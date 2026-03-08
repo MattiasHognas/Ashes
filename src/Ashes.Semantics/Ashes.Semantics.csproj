@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Ashes.Semantics</AssemblyName>
+    <RootNamespace>Ashes.Semantics</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\lib\Ashes\Result.ash" LogicalName="Ashes.Semantics.StdLib.Ashes.Result.ash" />
+  </ItemGroup>
+
+</Project>

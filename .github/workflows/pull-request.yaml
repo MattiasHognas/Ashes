@@ -1,0 +1,141 @@
+name: Pull Request
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Restore
+        run: dotnet restore Ashes.slnx
+
+      - name: Build
+        run: dotnet build Ashes.slnx --configuration Release --no-restore
+
+      - name: Verify formatting
+        run: dotnet format Ashes.slnx --verify-no-changes --no-restore
+
+      - name: Run Ashes.Tests
+        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --report-trx
+
+      - name: Run Ashes.Lsp.Tests
+        run: dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --report-trx
+
+      - name: Publish Ashes CLI binaries
+        run: |
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/windows
+
+      - name: Upload Ashes CLI binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: ashes-cli-binaries
+          path: artifacts/ashes
+          overwrite: true
+          retention-days: 365
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-dotnet-quality
+          path: TestResults
+          overwrite: true
+          retention-days: 365
+
+  test-matrix:
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download Ashes CLI binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: ashes-cli-binaries
+          path: artifacts/ashes
+
+      - name: Run examples (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x artifacts/ashes/linux/ashes
+          ASHES_CLI=./artifacts/ashes/linux/ashes
+          for example in examples/*.ash; do
+            "$ASHES_CLI" run "$example"
+          done
+
+      - name: Run examples (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+          Get-ChildItem examples\*.ash | ForEach-Object {
+            & $ashesCli run $_.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Example failed: $($_.FullName) (exit code: $LASTEXITCODE)"
+            }
+          }
+
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: ./artifacts/ashes/linux/ashes test tests
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: .\artifacts\ashes\windows\ashes.exe test tests
+
+      - name: Verify fmt on test and example files (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          ASHES_CLI=./artifacts/ashes/linux/ashes
+          "$ASHES_CLI" fmt examples -w > /dev/null
+          "$ASHES_CLI" fmt tests/imports -w > /dev/null
+          for test in tests/*.ash; do
+            if grep -Eq '^//[[:space:]]*fmt-skip:' "$test"; then
+              continue
+            fi
+            "$ASHES_CLI" fmt "$test" -w > /dev/null
+          done
+          git diff --exit-code -- examples tests
+
+      - name: Verify fmt on test and example files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+          & $ashesCli fmt examples -w > $null
+          & $ashesCli fmt tests\imports -w > $null
+          Get-ChildItem tests\*.ash | ForEach-Object {
+            if (Select-String -Path $_.FullName -Pattern '^//\s*fmt-skip:' -Quiet) {
+              return
+            }
+            & $ashesCli fmt $_.FullName -w > $null
+          }
+          git diff --exit-code -- examples tests

@@ -1,0 +1,4 @@
+type Result(E,A)=| Ok(A)| Error(E)
+
+let unwrap value=match value with | Ok((x,y))->x+y | Error(_)->0
+in Ashes.IO.print(unwrap(Ok((1,2))))

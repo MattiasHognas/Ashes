@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Ashes.Tests</AssemblyName>
+    <RootNamespace>Ashes.Tests</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableTestingPlatform>true</EnableTestingPlatform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
+    <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
+    <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
+    <ProjectReference Include="..\Ashes.Lsp\Ashes.Lsp.csproj" />
+    <ProjectReference Include="..\Ashes.TestRunner\Ashes.TestRunner.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.17.29" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="2.1.0" />
+    <PackageReference Include="Verify.TUnit" Version="31.13.2" />
+  </ItemGroup>
+</Project>

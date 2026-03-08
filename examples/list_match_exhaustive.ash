@@ -1,0 +1,5 @@
+let xs = [1, 2, 3]
+in 
+    Ashes.IO.print(match xs with
+        | [] -> 0
+        | x :: rest -> x)

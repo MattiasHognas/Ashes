@@ -1,0 +1,115 @@
+﻿{
+  Source: Ashes.IO.print("hello " + "world"),
+  Tokens: [
+    {
+      Kind: Ident,
+      Text: Ashes
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 5
+    },
+    {
+      Kind: Ident,
+      Text: IO,
+      Position: 6
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 8
+    },
+    {
+      Kind: Ident,
+      Text: print,
+      Position: 9
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 14
+    },
+    {
+      Kind: String,
+      Text: hello ,
+      Position: 15
+    },
+    {
+      Kind: Plus,
+      Text: +,
+      Position: 24
+    },
+    {
+      Kind: String,
+      Text: world,
+      Position: 26
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 33
+    },
+    {
+      Text: ,
+      Position: 34
+    }
+  ],
+  Ast: {
+    Func: {
+      Module: Ashes.IO,
+      Name: print
+    },
+    Arg: {
+      Left: {
+        Value: hello 
+      },
+      Right: {
+        Value: world
+      }
+    },
+    IsWhitespaceApplication: false
+  },
+  Ir: {
+    EntryFunction: {
+      Label: _start_main,
+      Instructions: [
+        {
+          StrLabel: str_0
+        },
+        {
+          Target: 1,
+          StrLabel: str_1
+        },
+        {
+          Target: 2,
+          Right: 1
+        },
+        {
+          Source: 2
+        },
+        {
+          Source: 2
+        }
+      ],
+      TempCount: 3,
+      HasEnvAndArgParams: false
+    },
+    StringLiterals: [
+      {
+        Label: str_0,
+        Value: hello 
+      },
+      {
+        Label: str_1,
+        Value: world
+      }
+    ],
+    UsesPrintInt: false,
+    UsesPrintStr: true,
+    UsesPrintBool: false,
+    UsesConcatStr: true,
+    UsesClosures: false
+  },
+  ElfSha256: 6C3DEBD54C5D8B2CE1B489568A96129CD7DA6880DAE2B9816EAC2E5A351A21B1
+}

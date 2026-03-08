@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Enable .NET analyzers -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+    <!-- Use latest rule set -->
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <!-- Enable nullable analysis -->
+    <Nullable>enable</Nullable>
+
+    <!-- Respect .editorconfig -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+</Project>

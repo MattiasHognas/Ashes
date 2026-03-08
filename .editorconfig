@@ -1,0 +1,79 @@
+# Top-most EditorConfig file
+root = true
+
+# Applies to all C# files
+[*.cs]
+
+# Indentation
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+# Newlines
+end_of_line = lf
+insert_final_newline = true
+
+[*.ash]
+indent_style = space
+indent_size = 4
+tab_width = 4
+end_of_line = lf
+
+# Nullable analysis is enabled in build; keep style consistent
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+
+# Prefer explicit types in compiler code (less ambiguity in AST/IR)
+dotnet_style_var_for_built_in_types = false:warning
+dotnet_style_var_when_type_is_apparent = false:warning
+dotnet_style_var_elsewhere = false:warning
+
+# Prefer expression-bodied members sparingly (readability for compiler logic)
+csharp_style_expression_bodied_methods = false:warning
+csharp_style_expression_bodied_constructors = false:warning
+csharp_style_expression_bodied_operators = false:warning
+csharp_style_expression_bodied_properties = when_on_single_line:suggestion
+
+# Use pattern matching where clear
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+
+# Use switch expressions where appropriate
+csharp_style_prefer_switch_expression = true:suggestion
+
+# Prefer readonly where possible (helps avoid defensive copies)
+dotnet_style_readonly_field = true:warning
+
+# Prefer 'in' parameters for large structs (Meziantou can suggest)
+dotnet_diagnostic.MA0032.severity = warning
+
+# Disallow culture-sensitive string comparisons by default
+# Use StringComparison.Ordinal or OrdinalIgnoreCase explicitly
+dotnet_diagnostic.MA0006.severity = error
+
+# Dispose pattern correctness
+dotnet_diagnostic.MA0004.severity = warning
+
+# Avoid allocation-heavy LINQ in hot paths
+dotnet_diagnostic.MA0011.severity = warning
+
+# Prefer using declarations where possible
+csharp_style_prefer_using_declaration = true:suggestion
+
+# Remove unused private members
+dotnet_diagnostic.IDE0051.severity = warning
+
+# Braces for clarity
+csharp_prefer_braces = true:warning
+
+# Naming (keep minimal to avoid noise)
+dotnet_naming_rule.private_fields_should_be_camel_case.severity = suggestion
+dotnet_naming_rule.private_fields_should_be_camel_case.symbols = private_fields
+dotnet_naming_rule.private_fields_should_be_camel_case.style = camel_case_style
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.camel_case_style.capitalization = camel_case
+
+# Analyzer severities can be tuned here over time

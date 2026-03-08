@@ -1,0 +1,2 @@
+let value = Foo.bar(Baz.qux(1))
+in Ashes.IO.print(value)

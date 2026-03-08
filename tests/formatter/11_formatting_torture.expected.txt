@@ -1,0 +1,23 @@
+type Result(E, A) =
+    | Ok(A)
+    | Error(E)
+
+let rec compute fallback xs =
+    match xs with
+        | [] ->
+            if fallback >= 10
+            then Ok(fallback)
+            else Error("small")
+        | head :: tail ->
+            let next =
+                if head >= fallback
+                then head + fallback
+                else fallback - head
+            in
+                match wrap(next) with
+                    | Ok(value) -> compute(value)(tail)
+                    | Error(err) -> Error(err)
+in
+    [1, 2, 3]
+    |> compute(0)
+    |> Ashes.IO.print

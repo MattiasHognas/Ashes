@@ -1,0 +1,1 @@
+Ashes.IO.print("ok")

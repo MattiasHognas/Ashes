@@ -1,0 +1,71 @@
+name: Push to main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  packaging:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+          check-latest: true
+
+      - name: Restore
+        run: dotnet restore Ashes.slnx
+
+      - name: Build
+        run: dotnet build Ashes.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --coverage --coverage-output coverage.cobertura.xml --coverage-output-format cobertura 
+
+      - name: Bundle VS Code extension (Release)
+        run: |
+          cd vscode-extension
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm run lint
+          pnpm run format:check
+          pnpm run compile
+          pnpm run build-server
+          pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
+
+      - name: Upload VS Code extension bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ashes-vscode
+          path: ashes-vscode.vsix
+
+      - name: Coverage summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: TestResults/coverage.cobertura.xml
+          format: markdown
+          output: both
+
+      - name: Add coverage to quality-and-packaging summary
+        run: |
+          if [ -f code-coverage-results.md ]; then
+            cat code-coverage-results.md >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.*.*'
+
+jobs:
+  build-compiler:
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: ashes-linux-x64
+            binary: ashes
+          - os: windows-latest
+            rid: win-x64
+            artifact: ashes-win-x64
+            binary: ashes.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Restore
+        run: dotnet restore src/Ashes.Cli/Ashes.Cli.csproj --runtime ${{ matrix.rid }}
+
+      - name: Publish
+        run: dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} --output publish/${{ matrix.rid }} --no-restore
+
+      - name: Stage and zip artifact (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p staging
+          cp publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
+          [ -f LICENSE ] && cp LICENSE staging/ || true
+          cp README.md staging/
+          (cd staging && zip ../${{ matrix.artifact }}.zip *)
+
+      - name: Stage and zip artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
+          if (Test-Path LICENSE) { Copy-Item LICENSE staging/ }
+          Copy-Item README.md staging/
+          Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  build-vscode-extension:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+          check-latest: true
+
+      - name: Get and validate version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: '$VERSION'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Restore .NET
+        run: dotnet restore Ashes.slnx
+
+      - name: Build .NET
+        run: dotnet build Ashes.slnx --configuration Release --no-restore
+
+      - name: Build and package VS Code extension
+        run: |
+          cd vscode-extension
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm version --no-git-tag-version ${{ steps.version.outputs.version }}
+          pnpm run compile
+          pnpm run build-server
+          pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-language-${{ steps.version.outputs.version }}.vsix
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ashes-vscode
+          path: ashes-language-${{ steps.version.outputs.version }}.vsix
+
+  release:
+    needs: [build-compiler, build-vscode-extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Get and validate version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: '$VERSION'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Ashes ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/ashes-win-x64/ashes-win-x64.zip
+            artifacts/ashes-linux-x64/ashes-linux-x64.zip
+            artifacts/ashes-vscode/ashes-language-${{ steps.version.outputs.version }}.vsix

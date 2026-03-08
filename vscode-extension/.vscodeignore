@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+tsconfig.json
+pnpm-lock.yaml
+**/*.ts
+**/*.map
+node_modules/**
+.gitignore
+.gitattributes
+.editorconfig

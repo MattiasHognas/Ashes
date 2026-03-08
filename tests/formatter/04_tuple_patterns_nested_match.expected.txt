@@ -1,0 +1,5 @@
+let value = 
+    match pair with
+        | (x, (y, z)) -> x + y + z
+        | _ -> 0
+in Ashes.IO.print(value)

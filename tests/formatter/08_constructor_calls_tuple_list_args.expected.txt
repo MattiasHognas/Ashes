@@ -1,0 +1,5 @@
+type Pair =
+    | Pair(A, B)
+
+let value = Pair((1, 2))([3, 4])
+in Ashes.IO.print(value)

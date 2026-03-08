@@ -1,0 +1,6 @@
+node_modules
+out
+dist
+server/win-x64
+server/linux-x64
+pnpm-lock.yaml

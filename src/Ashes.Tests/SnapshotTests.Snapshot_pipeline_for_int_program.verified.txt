@@ -1,0 +1,170 @@
+﻿{
+  Source: let x = 40 + 2 in Ashes.IO.print(x + 1),
+  Tokens: [
+    {
+      Kind: Let,
+      Text: let
+    },
+    {
+      Kind: Ident,
+      Text: x,
+      Position: 4
+    },
+    {
+      Kind: Equals,
+      Text: =,
+      Position: 6
+    },
+    {
+      Kind: Int,
+      Text: 40,
+      IntValue: 40,
+      Position: 8
+    },
+    {
+      Kind: Plus,
+      Text: +,
+      Position: 11
+    },
+    {
+      Kind: Int,
+      Text: 2,
+      IntValue: 2,
+      Position: 13
+    },
+    {
+      Kind: In,
+      Text: in,
+      Position: 15
+    },
+    {
+      Kind: Ident,
+      Text: Ashes,
+      Position: 18
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 23
+    },
+    {
+      Kind: Ident,
+      Text: IO,
+      Position: 24
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 26
+    },
+    {
+      Kind: Ident,
+      Text: print,
+      Position: 27
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 32
+    },
+    {
+      Kind: Ident,
+      Text: x,
+      Position: 33
+    },
+    {
+      Kind: Plus,
+      Text: +,
+      Position: 35
+    },
+    {
+      Kind: Int,
+      Text: 1,
+      IntValue: 1,
+      Position: 37
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 38
+    },
+    {
+      Text: ,
+      Position: 39
+    }
+  ],
+  Ast: {
+    Name: x,
+    Value: {
+      Left: {
+        Value: 40
+      },
+      Right: {
+        Value: 2
+      }
+    },
+    Body: {
+      Func: {
+        Module: Ashes.IO,
+        Name: print
+      },
+      Arg: {
+        Left: {
+          Name: x
+        },
+        Right: {
+          Value: 1
+        }
+      },
+      IsWhitespaceApplication: false
+    }
+  },
+  Ir: {
+    EntryFunction: {
+      Label: _start_main,
+      Instructions: [
+        {
+          Value: 40
+        },
+        {
+          Target: 1,
+          Value: 2
+        },
+        {
+          Target: 2,
+          Right: 1
+        },
+        {
+          Source: 2
+        },
+        {
+          Target: 3
+        },
+        {
+          Target: 4,
+          Value: 1
+        },
+        {
+          Target: 5,
+          Left: 3,
+          Right: 4
+        },
+        {
+          Source: 5
+        },
+        {
+          Source: 5
+        }
+      ],
+      LocalCount: 1,
+      TempCount: 6,
+      HasEnvAndArgParams: false
+    },
+    UsesPrintInt: true,
+    UsesPrintStr: false,
+    UsesPrintBool: false,
+    UsesConcatStr: false,
+    UsesClosures: false
+  },
+  ElfSha256: 65A91024B48D6D255DF4D716765E7E317FC5BF6E6C5FF981A635AC818CA47C2F
+}

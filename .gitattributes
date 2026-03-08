@@ -1,0 +1,2 @@
+# Enforce LF line endings for all text files to keep editorconfig (end_of_line = lf) consistent
+* text=auto eol=lf

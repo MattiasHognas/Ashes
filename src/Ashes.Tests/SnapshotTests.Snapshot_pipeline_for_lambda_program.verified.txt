@@ -1,0 +1,302 @@
+﻿{
+  Source: let add = fun (x) -> fun (y) -> x + y in Ashes.IO.print(add(10)(32)),
+  Tokens: [
+    {
+      Kind: Let,
+      Text: let
+    },
+    {
+      Kind: Ident,
+      Text: add,
+      Position: 4
+    },
+    {
+      Kind: Equals,
+      Text: =,
+      Position: 8
+    },
+    {
+      Kind: Fun,
+      Text: fun,
+      Position: 10
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 14
+    },
+    {
+      Kind: Ident,
+      Text: x,
+      Position: 15
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 16
+    },
+    {
+      Kind: Arrow,
+      Text: ->,
+      Position: 18
+    },
+    {
+      Kind: Fun,
+      Text: fun,
+      Position: 21
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 25
+    },
+    {
+      Kind: Ident,
+      Text: y,
+      Position: 26
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 27
+    },
+    {
+      Kind: Arrow,
+      Text: ->,
+      Position: 29
+    },
+    {
+      Kind: Ident,
+      Text: x,
+      Position: 32
+    },
+    {
+      Kind: Plus,
+      Text: +,
+      Position: 34
+    },
+    {
+      Kind: Ident,
+      Text: y,
+      Position: 36
+    },
+    {
+      Kind: In,
+      Text: in,
+      Position: 38
+    },
+    {
+      Kind: Ident,
+      Text: Ashes,
+      Position: 41
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 46
+    },
+    {
+      Kind: Ident,
+      Text: IO,
+      Position: 47
+    },
+    {
+      Kind: Dot,
+      Text: .,
+      Position: 49
+    },
+    {
+      Kind: Ident,
+      Text: print,
+      Position: 50
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 55
+    },
+    {
+      Kind: Ident,
+      Text: add,
+      Position: 56
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 59
+    },
+    {
+      Kind: Int,
+      Text: 10,
+      IntValue: 10,
+      Position: 60
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 62
+    },
+    {
+      Kind: LParen,
+      Text: (,
+      Position: 63
+    },
+    {
+      Kind: Int,
+      Text: 32,
+      IntValue: 32,
+      Position: 64
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 66
+    },
+    {
+      Kind: RParen,
+      Text: ),
+      Position: 67
+    },
+    {
+      Text: ,
+      Position: 68
+    }
+  ],
+  Ast: {
+    Name: add,
+    Value: {
+      ParamName: x,
+      Body: {
+        ParamName: y,
+        Body: {
+          Left: {
+            Name: x
+          },
+          Right: {
+            Name: y
+          }
+        }
+      }
+    },
+    Body: {
+      Func: {
+        Module: Ashes.IO,
+        Name: print
+      },
+      Arg: {
+        Func: {
+          Func: {
+            Name: add
+          },
+          Arg: {
+            Value: 10
+          },
+          IsWhitespaceApplication: false
+        },
+        Arg: {
+          Value: 32
+        },
+        IsWhitespaceApplication: false
+      },
+      IsWhitespaceApplication: false
+    }
+  },
+  Ir: {
+    EntryFunction: {
+      Label: _start_main,
+      Instructions: [
+        {},
+        {
+          Target: 1,
+          FuncLabel: lambda_0
+        },
+        {
+          Source: 1
+        },
+        {
+          Target: 2
+        },
+        {
+          Target: 3,
+          Value: 10
+        },
+        {
+          Target: 4,
+          ClosureTemp: 2,
+          ArgTemp: 3
+        },
+        {
+          Target: 5,
+          Value: 32
+        },
+        {
+          Target: 6,
+          ClosureTemp: 4,
+          ArgTemp: 5
+        },
+        {
+          Source: 6
+        },
+        {
+          Source: 6
+        }
+      ],
+      LocalCount: 1,
+      TempCount: 7,
+      HasEnvAndArgParams: false
+    },
+    Functions: [
+      {
+        Label: lambda_1,
+        Instructions: [
+          {},
+          {
+            Target: 1,
+            Slot: 1
+          },
+          {
+            Target: 2,
+            Right: 1
+          },
+          {
+            Source: 2
+          }
+        ],
+        LocalCount: 2,
+        TempCount: 3,
+        HasEnvAndArgParams: true
+      },
+      {
+        Label: lambda_0,
+        Instructions: [
+          {
+            SizeBytes: 8
+          },
+          {
+            Target: 1,
+            Slot: 1
+          },
+          {
+            Source: 1
+          },
+          {
+            Target: 2,
+            FuncLabel: lambda_1
+          },
+          {
+            Source: 2
+          }
+        ],
+        LocalCount: 2,
+        TempCount: 3,
+        HasEnvAndArgParams: true
+      }
+    ],
+    UsesPrintInt: true,
+    UsesPrintStr: false,
+    UsesPrintBool: false,
+    UsesConcatStr: false,
+    UsesClosures: true
+  },
+  ElfSha256: 30BAB02A0673CB406DFC1C2B0612549A6AC8DD2B03FF9AF3C45E98C451F3195C
+}

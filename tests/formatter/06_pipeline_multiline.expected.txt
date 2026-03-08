@@ -1,0 +1,6 @@
+let result = 
+    1
+    |> inc
+    |> double
+    |> Ashes.IO.print
+in result

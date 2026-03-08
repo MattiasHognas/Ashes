@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>ashes</AssemblyName>
+    <RootNamespace>Ashes.Cli</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>      <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
+    <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
+    <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
+    <ProjectReference Include="..\Ashes.Formatter\Ashes.Formatter.csproj" />
+    <ProjectReference Include="..\Ashes.TestRunner\Ashes.TestRunner.csproj" />
+</ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.54.0" />
+  </ItemGroup>
+</Project>
+

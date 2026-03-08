@@ -1,0 +1,2 @@
+let value = "a\\b\"c\nd\re\tf"
+in Ashes.IO.print(value)

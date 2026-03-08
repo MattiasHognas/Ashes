@@ -1,0 +1,109 @@
+{
+  "name": "ashes-vscode",
+  "displayName": "Ashes",
+  "description": "Ashes programming language support",
+  "version": "0.0.1",
+  "publisher": "mattiashognas",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "icon": "icon.png",
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:ashes",
+    "onCommand:ashes.compile",
+    "onCommand:ashes.run",
+    "onCommand:ashes.test"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ashes",
+        "aliases": [
+          "Ashes",
+          "ashes"
+        ],
+        "extensions": [
+          ".ash"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ashes",
+        "scopeName": "source.ashes",
+        "path": "./syntaxes/ashes.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[ashes]": {
+        "editor.defaultFormatter": "mattiashognas.ashes-vscode",
+        "editor.formatOnSave": true
+      }
+    },
+    "commands": [
+      {
+        "command": "ashes.compile",
+        "title": "Compile",
+        "category": "Ashes"
+      },
+      {
+        "command": "ashes.run",
+        "title": "Run",
+        "category": "Ashes"
+      },
+      {
+        "command": "ashes.test",
+        "title": "Run Tests",
+        "category": "Ashes"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ashes.run",
+        "key": "f5",
+        "when": "editorLangId == ashes"
+      },
+      {
+        "command": "ashes.compile",
+        "key": "shift+f5",
+        "when": "editorLangId == ashes"
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
+    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
+    "build-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "esbuild": "^0.27.3",
+    "eslint": "^10.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.1",
+    "typescript": "^5.5.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "overrides": {
+    "minimatch": "10.2.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

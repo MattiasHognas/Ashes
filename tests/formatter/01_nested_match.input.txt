@@ -1,0 +1,4 @@
+type Option=| None| Some(T)
+
+let classify value=match value with | Some(inner)->match inner with | [] -> 0| _ :: _ -> 1 | None -> 2
+in Ashes.IO.print(classify(Some([])))

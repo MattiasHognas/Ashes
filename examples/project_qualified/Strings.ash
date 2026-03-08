@@ -1,0 +1,2 @@
+let bang = "!"
+in bang
