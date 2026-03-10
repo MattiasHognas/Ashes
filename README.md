@@ -72,12 +72,23 @@ Authoritative specifications:
 
 The README provides only a high-level overview.
 
-Standard library functions live under `Ashes.*` modules. Use qualified access directly, or
-`import Ashes.IO` before using unqualified `print`, `panic`, and `args`:
+Standard library functions live under `Ashes.*` modules. Canonical root access is available for
+`Ashes.print`, `Ashes.panic`, and `Ashes.args`, while the `Ashes.IO` module continues to expose the
+same IO surface:
 
+-   `Ashes.print(expr)` — prints to standard output
+-   `Ashes.panic("message")` — aborts execution
+-   `Ashes.args` — `List<String>` of command-line arguments
 -   `Ashes.IO.print(expr)` — prints to standard output
 -   `Ashes.IO.panic("message")` — aborts execution
 -   `Ashes.IO.args` — `List<String>` of command-line arguments
+-   `Ashes.Fs.readText(path)` — `Result<String, String>` UTF-8 file read
+-   `Ashes.Fs.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
+-   `Ashes.Fs.exists(path)` — `Result<String, Bool>` existence check
+-   `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
+-   `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Int>` TCP send
+-   `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
+-   `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
 
 `Ashes` is reserved for compiler-provided standard library modules and cannot be defined by user projects.
 
@@ -109,8 +120,14 @@ Start with these runnable examples:
 - `examples/io_echo_all.ash` --- recursive echo until EOF
 - `examples/float_ops.ash` --- float arithmetic and comparison smoke test
 - `examples/float_backend_demo.ash` --- backend float arithmetic/comparison smoke test
-- `examples/std_fs_stub.ash` --- built-in Ashes.Fs stub module smoke test
+- `examples/fs_read_text.ash` --- read UTF-8 text from a file
+- `examples/fs_write_text.ash` --- write and reread UTF-8 text
+- `examples/fs_exists.ash` --- filesystem existence check
 - `examples/result_flow.ash` --- standalone `Result` workflow using `Ashes.Result`
+- `examples/tcp_connect.ash` --- TCP connect with Result handling
+- `examples/tcp_send.ash` --- TCP send with Result handling
+- `examples/tcp_receive.ash` --- TCP receive with Result handling
+- `examples/tcp_close.ash` --- TCP close with Result handling
 
 Project-mode shipped-library examples:
 
