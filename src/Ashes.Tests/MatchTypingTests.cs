@@ -246,10 +246,29 @@ public sealed class MatchTypingTests
         diag.Errors.ShouldNotContain(x => x.Contains("Non-exhaustive match on Result", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Match_with_print_calls_of_different_argument_types_typechecks_without_error()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            import Ashes.Fs
+            match Ashes.Fs.exists("out.txt") with
+            | Ok(found) ->
+                if found
+                then Ashes.IO.print(1)
+                else Ashes.IO.print(0)
+            | Error(msg) -> Ashes.IO.print(msg)
+            """);
+
+        diag.Errors.ShouldBeEmpty();
+    }
+
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)
     {
         var diag = new Diagnostics();
-        var program = new Parser(source, diag).ParseProgram();
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var program = new Parser(layout.Source, diag).ParseProgram();
         var lowering = new Lowering(diag);
         lowering.Lower(program);
         return (lowering, diag);

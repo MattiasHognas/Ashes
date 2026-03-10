@@ -189,6 +189,16 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_allow_standalone_import_of_Ashes_Test()
+    {
+        const string source = "import Ashes.Test\nlet checked = assertEqual(1, 1)\nin checked";
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Fs()
     {
         const string source = "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
@@ -373,7 +383,7 @@ public sealed class LspDocumentServiceTests
         var hover = DocumentService.GetHover(source, printPosition);
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("print : a -> a");
+        hover.Value.Contents.ShouldBe("print : a -> Unit");
     }
 
     [Test]

@@ -2,10 +2,6 @@ type Option =
     | None
     | Some(T)
 
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let unwrapOr = 
     fun (opt) -> 
         fun (def) -> 
