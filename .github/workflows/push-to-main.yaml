@@ -44,7 +44,7 @@ jobs:
         run: |
           cd vscode-extension
           corepack enable
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile --force
           pnpm run lint
           pnpm run format:check
           pnpm run compile

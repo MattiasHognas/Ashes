@@ -116,7 +116,7 @@ jobs:
         run: |
           cd vscode-extension
           corepack enable
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile --force
           pnpm version --no-git-tag-version ${{ steps.version.outputs.version }}
           pnpm run compile
           pnpm run build-server
