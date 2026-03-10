@@ -78,7 +78,3 @@ ROADMAP.md
 
 # Git
 .git/
-
-# Runtime artifacts from running examples
-area.txt
-out.txt
