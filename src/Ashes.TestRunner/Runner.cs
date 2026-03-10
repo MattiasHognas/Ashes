@@ -634,11 +634,10 @@ public static class Runner
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var serverTask = Task.Run(async () =>
             {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 try
                 {
-                    using var client = await listener.AcceptTcpClientAsync();
-                    client.ReceiveTimeout = 5000;
-                    client.SendTimeout = 5000;
+                    using var client = await listener.AcceptTcpClientAsync(cts.Token);
                     using var stream = client.GetStream();
 
                     if (fixture.ExpectedText is not null)
@@ -648,7 +647,7 @@ public static class Runner
                         var read = 0;
                         while (read < expectedBytes.Length)
                         {
-                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
+                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read), cts.Token);
                             if (n == 0)
                             {
                                 return $"tcp fixture expected '{fixture.ExpectedText}' but connection closed early";
@@ -666,11 +665,15 @@ public static class Runner
                     if (fixture.SendText is not null)
                     {
                         var sendBytes = System.Text.Encoding.UTF8.GetBytes(fixture.SendText);
-                        await stream.WriteAsync(sendBytes);
-                        await stream.FlushAsync();
+                        await stream.WriteAsync(sendBytes, cts.Token);
+                        await stream.FlushAsync(cts.Token);
                     }
 
                     return null;
+                }
+                catch (OperationCanceledException)
+                {
+                    return "tcp fixture timed out waiting for client connection or data";
                 }
                 catch (Exception ex)
                 {
