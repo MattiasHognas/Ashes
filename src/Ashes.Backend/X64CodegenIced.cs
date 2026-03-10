@@ -46,6 +46,8 @@ public sealed class X64CodegenIced
         EnsureStringLiteral(data, "__rt_tcp_invalid_utf8", "Ashes.Net.Tcp.receive() encountered invalid UTF-8");
         EnsureStringLiteral(data, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
         EnsureStringLiteral(data, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
+        EnsureStringLiteral(data, "__rt_tcp_resolve_failed", "Ashes.Net.Tcp.connect() could not resolve host");
+        EnsureStringLiteral(data, "__rt_hosts_path", "/etc/hosts");
 
         foreach (var s in p.StringLiterals)
         {
@@ -167,6 +169,8 @@ public sealed class X64CodegenIced
         var L_read_line = asm.CreateLabel();
         var L_string_to_cstr = asm.CreateLabel();
         var L_parse_ipv4 = asm.CreateLabel();
+        var L_cstr_eq_token = asm.CreateLabel();
+        var L_resolve_host_ipv4 = asm.CreateLabel();
         var L_validate_utf8 = asm.CreateLabel();
         var L_fs_read_text = asm.CreateLabel();
         var L_fs_write_text = asm.CreateLabel();
@@ -484,6 +488,201 @@ public sealed class X64CodegenIced
         asm.mov(eax, 1);
         asm.ret();
         asm.Label(ref L_parse_ipv4_fail);
+        asm.xor(eax, eax);
+        asm.xor(edx, edx);
+        asm.ret();
+
+        // cstr_eq_token(RDI=cstr, RSI=tokenStart) -> EAX=1 if equal and token ends at delimiter
+        asm.Label(ref L_cstr_eq_token);
+        var L_cstr_eq_token_done = asm.CreateLabel();
+        var L_cstr_eq_token_success = asm.CreateLabel();
+        var L_cstr_eq_token_fail = asm.CreateLabel();
+        asm.movzx(eax, __byte_ptr[rdi]);
+        asm.movzx(edx, __byte_ptr[rsi]);
+        asm.cmp(al, 0);
+        asm.je(L_cstr_eq_token_done);
+        asm.cmp(al, dl);
+        asm.jne(L_cstr_eq_token_fail);
+        asm.inc(rdi);
+        asm.inc(rsi);
+        asm.jmp(L_cstr_eq_token);
+        asm.Label(ref L_cstr_eq_token_done);
+        asm.cmp(dl, 0);
+        asm.je(L_cstr_eq_token_success);
+        asm.cmp(dl, 9);
+        asm.je(L_cstr_eq_token_success);
+        asm.cmp(dl, 10);
+        asm.je(L_cstr_eq_token_success);
+        asm.cmp(dl, 13);
+        asm.je(L_cstr_eq_token_success);
+        asm.cmp(dl, 32);
+        asm.je(L_cstr_eq_token_success);
+        asm.cmp(dl, 35);
+        asm.jne(L_cstr_eq_token_fail);
+        asm.Label(ref L_cstr_eq_token_success);
+        asm.mov(eax, 1);
+        asm.ret();
+        asm.Label(ref L_cstr_eq_token_fail);
+        asm.xor(eax, eax);
+        asm.ret();
+
+        // resolve_host_ipv4(RDI=host string*) -> EAX=1 on success, EDX=address in sockaddr-compatible byte order
+        asm.Label(ref L_resolve_host_ipv4);
+        var L_resolve_host_skip_ws = asm.CreateLabel();
+        var L_resolve_host_skip_ws_done = asm.CreateLabel();
+        var L_resolve_host_skip_name = asm.CreateLabel();
+        var L_resolve_host_skip_name_done = asm.CreateLabel();
+        var L_resolve_host_skip_line = asm.CreateLabel();
+        var L_resolve_host_skip_line_done = asm.CreateLabel();
+        var L_resolve_host_parse_loop = asm.CreateLabel();
+        var L_resolve_host_scan_ip = asm.CreateLabel();
+        var L_resolve_host_after_ip = asm.CreateLabel();
+        var L_resolve_host_match = asm.CreateLabel();
+        var L_resolve_host_read_fail = asm.CreateLabel();
+        var L_resolve_host_success = asm.CreateLabel();
+        var L_resolve_host_fail = asm.CreateLabel();
+        asm.call(L_string_to_cstr);
+        asm.mov(r12, rax);
+        asm.mov(rdi, r12);
+        asm.call(L_parse_ipv4);
+        asm.cmp(eax, 0);
+        asm.jne(L_resolve_host_success);
+
+        asm.mov(rdi, (long)addrOf("__rt_hosts_path"));
+        asm.call(L_string_to_cstr);
+        asm.mov(rdi, rax);
+        asm.mov(rax, 2);
+        asm.xor(rsi, rsi);
+        asm.xor(rdx, rdx);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_resolve_host_fail);
+        asm.mov(r13, rax);
+        asm.mov(rax, 0);
+        asm.mov(rdi, r13);
+        asm.mov(r14, (long)addrOf("stdin_buf"));
+        asm.mov(rsi, r14);
+        asm.mov(rdx, InputBufSize - 1);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jle(L_resolve_host_read_fail);
+        asm.mov(__byte_ptr[r14 + rax], 0);
+        asm.mov(rax, 3);
+        asm.mov(rdi, r13);
+        asm.syscall();
+        asm.mov(r15, r14);
+
+        asm.Label(ref L_resolve_host_parse_loop);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 0);
+        asm.je(L_resolve_host_fail);
+        asm.cmp(al, 10);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 13);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 35);
+        asm.je(L_resolve_host_skip_line);
+        asm.cmp(al, 32);
+        asm.je(L_resolve_host_skip_ws);
+        asm.cmp(al, 9);
+        asm.je(L_resolve_host_skip_ws);
+        asm.mov(r8, r15);
+        asm.Label(ref L_resolve_host_scan_ip);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 0);
+        asm.je(L_resolve_host_fail);
+        asm.cmp(al, 32);
+        asm.je(L_resolve_host_after_ip);
+        asm.cmp(al, 9);
+        asm.je(L_resolve_host_after_ip);
+        asm.cmp(al, 10);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 13);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 35);
+        asm.je(L_resolve_host_skip_line);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_scan_ip);
+
+        asm.Label(ref L_resolve_host_after_ip);
+        asm.mov(__byte_ptr[r15], 0);
+        asm.inc(r15);
+        asm.Label(ref L_resolve_host_skip_ws);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 32);
+        asm.je(L_resolve_host_skip_ws_done);
+        asm.cmp(al, 9);
+        asm.je(L_resolve_host_skip_ws_done);
+        asm.cmp(al, 10);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 13);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 35);
+        asm.je(L_resolve_host_skip_line);
+        asm.mov(rdi, r12);
+        asm.mov(rsi, r15);
+        asm.call(L_cstr_eq_token);
+        asm.cmp(eax, 0);
+        asm.jne(L_resolve_host_match);
+        asm.Label(ref L_resolve_host_skip_name);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 0);
+        asm.je(L_resolve_host_fail);
+        asm.cmp(al, 32);
+        asm.je(L_resolve_host_skip_name_done);
+        asm.cmp(al, 9);
+        asm.je(L_resolve_host_skip_name_done);
+        asm.cmp(al, 10);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 13);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.cmp(al, 35);
+        asm.je(L_resolve_host_skip_line);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_skip_name);
+
+        asm.Label(ref L_resolve_host_skip_name_done);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_skip_ws);
+
+        asm.Label(ref L_resolve_host_match);
+        asm.mov(rdi, r8);
+        asm.call(L_parse_ipv4);
+        asm.cmp(eax, 0);
+        asm.jne(L_resolve_host_success);
+        asm.jmp(L_resolve_host_fail);
+
+        asm.Label(ref L_resolve_host_skip_ws_done);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_skip_ws);
+
+        asm.Label(ref L_resolve_host_skip_line);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 0);
+        asm.je(L_resolve_host_fail);
+        asm.cmp(al, 10);
+        asm.je(L_resolve_host_skip_line_done);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_skip_line);
+
+        asm.Label(ref L_resolve_host_skip_line_done);
+        asm.movzx(eax, __byte_ptr[r15]);
+        asm.cmp(al, 10);
+        asm.jne(L_resolve_host_fail);
+        asm.inc(r15);
+        asm.jmp(L_resolve_host_parse_loop);
+
+        asm.Label(ref L_resolve_host_read_fail);
+        asm.mov(rax, 3);
+        asm.mov(rdi, r13);
+        asm.syscall();
+        asm.jmp(L_resolve_host_fail);
+
+        asm.Label(ref L_resolve_host_success);
+        asm.mov(eax, 1);
+        asm.ret();
+
+        asm.Label(ref L_resolve_host_fail);
         asm.xor(eax, eax);
         asm.xor(edx, edx);
         asm.ret();
@@ -839,17 +1038,15 @@ public sealed class X64CodegenIced
         asm.Label(ref L_tcp_connect);
         var L_tcp_connect_fail = asm.CreateLabel();
         var L_tcp_connect_fail_close = asm.CreateLabel();
-        var L_tcp_connect_invalid_host = asm.CreateLabel();
+        var L_tcp_connect_resolve_fail = asm.CreateLabel();
         asm.mov(r12, rsi);
         asm.cmp(r12, 0);
         asm.jle(L_tcp_connect_fail);
         asm.cmp(r12, 65535);
         asm.jg(L_tcp_connect_fail);
-        asm.call(L_string_to_cstr);
-        asm.mov(rdi, rax);
-        asm.call(L_parse_ipv4);
+        asm.call(L_resolve_host_ipv4);
         asm.cmp(eax, 0);
-        asm.je(L_tcp_connect_invalid_host);
+        asm.je(L_tcp_connect_resolve_fail);
         asm.mov(r13d, edx);
         asm.mov(rax, 41);
         asm.mov(rdi, 2);
@@ -879,8 +1076,8 @@ public sealed class X64CodegenIced
         asm.call(L_make_result_ok);
         asm.ret();
 
-        asm.Label(ref L_tcp_connect_invalid_host);
-        asm.mov(rdi, (long)addrOf("__rt_tcp_invalid_host"));
+        asm.Label(ref L_tcp_connect_resolve_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_resolve_failed"));
         asm.call(L_make_result_error);
         asm.ret();
 

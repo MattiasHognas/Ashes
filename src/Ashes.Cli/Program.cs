@@ -745,7 +745,7 @@ async Task<int> RunReplAsync(string[] a)
 
 int RunTest(string[] a)
 {
-    // ashes test [--target ...] [paths...]
+    // ashes test [--project ...] [--target ...] [paths...]
     string? target = null;
     string? projectPath = null;
     var paths = new List<string>();
@@ -763,24 +763,10 @@ int RunTest(string[] a)
         paths.Add(arg);
     }
 
-    if (paths.Count == 0)
-    {
-        var project = ResolveProject(projectPath, null, null);
-        if (project is not null)
-        {
-            var testsPath = Path.Combine(project.ProjectDirectory, "tests");
-            paths.Add(Directory.Exists(testsPath) ? testsPath : project.ProjectDirectory);
-            target ??= project.Target;
-        }
-        else
-        {
-            paths.Add("tests");
-        }
-    }
+    var project = ResolveProject(projectPath, null, null);
+    target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
 
-    target ??= BackendFactory.DefaultForCurrentOS();
-
-    return Runner.RunTests(paths, target, AnsiConsole.Console);
+    return Runner.RunTests(paths, target, AnsiConsole.Console, project);
 }
 
 async Task<int> RunFmtAsync(string[] a)

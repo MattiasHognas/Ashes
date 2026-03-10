@@ -1321,6 +1321,7 @@ public sealed class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (vTemp, vType) = LowerExpr(arg);
         var t = Prune(vType);
+        var unitType = _resolvedTypes["Unit"];
 
         if (t is TypeRef.TNever)
         {
@@ -1331,21 +1332,21 @@ public sealed class Lowering
         {
             _usesPrintInt = true;
             _inst.Add(new IrInst.PrintInt(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         if (t is TypeRef.TStr)
         {
             _usesPrintStr = true;
             _inst.Add(new IrInst.PrintStr(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         if (t is TypeRef.TBool)
         {
             _usesPrintBool = true;
             _inst.Add(new IrInst.PrintBool(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         ReportDiagnostic(GetSpan(arg), $"print() does not support type {Pretty(t)} yet.");
@@ -4000,10 +4001,10 @@ public sealed class Lowering
 
     private Binding.Intrinsic CreatePrintBinding()
     {
-        var printArgReturnTypeVar = (TypeRef.TVar)NewTypeVar();
+        var printArgTypeVar = (TypeRef.TVar)NewTypeVar();
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([new TypeVar(printArgReturnTypeVar.Id, "a")], new TypeRef.TFun(printArgReturnTypeVar, printArgReturnTypeVar))
+            new TypeScheme([new TypeVar(printArgTypeVar.Id, "a")], new TypeRef.TFun(printArgTypeVar, _resolvedTypes["Unit"]))
         );
     }
 
@@ -4043,7 +4044,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"])) ))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
     }
 

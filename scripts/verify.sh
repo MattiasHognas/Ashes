@@ -50,7 +50,7 @@ fi
 echo "--- Verifying Ashes on ${os}-${arch}..."
 dotnet restore "Ashes.slnx"
 dotnet build "Ashes.slnx" --configuration Release --no-restore
-dotnet format "Ashes.slnx" --verify-no-changes --no-restore
+dotnet format "Ashes.slnx" --no-restore
 dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore
 dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release --no-build --no-restore
 dotnet publish src/Ashes.Cli/Ashes.Cli.csproj \

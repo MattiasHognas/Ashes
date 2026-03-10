@@ -69,6 +69,7 @@ Authoritative specifications:
 - [Compiler CLI Specification](docs/COMPILER_CLI_SPEC.md)
 - [Formatter Specification](docs/FORMATTER_SPEC.md)
 - [Diagnostics Reference](docs/DIAGNOSTICS.md)
+- [Testing Reference](docs/TESTING.md)
 
 The README provides only a high-level overview.
 
@@ -325,8 +326,14 @@ comments are ignored by compilation.
 Runtime failure tests:
 
     // exit: 1
-    // expect: empty
-    panic("empty")
+    // expect: oh no!
+    panic("oh no!")
+
+Tests are discovered recursively under `tests/`, execute in stable
+lexicographic order, and become project-aware automatically when an
+`ashes.json` project file is discovered.
+
+Supported directives are documented in [docs/TESTING.md](docs/TESTING.md).
 
 If a fixture is intentionally parser-invalid and should be skipped by CI `fmt`
 verification, annotate it with:

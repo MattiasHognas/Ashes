@@ -29,6 +29,7 @@ public sealed class WindowsX64CodegenIced
     private const int IatIndex_recv = 16;
     private const int IatIndex_closesocket = 17;
     private const int IatIndex_inet_addr = 18;
+    private const int IatIndex_gethostbyname = 19;
 
     // Windows x64 ABI: 32-byte shadow space + alignment padding
     private const int ShadowAndAlign = 0x28;
@@ -832,7 +833,9 @@ public sealed class WindowsX64CodegenIced
         asm.Label(ref L_tcp_connect);
         var L_tcp_connect_fail = asm.CreateLabel();
         var L_tcp_connect_fail_close = asm.CreateLabel();
-        var L_tcp_connect_invalid_host = asm.CreateLabel();
+        var L_tcp_connect_resolve_host = asm.CreateLabel();
+        var L_tcp_connect_resolve_fail = asm.CreateLabel();
+        var L_tcp_connect_have_addr = asm.CreateLabel();
         asm.mov(r12, rsi);
         CallLabel(L_init_winsock);
         asm.test(eax, eax);
@@ -842,11 +845,27 @@ public sealed class WindowsX64CodegenIced
         asm.cmp(r12, 65535);
         asm.jg(L_tcp_connect_fail);
         asm.call(L_string_to_cstr);
-        asm.mov(rcx, rax);
+        asm.mov(r14, rax);
+        asm.mov(rcx, r14);
         CallIat(IatIndex_inet_addr);
         asm.cmp(eax, unchecked((int)0xFFFFFFFF));
-        asm.je(L_tcp_connect_invalid_host);
+        asm.je(L_tcp_connect_resolve_host);
         asm.mov(r13d, eax);
+        asm.jmp(L_tcp_connect_have_addr);
+
+        asm.Label(ref L_tcp_connect_resolve_host);
+        asm.mov(rcx, r14);
+        CallIat(IatIndex_gethostbyname);
+        asm.test(rax, rax);
+        asm.jz(L_tcp_connect_resolve_fail);
+        asm.mov(rbx, __[rax + 24]);
+        asm.test(rbx, rbx);
+        asm.jz(L_tcp_connect_resolve_fail);
+        asm.mov(rbx, __[rbx]);
+        asm.test(rbx, rbx);
+        asm.jz(L_tcp_connect_resolve_fail);
+        asm.mov(r13d, __dword_ptr[rbx]);
+        asm.Label(ref L_tcp_connect_have_addr);
         asm.mov(rcx, 2);
         asm.mov(rdx, 1);
         asm.mov(r8, 6);
@@ -873,8 +892,8 @@ public sealed class WindowsX64CodegenIced
         CallLabel(L_make_result_ok);
         asm.ret();
 
-        asm.Label(ref L_tcp_connect_invalid_host);
-        asm.mov(rdi, (long)addrOf("__rt_tcp_invalid_host"));
+        asm.Label(ref L_tcp_connect_resolve_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_resolve_failed"));
         CallLabel(L_make_result_error);
         asm.ret();
 

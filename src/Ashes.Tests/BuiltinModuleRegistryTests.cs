@@ -44,4 +44,12 @@ public sealed class BuiltinModuleRegistryTests
 
         diag.Errors.ShouldBeEmpty();
     }
+
+    [Test]
+    public void Ashes_test_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Test", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Test");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Test.ash");
+    }
 }

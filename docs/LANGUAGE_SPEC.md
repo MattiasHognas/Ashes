@@ -1,4 +1,4 @@
-# Ashes Language Specification (v0.x)
+# Ashes Language Specification
 
 Ashes is a pure, statically typed, expression-based functional programming language
 compiled directly to native code.
@@ -118,6 +118,10 @@ Networking APIs live under `Ashes.Net.Tcp`:
 Networking rules:
 
 - `connect` supports IPv4 address literals such as `"127.0.0.1"`.
+- `connect` may also resolve hostnames through the runtime host-resolution path
+    (for example `localhost` and other names available through system host
+    configuration).
+- Unresolvable hostnames return `Error(...)`.
 - `send` attempts to write the full UTF-8 buffer before returning `Ok(bytesWritten)`.
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
@@ -837,6 +841,7 @@ Rules:
 - `None` and `Some` participate in normal constructor resolution rules.
 
 `Ashes.IO.write` and `Ashes.IO.writeLine` return `Unit`.
+`Ashes.IO.print` has type `a -> Unit`.
 `Ashes.IO.readLine` has type `Unit -> OptionString` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
 

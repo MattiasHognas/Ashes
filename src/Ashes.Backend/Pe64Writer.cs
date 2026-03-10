@@ -16,7 +16,7 @@ namespace Ashes.Backend;
 /// - We import KERNEL32.DLL: ExitProcess, GetStdHandle, WriteFile, ReadFile, GetCommandLineW, WideCharToMultiByte, LocalFree,
 ///   CreateFileA, CloseHandle, GetFileSizeEx, GetFileAttributesA.
 /// - We import SHELL32.DLL: CommandLineToArgvW.
-/// - We import WS2_32.DLL: WSAStartup, socket, connect, send, recv, closesocket, inet_addr.
+/// - We import WS2_32.DLL: WSAStartup, socket, connect, send, recv, closesocket, inet_addr, gethostbyname.
 /// </summary>
 public sealed class Pe64Writer
 {
@@ -33,7 +33,7 @@ public sealed class Pe64Writer
     private const uint SectionAlignment = 0x00001000;
     private const int ImportDllCount = 3;
     private const int ShellImportCount = 1;
-    private const int Ws2ImportCount = 7;
+    private const int Ws2ImportCount = 8;
 
     // Import Address Table layout (we put IAT directory first in .rdata)
     private const int IatIndex_ExitProcess = 0;
@@ -55,6 +55,7 @@ public sealed class Pe64Writer
     private const int IatIndex_recv = 16;
     private const int IatIndex_closesocket = 17;
     private const int IatIndex_inet_addr = 18;
+    private const int IatIndex_gethostbyname = 19;
     private const int KernelImportCount = IatIndex_GetFileAttributesA + 1;
     private const int Ws2ImportStart = IatIndex_WSAStartup;
 
@@ -104,16 +105,17 @@ public sealed class Pe64Writer
         var hnRecv = WriteImportHintName(rdata, 0, "recv");
         var hnCloseSocket = WriteImportHintName(rdata, 0, "closesocket");
         var hnInetAddr = WriteImportHintName(rdata, 0, "inet_addr");
+        var hnGetHostByName = WriteImportHintName(rdata, 0, "gethostbyname");
 
         // Build IAT/ILT/Import directory objects (these become section data too)
         var kernelIat = new PEImportAddressTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree, hnCreateFileA, hnCloseHandle, hnGetFileSizeEx, hnGetFileAttributesA };
         var shellIat = new PEImportAddressTable64() { hnCommandLineToArgvW };
-        var ws2Iat = new PEImportAddressTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr };
+        var ws2Iat = new PEImportAddressTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr, hnGetHostByName };
         var iatDirectory = new PEImportAddressTableDirectory() { kernelIat, shellIat, ws2Iat };
 
         var kernelIlt = new PEImportLookupTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree, hnCreateFileA, hnCloseHandle, hnGetFileSizeEx, hnGetFileAttributesA };
         var shellIlt = new PEImportLookupTable64() { hnCommandLineToArgvW };
-        var ws2Ilt = new PEImportLookupTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr };
+        var ws2Ilt = new PEImportLookupTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr, hnGetHostByName };
         var importDirectory = new PEImportDirectory()
         {
             Entries =
@@ -138,6 +140,7 @@ public sealed class Pe64Writer
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_utf8", "Ashes.Net.Tcp.receive() encountered invalid UTF-8");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_resolve_failed", "Ashes.Net.Tcp.connect() could not resolve host");
 
         foreach (var s in p.StringLiterals)
         {

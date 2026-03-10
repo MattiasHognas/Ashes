@@ -32,11 +32,11 @@ public static class Runner
 
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
-    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console)
+    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null)
     {
-        targetId ??= BackendFactory.DefaultForCurrentOS();
+        targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
 
-        var files = DiscoverAshFiles(paths.Any() ? paths : new[] { "tests" })
+        var files = DiscoverAshFiles(paths, project)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (files.Count == 0)
@@ -76,7 +76,7 @@ public static class Runner
                     sourceOverride = rawSource.Replace(TcpPortPlaceholder, tcpServer.Port.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
                 }
 
-                var image = CompileFileToImage(file, targetId, sourceOverride);
+                var image = CompileFileToImage(file, targetId, project, sourceOverride);
                 var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures);
                 exit = runExit;
                 actual = (stdout ?? "").TrimEnd();
@@ -132,23 +132,99 @@ public static class Runner
         return results.Any(r => !r.Passed && r.HasExpected) ? 1 : 0;
     }
 
-    private static IEnumerable<string> DiscoverAshFiles(IEnumerable<string> paths)
+    private static IEnumerable<string> DiscoverAshFiles(IEnumerable<string> paths, AshesProject? project)
     {
-        foreach (var p in paths)
+        var effectivePaths = paths.Any()
+            ? paths.ToList()
+            : [project is null ? "tests" : Path.Combine(project.ProjectDirectory, "tests")];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawPath in effectivePaths)
         {
+            var p = ResolveDiscoveryPath(rawPath, project);
             if (File.Exists(p) && p.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
             {
-                yield return Path.GetFullPath(p);
+                var full = Path.GetFullPath(p);
+                if (seen.Add(full))
+                {
+                    yield return full;
+                }
                 continue;
             }
 
             if (Directory.Exists(p))
             {
-                foreach (var f in Directory.EnumerateFiles(p, "*.ash", SearchOption.AllDirectories))
+                foreach (var f in EnumerateAshFilesRecursively(p))
                 {
-                    yield return Path.GetFullPath(f);
+                    var full = Path.GetFullPath(f);
+                    if (seen.Add(full))
+                    {
+                        yield return full;
+                    }
                 }
             }
+        }
+    }
+
+    private static string ResolveDiscoveryPath(string rawPath, AshesProject? project)
+    {
+        if (Path.IsPathRooted(rawPath) || project is null)
+        {
+            return rawPath;
+        }
+
+        if (File.Exists(rawPath) || Directory.Exists(rawPath))
+        {
+            return rawPath;
+        }
+
+        return Path.Combine(project.ProjectDirectory, rawPath);
+    }
+
+    private static IEnumerable<string> EnumerateAshFilesRecursively(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(Path.GetFullPath(root));
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+
+            foreach (var dir in Directory.EnumerateDirectories(current)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (ShouldSkipDirectory(dir))
+                {
+                    continue;
+                }
+
+                pending.Push(dir);
+            }
+
+            foreach (var file in Directory.EnumerateFiles(current, "*.ash", SearchOption.TopDirectoryOnly)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                yield return file;
+            }
+        }
+    }
+
+    private static bool ShouldSkipDirectory(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.StartsWith(".", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.Hidden) != 0;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -380,12 +456,7 @@ public static class Runner
         ProjectSupport.ImportModulePattern,
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static bool HasImports(string filePath)
-    {
-        return File.ReadLines(filePath).Any(line => ImportPattern.IsMatch(line));
-    }
-
-    private static bool HasImports(string source, bool isSourceText)
+    private static bool HasImports(string source)
     {
         using var reader = new StringReader(source);
         string? line;
@@ -400,17 +471,45 @@ public static class Runner
         return false;
     }
 
-    private static byte[] CompileFileToImage(string filePath, string targetId, string? sourceOverride = null)
+    private static byte[] CompileFileToImage(string filePath, string targetId, AshesProject? project = null, string? sourceOverride = null)
     {
         var source = sourceOverride ?? File.ReadAllText(filePath);
 
-        if (HasImports(source, isSourceText: true))
+        if (project is not null)
+        {
+            var testProject = new AshesProject(
+                ProjectFilePath: project.ProjectFilePath,
+                ProjectDirectory: project.ProjectDirectory,
+                EntryPath: Path.GetFullPath(filePath),
+                EntryModuleName: Path.GetFileNameWithoutExtension(filePath),
+                Name: project.Name,
+                SourceRoots: project.SourceRoots,
+                Include: project.Include,
+                OutDir: project.OutDir,
+                Target: project.Target);
+
+            var plan = ProjectSupport.BuildCompilationPlan(testProject);
+            if (sourceOverride is null)
+            {
+                var compilationSource = ProjectSupport.BuildCompilationSource(plan);
+                return CompileToImage(compilationSource, targetId, plan.ImportedStdModules);
+            }
+
+            var parsed = ProjectSupport.ParseImportHeader(source, filePath);
+            var layout = ProjectSupport.BuildCompilationLayout(plan, parsed.SourceWithoutImports);
+            var importedStdModules = plan.ImportedStdModules
+                .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
+                .ToHashSet(StringComparer.Ordinal);
+            return CompileToImage(layout.Source, targetId, importedStdModules.Count == 0 ? null : importedStdModules);
+        }
+
+        if (HasImports(source))
         {
             if (sourceOverride is null)
             {
                 var fileDir = Path.GetDirectoryName(Path.GetFullPath(filePath))
                     ?? throw new InvalidOperationException($"Cannot determine directory for: {filePath}");
-                var project = new AshesProject(
+                var standaloneProject = new AshesProject(
                     ProjectFilePath: filePath,
                     ProjectDirectory: fileDir,
                     EntryPath: filePath,
@@ -421,7 +520,7 @@ public static class Runner
                     OutDir: Path.GetTempPath(),
                     Target: targetId
                 );
-                var plan = ProjectSupport.BuildCompilationPlan(project);
+                var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
                 return CompileToImage(compilationSource, targetId, plan.ImportedStdModules);
             }
