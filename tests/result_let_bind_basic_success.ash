@@ -1,8 +1,4 @@
 // expect: 43
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let x = 
     let? n = Ok(42)
     in Ok(n + 1)

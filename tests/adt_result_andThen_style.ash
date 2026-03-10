@@ -1,8 +1,4 @@
 // expect: ok
-type Result =
-    | Ok(T)
-    | Error(T)
-
 let r1 = Ok(5)
 in 
     let r2 = 
