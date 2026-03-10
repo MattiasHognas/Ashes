@@ -36,6 +36,16 @@ public sealed class X64CodegenIced
         EnsureStringLiteral(data, "__rt_false", "false");
         string falseLabel = "__rt_false";
         EnsureStringLiteral(data, "__rt_readline_too_long", "readLine() exceeded max line length");
+        EnsureStringLiteral(data, "__rt_fs_read_failed", "Ashes.Fs.readText() failed");
+        EnsureStringLiteral(data, "__rt_fs_write_failed", "Ashes.Fs.writeText() failed");
+        EnsureStringLiteral(data, "__rt_fs_invalid_utf8", "Ashes.Fs.readText() encountered invalid UTF-8");
+        EnsureStringLiteral(data, "__rt_tcp_connect_failed", "Ashes.Net.Tcp.connect() failed");
+        EnsureStringLiteral(data, "__rt_tcp_send_failed", "Ashes.Net.Tcp.send() failed");
+        EnsureStringLiteral(data, "__rt_tcp_receive_failed", "Ashes.Net.Tcp.receive() failed");
+        EnsureStringLiteral(data, "__rt_tcp_close_failed", "Ashes.Net.Tcp.close() failed");
+        EnsureStringLiteral(data, "__rt_tcp_invalid_utf8", "Ashes.Net.Tcp.receive() encountered invalid UTF-8");
+        EnsureStringLiteral(data, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
+        EnsureStringLiteral(data, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
 
         foreach (var s in p.StringLiterals)
         {
@@ -149,9 +159,22 @@ public sealed class X64CodegenIced
 
         var L_init_heap = asm.CreateLabel();
         var L_alloc = asm.CreateLabel();
+        var L_make_unit = asm.CreateLabel();
+        var L_make_result_ok = asm.CreateLabel();
+        var L_make_result_error = asm.CreateLabel();
         var L_write_str = asm.CreateLabel();
         var L_print_str = asm.CreateLabel();
         var L_read_line = asm.CreateLabel();
+        var L_string_to_cstr = asm.CreateLabel();
+        var L_parse_ipv4 = asm.CreateLabel();
+        var L_validate_utf8 = asm.CreateLabel();
+        var L_fs_read_text = asm.CreateLabel();
+        var L_fs_write_text = asm.CreateLabel();
+        var L_fs_exists = asm.CreateLabel();
+        var L_tcp_connect = asm.CreateLabel();
+        var L_tcp_send = asm.CreateLabel();
+        var L_tcp_receive = asm.CreateLabel();
+        var L_tcp_close = asm.CreateLabel();
         var L_panic_str = asm.CreateLabel();
         var L_print_bool = asm.CreateLabel();
         var L_concat = asm.CreateLabel();
@@ -264,6 +287,34 @@ public sealed class X64CodegenIced
         asm.mov(__[rbx], r11);
         asm.ret();
 
+        // make_unit() -> RAX = Unit value
+        asm.Label(ref L_make_unit);
+        asm.mov(rdi, 8);
+        asm.call(L_alloc);
+        asm.xor(rbx, rbx);
+        asm.mov(__[rax], rbx);
+        asm.ret();
+
+        // make_result_ok(RDI=payload) -> RAX = Result(Str, T)
+        asm.Label(ref L_make_result_ok);
+        asm.mov(r8, rdi);
+        asm.mov(rdi, 16);
+        asm.call(L_alloc);
+        asm.xor(rbx, rbx);
+        asm.mov(__[rax], rbx);
+        asm.mov(__[rax + 8], r8);
+        asm.ret();
+
+        // make_result_error(RDI=error string ptr) -> RAX = Result(Str, T)
+        asm.Label(ref L_make_result_error);
+        asm.mov(r8, rdi);
+        asm.mov(rdi, 16);
+        asm.call(L_alloc);
+        asm.mov(rbx, 1);
+        asm.mov(__[rax], rbx);
+        asm.mov(__[rax + 8], r8);
+        asm.ret();
+
         // write_str(RDI=string*)
         asm.Label(ref L_write_str);
         asm.mov(rdx, __[rdi]);         // len
@@ -356,6 +407,592 @@ public sealed class X64CodegenIced
         asm.Label(ref L_read_line_overflow);
         asm.mov(rdi, (long)addrOf("__rt_readline_too_long"));
         asm.call(L_panic_str);
+
+        // string_to_cstr(RDI=string*) -> RAX = heap-allocated null-terminated bytes
+        asm.Label(ref L_string_to_cstr);
+        var L_string_to_cstr_heap_ok = asm.CreateLabel();
+        asm.mov(rbx, (long)addrOf("heap_ptr"));
+        asm.mov(rax, __[rbx]);
+        asm.cmp(rax, 0);
+        asm.jne(L_string_to_cstr_heap_ok);
+        asm.call(L_init_heap);
+        asm.Label(ref L_string_to_cstr_heap_ok);
+        asm.mov(r8, __[rdi]);
+        asm.mov(r9, rdi);
+        asm.mov(rdi, r8);
+        asm.add(rdi, 1);
+        asm.call(L_alloc);
+        asm.mov(r10, rax);
+        asm.mov(rdi, rax);
+        asm.lea(rsi, __[r9 + 8]);
+        asm.mov(rcx, r8);
+        asm.rep.movsb();
+        asm.mov(__byte_ptr[r10 + r8], 0);
+        asm.mov(rax, r10);
+        asm.ret();
+
+        // parse_ipv4(RDI=cstr) -> EAX=1 on success, EDX=address in sockaddr-compatible byte order
+        asm.Label(ref L_parse_ipv4);
+        var L_parse_ipv4_octet = asm.CreateLabel();
+        var L_parse_ipv4_expect_separator = asm.CreateLabel();
+        var L_parse_ipv4_done = asm.CreateLabel();
+        var L_parse_ipv4_fail = asm.CreateLabel();
+        asm.mov(rsi, rdi);
+        asm.xor(r8d, r8d);
+        asm.xor(r10d, r10d);
+        asm.Label(ref L_parse_ipv4_octet);
+        asm.cmp(r10d, 4);
+        asm.je(L_parse_ipv4_fail);
+        asm.xor(r9d, r9d);
+        asm.xor(r11d, r11d);
+        var L_parse_ipv4_digit_loop = asm.CreateLabel();
+        var L_parse_ipv4_after_digits = asm.CreateLabel();
+        asm.Label(ref L_parse_ipv4_digit_loop);
+        asm.movzx(eax, __byte_ptr[rsi]);
+        asm.cmp(al, 48);
+        asm.jb(L_parse_ipv4_after_digits);
+        asm.cmp(al, 57);
+        asm.ja(L_parse_ipv4_after_digits);
+        asm.imul(r9d, r9d, 10);
+        asm.sub(eax, 48);
+        asm.add(r9d, eax);
+        asm.cmp(r9d, 255);
+        asm.jg(L_parse_ipv4_fail);
+        asm.inc(r11d);
+        asm.inc(rsi);
+        asm.jmp(L_parse_ipv4_digit_loop);
+        asm.Label(ref L_parse_ipv4_after_digits);
+        asm.cmp(r11d, 0);
+        asm.je(L_parse_ipv4_fail);
+        asm.shl(r8d, 8);
+        asm.or(r8d, r9d);
+        asm.inc(r10d);
+        asm.cmp(r10d, 4);
+        asm.je(L_parse_ipv4_done);
+        asm.Label(ref L_parse_ipv4_expect_separator);
+        asm.movzx(eax, __byte_ptr[rsi]);
+        asm.cmp(al, 46);
+        asm.jne(L_parse_ipv4_fail);
+        asm.inc(rsi);
+        asm.jmp(L_parse_ipv4_octet);
+        asm.Label(ref L_parse_ipv4_done);
+        asm.movzx(eax, __byte_ptr[rsi]);
+        asm.cmp(al, 0);
+        asm.jne(L_parse_ipv4_fail);
+        asm.mov(edx, r8d);
+        asm.bswap(edx);
+        asm.mov(eax, 1);
+        asm.ret();
+        asm.Label(ref L_parse_ipv4_fail);
+        asm.xor(eax, eax);
+        asm.xor(edx, edx);
+        asm.ret();
+
+        // validate_utf8(RDI=bytes, RSI=len) -> RAX = 1 if valid, 0 if invalid
+        asm.Label(ref L_validate_utf8);
+        var L_utf8_loop = asm.CreateLabel();
+        var L_utf8_ascii = asm.CreateLabel();
+        var L_utf8_two = asm.CreateLabel();
+        var L_utf8_three = asm.CreateLabel();
+        var L_utf8_e0 = asm.CreateLabel();
+        var L_utf8_ed = asm.CreateLabel();
+        var L_utf8_f0 = asm.CreateLabel();
+        var L_utf8_four = asm.CreateLabel();
+        var L_utf8_f4 = asm.CreateLabel();
+        var L_utf8_valid = asm.CreateLabel();
+        var L_utf8_invalid = asm.CreateLabel();
+
+        asm.xor(rcx, rcx);
+        asm.Label(ref L_utf8_loop);
+        asm.cmp(rcx, rsi);
+        asm.je(L_utf8_valid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_ascii);
+        asm.cmp(al, 0xC2);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xDF);
+        asm.jbe(L_utf8_two);
+        asm.cmp(al, 0xE0);
+        asm.je(L_utf8_e0);
+        asm.cmp(al, 0xEC);
+        asm.jbe(L_utf8_three);
+        asm.cmp(al, 0xED);
+        asm.je(L_utf8_ed);
+        asm.cmp(al, 0xEF);
+        asm.jbe(L_utf8_three);
+        asm.cmp(al, 0xF0);
+        asm.je(L_utf8_f0);
+        asm.cmp(al, 0xF3);
+        asm.jbe(L_utf8_four);
+        asm.cmp(al, 0xF4);
+        asm.je(L_utf8_f4);
+        asm.jmp(L_utf8_invalid);
+
+        asm.Label(ref L_utf8_ascii);
+        asm.inc(rcx);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_two);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 2);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 2);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_three);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 3);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 3);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_e0);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 3);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0xA0);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 3);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_ed);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 3);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0x9F);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 3);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_f0);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 4);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x90);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 3]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 4);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_four);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 4);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 3]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 4);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_f4);
+        asm.mov(rax, rsi);
+        asm.sub(rax, rcx);
+        asm.cmp(rax, 4);
+        asm.jb(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 1]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0x8F);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 2]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.movzx(eax, __byte_ptr[rdi + rcx + 3]);
+        asm.cmp(al, 0x80);
+        asm.jb(L_utf8_invalid);
+        asm.cmp(al, 0xBF);
+        asm.ja(L_utf8_invalid);
+        asm.add(rcx, 4);
+        asm.jmp(L_utf8_loop);
+
+        asm.Label(ref L_utf8_valid);
+        asm.mov(rax, 1);
+        asm.ret();
+
+        asm.Label(ref L_utf8_invalid);
+        asm.xor(rax, rax);
+        asm.ret();
+
+        // fs_read_text(RDI=path string*) -> RAX=Result(Str, Str)
+        asm.Label(ref L_fs_read_text);
+        var L_fs_read_empty = asm.CreateLabel();
+        var L_fs_read_loop = asm.CreateLabel();
+        var L_fs_read_after = asm.CreateLabel();
+        var L_fs_read_fail = asm.CreateLabel();
+        var L_fs_read_invalid_utf8 = asm.CreateLabel();
+
+        asm.mov(r15, rdi);
+        asm.call(L_string_to_cstr);
+        asm.mov(rdi, rax);
+        asm.mov(rax, 2);
+        asm.xor(rsi, rsi);
+        asm.xor(rdx, rdx);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_fs_read_fail);
+        asm.mov(r12, rax);
+
+        asm.mov(rdi, r12);
+        asm.xor(rsi, rsi);
+        asm.mov(rdx, 2);
+        asm.mov(rax, 8);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_fs_read_fail);
+        asm.mov(r13, rax);
+
+        asm.mov(rdi, r12);
+        asm.xor(rsi, rsi);
+        asm.xor(rdx, rdx);
+        asm.mov(rax, 8);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_fs_read_fail);
+
+        asm.mov(rdi, r13);
+        asm.add(rdi, 8);
+        asm.call(L_alloc);
+        asm.mov(__[rax], r13);
+        asm.mov(r14, rax);
+        asm.cmp(r13, 0);
+        asm.je(L_fs_read_empty);
+
+        asm.lea(rbx, __[r14 + 8]);
+        asm.mov(r11, r13);
+        asm.Label(ref L_fs_read_loop);
+        asm.cmp(r11, 0);
+        asm.je(L_fs_read_after);
+        asm.mov(rdi, r12);
+        asm.mov(rsi, rbx);
+        asm.mov(rdx, r11);
+        asm.mov(rax, 0);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jle(L_fs_read_fail);
+        asm.sub(r11, rax);
+        asm.add(rbx, rax);
+        asm.jmp(L_fs_read_loop);
+
+        asm.Label(ref L_fs_read_after);
+        asm.lea(rdi, __[r14 + 8]);
+        asm.mov(rsi, r13);
+        asm.call(L_validate_utf8);
+        asm.cmp(rax, 0);
+        asm.je(L_fs_read_invalid_utf8);
+
+        asm.Label(ref L_fs_read_empty);
+        asm.mov(rdi, r12);
+        asm.mov(rax, 3);
+        asm.syscall();
+        asm.mov(rdi, r14);
+        asm.call(L_make_result_ok);
+        asm.ret();
+
+        asm.Label(ref L_fs_read_invalid_utf8);
+        asm.mov(rdi, r12);
+        asm.mov(rax, 3);
+        asm.syscall();
+        asm.mov(rdi, (long)addrOf("__rt_fs_invalid_utf8"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        asm.Label(ref L_fs_read_fail);
+        asm.mov(rdi, (long)addrOf("__rt_fs_read_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        // fs_write_text(RDI=path string*, RSI=text string*) -> RAX=Result(Str, Unit)
+        asm.Label(ref L_fs_write_text);
+        var L_fs_write_loop = asm.CreateLabel();
+        var L_fs_write_done = asm.CreateLabel();
+        var L_fs_write_fail = asm.CreateLabel();
+
+        asm.mov(r15, rsi);
+        asm.call(L_string_to_cstr);
+        asm.mov(rdi, rax);
+        asm.mov(rax, 2);
+        asm.mov(rsi, 0x241);
+        asm.mov(rdx, 420);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_fs_write_fail);
+        asm.mov(r12, rax);
+        asm.lea(r13, __[r15 + 8]);
+        asm.mov(r14, __[r15]);
+
+        asm.Label(ref L_fs_write_loop);
+        asm.cmp(r14, 0);
+        asm.je(L_fs_write_done);
+        asm.mov(rdi, r12);
+        asm.mov(rsi, r13);
+        asm.mov(rdx, r14);
+        asm.mov(rax, 1);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jle(L_fs_write_fail);
+        asm.sub(r14, rax);
+        asm.add(r13, rax);
+        asm.jmp(L_fs_write_loop);
+
+        asm.Label(ref L_fs_write_done);
+        asm.mov(rdi, r12);
+        asm.mov(rax, 3);
+        asm.syscall();
+        asm.call(L_make_unit);
+        asm.mov(rdi, rax);
+        asm.call(L_make_result_ok);
+        asm.ret();
+
+        asm.Label(ref L_fs_write_fail);
+        asm.mov(rdi, (long)addrOf("__rt_fs_write_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        // fs_exists(RDI=path string*) -> RAX=Result(Str, Bool)
+        asm.Label(ref L_fs_exists);
+        var L_fs_exists_false = asm.CreateLabel();
+        asm.call(L_string_to_cstr);
+        asm.mov(rdi, rax);
+        asm.mov(rax, 2);
+        asm.xor(rsi, rsi);
+        asm.xor(rdx, rdx);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_fs_exists_false);
+        asm.mov(rdi, rax);
+        asm.mov(rax, 3);
+        asm.syscall();
+        asm.mov(rdi, 1);
+        asm.call(L_make_result_ok);
+        asm.ret();
+
+        asm.Label(ref L_fs_exists_false);
+        asm.xor(rdi, rdi);
+        asm.call(L_make_result_ok);
+        asm.ret();
+
+        // tcp_connect(RDI=host string*, RSI=port int) -> RAX=Result(Str, Socket)
+        asm.Label(ref L_tcp_connect);
+        var L_tcp_connect_fail = asm.CreateLabel();
+        var L_tcp_connect_fail_close = asm.CreateLabel();
+        var L_tcp_connect_invalid_host = asm.CreateLabel();
+        asm.mov(r12, rsi);
+        asm.cmp(r12, 0);
+        asm.jle(L_tcp_connect_fail);
+        asm.cmp(r12, 65535);
+        asm.jg(L_tcp_connect_fail);
+        asm.call(L_string_to_cstr);
+        asm.mov(rdi, rax);
+        asm.call(L_parse_ipv4);
+        asm.cmp(eax, 0);
+        asm.je(L_tcp_connect_invalid_host);
+        asm.mov(r13d, edx);
+        asm.mov(rax, 41);
+        asm.mov(rdi, 2);
+        asm.mov(rsi, 1);
+        asm.xor(rdx, rdx);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_tcp_connect_fail);
+        asm.mov(r15, rax);
+        asm.sub(rsp, 0x20);
+        asm.mov(__word_ptr[rsp], 2);
+        asm.mov(ax, r12w);
+        asm.xchg(al, ah);
+        asm.mov(__word_ptr[rsp + 2], ax);
+        asm.mov(__dword_ptr[rsp + 4], r13d);
+        asm.xor(rax, rax);
+        asm.mov(__[rsp + 8], rax);
+        asm.mov(rax, 42);
+        asm.mov(rdi, r15);
+        asm.mov(rsi, rsp);
+        asm.mov(rdx, 16);
+        asm.syscall();
+        asm.add(rsp, 0x20);
+        asm.cmp(rax, 0);
+        asm.jl(L_tcp_connect_fail_close);
+        asm.mov(rdi, r15);
+        asm.call(L_make_result_ok);
+        asm.ret();
+
+        asm.Label(ref L_tcp_connect_invalid_host);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_invalid_host"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        asm.Label(ref L_tcp_connect_fail_close);
+        asm.mov(rax, 3);
+        asm.mov(rdi, r15);
+        asm.syscall();
+        asm.Label(ref L_tcp_connect_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_connect_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        // tcp_send(RDI=socket, RSI=text string*) -> RAX=Result(Str, Int)
+        asm.Label(ref L_tcp_send);
+        var L_tcp_send_loop = asm.CreateLabel();
+        var L_tcp_send_done = asm.CreateLabel();
+        var L_tcp_send_fail = asm.CreateLabel();
+        asm.mov(r12, rdi);
+        asm.mov(r13, rsi);
+        asm.mov(rbx, __[r13]);
+        asm.mov(r14, rbx);
+        asm.lea(r15, __[r13 + 8]);
+        asm.Label(ref L_tcp_send_loop);
+        asm.cmp(r14, 0);
+        asm.je(L_tcp_send_done);
+        asm.mov(rax, 1);
+        asm.mov(rdi, r12);
+        asm.mov(rsi, r15);
+        asm.mov(rdx, r14);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jle(L_tcp_send_fail);
+        asm.sub(r14, rax);
+        asm.add(r15, rax);
+        asm.jmp(L_tcp_send_loop);
+        asm.Label(ref L_tcp_send_done);
+        asm.mov(rdi, rbx);
+        asm.call(L_make_result_ok);
+        asm.ret();
+        asm.Label(ref L_tcp_send_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_send_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        // tcp_receive(RDI=socket, RSI=maxBytes) -> RAX=Result(Str, Str)
+        asm.Label(ref L_tcp_receive);
+        var L_tcp_receive_fail = asm.CreateLabel();
+        var L_tcp_receive_invalid_max = asm.CreateLabel();
+        var L_tcp_receive_invalid_utf8 = asm.CreateLabel();
+        var L_tcp_receive_empty = asm.CreateLabel();
+        asm.mov(r12, rdi);
+        asm.mov(r13, rsi);
+        asm.cmp(r13, 0);
+        asm.jle(L_tcp_receive_invalid_max);
+        asm.mov(rdi, r13);
+        asm.add(rdi, 8);
+        asm.call(L_alloc);
+        asm.mov(r14, rax);
+        asm.lea(r15, __[r14 + 8]);
+        asm.mov(rax, 0);
+        asm.mov(rdi, r12);
+        asm.mov(rsi, r15);
+        asm.mov(rdx, r13);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_tcp_receive_fail);
+        asm.je(L_tcp_receive_empty);
+        asm.mov(__[r14], rax);
+        asm.mov(rdi, r15);
+        asm.mov(rsi, rax);
+        asm.call(L_validate_utf8);
+        asm.cmp(rax, 0);
+        asm.je(L_tcp_receive_invalid_utf8);
+        asm.mov(rdi, r14);
+        asm.call(L_make_result_ok);
+        asm.ret();
+        asm.Label(ref L_tcp_receive_empty);
+        asm.mov(rdi, 8);
+        asm.call(L_alloc);
+        asm.xor(rbx, rbx);
+        asm.mov(__[rax], rbx);
+        asm.mov(rdi, rax);
+        asm.call(L_make_result_ok);
+        asm.ret();
+        asm.Label(ref L_tcp_receive_invalid_max);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_invalid_max_bytes"));
+        asm.call(L_make_result_error);
+        asm.ret();
+        asm.Label(ref L_tcp_receive_invalid_utf8);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_invalid_utf8"));
+        asm.call(L_make_result_error);
+        asm.ret();
+        asm.Label(ref L_tcp_receive_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_receive_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
+
+        // tcp_close(RDI=socket) -> RAX=Result(Str, Unit)
+        asm.Label(ref L_tcp_close);
+        var L_tcp_close_fail = asm.CreateLabel();
+        asm.mov(rax, 3);
+        asm.syscall();
+        asm.cmp(rax, 0);
+        asm.jl(L_tcp_close_fail);
+        asm.call(L_make_unit);
+        asm.mov(rdi, rax);
+        asm.call(L_make_result_ok);
+        asm.ret();
+        asm.Label(ref L_tcp_close_fail);
+        asm.mov(rdi, (long)addrOf("__rt_tcp_close_failed"));
+        asm.call(L_make_result_error);
+        asm.ret();
 
         // panic_str(RDI=string*) -> prints message and exits with code 1
         asm.Label(ref L_panic_str);
@@ -921,6 +1558,52 @@ public sealed class X64CodegenIced
                     case IrInst.ReadLine rl:
                         a.call(L_read_line);
                         a.mov(__[rbp + DispForSlot(TempSlot(rl.Target))], rax);
+                        break;
+
+                    case IrInst.FsReadText frt:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(frt.PathTemp))]);
+                        a.call(L_fs_read_text);
+                        a.mov(__[rbp + DispForSlot(TempSlot(frt.Target))], rax);
+                        break;
+
+                    case IrInst.FsWriteText fwt:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(fwt.PathTemp))]);
+                        a.mov(rsi, __[rbp + DispForSlot(TempSlot(fwt.TextTemp))]);
+                        a.call(L_fs_write_text);
+                        a.mov(__[rbp + DispForSlot(TempSlot(fwt.Target))], rax);
+                        break;
+
+                    case IrInst.FsExists fex:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(fex.PathTemp))]);
+                        a.call(L_fs_exists);
+                        a.mov(__[rbp + DispForSlot(TempSlot(fex.Target))], rax);
+                        break;
+
+                    case IrInst.NetTcpConnect ntc:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(ntc.HostTemp))]);
+                        a.mov(rsi, __[rbp + DispForSlot(TempSlot(ntc.PortTemp))]);
+                        a.call(L_tcp_connect);
+                        a.mov(__[rbp + DispForSlot(TempSlot(ntc.Target))], rax);
+                        break;
+
+                    case IrInst.NetTcpSend nts:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(nts.SocketTemp))]);
+                        a.mov(rsi, __[rbp + DispForSlot(TempSlot(nts.TextTemp))]);
+                        a.call(L_tcp_send);
+                        a.mov(__[rbp + DispForSlot(TempSlot(nts.Target))], rax);
+                        break;
+
+                    case IrInst.NetTcpReceive ntr:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(ntr.SocketTemp))]);
+                        a.mov(rsi, __[rbp + DispForSlot(TempSlot(ntr.MaxBytesTemp))]);
+                        a.call(L_tcp_receive);
+                        a.mov(__[rbp + DispForSlot(TempSlot(ntr.Target))], rax);
+                        break;
+
+                    case IrInst.NetTcpClose ntcl:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(ntcl.SocketTemp))]);
+                        a.call(L_tcp_close);
+                        a.mov(__[rbp + DispForSlot(TempSlot(ntcl.Target))], rax);
                         break;
 
                     case IrInst.PanicStr err:

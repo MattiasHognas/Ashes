@@ -42,7 +42,6 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result = | Ok(T) | Error(T)
             let resTag = match Error(1) with
               | Ok(x) -> 1
               | Error(x) -> 2
@@ -220,6 +219,31 @@ public sealed class MatchTypingTests
 
         diag.Errors.ShouldContain(x => x.Contains("Unknown constructor 'Missing' in pattern", StringComparison.Ordinal));
         diag.Errors.ShouldNotContain(x => x.Contains("Non-exhaustive match expression.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Match_missing_result_error_branch_reports_result_specific_message()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            match Ok(1) with
+            | Ok(x) -> x
+            """);
+
+        diag.Errors.ShouldContain(x => x.Contains("Non-exhaustive match on Result: missing Error.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Match_with_both_result_branches_does_not_report_result_specific_message()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            match Ok(1) with
+            | Ok(x) -> x
+            | Error(_) -> 0
+            """);
+
+        diag.Errors.ShouldNotContain(x => x.Contains("Non-exhaustive match on Result", StringComparison.Ordinal));
     }
 
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)
