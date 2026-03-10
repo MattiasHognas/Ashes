@@ -385,7 +385,7 @@ public static class Runner
         return File.ReadLines(filePath).Any(line => ImportPattern.IsMatch(line));
     }
 
-    private static bool HasImports(string source, bool isSourceText)
+    private static bool HasImportsInSource(string source)
     {
         using var reader = new StringReader(source);
         string? line;
@@ -404,7 +404,7 @@ public static class Runner
     {
         var source = sourceOverride ?? File.ReadAllText(filePath);
 
-        if (HasImports(source, isSourceText: true))
+        if (HasImportsInSource(source))
         {
             if (sourceOverride is null)
             {
