@@ -1,8 +1,4 @@
 // expect: bad
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let fail = 
     fun (x) -> Error("bad")
 in 

@@ -1,8 +1,4 @@
 // expect: 43
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let parse = 
     fun (text) -> 
         if text == "42"

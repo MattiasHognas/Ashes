@@ -1,8 +1,4 @@
 // expect: not-an-int
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 type ParseError =
     | NotAnInt(String)
 

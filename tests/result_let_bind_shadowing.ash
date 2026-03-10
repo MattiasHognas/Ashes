@@ -1,8 +1,4 @@
 // expect: 3
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let x = 1
 in 
     let y = 

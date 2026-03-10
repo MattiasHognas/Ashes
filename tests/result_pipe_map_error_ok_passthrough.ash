@@ -1,8 +1,4 @@
 // expect: 41
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 type AppError =
     | Wrapped(String)
 

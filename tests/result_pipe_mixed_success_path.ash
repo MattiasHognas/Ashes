@@ -1,8 +1,4 @@
 // expect: 42
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 type ParseError =
     | NotAnInt(String)
 

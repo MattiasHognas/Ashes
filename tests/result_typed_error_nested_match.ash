@@ -1,8 +1,4 @@
 // expect: missing age
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 type JsonError =
     | MissingField(String)
 

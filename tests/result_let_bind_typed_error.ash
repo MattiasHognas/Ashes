@@ -1,8 +1,4 @@
 // expect: fail
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 type AppError =
     | Fail(String)
 
