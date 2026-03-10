@@ -77,4 +77,5 @@ PLANNED_ISSUES*.md
 ROADMAP.md
 
 # Git
-.git/
+.git/area.txt
+out.txt
