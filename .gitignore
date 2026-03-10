@@ -77,5 +77,8 @@ PLANNED_ISSUES*.md
 ROADMAP.md
 
 # Git
-.git/area.txt
+.git/
+
+# Runtime artifacts from running examples
+area.txt
 out.txt
