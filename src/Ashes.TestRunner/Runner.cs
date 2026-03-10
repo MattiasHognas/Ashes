@@ -424,12 +424,16 @@ public static class Runner
 
     private static string GetFixtureDestinationPath(string rootDirectory, string relativePath)
     {
-        if (Path.IsPathRooted(relativePath))
+        var normalizedRelativePath = relativePath
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+
+        if (Path.IsPathRooted(normalizedRelativePath))
         {
             throw new InvalidOperationException($"Test fixture path '{relativePath}' must be relative.");
         }
 
-        var candidate = Path.GetFullPath(Path.Combine(rootDirectory, relativePath));
+        var candidate = Path.GetFullPath(Path.Combine(rootDirectory, normalizedRelativePath));
         var normalizedRoot = Path.GetFullPath(rootDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;
