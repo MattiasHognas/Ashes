@@ -31,7 +31,7 @@ public sealed class TypeResolutionTests
     }
 
     [Test]
-    public void Explicit_type_parameters_are_registered_in_resolved_type()
+    public void Builtin_result_type_is_registered_with_expected_type_parameters()
     {
         var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
