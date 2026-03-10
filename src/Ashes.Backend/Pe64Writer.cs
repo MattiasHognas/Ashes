@@ -13,8 +13,10 @@ namespace Ashes.Backend;
 /// Notes:
 /// - We keep Ashes's INTERNAL calling convention (envPtr in RDI, arg in RSI) for lambdas/closures.
 /// - For calls into Win32 APIs we follow Windows x64 ABI (RCX,RDX,R8,R9 + 32-byte shadow space).
-/// - We import KERNEL32.DLL: ExitProcess, GetStdHandle, WriteFile, GetCommandLineW, WideCharToMultiByte, LocalFree.
+/// - We import KERNEL32.DLL: ExitProcess, GetStdHandle, WriteFile, ReadFile, GetCommandLineW, WideCharToMultiByte, LocalFree,
+///   CreateFileA, CloseHandle, GetFileSizeEx, GetFileAttributesA.
 /// - We import SHELL32.DLL: CommandLineToArgvW.
+/// - We import WS2_32.DLL: WSAStartup, socket, connect, send, recv, closesocket, inet_addr.
 /// </summary>
 public sealed class Pe64Writer
 {
@@ -29,8 +31,9 @@ public sealed class Pe64Writer
     private const ulong ImageBase = 0x0000000140000000UL;
     private const uint TextRva = 0x00001000;
     private const uint SectionAlignment = 0x00001000;
-    private const int ImportDllCount = 2;
+    private const int ImportDllCount = 3;
     private const int ShellImportCount = 1;
+    private const int Ws2ImportCount = 7;
 
     // Import Address Table layout (we put IAT directory first in .rdata)
     private const int IatIndex_ExitProcess = 0;
@@ -40,7 +43,20 @@ public sealed class Pe64Writer
     private const int IatIndex_GetCommandLineW = 4;
     private const int IatIndex_WideCharToMultiByte = 5;
     private const int IatIndex_LocalFree = 6;
-    private const int IatIndex_CommandLineToArgvW = 7;
+    private const int IatIndex_CreateFileA = 7;
+    private const int IatIndex_CloseHandle = 8;
+    private const int IatIndex_GetFileSizeEx = 9;
+    private const int IatIndex_GetFileAttributesA = 10;
+    private const int IatIndex_CommandLineToArgvW = 11;
+    private const int IatIndex_WSAStartup = 12;
+    private const int IatIndex_socket = 13;
+    private const int IatIndex_connect = 14;
+    private const int IatIndex_send = 15;
+    private const int IatIndex_recv = 16;
+    private const int IatIndex_closesocket = 17;
+    private const int IatIndex_inet_addr = 18;
+    private const int KernelImportCount = IatIndex_GetFileAttributesA + 1;
+    private const int Ws2ImportStart = IatIndex_WSAStartup;
 
     // Runtime memory
     private const int HeapSize = 1024 * 1024 * 4; // 4 MiB to support large recursive list programs
@@ -64,6 +80,9 @@ public sealed class Pe64Writer
         var shellNameOff = (int)rdata.Stream.Position;
         rdata.Stream.Write(Encoding.ASCII.GetBytes("SHELL32.DLL\0"));
         var shellName = new PEAsciiStringLink(rdata, new RVO((uint)shellNameOff));
+        var ws2NameOff = (int)rdata.Stream.Position;
+        rdata.Stream.Write(Encoding.ASCII.GetBytes("WS2_32.DLL\0"));
+        var ws2Name = new PEAsciiStringLink(rdata, new RVO((uint)ws2NameOff));
 
         // Hint is optional; 0 is fine.
         var hnExitProcess = WriteImportHintName(rdata, 0, "ExitProcess");
@@ -73,21 +92,35 @@ public sealed class Pe64Writer
         var hnGetCommandLineW = WriteImportHintName(rdata, 0, "GetCommandLineW");
         var hnWideCharToMultiByte = WriteImportHintName(rdata, 0, "WideCharToMultiByte");
         var hnLocalFree = WriteImportHintName(rdata, 0, "LocalFree");
+        var hnCreateFileA = WriteImportHintName(rdata, 0, "CreateFileA");
+        var hnCloseHandle = WriteImportHintName(rdata, 0, "CloseHandle");
+        var hnGetFileSizeEx = WriteImportHintName(rdata, 0, "GetFileSizeEx");
+        var hnGetFileAttributesA = WriteImportHintName(rdata, 0, "GetFileAttributesA");
         var hnCommandLineToArgvW = WriteImportHintName(rdata, 0, "CommandLineToArgvW");
+        var hnWSAStartup = WriteImportHintName(rdata, 0, "WSAStartup");
+        var hnSocket = WriteImportHintName(rdata, 0, "socket");
+        var hnConnect = WriteImportHintName(rdata, 0, "connect");
+        var hnSend = WriteImportHintName(rdata, 0, "send");
+        var hnRecv = WriteImportHintName(rdata, 0, "recv");
+        var hnCloseSocket = WriteImportHintName(rdata, 0, "closesocket");
+        var hnInetAddr = WriteImportHintName(rdata, 0, "inet_addr");
 
         // Build IAT/ILT/Import directory objects (these become section data too)
-        var kernelIat = new PEImportAddressTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree };
+        var kernelIat = new PEImportAddressTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree, hnCreateFileA, hnCloseHandle, hnGetFileSizeEx, hnGetFileAttributesA };
         var shellIat = new PEImportAddressTable64() { hnCommandLineToArgvW };
-        var iatDirectory = new PEImportAddressTableDirectory() { kernelIat, shellIat };
+        var ws2Iat = new PEImportAddressTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr };
+        var iatDirectory = new PEImportAddressTableDirectory() { kernelIat, shellIat, ws2Iat };
 
-        var kernelIlt = new PEImportLookupTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree };
+        var kernelIlt = new PEImportLookupTable64() { hnExitProcess, hnGetStdHandle, hnWriteFile, hnReadFile, hnGetCommandLineW, hnWideCharToMultiByte, hnLocalFree, hnCreateFileA, hnCloseHandle, hnGetFileSizeEx, hnGetFileAttributesA };
         var shellIlt = new PEImportLookupTable64() { hnCommandLineToArgvW };
+        var ws2Ilt = new PEImportLookupTable64() { hnWSAStartup, hnSocket, hnConnect, hnSend, hnRecv, hnCloseSocket, hnInetAddr };
         var importDirectory = new PEImportDirectory()
         {
             Entries =
             {
                 new PEImportDirectoryEntry(kernelName, kernelIat, kernelIlt),
-                new PEImportDirectoryEntry(shellName, shellIat, shellIlt)
+                new PEImportDirectoryEntry(shellName, shellIat, shellIlt),
+                new PEImportDirectoryEntry(ws2Name, ws2Iat, ws2Ilt)
             }
         };
 
@@ -95,6 +128,16 @@ public sealed class Pe64Writer
         string trueLabel = InternStringLiteral(rdata, rdataOffsets, "true", label: null);
         string falseLabel = InternStringLiteral(rdata, rdataOffsets, "false", label: null);
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_readline_too_long", "readLine() exceeded max line length");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_read_failed", "Ashes.Fs.readText() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_write_failed", "Ashes.Fs.writeText() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_invalid_utf8", "Ashes.Fs.readText() encountered invalid UTF-8");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_connect_failed", "Ashes.Net.Tcp.connect() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_send_failed", "Ashes.Net.Tcp.send() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_receive_failed", "Ashes.Net.Tcp.receive() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_close_failed", "Ashes.Net.Tcp.close() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_utf8", "Ashes.Net.Tcp.receive() encountered invalid UTF-8");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
 
         foreach (var s in p.StringLiterals)
         {
@@ -154,6 +197,18 @@ public sealed class Pe64Writer
         Mark(data, dataOffsets, "bytes_read");
         WriteU64(data, 0);
 
+        Align(data, 8);
+        Mark(data, dataOffsets, "file_size");
+        WriteU64(data, 0);
+
+        Align(data, 8);
+        Mark(data, dataOffsets, "winsock_started");
+        WriteU64(data, 0);
+
+        Align(data, 8);
+        Mark(data, dataOffsets, "wsadata");
+        data.Stream.Write(new byte[512]);
+
         Mark(data, dataOffsets, "stdin_byte");
         data.Stream.WriteByte(0);
 
@@ -189,11 +244,11 @@ public sealed class Pe64Writer
             {
                 // IAT starts at rdataVa + iatSectionOffset (after the rdata stream data).
                 ulong iatBase = rdataVa + (ulong)iatSectionOffset;
-                const int kernelImportCount = 7;
                 return index switch
                 {
-                    < kernelImportCount => iatBase + (ulong)(index * 8),
-                    IatIndex_CommandLineToArgvW => iatBase + (ulong)((kernelImportCount + 1) * 8),
+                    < KernelImportCount => iatBase + (ulong)(index * 8),
+                    IatIndex_CommandLineToArgvW => iatBase + (ulong)((KernelImportCount + 1) * 8),
+                    >= Ws2ImportStart and < Ws2ImportStart + Ws2ImportCount => iatBase + (ulong)((KernelImportCount + 1 + ShellImportCount + 1 + (index - Ws2ImportStart)) * 8),
                     _ => throw new InvalidOperationException($"Unknown IAT index: {index}")
                 };
             }
@@ -225,6 +280,7 @@ public sealed class Pe64Writer
         rdataSection.Content.Add(iatDirectory);
         rdataSection.Content.Add(kernelIlt);
         rdataSection.Content.Add(shellIlt);
+        rdataSection.Content.Add(ws2Ilt);
         rdataSection.Content.Add(importDirectory);
         dataSection.Content.Add(data);
 
@@ -343,10 +399,10 @@ public sealed class Pe64Writer
     private static uint ComputeRDataMetadataSize()
     {
         // .rdata appends:
-        // - IAT directory (2 tables, null-terminated): (6+1 + 1+1) * 8
-        // - ILT tables (same layout):               (6+1 + 1+1) * 8
-        // - import directory entries + null terminator: (2+1) * 20
-        const uint tableBytes = (uint)((IatIndex_LocalFree + 1 + 1 + ShellImportCount + 1) * sizeof(ulong));
+        // - IAT directory (3 tables, null-terminated): (kernel+1 + shell+1 + ws2+1) * 8
+        // - ILT tables (same layout):                   (kernel+1 + shell+1 + ws2+1) * 8
+        // - import directory entries + null terminator: (3+1) * 20
+        const uint tableBytes = (uint)((KernelImportCount + 1 + ShellImportCount + 1 + Ws2ImportCount + 1) * sizeof(ulong));
         const uint directoryBytes = (uint)((ImportDllCount + 1) * 20);
         return checked(tableBytes + tableBytes + directoryBytes);
     }

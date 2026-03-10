@@ -33,11 +33,11 @@ public sealed class TypeResolutionTests
     [Test]
     public void Explicit_type_parameters_are_registered_in_resolved_type()
     {
-        var (lowering, diag) = LowerProgram("type Result(E, A) = | Ok(A) | Error(E)\nAshes.IO.print(1)");
+        var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
         var named = lowering.ResolvedTypes["Result"];
-        named.TypeArgs.Count.ShouldBe(2);
+        named.TypeArgs.Count.ShouldBe(0);
         named.Symbol.TypeParameters.Select(x => x.Name).ShouldBe(["E", "A"]);
     }
 
@@ -107,6 +107,18 @@ public sealed class TypeResolutionTests
         var resolved = lowering.ResolveTypeName("Unit");
         resolved.ShouldBeOfType<TypeRef.TNamedType>();
         ((TypeRef.TNamedType)resolved).Symbol.Name.ShouldBe("Unit");
+    }
+
+    [Test]
+    public void Builtin_socket_type_can_be_resolved()
+    {
+        var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
+
+        diag.Errors.ShouldBeEmpty();
+        var resolved = lowering.ResolveTypeName("Socket");
+        resolved.ShouldBeOfType<TypeRef.TNamedType>();
+        ((TypeRef.TNamedType)resolved).Symbol.Name.ShouldBe("Socket");
+        ((TypeRef.TNamedType)resolved).Symbol.Constructors.ShouldBeEmpty();
     }
 
     [Test]

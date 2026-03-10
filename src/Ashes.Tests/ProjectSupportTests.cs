@@ -416,7 +416,7 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.Fs\nif Ashes.Fs.exists(\"file.txt\") then Ashes.IO.print(1) else Ashes.IO.print(0)");
+                "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             plan.ImportedStdModules.ShouldContain("Ashes.Fs");

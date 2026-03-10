@@ -89,7 +89,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Constructor_function_value_can_be_partially_applied_via_let_binding()
     {
-        var (_, diag) = LowerProgram("type Result(E, A) = | Ok(A) | Error(E)\nlet wrap = Error\nin match wrap(\"bad\") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> Ashes.IO.print(\"ok\")");
+        var (_, diag) = LowerProgram("let wrap = Error\nin match wrap(\"bad\") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> Ashes.IO.print(\"ok\")");
 
         diag.Errors.ShouldBeEmpty();
     }

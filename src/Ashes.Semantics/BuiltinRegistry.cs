@@ -19,7 +19,11 @@ public static class BuiltinRegistry
         ReadLine,
         FsReadText,
         FsWriteText,
-        FsExists
+        FsExists,
+        NetTcpConnect,
+        NetTcpSend,
+        NetTcpReceive,
+        NetTcpClose
     }
 
     public sealed record BuiltinModuleMember(
@@ -47,6 +51,15 @@ public static class BuiltinRegistry
     private static readonly IReadOnlyDictionary<string, BuiltinModule> ModulesByName =
         new Dictionary<string, BuiltinModule>(StringComparer.Ordinal)
         {
+            ["Ashes"] = new(
+                "Ashes",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["print"] = new("print", BuiltinValueKind.Print, IsCallable: true, Arity: 1),
+                    ["panic"] = new("panic", BuiltinValueKind.Panic, IsCallable: true, Arity: 1),
+                    ["args"] = new("args", BuiltinValueKind.Args, IsCallable: false, Arity: 0)
+                }),
             ["Ashes.IO"] = new(
                 "Ashes.IO",
                 null,
@@ -71,6 +84,16 @@ public static class BuiltinRegistry
                     ["readText"] = new("readText", BuiltinValueKind.FsReadText, IsCallable: true, Arity: 1),
                     ["writeText"] = new("writeText", BuiltinValueKind.FsWriteText, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FsExists, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Net.Tcp"] = new(
+                "Ashes.Net.Tcp",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["connect"] = new("connect", BuiltinValueKind.NetTcpConnect, IsCallable: true, Arity: 2),
+                    ["send"] = new("send", BuiltinValueKind.NetTcpSend, IsCallable: true, Arity: 2),
+                    ["receive"] = new("receive", BuiltinValueKind.NetTcpReceive, IsCallable: true, Arity: 2),
+                    ["close"] = new("close", BuiltinValueKind.NetTcpClose, IsCallable: true, Arity: 1)
                 })
         };
 
@@ -137,6 +160,25 @@ public static class BuiltinRegistry
                 new TypeConstructor("Some", ["Str"])
             ]);
 
+        var resultTypeParameters = new[]
+        {
+            new TypeParameterSymbol("E"),
+            new TypeParameterSymbol("A")
+        };
+        var resultDecl = new TypeDecl(
+            "Result",
+            [new TypeParameter("E"), new TypeParameter("A")],
+            [
+                new TypeConstructor("Ok", ["A"]),
+                new TypeConstructor("Error", ["E"])
+            ]);
+
+        var socketTypeParameters = Array.Empty<TypeParameterSymbol>();
+        var socketDecl = new TypeDecl(
+            "Socket",
+            [],
+            []);
+
         return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
         {
             ["Unit"] = new(
@@ -162,7 +204,26 @@ public static class BuiltinRegistry
                         [new TypeRef.TStr()],
                         optionStringDecl.Constructors[1])
                 ],
-                optionStringDecl)
+                optionStringDecl),
+            ["Result"] = new(
+                "Result",
+                resultTypeParameters,
+                [
+                    new BuiltinConstructor(
+                        "Ok",
+                        [new TypeRef.TTypeParam(resultTypeParameters[1])],
+                        resultDecl.Constructors[0]),
+                    new BuiltinConstructor(
+                        "Error",
+                        [new TypeRef.TTypeParam(resultTypeParameters[0])],
+                        resultDecl.Constructors[1])
+                ],
+                resultDecl),
+            ["Socket"] = new(
+                "Socket",
+                socketTypeParameters,
+                [],
+                socketDecl)
         };
     }
 }

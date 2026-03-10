@@ -77,6 +77,13 @@ public abstract record IrInst
     public sealed record PrintBool(int Source) : IrInst;
     public sealed record WriteStr(int Source) : IrInst;
     public sealed record ReadLine(int Target) : IrInst;
+    public sealed record FsReadText(int Target, int PathTemp) : IrInst;
+    public sealed record FsWriteText(int Target, int PathTemp, int TextTemp) : IrInst;
+    public sealed record FsExists(int Target, int PathTemp) : IrInst;
+    public sealed record NetTcpConnect(int Target, int HostTemp, int PortTemp) : IrInst;
+    public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
+    public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
+    public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;
