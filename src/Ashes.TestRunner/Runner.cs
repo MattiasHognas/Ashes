@@ -136,7 +136,7 @@ public static class Runner
     {
         var effectivePaths = paths.Any()
             ? paths.ToList()
-            : [project is null ? "tests" : Path.Combine(project.ProjectDirectory, "tests")];
+            : GetDefaultDiscoveryPaths(project);
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -165,6 +165,22 @@ public static class Runner
                 }
             }
         }
+    }
+
+    private static List<string> GetDefaultDiscoveryPaths(AshesProject? project)
+    {
+        if (project is null)
+        {
+            return ["tests"];
+        }
+
+        var projectTestsDirectory = Path.Combine(project.ProjectDirectory, "tests");
+        if (Directory.Exists(projectTestsDirectory))
+        {
+            return [projectTestsDirectory];
+        }
+
+        return [project.EntryPath];
     }
 
     private static string ResolveDiscoveryPath(string rawPath, AshesProject? project)

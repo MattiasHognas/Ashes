@@ -304,6 +304,29 @@ public sealed class CliDiagnosticsTests
     }
 
     [Test]
+    public async Task Test_should_fallback_to_project_entry_when_project_has_no_tests_directory()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var projectPath = Path.Combine(tempDir, "ashes.json");
+            await File.WriteAllTextAsync(projectPath, """{"entry":"Main.ash","sourceRoots":["."]}""");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "Main.ash"), "// expect: 42\nAshes.IO.print(42)\n");
+
+            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath());
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Main.ash");
+            result.Output.ShouldContain("1 passed");
+            result.Output.ShouldNotContain("No tests found");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Test_should_ignore_hidden_directories_during_default_discovery()
     {
         var tempDir = CreateTempDir();
