@@ -270,7 +270,6 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            type Result = | Ok(T) | Error(T)
             let tag = fun (r) ->
               match r with
               | Ok(x) -> 1

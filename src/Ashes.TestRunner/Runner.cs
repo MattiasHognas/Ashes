@@ -337,7 +337,10 @@ public static class Runner
             throw new InvalidOperationException($"Test fixture path '{relativePath}' must be relative.");
         }
 
-        var candidate = Path.GetFullPath(Path.Combine(rootDirectory, relativePath));
+        // Normalize both separators so that Windows-style paths (e.g. "..\escape.txt") are
+        // treated as traversal attempts on all platforms, not just on Windows.
+        var normalizedRelativePath = relativePath.Replace('\\', '/');
+        var candidate = Path.GetFullPath(Path.Combine(rootDirectory, normalizedRelativePath));
         var normalizedRoot = Path.GetFullPath(rootDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;

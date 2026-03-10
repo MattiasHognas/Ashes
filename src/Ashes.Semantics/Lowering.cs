@@ -4043,7 +4043,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"])) ))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
     }
 
