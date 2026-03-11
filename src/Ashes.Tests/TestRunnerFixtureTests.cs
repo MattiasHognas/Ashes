@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Ashes.TestRunner;
 using Ashes.Backend.Backends;
 using Spectre.Console;
@@ -117,5 +118,51 @@ public sealed class TestRunnerFixtureTests
                 Directory.Delete(root, recursive: true);
             }
         }
+    }
+
+    [Test]
+    public void RunProcessCapture_times_out_hung_process()
+    {
+        var originalTimeout = Runner.TestProcessTimeout;
+
+        try
+        {
+            Runner.TestProcessTimeout = TimeSpan.FromMilliseconds(250);
+
+            var psi = CreateSleepProcessStartInfo();
+            var ex = Should.Throw<TimeoutException>(() => Runner.RunProcessCapture(psi));
+
+            ex.Message.ShouldContain("test process timed out");
+        }
+        finally
+        {
+            Runner.TestProcessTimeout = originalTimeout;
+        }
+    }
+
+    private static ProcessStartInfo CreateSleepProcessStartInfo()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var windowsPsi = new ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            windowsPsi.ArgumentList.Add("/c");
+            windowsPsi.ArgumentList.Add("ping 127.0.0.1 -n 6 > nul");
+            return windowsPsi;
+        }
+
+        var unixPsi = new ProcessStartInfo("/bin/sh")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        unixPsi.ArgumentList.Add("-c");
+        unixPsi.ArgumentList.Add("sleep 5");
+        return unixPsi;
     }
 }
