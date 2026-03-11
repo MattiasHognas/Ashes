@@ -179,11 +179,11 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
         throw new InvalidOperationException("Failed to start compiled executable.");
     }
 
-    var stdout = await p.StandardOutput.ReadToEndAsync();
-    var stderr = await p.StandardError.ReadToEndAsync();
-    await p.WaitForExitAsync();
+    var stdoutTask = p.StandardOutput.ReadToEndAsync();
+    var stderrTask = p.StandardError.ReadToEndAsync();
+    await Task.WhenAll(stdoutTask, stderrTask, p.WaitForExitAsync());
 
-    return (p.ExitCode, stdout, stderr);
+    return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
 }
 
 static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
