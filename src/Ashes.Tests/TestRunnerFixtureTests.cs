@@ -1,4 +1,6 @@
 using Ashes.TestRunner;
+using Ashes.Backend.Backends;
+using Spectre.Console;
 using Shouldly;
 
 namespace Ashes.Tests;
@@ -72,6 +74,44 @@ public sealed class TestRunnerFixtureTests
         }
         finally
         {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public void RunTests_times_out_tcp_fixture_when_program_never_connects()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
+        var filePath = Path.Combine(root, "tcp-timeout.ash");
+        var originalTimeout = Runner.TcpFixtureAcceptTimeout;
+
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(
+                filePath,
+                "// tcp-server: accept\n// expect:\nAshes.IO.print(\"\")\n");
+
+            Runner.TcpFixtureAcceptTimeout = TimeSpan.FromMilliseconds(250);
+
+            using var output = new StringWriter();
+            var console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output)
+            });
+
+            var exitCode = Runner.RunTests([filePath], BackendFactory.DefaultForCurrentOS(), console);
+
+            exitCode.ShouldBe(1);
+            output.ToString().ShouldContain("tcp fixture timed out waiting for connection");
+        }
+        finally
+        {
+            Runner.TcpFixtureAcceptTimeout = originalTimeout;
+
             if (Directory.Exists(root))
             {
                 Directory.Delete(root, recursive: true);

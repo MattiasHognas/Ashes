@@ -13,6 +13,7 @@ namespace Ashes.TestRunner;
 public static class Runner
 {
     private const string TcpPortPlaceholder = "__TCP_PORT__";
+    internal static TimeSpan TcpFixtureAcceptTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     public sealed record TestFileFixture(string RelativePath, byte[] Content);
 
@@ -644,10 +645,11 @@ public static class Runner
                 p.StandardInput.Close();
             }
 
-            var stdout = p.StandardOutput.ReadToEnd();
-            var stderr = p.StandardError.ReadToEnd();
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            Task.WaitAll(stdoutTask, stderrTask);
             p.WaitForExit();
-            return (p.ExitCode, stdout, stderr);
+            return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
         }
         finally
         {
@@ -755,7 +757,8 @@ public static class Runner
             {
                 try
                 {
-                    using var client = await listener.AcceptTcpClientAsync();
+                    using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
+                    using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = client.GetStream();
@@ -790,6 +793,10 @@ public static class Runner
                     }
 
                     return null;
+                }
+                catch (OperationCanceledException)
+                {
+                    return $"tcp fixture timed out waiting for connection after {FormatElapsed((long)TcpFixtureAcceptTimeout.TotalMilliseconds)}";
                 }
                 catch (Exception ex)
                 {
