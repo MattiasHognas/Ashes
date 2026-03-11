@@ -103,10 +103,12 @@ jobs:
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
+        timeout-minutes: 2
         run: ./artifacts/ashes/linux/ashes test tests
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 2
         run: .\artifacts\ashes\windows\ashes.exe test tests
 
       - name: Verify fmt on test and example files (Linux)
