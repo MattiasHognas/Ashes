@@ -139,7 +139,7 @@ Project-mode shipped-library examples:
 
 - `examples/pipeline_list_map/`
 - `examples/list_filter_fold/`
-- `examples/option_default/`
+- `examples/maybe_default/`
 - `examples/result_flow/`
 - `examples/args_demo.ash` --- command-line argument access via `Ashes.IO.args`
 
@@ -149,7 +149,7 @@ Project-style examples also live under:
 - `examples/project_using_libs/`
 - `examples/list_pipeline/`
 - `examples/list_fold/`
-- `examples/option_flow/`
+- `examples/maybe_flow/`
 - `examples/result_flow/`
 
 ------------------------------------------------------------------------
