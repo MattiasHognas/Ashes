@@ -51,6 +51,7 @@ public static class Runner
         foreach (var file in files)
         {
             var rawSource = File.ReadAllText(file);
+            var effectiveProject = ResolveProjectForTestFile(file, project);
             var directives = ParseTestDirectives(rawSource);
             var expected = directives.Expected;
             var hasExpected = directives.HasExpected;
@@ -77,7 +78,7 @@ public static class Runner
                     sourceOverride = rawSource.Replace(TcpPortPlaceholder, tcpServer.Port.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
                 }
 
-                var image = CompileFileToImage(file, targetId, project, sourceOverride);
+                var image = CompileFileToImage(file, targetId, effectiveProject, sourceOverride);
                 var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures);
                 exit = runExit;
                 actual = (stdout ?? "").TrimEnd();
@@ -131,6 +132,25 @@ public static class Runner
         RenderResults(results, console);
 
         return results.Any(r => !r.Passed && r.HasExpected) ? 1 : 0;
+    }
+
+    private static AshesProject? ResolveProjectForTestFile(string filePath, AshesProject? project)
+    {
+        if (project is not null)
+        {
+            return project;
+        }
+
+        var fileDirectory = Path.GetDirectoryName(Path.GetFullPath(filePath));
+        if (string.IsNullOrWhiteSpace(fileDirectory))
+        {
+            return null;
+        }
+
+        var projectFile = ProjectSupport.DiscoverProjectFile(fileDirectory);
+        return string.IsNullOrWhiteSpace(projectFile)
+            ? null
+            : ProjectSupport.LoadProject(projectFile);
     }
 
     private static IEnumerable<string> DiscoverAshFiles(IEnumerable<string> paths, AshesProject? project)
