@@ -47,6 +47,19 @@ public sealed class X64CodegenIced
         EnsureStringLiteral(data, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
         EnsureStringLiteral(data, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
         EnsureStringLiteral(data, "__rt_tcp_resolve_failed", "Ashes.Net.Tcp.connect() could not resolve host");
+        EnsureStringLiteral(data, "__rt_empty", "");
+        EnsureStringLiteral(data, "__rt_http_default_path", "/");
+        EnsureStringLiteral(data, "__rt_http_get_prefix", "GET ");
+        EnsureStringLiteral(data, "__rt_http_post_prefix", "POST ");
+        EnsureStringLiteral(data, "__rt_http_host_header", " HTTP/1.1\r\nHost: ");
+        EnsureStringLiteral(data, "__rt_http_content_length_header", "\r\nContent-Length: ");
+        EnsureStringLiteral(data, "__rt_http_request_suffix", "\r\nConnection: close\r\n\r\n");
+        EnsureStringLiteral(data, "__rt_http_status_prefix", "HTTP ");
+        EnsureStringLiteral(data, "__rt_http_chunked_header", "Transfer-Encoding: chunked");
+        EnsureStringLiteral(data, "__rt_http_https_not_supported", "https not supported");
+        EnsureStringLiteral(data, "__rt_http_malformed_url", "malformed URL");
+        EnsureStringLiteral(data, "__rt_http_malformed_response", "malformed HTTP response");
+        EnsureStringLiteral(data, "__rt_http_unsupported_transfer_encoding", "unsupported transfer encoding");
         EnsureStringLiteral(data, "__rt_hosts_path", "/etc/hosts");
 
         foreach (var s in p.StringLiterals)
@@ -164,6 +177,8 @@ public sealed class X64CodegenIced
         var L_make_unit = asm.CreateLabel();
         var L_make_result_ok = asm.CreateLabel();
         var L_make_result_error = asm.CreateLabel();
+        var L_make_string_slice = asm.CreateLabel();
+        var L_make_http_status_error = asm.CreateLabel();
         var L_write_str = asm.CreateLabel();
         var L_print_str = asm.CreateLabel();
         var L_read_line = asm.CreateLabel();
@@ -179,6 +194,7 @@ public sealed class X64CodegenIced
         var L_tcp_send = asm.CreateLabel();
         var L_tcp_receive = asm.CreateLabel();
         var L_tcp_close = asm.CreateLabel();
+        var L_http_request = asm.CreateLabel();
         var L_panic_str = asm.CreateLabel();
         var L_print_bool = asm.CreateLabel();
         var L_concat = asm.CreateLabel();
@@ -317,6 +333,50 @@ public sealed class X64CodegenIced
         asm.mov(rbx, 1);
         asm.mov(__[rax], rbx);
         asm.mov(__[rax + 8], r8);
+        asm.ret();
+
+        // make_string_slice(RDI=src bytes ptr, RSI=len) -> RAX=string*
+        asm.Label(ref L_make_string_slice);
+        var L_make_string_slice_done = asm.CreateLabel();
+        asm.mov(r12, rdi);
+        asm.mov(r13, rsi);
+        asm.mov(rdi, r13);
+        asm.add(rdi, 8);
+        asm.call(L_alloc);
+        asm.mov(r14, rax);
+        asm.mov(__[r14], r13);
+        asm.test(r13, r13);
+        asm.je(L_make_string_slice_done);
+        asm.lea(rdi, __[r14 + 8]);
+        asm.mov(rsi, r12);
+        asm.mov(rcx, r13);
+        asm.rep.movsb();
+        asm.Label(ref L_make_string_slice_done);
+        asm.mov(rax, r14);
+        asm.ret();
+
+        // make_http_status_error(RDI=statusCode) -> RAX=string* ("HTTP <code>")
+        asm.Label(ref L_make_http_status_error);
+        asm.mov(rsi, (long)addrOf("buf_i64"));
+        asm.call(L_itoa);
+        asm.mov(r12, rsi);
+        asm.mov(r13, rdx);
+        asm.mov(rdi, r13);
+        asm.add(rdi, 13);
+        asm.call(L_alloc);
+        asm.mov(r14, rax);
+        asm.mov(rcx, r13);
+        asm.add(rcx, 5);
+        asm.mov(__[r14], rcx);
+        asm.lea(rdi, __[r14 + 8]);
+        asm.mov(rsi, (long)addrOf("__rt_http_status_prefix"));
+        asm.add(rsi, 8);
+        asm.mov(rcx, 5);
+        asm.rep.movsb();
+        asm.mov(rsi, r12);
+        asm.mov(rcx, r13);
+        asm.rep.movsb();
+        asm.mov(rax, r14);
         asm.ret();
 
         // write_str(RDI=string*)
@@ -1195,6 +1255,487 @@ public sealed class X64CodegenIced
         asm.call(L_make_result_error);
         asm.ret();
 
+        // http_request(RDI=url string*, RSI=body string* or 0, RDX=method: 0=get, 1=post)
+        asm.Label(ref L_http_request);
+        var L_http_return_result = asm.CreateLabel();
+        var L_http_return_error = asm.CreateLabel();
+        var L_http_check_http = asm.CreateLabel();
+        var L_http_scan_host = asm.CreateLabel();
+        var L_http_parse_port = asm.CreateLabel();
+        var L_http_parse_port_loop = asm.CreateLabel();
+        var L_http_default_path = asm.CreateLabel();
+        var L_http_after_path = asm.CreateLabel();
+        var L_http_use_post_prefix = asm.CreateLabel();
+        var L_http_have_prefix = asm.CreateLabel();
+        var L_http_have_host_info = asm.CreateLabel();
+        var L_http_skip_post_digits = asm.CreateLabel();
+        var L_http_have_request_len = asm.CreateLabel();
+        var L_http_copy_body = asm.CreateLabel();
+        var L_http_send_suffix = asm.CreateLabel();
+        var L_http_receive_loop = asm.CreateLabel();
+        var L_http_receive_done = asm.CreateLabel();
+        var L_http_store_first_chunk = asm.CreateLabel();
+        var L_http_find_separator = asm.CreateLabel();
+        var L_http_separator_found = asm.CreateLabel();
+        var L_http_find_status_space = asm.CreateLabel();
+        var L_http_have_status_space = asm.CreateLabel();
+        var L_http_chunk_scan_outer = asm.CreateLabel();
+        var L_http_chunk_scan_inner = asm.CreateLabel();
+        var L_http_chunk_scan_no_match = asm.CreateLabel();
+        var L_http_chunk_scan_done = asm.CreateLabel();
+        var L_http_chunked_found = asm.CreateLabel();
+        var L_http_separator_continue = asm.CreateLabel();
+        var L_http_status_success = asm.CreateLabel();
+        var L_http_parse_url_fail = asm.CreateLabel();
+        var L_http_parse_response_fail = asm.CreateLabel();
+        var L_http_send_fail = asm.CreateLabel();
+        var L_http_recv_fail = asm.CreateLabel();
+
+        asm.sub(rsp, 0x80);
+        asm.mov(__[rsp], rdi);
+        asm.mov(__[rsp + 8], rsi);
+        asm.mov(__[rsp + 16], rdx);
+        asm.xor(rax, rax);
+        asm.mov(__[rsp + 32], rax);
+        asm.mov(__[rsp + 48], rax);
+
+        asm.mov(r15, __[rsp]);
+        asm.mov(r12, __[r15]);
+        asm.lea(r11, __[r15 + 8]);
+
+        asm.cmp(r12, 8);
+        asm.jb(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11]);
+        asm.cmp(al, 104);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 1]);
+        asm.cmp(al, 116);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 2]);
+        asm.cmp(al, 116);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 3]);
+        asm.cmp(al, 112);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 4]);
+        asm.cmp(al, 115);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 5]);
+        asm.cmp(al, 58);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 6]);
+        asm.cmp(al, 47);
+        asm.jne(L_http_check_http);
+        asm.movzx(eax, __byte_ptr[r11 + 7]);
+        asm.cmp(al, 47);
+        asm.jne(L_http_check_http);
+        asm.mov(rdi, (long)addrOf("__rt_http_https_not_supported"));
+        asm.jmp(L_http_return_error);
+
+        asm.Label(ref L_http_check_http);
+        asm.cmp(r12, 7);
+        asm.jb(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11]);
+        asm.cmp(al, 104);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 1]);
+        asm.cmp(al, 116);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 2]);
+        asm.cmp(al, 116);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 3]);
+        asm.cmp(al, 112);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 4]);
+        asm.cmp(al, 58);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 5]);
+        asm.cmp(al, 47);
+        asm.jne(L_http_parse_url_fail);
+        asm.movzx(eax, __byte_ptr[r11 + 6]);
+        asm.cmp(al, 47);
+        asm.jne(L_http_parse_url_fail);
+
+        asm.mov(r9, 7);
+        asm.mov(r10, 80);
+        asm.Label(ref L_http_scan_host);
+        asm.cmp(r9, r12);
+        asm.jae(L_http_default_path);
+        asm.movzx(eax, __byte_ptr[r11 + r9]);
+        asm.cmp(al, 58);
+        asm.je(L_http_parse_port);
+        asm.cmp(al, 47);
+        asm.je(L_http_after_path);
+        asm.cmp(al, 63);
+        asm.je(L_http_parse_url_fail);
+        asm.cmp(al, 35);
+        asm.je(L_http_parse_url_fail);
+        asm.inc(r9);
+        asm.jmp(L_http_scan_host);
+
+        asm.Label(ref L_http_parse_port);
+        asm.mov(rbx, r9);
+        asm.sub(rbx, 7);
+        asm.cmp(rbx, 0);
+        asm.jle(L_http_parse_url_fail);
+        asm.lea(rax, __[r11 + 7]);
+        asm.mov(__[rsp + 40], rax);
+        asm.mov(__[rsp + 48], rbx);
+        asm.mov(r10, 0);
+        asm.xor(r8, r8);
+        asm.inc(r9);
+        asm.Label(ref L_http_parse_port_loop);
+        asm.cmp(r9, r12);
+        asm.jae(L_http_default_path);
+        asm.movzx(eax, __byte_ptr[r11 + r9]);
+        asm.cmp(al, 47);
+        asm.je(L_http_after_path);
+        asm.cmp(al, 48);
+        asm.jb(L_http_parse_url_fail);
+        asm.cmp(al, 57);
+        asm.ja(L_http_parse_url_fail);
+        asm.imul(r10, r10, 10);
+        asm.sub(rax, '0');
+        asm.add(r10, rax);
+        asm.cmp(r10, 65535);
+        asm.jg(L_http_parse_url_fail);
+        asm.inc(r8);
+        asm.inc(r9);
+        asm.jmp(L_http_parse_port_loop);
+
+        asm.Label(ref L_http_default_path);
+        asm.mov(rbx, r9);
+        asm.sub(rbx, 7);
+        asm.cmp(rbx, 0);
+        asm.jle(L_http_parse_url_fail);
+        asm.mov(rax, (long)addrOf("__rt_http_default_path"));
+        asm.add(rax, 8);
+        asm.mov(__[rsp + 24], rax);
+        asm.mov(rax, 1);
+        asm.mov(__[rsp + 32], rax);
+        asm.jmp(L_http_after_path);
+
+        asm.Label(ref L_http_after_path);
+        asm.mov(rbx, r9);
+        asm.sub(rbx, 7);
+        asm.cmp(rbx, 0);
+        asm.jle(L_http_parse_url_fail);
+        asm.mov(rax, __[rsp + 48]);
+        asm.cmp(rax, 0);
+        asm.jne(L_http_have_host_info);
+        asm.lea(rax, __[r11 + 7]);
+        asm.mov(__[rsp + 40], rax);
+        asm.mov(__[rsp + 48], rbx);
+        asm.Label(ref L_http_have_host_info);
+        asm.mov(__[rsp + 56], r10);
+        asm.mov(rax, __[rsp + 32]);
+        asm.cmp(rax, 0);
+        asm.jne(L_http_use_post_prefix);
+        asm.cmp(r9, r12);
+        asm.jae(L_http_use_post_prefix);
+        asm.lea(rax, __[r11 + r9]);
+        asm.mov(__[rsp + 24], rax);
+        asm.mov(rax, r12);
+        asm.sub(rax, r9);
+        asm.mov(__[rsp + 32], rax);
+
+        asm.Label(ref L_http_use_post_prefix);
+        asm.mov(rdi, __[rsp + 40]);
+        asm.mov(rsi, __[rsp + 48]);
+        asm.call(L_make_string_slice);
+        asm.mov(rdi, rax);
+        asm.mov(rsi, __[rsp + 56]);
+        asm.call(L_tcp_connect);
+        asm.mov(rdx, __[rax]);
+        asm.cmp(rdx, 0);
+        asm.jne(L_http_return_result);
+        asm.mov(r15, __[rax + 8]);
+        asm.mov(__[rsp + 64], r15);
+
+        asm.mov(rax, __[rsp + 16]);
+        asm.cmp(rax, 0);
+        asm.jne(L_http_have_prefix);
+        asm.mov(rax, (long)addrOf("__rt_http_get_prefix"));
+        asm.mov(__[rsp + 72], rax);
+        asm.jmp(L_http_skip_post_digits);
+
+        asm.Label(ref L_http_have_prefix);
+        asm.mov(rax, (long)addrOf("__rt_http_post_prefix"));
+        asm.mov(__[rsp + 72], rax);
+        asm.mov(rdi, __[rsp + 8]);
+        asm.mov(rdi, __[rdi]);
+        asm.mov(rsi, (long)addrOf("buf_i64"));
+        asm.call(L_itoa);
+        asm.mov(__[rsp + 80], rsi);
+        asm.mov(__[rsp + 88], rdx);
+
+        asm.Label(ref L_http_skip_post_digits);
+        asm.mov(rbx, __[rsp + 72]);
+        asm.mov(rdi, __[rbx]);
+        asm.add(rdi, __[rsp + 32]);
+        asm.mov(rax, (long)addrOf("__rt_http_host_header"));
+        asm.add(rdi, __[rax]);
+        asm.add(rdi, __[rsp + 48]);
+        asm.mov(rax, __[rsp + 16]);
+        asm.cmp(rax, 0);
+        asm.je(L_http_have_request_len);
+        asm.mov(rax, (long)addrOf("__rt_http_content_length_header"));
+        asm.add(rdi, __[rax]);
+        asm.add(rdi, __[rsp + 88]);
+        asm.mov(rax, (long)addrOf("__rt_http_request_suffix"));
+        asm.add(rdi, __[rax]);
+        asm.mov(rax, __[rsp + 8]);
+        asm.add(rdi, __[rax]);
+        asm.jmp(L_http_send_suffix);
+
+        asm.Label(ref L_http_have_request_len);
+        asm.mov(rax, (long)addrOf("__rt_http_request_suffix"));
+        asm.add(rdi, __[rax]);
+
+        asm.Label(ref L_http_send_suffix);
+        asm.mov(__[rsp + 104], rdi);
+        asm.add(rdi, 8);
+        asm.call(L_alloc);
+        asm.mov(r12, rax);
+        asm.mov(rbx, __[rsp + 104]);
+        asm.mov(__[r12], rbx);
+        asm.lea(rdi, __[r12 + 8]);
+
+        asm.mov(rsi, __[rsp + 72]);
+        asm.mov(rcx, __[rsi]);
+        asm.add(rsi, 8);
+        asm.rep.movsb();
+
+        asm.mov(rsi, __[rsp + 24]);
+        asm.mov(rcx, __[rsp + 32]);
+        asm.rep.movsb();
+
+        asm.mov(rsi, (long)addrOf("__rt_http_host_header"));
+        asm.mov(rcx, __[rsi]);
+        asm.add(rsi, 8);
+        asm.rep.movsb();
+
+        asm.mov(rsi, __[rsp + 40]);
+        asm.mov(rcx, __[rsp + 48]);
+        asm.rep.movsb();
+
+        asm.mov(rax, __[rsp + 16]);
+        asm.cmp(rax, 0);
+        asm.je(L_http_copy_body);
+        asm.mov(rsi, (long)addrOf("__rt_http_content_length_header"));
+        asm.mov(rcx, __[rsi]);
+        asm.add(rsi, 8);
+        asm.rep.movsb();
+        asm.mov(rsi, __[rsp + 80]);
+        asm.mov(rcx, __[rsp + 88]);
+        asm.rep.movsb();
+
+        asm.Label(ref L_http_copy_body);
+        asm.mov(rsi, (long)addrOf("__rt_http_request_suffix"));
+        asm.mov(rcx, __[rsi]);
+        asm.add(rsi, 8);
+        asm.rep.movsb();
+
+        asm.mov(rax, __[rsp + 16]);
+        asm.cmp(rax, 0);
+        asm.je(L_http_receive_loop);
+        asm.mov(rsi, __[rsp + 8]);
+        asm.mov(rcx, __[rsi]);
+        asm.add(rsi, 8);
+        asm.rep.movsb();
+
+        asm.Label(ref L_http_receive_loop);
+        asm.mov(rdi, __[rsp + 64]);
+        asm.mov(rsi, r12);
+        asm.call(L_tcp_send);
+        asm.mov(rdx, __[rax]);
+        asm.cmp(rdx, 0);
+        asm.jne(L_http_send_fail);
+
+        asm.mov(rax, (long)addrOf("__rt_empty"));
+        asm.mov(__[rsp + 96], rax);
+        asm.Label(ref L_http_receive_done);
+        asm.mov(rdi, __[rsp + 64]);
+        asm.mov(rsi, 65536);
+        asm.call(L_tcp_receive);
+        asm.mov(rdx, __[rax]);
+        asm.cmp(rdx, 0);
+        asm.jne(L_http_recv_fail);
+        asm.mov(r13, __[rax + 8]);
+        asm.mov(rax, __[r13]);
+        asm.cmp(rax, 0);
+        asm.je(L_http_find_separator);
+        asm.mov(rdi, __[rsp + 96]);
+        asm.mov(rax, __[rdi]);
+        asm.cmp(rax, 0);
+        asm.je(L_http_store_first_chunk);
+        asm.mov(rdi, __[rsp + 96]);
+        asm.mov(rsi, r13);
+        asm.call(L_concat);
+        asm.mov(__[rsp + 96], rax);
+        asm.jmp(L_http_receive_done);
+
+        asm.Label(ref L_http_store_first_chunk);
+        asm.mov(__[rsp + 96], r13);
+        asm.jmp(L_http_receive_done);
+
+        asm.Label(ref L_http_find_separator);
+        asm.mov(rdi, __[rsp + 64]);
+        asm.call(L_tcp_close);
+        asm.mov(rdx, __[rax]);
+        asm.cmp(rdx, 0);
+        asm.jne(L_http_return_result);
+        asm.mov(r14, __[rsp + 96]);
+        asm.mov(r12, __[r14]);
+        asm.lea(r13, __[r14 + 8]);
+        asm.cmp(r12, 12);
+        asm.jb(L_http_parse_response_fail);
+        asm.xor(r8, r8);
+        asm.Label(ref L_http_separator_found);
+        asm.mov(rax, r12);
+        asm.sub(rax, 3);
+        asm.cmp(r8, rax);
+        asm.jae(L_http_parse_response_fail);
+        asm.movzx(eax, __byte_ptr[r13 + r8]);
+        asm.cmp(al, 13);
+        asm.jne(L_http_separator_continue);
+        asm.movzx(eax, __byte_ptr[r13 + r8 + 1]);
+        asm.cmp(al, 10);
+        asm.jne(L_http_separator_continue);
+        asm.movzx(eax, __byte_ptr[r13 + r8 + 2]);
+        asm.cmp(al, 13);
+        asm.jne(L_http_separator_continue);
+        asm.movzx(eax, __byte_ptr[r13 + r8 + 3]);
+        asm.cmp(al, 10);
+        asm.je(L_http_find_status_space);
+        asm.Label(ref L_http_separator_continue);
+        asm.inc(r8);
+        asm.jmp(L_http_separator_found);
+
+        asm.Label(ref L_http_find_status_space);
+        asm.xor(r9, r9);
+        asm.Label(ref L_http_have_status_space);
+        asm.cmp(r9, r8);
+        asm.jae(L_http_parse_response_fail);
+        asm.movzx(eax, __byte_ptr[r13 + r9]);
+        asm.cmp(al, 32);
+        asm.je(L_http_chunk_scan_outer);
+        asm.inc(r9);
+        asm.jmp(L_http_have_status_space);
+
+        asm.Label(ref L_http_chunk_scan_outer);
+        asm.mov(rax, r9);
+        asm.add(rax, 3);
+        asm.cmp(rax, r8);
+        asm.jae(L_http_parse_response_fail);
+        asm.movzx(eax, __byte_ptr[r13 + r9 + 1]);
+        asm.cmp(al, 48);
+        asm.jb(L_http_parse_response_fail);
+        asm.cmp(al, 57);
+        asm.ja(L_http_parse_response_fail);
+        asm.sub(rax, '0');
+        asm.imul(r10, rax, 100);
+        asm.movzx(eax, __byte_ptr[r13 + r9 + 2]);
+        asm.cmp(al, 48);
+        asm.jb(L_http_parse_response_fail);
+        asm.cmp(al, 57);
+        asm.ja(L_http_parse_response_fail);
+        asm.sub(rax, '0');
+        asm.imul(rax, rax, 10);
+        asm.add(r10, rax);
+        asm.movzx(eax, __byte_ptr[r13 + r9 + 3]);
+        asm.cmp(al, 48);
+        asm.jb(L_http_parse_response_fail);
+        asm.cmp(al, 57);
+        asm.ja(L_http_parse_response_fail);
+        asm.sub(rax, '0');
+        asm.add(r10, rax);
+
+        asm.mov(r11, (long)addrOf("__rt_http_chunked_header"));
+        asm.mov(rbx, __[r11]);
+        asm.add(r11, 8);
+        asm.cmp(r8, rbx);
+        asm.jb(L_http_chunk_scan_done);
+        asm.xor(r9, r9);
+        asm.Label(ref L_http_chunk_scan_inner);
+        asm.mov(rax, r8);
+        asm.sub(rax, rbx);
+        asm.cmp(r9, rax);
+        asm.ja(L_http_chunk_scan_done);
+        asm.xor(rcx, rcx);
+        asm.Label(ref L_http_chunk_scan_no_match);
+        asm.cmp(rcx, rbx);
+        asm.je(L_http_chunked_found);
+        asm.mov(rax, r13);
+        asm.add(rax, r9);
+        asm.add(rax, rcx);
+        asm.movzx(eax, __byte_ptr[rax]);
+        asm.mov(rdx, r11);
+        asm.add(rdx, rcx);
+        asm.movzx(edx, __byte_ptr[rdx]);
+        asm.cmp(al, dl);
+        asm.jne(L_http_chunk_scan_done);
+        asm.inc(rcx);
+        asm.jmp(L_http_chunk_scan_no_match);
+
+        asm.Label(ref L_http_chunk_scan_done);
+        asm.inc(r9);
+        asm.mov(rax, r8);
+        asm.sub(rax, rbx);
+        asm.cmp(r9, rax);
+        asm.jbe(L_http_chunk_scan_inner);
+
+        asm.lea(rdi, __[r13 + r8 + 4]);
+        asm.mov(rsi, r12);
+        asm.sub(rsi, r8);
+        asm.sub(rsi, 4);
+        asm.call(L_make_string_slice);
+        asm.mov(r12, rax);
+        asm.cmp(r10, 200);
+        asm.jb(L_http_return_result);
+        asm.cmp(r10, 299);
+        asm.ja(L_http_status_success);
+        asm.mov(rdi, r12);
+        asm.call(L_make_result_ok);
+        asm.jmp(L_http_return_result);
+
+        asm.Label(ref L_http_chunked_found);
+        asm.mov(rdi, (long)addrOf("__rt_http_unsupported_transfer_encoding"));
+        asm.jmp(L_http_return_error);
+
+        asm.Label(ref L_http_parse_url_fail);
+        asm.mov(rdi, (long)addrOf("__rt_http_malformed_url"));
+        asm.jmp(L_http_return_error);
+
+        asm.Label(ref L_http_parse_response_fail);
+        asm.mov(rdi, (long)addrOf("__rt_http_malformed_response"));
+        asm.jmp(L_http_return_error);
+
+        asm.Label(ref L_http_send_fail);
+        asm.mov(__[rsp + 112], rax);
+        asm.mov(rdi, __[rsp + 64]);
+        asm.call(L_tcp_close);
+        asm.mov(rax, __[rsp + 112]);
+        asm.jmp(L_http_return_result);
+
+        asm.Label(ref L_http_recv_fail);
+        asm.mov(__[rsp + 112], rax);
+        asm.mov(rdi, __[rsp + 64]);
+        asm.call(L_tcp_close);
+        asm.mov(rax, __[rsp + 112]);
+        asm.jmp(L_http_return_result);
+
+        asm.Label(ref L_http_status_success);
+        asm.mov(rdi, r10);
+        asm.call(L_make_http_status_error);
+        asm.mov(rdi, rax);
+        asm.Label(ref L_http_return_error);
+        asm.call(L_make_result_error);
+        asm.Label(ref L_http_return_result);
+        asm.add(rsp, 0x80);
+        asm.ret();
+
         // panic_str(RDI=string*) -> prints message and exits with code 1
         asm.Label(ref L_panic_str);
         asm.call(L_print_str);
@@ -1761,23 +2302,39 @@ public sealed class X64CodegenIced
                         a.mov(__[rbp + DispForSlot(TempSlot(rl.Target))], rax);
                         break;
 
-                    case IrInst.FsReadText frt:
+                    case IrInst.FileReadText frt:
                         a.mov(rdi, __[rbp + DispForSlot(TempSlot(frt.PathTemp))]);
                         a.call(L_fs_read_text);
                         a.mov(__[rbp + DispForSlot(TempSlot(frt.Target))], rax);
                         break;
 
-                    case IrInst.FsWriteText fwt:
+                    case IrInst.FileWriteText fwt:
                         a.mov(rdi, __[rbp + DispForSlot(TempSlot(fwt.PathTemp))]);
                         a.mov(rsi, __[rbp + DispForSlot(TempSlot(fwt.TextTemp))]);
                         a.call(L_fs_write_text);
                         a.mov(__[rbp + DispForSlot(TempSlot(fwt.Target))], rax);
                         break;
 
-                    case IrInst.FsExists fex:
+                    case IrInst.FileExists fex:
                         a.mov(rdi, __[rbp + DispForSlot(TempSlot(fex.PathTemp))]);
                         a.call(L_fs_exists);
                         a.mov(__[rbp + DispForSlot(TempSlot(fex.Target))], rax);
+                        break;
+
+                    case IrInst.HttpGet hg:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(hg.UrlTemp))]);
+                        a.xor(rsi, rsi);
+                        a.xor(rdx, rdx);
+                        a.call(L_http_request);
+                        a.mov(__[rbp + DispForSlot(TempSlot(hg.Target))], rax);
+                        break;
+
+                    case IrInst.HttpPost hp:
+                        a.mov(rdi, __[rbp + DispForSlot(TempSlot(hp.UrlTemp))]);
+                        a.mov(rsi, __[rbp + DispForSlot(TempSlot(hp.BodyTemp))]);
+                        a.mov(rdx, 1);
+                        a.call(L_http_request);
+                        a.mov(__[rbp + DispForSlot(TempSlot(hp.Target))], rax);
                         break;
 
                     case IrInst.NetTcpConnect ntc:

@@ -17,9 +17,11 @@ public static class BuiltinRegistry
         Write,
         WriteLine,
         ReadLine,
-        FsReadText,
-        FsWriteText,
-        FsExists,
+        FileReadText,
+        FileWriteText,
+        FileExists,
+        HttpGet,
+        HttpPost,
         NetTcpConnect,
         NetTcpSend,
         NetTcpReceive,
@@ -88,9 +90,17 @@ public static class BuiltinRegistry
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["readText"] = new("readText", BuiltinValueKind.FsReadText, IsCallable: true, Arity: 1),
-                    ["writeText"] = new("writeText", BuiltinValueKind.FsWriteText, IsCallable: true, Arity: 2),
-                    ["exists"] = new("exists", BuiltinValueKind.FsExists, IsCallable: true, Arity: 1)
+                    ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
+                    ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
+                    ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Http"] = new(
+                "Ashes.Http",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["get"] = new("get", BuiltinValueKind.HttpGet, IsCallable: true, Arity: 1),
+                    ["post"] = new("post", BuiltinValueKind.HttpPost, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Net.Tcp"] = new(
                 "Ashes.Net.Tcp",
