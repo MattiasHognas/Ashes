@@ -250,8 +250,8 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = """
-            type Maybe = | None | Some(T)
+                var src = """
+                        type LocalMaybe = | None | Some(T)
             let unwrapOr = fun (opt, def) ->
               match opt with
               | None -> def
