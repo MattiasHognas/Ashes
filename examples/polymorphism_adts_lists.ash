@@ -2,10 +2,6 @@ type Option =
     | None
     | Some(T)
 
-type Result =
-    | Ok(T)
-    | Error(T)
-
 let firstOr = 
     fun (xs) -> 
         fun (def) -> 

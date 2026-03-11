@@ -253,6 +253,126 @@ public sealed class CliDiagnosticsTests
     }
 
     [Test]
+    public async Task Test_should_run_tests_in_discovered_project_context()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDir, "src"));
+            Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Math.ash"), "let add = fun (x) -> fun (y) -> x + y in add\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "math.ash"), "// expect: 3\nimport Math\nAshes.IO.print(Math.add(1)(2))\n");
+
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("math.ash");
+            result.Output.ShouldContain("1 passed");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Test_should_support_explicit_project_flag_from_outside_project_directory()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDir, "src"));
+            Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
+            var projectPath = Path.Combine(tempDir, "ashes.json");
+            await File.WriteAllTextAsync(projectPath, """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Value.ash"), "let value = 42 in value\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "value.ash"), "// expect: 42\nimport Value\nAshes.IO.print(Value.value)\n");
+
+            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath());
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("value.ash");
+            result.Output.ShouldContain("1 passed");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Test_should_fallback_to_project_entry_when_project_has_no_tests_directory()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var projectPath = Path.Combine(tempDir, "ashes.json");
+            await File.WriteAllTextAsync(projectPath, """{"entry":"Main.ash","sourceRoots":["."]}""");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "Main.ash"), "// expect: 42\nAshes.IO.print(42)\n");
+
+            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath());
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Main.ash");
+            result.Output.ShouldContain("1 passed");
+            result.Output.ShouldNotContain("No tests found");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Test_should_ignore_hidden_directories_during_default_discovery()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
+            Directory.CreateDirectory(Path.Combine(tempDir, "tests", ".hidden"));
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "visible.ash"), "// expect: ok\nAshes.IO.print(\"ok\")\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", ".hidden", "skip.ash"), "// expect: bad\nAshes.IO.print(\"bad\")\n");
+
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("visible.ash");
+            result.Output.ShouldNotContain("skip.ash");
+            result.Output.ShouldContain("1 passed");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Test_should_report_files_in_lexicographic_order()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "b.ash"), "// expect: b\nAshes.IO.print(\"b\")\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "a.ash"), "// expect: a\nAshes.IO.print(\"a\")\n");
+
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.IndexOf("a.ash", StringComparison.Ordinal).ShouldBeLessThan(
+                result.Output.IndexOf("b.ash", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Compile_should_match_lsp_diagnostic_code_message_and_span()
     {
         var tempDir = CreateTempDir();
@@ -343,10 +463,14 @@ public sealed class CliDiagnosticsTests
 
     private sealed record RenderedSnippet(int Line, string SourceLine, int Column, int UnderlineLength);
 
-    private static async Task<CliCommandResult> RunCliAsync(string[] args, string? stdin = null)
+    private static async Task<CliCommandResult> RunCliAsync(string[] args, string? stdin = null, string? workingDirectory = null)
     {
         var startInfo = await CliTestHost.CreateStartInfoAsync(args);
         startInfo.RedirectStandardInput = stdin is not null;
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            startInfo.WorkingDirectory = workingDirectory;
+        }
 
         using var process = Process.Start(startInfo)!;
         if (stdin is not null)
@@ -365,7 +489,7 @@ public sealed class CliDiagnosticsTests
 
     private static Task<CliCommandResult> RunCliAsync(params string[] args)
     {
-        return RunCliAsync(args, stdin: null);
+        return RunCliAsync(args, stdin: null, workingDirectory: null);
     }
 
     private static string CreateTempDir()

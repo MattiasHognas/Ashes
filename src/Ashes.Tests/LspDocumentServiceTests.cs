@@ -130,13 +130,13 @@ public sealed class LspDocumentServiceTests
     {
         var completions = DocumentService.GetCompletions("Ashes.IO.print(42)");
 
-        completions.ShouldBe(["None", "Some", "Unit"]);
+        completions.ShouldBe(["Error", "None", "Ok", "Some", "Unit"]);
     }
 
     [Test]
     public void GetCompletions_should_return_constructors_from_multiple_types()
     {
-        const string source = "type Result = | Ok(T) | Err(E)\ntype Option = | None | Some(T)\nAshes.IO.print(1)";
+        const string source = "type Outcome = | Ok(T) | Err(E)\ntype Option = | None | Some(T)\nAshes.IO.print(1)";
 
         var completions = DocumentService.GetCompletions(source);
 
@@ -189,9 +189,29 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_allow_standalone_import_of_Ashes_Test()
+    {
+        const string source = "import Ashes.Test\nlet checked = assertEqual(1, 1)\nin checked";
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Fs()
     {
-        const string source = "import Ashes.Fs\nif Ashes.Fs.exists(\"file.txt\") then 1 else 0";
+        const string source = "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Analyze_should_allow_standalone_import_of_Ashes_Net_Tcp()
+    {
+        const string source = "import Ashes.Net.Tcp\nmatch Ashes.Net.Tcp.connect(\"127.0.0.1\")(80) with | Ok(sock) -> 1 | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -363,7 +383,7 @@ public sealed class LspDocumentServiceTests
         var hover = DocumentService.GetHover(source, printPosition);
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("print : a -> a");
+        hover.Value.Contents.ShouldBe("print : a -> Unit");
     }
 
     [Test]

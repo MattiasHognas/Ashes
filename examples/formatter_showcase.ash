@@ -1,7 +1,3 @@
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let rec compute fallback xs = 
     match xs with
         | [] -> 

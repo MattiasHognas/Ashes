@@ -270,12 +270,12 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            type Result = | Ok(T) | Error(T)
-            let tag = fun (r) ->
-              match r with
-              | Ok(x) -> 1
-              | Error(x) -> 2
-            in Ashes.IO.print(tag(Ok(0)) + tag(Error(0)))
+                        type Outcome = | Left(T) | Right(T)
+                        let tag = fun (value) ->
+                            match value with
+                            | Left(x) -> 1
+                            | Right(x) -> 2
+                        in Ashes.IO.print(tag(Left(0)) + tag(Right(0)))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
     }

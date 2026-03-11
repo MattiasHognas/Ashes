@@ -1,4 +1,4 @@
-# Ashes Language Specification (v0.x)
+# Ashes Language Specification
 
 Ashes is a pure, statically typed, expression-based functional programming language
 compiled directly to native code.
@@ -30,6 +30,27 @@ Programs are composed using nested expressions such as:
 
 let x = 10
 in Ashes.IO.print(x + 1)
+
+Built-in standard library members live under reserved `Ashes` modules.
+
+Canonical built-ins available today include:
+
+- `Ashes.print(expr)`
+- `Ashes.panic("message")`
+- `Ashes.args`
+- `Ashes.IO.print(expr)`
+- `Ashes.IO.write(expr)`
+- `Ashes.IO.writeLine(expr)`
+- `Ashes.IO.readLine()`
+- `Ashes.Fs.readText(path)`
+- `Ashes.Fs.writeText(path, text)`
+- `Ashes.Fs.exists(path)`
+- `Ashes.Net.Tcp.connect(host)(port)`
+- `Ashes.Net.Tcp.send(socket)(text)`
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)`
+- `Ashes.Net.Tcp.close(socket)`
+
+`Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 
 ---
 
@@ -75,6 +96,36 @@ Float arithmetic and comparisons are introduced in later milestones.
 “a” + “b”
 
 Strings support concatenation using `+`.
+
+Ashes strings represent UTF-8 text.
+
+Filesystem text APIs operate on UTF-8 encoded files:
+
+- `Ashes.Fs.readText(path)` returns `Result(Str, Str)`.
+- `Ashes.Fs.writeText(path, text)` returns `Result(Str, Unit)`.
+- `Ashes.Fs.exists(path)` returns `Result(Str, Bool)`.
+- Filesystem text is interpreted and written as UTF-8.
+- Invalid UTF-8 passed through `Ashes.Fs.readText` returns `Error(...)`.
+- Binary file APIs are not part of the current language surface.
+
+Networking APIs live under `Ashes.Net.Tcp`:
+
+- `Ashes.Net.Tcp.connect(host)(port)` returns `Result(Str, Socket)`.
+- `Ashes.Net.Tcp.send(socket)(text)` returns `Result(Str, Int)`.
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` returns `Result(Str, Str)`.
+- `Ashes.Net.Tcp.close(socket)` returns `Result(Str, Unit)`.
+
+Networking rules:
+
+- `connect` supports IPv4 address literals such as `"127.0.0.1"`.
+- `connect` may also resolve hostnames through the runtime host-resolution path
+    (for example `localhost` and other names available through system host
+    configuration).
+- Unresolvable hostnames return `Error(...)`.
+- `send` attempts to write the full UTF-8 buffer before returning `Ok(bytesWritten)`.
+- `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
+- Invalid UTF-8 received from the network returns `Error(...)`.
+- `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
 
 ## 2.3 Booleans
 
@@ -266,6 +317,9 @@ type Color =
 type Result(E, A) =
     | Ok(A)
     | Error(E)
+
+`Result` is a built-in runtime type. User code may use `Ok(...)` and `Error(...)`
+directly, and helper functions are available from the shipped `Ashes.Result` module.
 
 Generic ADTs declare their type parameters explicitly after the type name.
 For migration compatibility, code may omit explicit type parameters and rely on
@@ -787,6 +841,7 @@ Rules:
 - `None` and `Some` participate in normal constructor resolution rules.
 
 `Ashes.IO.write` and `Ashes.IO.writeLine` return `Unit`.
+`Ashes.IO.print` has type `a -> Unit`.
 `Ashes.IO.readLine` has type `Unit -> OptionString` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
 

@@ -1,8 +1,4 @@
 // expect: 5
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let x = 
     let? a = Ok(2)
     in 

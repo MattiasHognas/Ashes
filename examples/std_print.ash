@@ -1,0 +1,1 @@
+Ashes.print(42)

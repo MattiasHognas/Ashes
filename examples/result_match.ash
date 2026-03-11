@@ -1,7 +1,3 @@
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let r = Ok(42)
 in 
     match r with

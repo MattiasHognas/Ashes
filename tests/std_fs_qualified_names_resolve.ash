@@ -1,4 +1,8 @@
-// expect: 1
-if Ashes.Fs.exists("does-not-matter-yet")
-then Ashes.IO.print(1)
-else Ashes.IO.print(1)
+// file: file.txt = x
+// expect: true
+match Ashes.Fs.exists("file.txt") with
+    | Ok(found) -> 
+        if found
+        then Ashes.IO.print("true")
+        else Ashes.IO.print("false")
+    | Error(msg) -> Ashes.IO.print(msg)

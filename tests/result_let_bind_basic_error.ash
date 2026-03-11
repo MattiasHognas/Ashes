@@ -1,8 +1,4 @@
 // expect: bad
-type Result(E, A) =
-    | Ok(A)
-    | Error(E)
-
 let x = 
     let? n = Error("bad")
     in Ok(n + 1)

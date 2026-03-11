@@ -71,6 +71,8 @@ publish/
 tests/*.exe
 examples/*.exe
 /*.exe
+area.txt
+out.txt
 
 # Personal files
 PLANNED_ISSUES*.md

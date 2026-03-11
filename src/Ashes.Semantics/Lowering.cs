@@ -590,6 +590,10 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.FsReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFsReadTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FsWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFsWriteTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FsExists => LowerQualifiedBuiltinFunctionReference(name, CreateFsExistsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpConnectBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -1052,6 +1056,22 @@ public sealed class Lowering
         return false;
     }
 
+    private static bool TryBuildMissingResultDiagnostic(TypeRef type, IReadOnlyList<string> missingConstructors, out string diagnostic)
+    {
+        if (type is TypeRef.TNamedType named
+            && string.Equals(named.Symbol.Name, "Result", StringComparison.Ordinal)
+            && missingConstructors.Count > 0)
+        {
+            diagnostic = missingConstructors.Count == 1
+                ? $"Non-exhaustive match on Result: missing {missingConstructors[0]}."
+                : $"Non-exhaustive match on Result: missing {string.Join(" and ", missingConstructors)}.";
+            return true;
+        }
+
+        diagnostic = string.Empty;
+        return false;
+    }
+
     private bool TryRequireResultType(TypeRef type, TypeSymbol resultSymbol, Expr origin, string diagnosticMessage, out TypeRef errorType, out TypeRef successType)
     {
         var prunedType = Prune(type);
@@ -1301,6 +1321,7 @@ public sealed class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (vTemp, vType) = LowerExpr(arg);
         var t = Prune(vType);
+        var unitType = _resolvedTypes["Unit"];
 
         if (t is TypeRef.TNever)
         {
@@ -1311,21 +1332,21 @@ public sealed class Lowering
         {
             _usesPrintInt = true;
             _inst.Add(new IrInst.PrintInt(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         if (t is TypeRef.TStr)
         {
             _usesPrintStr = true;
             _inst.Add(new IrInst.PrintStr(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         if (t is TypeRef.TBool)
         {
             _usesPrintBool = true;
             _inst.Add(new IrInst.PrintBool(vTemp));
-            return (vTemp, t);
+            return (vTemp, unitType);
         }
 
         ReportDiagnostic(GetSpan(arg), $"print() does not support type {Pretty(t)} yet.");
@@ -1420,8 +1441,8 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.LoadConstStr(target, InternString(string.Empty)));
-        return (target, new TypeRef.TStr());
+        _inst.Add(new IrInst.FsReadText(target, pathTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerFsWriteText(Expr pathArg, Expr textArg)
@@ -1468,7 +1489,9 @@ public sealed class Lowering
             return (textTemp, textLoweredType);
         }
 
-        return LowerUnitValue();
+        var target = NewTemp();
+        _inst.Add(new IrInst.FsWriteText(target, pathTemp, textTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
     private (int, TypeRef) LowerFsExists(Expr pathArg)
@@ -1495,8 +1518,183 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.LoadConstBool(target, false));
-        return (target, new TypeRef.TBool());
+        _inst.Add(new IrInst.FsExists(target, pathTemp));
+        return (target, CreateStringResultType(new TypeRef.TBool()));
+    }
+
+    private TypeRef.TNamedType CreateStringResultType(TypeRef successType)
+    {
+        if (!_typeSymbols.TryGetValue("Result", out var resultSymbol) || resultSymbol.TypeParameters.Count != 2)
+        {
+            throw new InvalidOperationException("Built-in Result type is not registered.");
+        }
+
+        return new TypeRef.TNamedType(resultSymbol, [new TypeRef.TStr(), successType]);
+    }
+
+    private bool TryRequireSocketType(TypeRef type, Expr origin, string diagnosticMessage)
+    {
+        var prunedType = Prune(type);
+        if (prunedType is TypeRef.TVar)
+        {
+            Unify(prunedType, _resolvedTypes["Socket"]);
+            return true;
+        }
+
+        if (prunedType is TypeRef.TNamedType named && string.Equals(named.Symbol.Name, "Socket", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        ReportDiagnostic(GetSpan(origin), $"{diagnosticMessage} Got {Pretty(prunedType)}.");
+        return false;
+    }
+
+    private (int, TypeRef) LowerNetTcpConnect(Expr hostArg, Expr portArg)
+    {
+        using var hostSpan = PushDiagnosticSpan(hostArg);
+        var (hostTemp, hostType) = LowerExpr(hostArg);
+        var prunedHostType = Prune(hostType);
+        if (prunedHostType is TypeRef.TNever)
+        {
+            return (hostTemp, prunedHostType);
+        }
+
+        if (prunedHostType is TypeRef.TVar)
+        {
+            Unify(prunedHostType, new TypeRef.TStr());
+            prunedHostType = new TypeRef.TStr();
+        }
+
+        if (prunedHostType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(hostArg), $"Ashes.Net.Tcp.connect() expects Str for host but got {Pretty(prunedHostType)}.");
+            return (hostTemp, prunedHostType);
+        }
+
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tcp.connect() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.NetTcpConnect(target, hostTemp, portTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTcpSend(Expr socketArg, Expr textArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.send() expects Socket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        using var textSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var prunedTextType = Prune(textType);
+        if (prunedTextType is TypeRef.TNever)
+        {
+            return (textTemp, prunedTextType);
+        }
+
+        if (prunedTextType is TypeRef.TVar)
+        {
+            Unify(prunedTextType, new TypeRef.TStr());
+            prunedTextType = new TypeRef.TStr();
+        }
+
+        if (prunedTextType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Net.Tcp.send() expects Str for text but got {Pretty(prunedTextType)}.");
+            return (textTemp, prunedTextType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.NetTcpSend(target, socketTemp, textTemp));
+        return (target, CreateStringResultType(new TypeRef.TInt()));
+    }
+
+    private (int, TypeRef) LowerNetTcpReceive(Expr socketArg, Expr maxBytesArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.receive() expects Socket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        using var maxBytesSpan = PushDiagnosticSpan(maxBytesArg);
+        var (maxBytesTemp, maxBytesType) = LowerExpr(maxBytesArg);
+        var prunedMaxBytesType = Prune(maxBytesType);
+        if (prunedMaxBytesType is TypeRef.TNever)
+        {
+            return (maxBytesTemp, prunedMaxBytesType);
+        }
+
+        if (prunedMaxBytesType is TypeRef.TVar)
+        {
+            Unify(prunedMaxBytesType, new TypeRef.TInt());
+            prunedMaxBytesType = new TypeRef.TInt();
+        }
+
+        if (prunedMaxBytesType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(maxBytesArg), $"Ashes.Net.Tcp.receive() expects Int for maxBytes but got {Pretty(prunedMaxBytesType)}.");
+            return (maxBytesTemp, prunedMaxBytesType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.NetTcpReceive(target, socketTemp, maxBytesTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
+    }
+
+    private (int, TypeRef) LowerNetTcpClose(Expr socketArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.close() expects Socket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.NetTcpClose(target, socketTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
     private (int, TypeRef) LowerIf(Expr.If iff)
@@ -2021,6 +2219,10 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.FsReadText => LowerFsReadText(collectedArgs[0]),
                 BuiltinRegistry.BuiltinValueKind.FsWriteText => LowerFsWriteText(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.FsExists => LowerFsExists(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+                BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+                BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+                BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
                 _ => StdMemberNotFound(qv.Module, qv.Name)
             };
         }
@@ -2327,7 +2529,15 @@ public sealed class Lowering
         {
             if (missingAdtConstructors.Count > 0)
             {
-                _diag.Error(matchPos, $"Non-exhaustive match expression. Missing constructor(s): {string.Join(", ", missingAdtConstructors.Select(name => $"'{name}'"))}.");
+                if (TryBuildMissingResultDiagnostic(prunedValueType, missingAdtConstructors, out var resultDiagnostic))
+                {
+                    _diag.Error(matchPos, resultDiagnostic);
+                }
+                else
+                {
+                    _diag.Error(matchPos, $"Non-exhaustive match expression. Missing constructor(s): {string.Join(", ", missingAdtConstructors.Select(name => $"'{name}'"))}.");
+                }
+
                 reportedNonExhaustive = true;
             }
         }
@@ -3791,10 +4001,10 @@ public sealed class Lowering
 
     private Binding.Intrinsic CreatePrintBinding()
     {
-        var printArgReturnTypeVar = (TypeRef.TVar)NewTypeVar();
+        var printArgTypeVar = (TypeRef.TVar)NewTypeVar();
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([new TypeVar(printArgReturnTypeVar.Id, "a")], new TypeRef.TFun(printArgReturnTypeVar, printArgReturnTypeVar))
+            new TypeScheme([new TypeVar(printArgTypeVar.Id, "a")], new TypeRef.TFun(printArgTypeVar, _resolvedTypes["Unit"]))
         );
     }
 
@@ -3826,7 +4036,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TStr()))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())))
         );
     }
 
@@ -3834,7 +4044,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"])))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
     }
 
@@ -3842,7 +4052,39 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TBool()))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpConnectBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(_resolvedTypes["Socket"]))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpSendBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TInt()))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpReceiveBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr()))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpCloseBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringResultType(_resolvedTypes["Unit"])))
         );
     }
 
