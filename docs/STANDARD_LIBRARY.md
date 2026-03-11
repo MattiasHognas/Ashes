@@ -30,6 +30,18 @@ These types are always available without imports:
 - `readText(path)` returning `Result(Str, Str)`
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
+ 
+### `Ashes.Http`
+
+- `get(url)` returning `Result(Str, Str)`
+- `post(url, body)` returning `Result(Str, Str)`
+
+Current HTTP support is intentionally small:
+
+- Only `http://` URLs are supported.
+- `https://` returns `Error("https not supported")`.
+- Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
+- `Transfer-Encoding: chunked` currently returns `Error("unsupported transfer encoding")`.
 
 ### `Ashes.Net.Tcp`
 
