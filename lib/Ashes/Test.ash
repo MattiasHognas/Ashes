@@ -3,8 +3,8 @@ let assertEqual =
         fun (actual) -> 
             if expected == actual
             then Unit
-            else Ashes.panic("Assertion failed")
+            else Ashes.IO.panic("Assertion failed")
 in 
     let fail = 
-        fun (msg) -> Ashes.panic(msg)
+        fun (msg) -> Ashes.IO.panic(msg)
     in fail

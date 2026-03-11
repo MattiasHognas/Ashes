@@ -338,6 +338,98 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public async Task BuildCompilationSource_should_allow_leaf_qualified_export_access_for_multisegment_modules()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            Directory.CreateDirectory(Path.Combine(root, "M"));
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import M.X\nimport M.Y\nAshes.IO.print(X.z + Y.z)");
+            File.WriteAllText(Path.Combine(root, "M", "X.ash"), "let z = 1 in z");
+            File.WriteAllText(Path.Combine(root, "M", "Y.ash"), "let z = 2 in z");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("3\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void BuildCompilationSource_should_fail_on_imported_export_name_collision_for_multisegment_modules()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            Directory.CreateDirectory(Path.Combine(root, "M"));
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import M.X\nimport M.Y\nAshes.IO.print(z)");
+            File.WriteAllText(Path.Combine(root, "M", "X.ash"), "let z = 1 in z");
+            File.WriteAllText(Path.Combine(root, "M", "Y.ash"), "let z = 2 in z");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationSource(plan));
+            ex.Message.ShouldContain("Import name collision for imported binding 'z'");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void BuildCompilationSource_should_fail_on_ambiguous_leaf_module_qualifier()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            Directory.CreateDirectory(Path.Combine(root, "B"));
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import A.X\nimport B.X\nAshes.IO.print(X.z)");
+            File.WriteAllText(Path.Combine(root, "A", "X.ash"), "let z = 1 in z");
+            File.WriteAllText(Path.Combine(root, "B", "X.ash"), "let z = 2 in z");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationSource(plan));
+            ex.Message.ShouldContain("Import module qualifier collision for 'X'");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task BuildCompilationSource_should_allow_full_qualification_when_leaf_module_qualifier_is_ambiguous()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            Directory.CreateDirectory(Path.Combine(root, "B"));
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import A.X\nimport B.X\nAshes.IO.print(A.X.z + B.X.z)");
+            File.WriteAllText(Path.Combine(root, "A", "X.ash"), "let z = 1 in z");
+            File.WriteAllText(Path.Combine(root, "B", "X.ash"), "let z = 2 in z");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("3\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task BuildCompilationSource_should_allow_multiple_exports_from_imported_modules()
     {
         var root = CreateTempDirectory();

@@ -48,6 +48,12 @@ public static class ProjectSupport
 
     private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive);
 
+    private readonly record struct QualifiedReference(string ModuleName, string ExportName);
+
+    private readonly record struct ReferencedNames(
+        IReadOnlySet<string> Variables,
+        IReadOnlySet<QualifiedReference> QualifiedReferences);
+
     private sealed record ModuleSourceShape(
         string TypeDeclarationsSource,
         string RawExpressionSource,
@@ -506,12 +512,12 @@ public static class ProjectSupport
         ModuleSourceShape entryShape,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
     {
-        var referencedVariables = CollectReferencedVariables(entryShape.RawExpressionSource);
+        var referencedNames = CollectReferencedNames(entryShape.RawExpressionSource);
         var aliases = BuildVisibleAliases(
             entryModule,
             [],
             null,
-            referencedVariables,
+            referencedNames,
             exportedNames);
 
         return ApplyAliases(entryShape.RawExpressionSource, aliases);
@@ -546,12 +552,12 @@ public static class ProjectSupport
 
             usedBindingNames[generatedBindingName] = module.ModuleName;
 
-            var referencedVariables = CollectReferencedVariables(binding.ValueSource);
+            var referencedNames = CollectReferencedNames(binding.ValueSource);
             var aliases = BuildVisibleAliases(
                 module,
                 availableLocalBindings,
                 binding.IsRecursive ? binding.Name : null,
-                referencedVariables,
+                referencedNames,
                 exportedNames);
 
             prefix.Append("let ");
@@ -568,12 +574,12 @@ public static class ProjectSupport
             availableLocalBindings.Add(binding.Name);
         }
 
-        var bodyReferencedVariables = CollectReferencedVariables(shape.ExpressionBodySource);
+        var bodyReferencedNames = CollectReferencedNames(shape.ExpressionBodySource);
         var bodyAliases = BuildVisibleAliases(
             module,
             availableLocalBindings,
             null,
-            bodyReferencedVariables,
+            bodyReferencedNames,
             exportedNames);
 
         prefix.Append("let ")
@@ -589,11 +595,13 @@ public static class ProjectSupport
         ProjectModule module,
         IReadOnlyList<string> availableLocalBindings,
         string? currentRecursiveBinding,
-        IReadOnlySet<string> referencedVariables,
+        ReferencedNames referencedNames,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
     {
         var aliases = new List<KeyValuePair<string, string>>();
         var localNames = new HashSet<string>(StringComparer.Ordinal);
+        var referencedVariables = referencedNames.Variables;
+        var referencedQualifiedReferences = referencedNames.QualifiedReferences;
 
         if (!string.IsNullOrWhiteSpace(currentRecursiveBinding) && referencedVariables.Contains(currentRecursiveBinding))
         {
@@ -616,6 +624,7 @@ public static class ProjectSupport
         }
 
         var importedOwners = new Dictionary<string, string>(StringComparer.Ordinal);
+        var shortQualifierOwners = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var import in module.Imports.Reverse())
         {
             if (!exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
@@ -623,10 +632,33 @@ public static class ProjectSupport
                 continue;
             }
 
+            var shortQualifier = GetLeafModuleQualifier(import);
+            var hasReferencedShortQualifier = !string.Equals(shortQualifier, import, StringComparison.Ordinal)
+                && referencedQualifiedReferences.Any(reference => string.Equals(reference.ModuleName, shortQualifier, StringComparison.Ordinal));
+
+            if (hasReferencedShortQualifier)
+            {
+                if (shortQualifierOwners.TryGetValue(shortQualifier, out var existingModule))
+                {
+                    throw new InvalidOperationException(
+                        $"Import module qualifier collision for '{shortQualifier}': '{existingModule}' and '{import}'. Use full qualification.");
+                }
+
+                shortQualifierOwners[shortQualifier] = import;
+            }
+
             foreach (var exportName in exportNames)
             {
                 if (!referencedVariables.Contains(exportName) || localNames.Contains(exportName))
                 {
+                    if (hasReferencedShortQualifier
+                        && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
+                    {
+                        aliases.Add(new KeyValuePair<string, string>(
+                            $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
+                            $"{SanitizeModuleBindingName(import)}_{exportName}"));
+                    }
+
                     continue;
                 }
 
@@ -640,10 +672,24 @@ public static class ProjectSupport
                 aliases.Add(new KeyValuePair<string, string>(
                     exportName,
                     $"{SanitizeModuleBindingName(import)}_{exportName}"));
+
+                if (hasReferencedShortQualifier
+                    && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
+                {
+                    aliases.Add(new KeyValuePair<string, string>(
+                        $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
+                        $"{SanitizeModuleBindingName(import)}_{exportName}"));
+                }
             }
         }
 
         return aliases;
+    }
+
+    private static string GetLeafModuleQualifier(string moduleName)
+    {
+        var lastDot = moduleName.LastIndexOf('.');
+        return lastDot >= 0 ? moduleName[(lastDot + 1)..] : moduleName;
     }
 
     private static string ApplyAliases(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
@@ -925,18 +971,21 @@ public static class ProjectSupport
         return sources;
     }
 
-    private static HashSet<string> CollectReferencedVariables(string source)
+    private static ReferencedNames CollectReferencedNames(string source)
     {
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         if (diag.StructuredErrors.Count > 0)
         {
-            return [];
+            return new ReferencedNames(
+                new HashSet<string>(StringComparer.Ordinal),
+                new HashSet<QualifiedReference>());
         }
 
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var qualifiedReferences = new HashSet<QualifiedReference>();
         Visit(program.Body);
-        return names;
+        return new ReferencedNames(names, qualifiedReferences);
 
         void Visit(Expr expr)
         {
@@ -945,7 +994,9 @@ public static class ProjectSupport
                 case Expr.Var varExpr:
                     names.Add(varExpr.Name);
                     break;
-                case Expr.QualifiedVar:
+                case Expr.QualifiedVar qualifiedVar:
+                    qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
+                    break;
                 case Expr.IntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
