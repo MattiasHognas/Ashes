@@ -1,3 +1,3 @@
-match Ashes.args with
-    | [] -> Ashes.print("[]")
-    | first :: rest -> Ashes.print(first)
+match Ashes.IO.args with
+    | [] -> Ashes.IO.print("[]")
+    | first :: rest -> Ashes.IO.print(first)
