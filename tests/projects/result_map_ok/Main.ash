@@ -1,5 +1,5 @@
 // expect: 2
-import Result
+import Ashes.Result
 let inc = 
     fun (x) -> x + 1
 in 

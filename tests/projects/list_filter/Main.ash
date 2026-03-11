@@ -1,5 +1,5 @@
 // expect: 34
-import List
+import Ashes.List
 let keep = 
     fun (x) -> x >= 3
 in 

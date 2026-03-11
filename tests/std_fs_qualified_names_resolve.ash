@@ -1,6 +1,6 @@
 // file: file.txt = x
 // expect: true
-match Ashes.Fs.exists("file.txt") with
+match Ashes.File.exists("file.txt") with
     | Ok(found) -> 
         if found
         then Ashes.IO.print("true")

@@ -1,3 +1,3 @@
 // expect: true
-import Option
-Ashes.IO.print(Option.isSome(Some(1)))
+import Ashes.Maybe
+Ashes.IO.print(Maybe.isSome(Some(1)))

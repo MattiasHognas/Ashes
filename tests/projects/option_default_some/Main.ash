@@ -1,3 +1,3 @@
 // expect: 7
-import Option
-Ashes.IO.print(Option.default(0)(Some(7)))
+import Ashes.Maybe
+Ashes.IO.print(Maybe.default(0)(Some(7)))

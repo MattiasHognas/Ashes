@@ -70,6 +70,7 @@ Authoritative specifications:
 - [Formatter Specification](docs/FORMATTER_SPEC.md)
 - [Diagnostics Reference](docs/DIAGNOSTICS.md)
 - [Testing Reference](docs/TESTING.md)
+- [Standard Library Reference](docs/STANDARD_LIBRARY.md)
 
 The README provides only a high-level overview.
 
@@ -79,9 +80,9 @@ Standard library functions live under `Ashes.*` modules. The core IO surface liv
 -   `Ashes.IO.print(expr)` — prints to standard output
 -   `Ashes.IO.panic("message")` — aborts execution
 -   `Ashes.IO.args` — `List<String>` of command-line arguments
--   `Ashes.Fs.readText(path)` — `Result<String, String>` UTF-8 file read
--   `Ashes.Fs.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
--   `Ashes.Fs.exists(path)` — `Result<String, Bool>` existence check
+-   `Ashes.File.readText(path)` — `Result<String, String>` UTF-8 file read
+-   `Ashes.File.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
+-   `Ashes.File.exists(path)` — `Result<String, Bool>` existence check
 -   `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
 -   `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Int>` TCP send
 -   `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
@@ -94,19 +95,22 @@ Short qualification such as `Bar.value` also works when `Bar` is the unique impo
 qualifier. If imported exports collide, unqualified access fails; if imported leaf qualifiers
 collide, short qualification fails and full qualification must be used.
 
-Pure shipped libraries live under the compiler `lib/` folder and are available in project mode without additional configuration. Project-local modules still win first, so a project can intentionally override a shipped module such as `List` by defining its own `List.ash`.
+Pure shipped helper libraries live under the compiler `lib/` folder. Reserved
+`Ashes.*` modules are compiler-provided and are not overridable by project-local
+modules.
 
-Shipped pure libraries currently include:
+Shipped source-backed standard-library helper modules currently include:
 
-- `List`
-- `Option`
-- `Result`
+- `Ashes.List`
+- `Ashes.Maybe`
+- `Ashes.Result`
+- `Ashes.Test`
 
 Example:
 
-    import List
+    import Ashes.List
     import Ashes.IO
-    print(List.length([1, 2, 3]))
+    print(Ashes.List.length([1, 2, 3]))
 
 ------------------------------------------------------------------------
 

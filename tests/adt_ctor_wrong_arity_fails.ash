@@ -1,5 +1,5 @@
 // expect-compile-error: Constructor 'None' expects 0 argument(s) but got 1.
-type Option =
+type Maybe =
     | None
     | Some(T)
 

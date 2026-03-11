@@ -1,5 +1,5 @@
 // expect-compile-error: Constructor patterns from different ADTs
-type Option =
+type Maybe =
     | None
     | Some(T)
 
