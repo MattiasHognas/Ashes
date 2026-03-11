@@ -1,4 +1,4 @@
-match Ashes.Fs.exists("out.txt") with
+match Ashes.File.exists("out.txt") with
     | Ok(found) -> 
         if found
         then Ashes.IO.print(1)

@@ -21,13 +21,13 @@ public sealed class TypeResolutionTests
     [Test]
     public void Resolve_type_name_returns_named_type_for_known_type()
     {
-        var (lowering, diag) = LowerProgram("type Option = | None | Some(T)\nAshes.IO.print(1)");
+        var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
-        var resolved = lowering.ResolveTypeName("Option", [new TypeRef.TInt()]);
+        var resolved = lowering.ResolveTypeName("Maybe", [new TypeRef.TInt()]);
         resolved.ShouldBeOfType<TypeRef.TNamedType>();
         var named = (TypeRef.TNamedType)resolved;
-        named.Symbol.Name.ShouldBe("Option");
+        named.Symbol.Name.ShouldBe("Maybe");
     }
 
     [Test]
@@ -37,17 +37,17 @@ public sealed class TypeResolutionTests
 
         diag.Errors.ShouldBeEmpty();
         var named = lowering.ResolvedTypes["Result"];
-        named.TypeArgs.Count.ShouldBe(0);
+        named.TypeArgs.Count.ShouldBe(2);
         named.Symbol.TypeParameters.Select(x => x.Name).ShouldBe(["E", "A"]);
     }
 
     [Test]
     public void Implicit_constructor_parameters_still_register_as_type_parameters()
     {
-        var (lowering, diag) = LowerProgram("type Option = | None | Some(T)\nAshes.IO.print(1)");
+        var (lowering, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nAshes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
-        lowering.TypeSymbols["Option"].TypeParameters.Select(x => x.Name).ShouldBe(["T"]);
+        lowering.TypeSymbols["LocalMaybe"].TypeParameters.Select(x => x.Name).ShouldBe(["T"]);
     }
 
     [Test]
@@ -88,14 +88,23 @@ public sealed class TypeResolutionTests
     }
 
     [Test]
-    public void Builtin_option_string_type_can_be_resolved()
+    public void Builtin_maybe_type_can_be_resolved()
     {
         var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
-        var resolved = lowering.ResolveTypeName("OptionString");
+        var resolved = lowering.ResolveTypeName("Maybe", [new TypeRef.TStr()]);
         resolved.ShouldBeOfType<TypeRef.TNamedType>();
         ((TypeRef.TNamedType)resolved).Symbol.IsBuiltin.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Builtin_list_type_can_be_resolved()
+    {
+        var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
+
+        diag.Errors.ShouldBeEmpty();
+        lowering.ResolveTypeName("List", [new TypeRef.TInt()]).ShouldBeOfType<TypeRef.TList>();
     }
 
     [Test]

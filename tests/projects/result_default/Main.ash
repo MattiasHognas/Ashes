@@ -1,3 +1,3 @@
 // expect: 5
-import Result
+import Ashes.Result
 Ashes.IO.print(Result.default(5)(Error("nope")))

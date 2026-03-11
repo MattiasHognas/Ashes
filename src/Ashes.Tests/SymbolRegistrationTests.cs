@@ -9,28 +9,28 @@ public sealed class SymbolRegistrationTests
     [Test]
     public void Lower_program_registers_type_symbol()
     {
-        var (lowering, _) = LowerProgram("type Option = | None | Some(T)\nAshes.IO.print(1)");
+        var (lowering, _) = LowerProgram("type Maybe = | None | Some(T)\nAshes.IO.print(1)");
 
-        lowering.TypeSymbols.ContainsKey("Option").ShouldBeTrue();
-        var sym = lowering.TypeSymbols["Option"];
-        sym.Name.ShouldBe("Option");
+        lowering.TypeSymbols.ContainsKey("Maybe").ShouldBeTrue();
+        var sym = lowering.TypeSymbols["Maybe"];
+        sym.Name.ShouldBe("Maybe");
         sym.Constructors.Count.ShouldBe(2);
     }
 
     [Test]
     public void Lower_program_registers_constructor_symbols_linked_to_parent_type()
     {
-        var (lowering, _) = LowerProgram("type Option = | None | Some(T)\nAshes.IO.print(1)");
+        var (lowering, _) = LowerProgram("type Maybe = | None | Some(T)\nAshes.IO.print(1)");
 
         lowering.ConstructorSymbols.ContainsKey("None").ShouldBeTrue();
         lowering.ConstructorSymbols.ContainsKey("Some").ShouldBeTrue();
 
         var none = lowering.ConstructorSymbols["None"];
-        none.ParentType.ShouldBe("Option");
+        none.ParentType.ShouldBe("Maybe");
         none.Arity.ShouldBe(0);
 
         var some = lowering.ConstructorSymbols["Some"];
-        some.ParentType.ShouldBe("Option");
+        some.ParentType.ShouldBe("Maybe");
         some.Arity.ShouldBe(1);
     }
 
@@ -56,7 +56,7 @@ public sealed class SymbolRegistrationTests
         var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
-        lowering.TypeSymbols.ContainsKey("OptionString").ShouldBeTrue();
+        lowering.TypeSymbols.ContainsKey("Maybe").ShouldBeTrue();
         lowering.ConstructorSymbols.ContainsKey("None").ShouldBeTrue();
         lowering.ConstructorSymbols.ContainsKey("Some").ShouldBeTrue();
     }
@@ -72,16 +72,16 @@ public sealed class SymbolRegistrationTests
     }
 
     [Test]
-    public void Lower_program_registers_builtin_option_string_symbols()
+    public void Lower_program_registers_builtin_maybe_symbols()
     {
         var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
-        lowering.TypeSymbols.ContainsKey("OptionString").ShouldBeTrue();
+        lowering.TypeSymbols.ContainsKey("Maybe").ShouldBeTrue();
         lowering.TypeSymbols.ContainsKey("Unit").ShouldBeTrue();
-        lowering.TypeSymbols["OptionString"].IsBuiltin.ShouldBeTrue();
-        lowering.ConstructorSymbols["None"].ParentType.ShouldBe("OptionString");
-        lowering.ConstructorSymbols["Some"].ParameterTypes.ShouldHaveSingleItem().ShouldBeOfType<TypeRef.TStr>();
+        lowering.TypeSymbols["Maybe"].IsBuiltin.ShouldBeTrue();
+        lowering.ConstructorSymbols["None"].ParentType.ShouldBe("Maybe");
+        lowering.ConstructorSymbols["Some"].ParameterTypes.ShouldHaveSingleItem().ShouldBeOfType<TypeRef.TTypeParam>();
         lowering.ConstructorSymbols["Unit"].ParentType.ShouldBe("Unit");
     }
 
@@ -99,7 +99,7 @@ public sealed class SymbolRegistrationTests
     [Test]
     public void Lower_program_reports_reserved_runtime_type_diagnostic()
     {
-        var (_, diag) = LowerProgram("type OptionString = | Nope\nAshes.IO.print(1)");
+        var (_, diag) = LowerProgram("type Maybe = | Nope\nAshes.IO.print(1)");
 
         diag.Errors.ShouldContain(x => x.Contains("built-in runtime types are reserved", StringComparison.Ordinal));
     }

@@ -1,5 +1,5 @@
 // expect: 1234
-import List
+import Ashes.List
 let digits = 
     fun (acc) -> 
         fun (x) -> acc * 10 + x

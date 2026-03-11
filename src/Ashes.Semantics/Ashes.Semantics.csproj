@@ -13,6 +13,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="..\..\lib\Ashes\List.ash" LogicalName="Ashes.Semantics.StdLib.Ashes.List.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Maybe.ash" LogicalName="Ashes.Semantics.StdLib.Ashes.Maybe.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Result.ash" LogicalName="Ashes.Semantics.StdLib.Ashes.Result.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Test.ash" LogicalName="Ashes.Semantics.StdLib.Ashes.Test.ash" />
   </ItemGroup>

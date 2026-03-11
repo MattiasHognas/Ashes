@@ -11,7 +11,7 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Option = | None | Some(T)
+            type LocalMaybe = | None | Some(T)
             let unwrapOr = fun (opt, def) ->
               match opt with
               | None -> def
@@ -27,7 +27,7 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Option = | None | Some(T)
+            type LocalMaybe = | None | Some(T)
             type Result = | Ok(T) | Error(T)
             match None with
             | None -> 0
@@ -70,7 +70,7 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Option = | None | Some(T)
+            type LocalMaybe = | None | Some(T)
             match None with
             | Foo(x) -> x
             | None -> 0
@@ -85,7 +85,7 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Option = | None | Some(T)
+            type LocalMaybe = | None | Some(T)
             match Some(1) with
             | Some(x, y) -> x
             | None -> 0
@@ -251,8 +251,8 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            import Ashes.Fs
-            match Ashes.Fs.exists("out.txt") with
+            import Ashes.File
+            match Ashes.File.exists("out.txt") with
             | Ok(found) ->
                 if found
                 then Ashes.IO.print(1)

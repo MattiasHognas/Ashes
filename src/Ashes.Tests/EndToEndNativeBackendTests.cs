@@ -251,7 +251,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            type Option = | None | Some(T)
+            type Maybe = | None | Some(T)
             let unwrapOr = fun (opt, def) ->
               match opt with
               | None -> def

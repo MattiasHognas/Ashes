@@ -1,7 +1,3 @@
-type Option =
-    | None
-    | Some(T)
-
 let firstOr = 
     fun (xs) -> 
         fun (def) -> 

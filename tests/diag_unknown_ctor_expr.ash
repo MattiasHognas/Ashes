@@ -1,5 +1,5 @@
 // expect-compile-error: Unknown constructor 'Foo'.
-type Option =
+type Maybe =
     | None
     | Some(T)
 

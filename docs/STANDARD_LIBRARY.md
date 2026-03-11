@@ -1,0 +1,91 @@
+# Ashes Standard Library
+
+This document summarizes the current compiler-provided standard-library surface.
+It is user-facing guidance for the shipped modules; the authoritative language
+semantics remain in `docs/LANGUAGE_SPEC.md`.
+
+## Built-in Runtime Types
+
+These types are always available without imports:
+
+- `Unit`
+- `Maybe(T)` with constructors `None` and `Some(T)`
+- `Result(E, A)` with constructors `Error(E)` and `Ok(A)`
+- `List<T>` as the type shown for list syntax and list values
+- `Socket`
+
+## Built-in Modules
+
+### `Ashes.IO`
+
+- `print(value)`
+- `panic(message)`
+- `args`
+- `write(text)`
+- `writeLine(text)`
+- `readLine()` returning `Maybe(Str)`
+
+### `Ashes.File`
+
+- `readText(path)` returning `Result(Str, Str)`
+- `writeText(path, text)` returning `Result(Str, Unit)`
+- `exists(path)` returning `Result(Str, Bool)`
+
+### `Ashes.Net.Tcp`
+
+- `connect(host)(port)` returning `Result(Str, Socket)`
+- `send(socket)(text)` returning `Result(Str, Int)`
+- `receive(socket)(maxBytes)` returning `Result(Str, Str)`
+- `close(socket)` returning `Result(Str, Unit)`
+
+## Shipped Helper Modules
+
+These modules are compiler-shipped and live under the reserved `Ashes.*`
+namespace. They are not overridable by project-local modules.
+
+### `Ashes.List`
+
+- `length`
+- `head`
+- `tail`
+- `map`
+- `filter`
+- `foldLeft`
+- `reverse`
+- `append`
+- `isEmpty`
+
+### `Ashes.Maybe`
+
+- `map`
+- `flatMap`
+- `getOrElse`
+- `isSome`
+- `isNone`
+
+### `Ashes.Result`
+
+- `map`
+- `flatMap`
+- `getOrElse`
+- `isOk`
+- `isError`
+
+### `Ashes.Test`
+
+- `assertEqual(expected, actual)`
+- `fail(message)`
+
+`assertEqual(expected, actual)` is the preferred surface form. Like other
+multi-argument calls in Ashes, it is syntax sugar for curried application.
+
+Canonical example:
+
+```ash
+import Ashes.Test
+
+let checked = assertEqual(3, 3)
+in Ashes.IO.print("ok")
+```
+
+`Ashes.Test` is ordinary shipped library code, not a special compiler intrinsic.

@@ -383,7 +383,7 @@ public sealed class WindowsX64CodegenIced
 
         asm.ret();
 
-        // read_line() -> RAX = OptionString
+        // read_line() -> RAX = Maybe<Str>
         asm.Label(ref L_read_line);
         var L_read_line_loop = asm.CreateLabel();
         var L_read_line_eof = asm.CreateLabel();

@@ -1,5 +1,1 @@
-type Option =
-    | None
-    | Some(T)
-
-Ashes.IO.print("Option type declared")
+Ashes.IO.print("Maybe type declared")

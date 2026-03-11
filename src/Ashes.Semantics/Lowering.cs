@@ -282,7 +282,20 @@ public sealed class Lowering
                 IsBuiltin: true);
 
             _typeSymbols[builtinType.Name] = typeSymbol;
-            _resolvedTypes[builtinType.Name] = new TypeRef.TNamedType(typeSymbol, []);
+            if (string.Equals(builtinType.Name, "List", StringComparison.Ordinal))
+            {
+                _resolvedTypes[builtinType.Name] = new TypeRef.TNamedType(typeSymbol, [new TypeRef.TTypeParam(typeSymbol.TypeParameters[0])]);
+            }
+            else if (typeSymbol.TypeParameters.Count > 0)
+            {
+                _resolvedTypes[builtinType.Name] = new TypeRef.TNamedType(
+                    typeSymbol,
+                    typeSymbol.TypeParameters.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
+            }
+            else
+            {
+                _resolvedTypes[builtinType.Name] = new TypeRef.TNamedType(typeSymbol, []);
+            }
             foreach (var constructor in constructors)
             {
                 _constructorSymbols[constructor.Name] = constructor;
@@ -340,6 +353,17 @@ public sealed class Lowering
             }
 
             return primitiveType;
+        }
+
+        if (string.Equals(name, "List", StringComparison.Ordinal))
+        {
+            if (typeArgs.Count != 1)
+            {
+                ReportDiagnostic(0, $"Type 'List' expects 1 type argument(s) but got {typeArgs.Count}.");
+                return new TypeRef.TNever();
+            }
+
+            return new TypeRef.TList(typeArgs[0]);
         }
 
         if (!_typeSymbols.TryGetValue(name, out var sym))
@@ -1404,7 +1428,7 @@ public sealed class Lowering
 
         var target = NewTemp();
         _inst.Add(new IrInst.ReadLine(target));
-        return (target, _resolvedTypes["OptionString"]);
+        return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerUnitValue()
@@ -1436,7 +1460,7 @@ public sealed class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.Fs.readText() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.readText() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -1464,7 +1488,7 @@ public sealed class Lowering
 
         if (pathLoweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.Fs.writeText() expects Str for path but got {Pretty(pathLoweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.writeText() expects Str for path but got {Pretty(pathLoweredType)}.");
             return (pathTemp, pathLoweredType);
         }
 
@@ -1485,7 +1509,7 @@ public sealed class Lowering
 
         if (textLoweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(textArg), $"Ashes.Fs.writeText() expects Str for text but got {Pretty(textLoweredType)}.");
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.File.writeText() expects Str for text but got {Pretty(textLoweredType)}.");
             return (textTemp, textLoweredType);
         }
 
@@ -1513,7 +1537,7 @@ public sealed class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.Fs.exists() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.exists() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -4028,8 +4052,18 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], _resolvedTypes["OptionString"]))
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateMaybeType(new TypeRef.TStr())))
         );
+    }
+
+    private TypeRef CreateMaybeType(TypeRef innerType)
+    {
+        if (!_typeSymbols.TryGetValue("Maybe", out var maybeSymbol) || maybeSymbol.TypeParameters.Count != 1)
+        {
+            throw new InvalidOperationException("Built-in Maybe type is not registered.");
+        }
+
+        return new TypeRef.TNamedType(maybeSymbol, [innerType]);
     }
 
     private Binding.Intrinsic CreateFsReadTextBinding()

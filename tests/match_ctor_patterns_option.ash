@@ -1,8 +1,4 @@
 // expect: 12
-type Option =
-    | None
-    | Some(T)
-
 let unwrapOr = 
     fun (opt) -> 
         fun (def) -> 

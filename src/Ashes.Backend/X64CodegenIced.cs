@@ -36,9 +36,9 @@ public sealed class X64CodegenIced
         EnsureStringLiteral(data, "__rt_false", "false");
         string falseLabel = "__rt_false";
         EnsureStringLiteral(data, "__rt_readline_too_long", "readLine() exceeded max line length");
-        EnsureStringLiteral(data, "__rt_fs_read_failed", "Ashes.Fs.readText() failed");
-        EnsureStringLiteral(data, "__rt_fs_write_failed", "Ashes.Fs.writeText() failed");
-        EnsureStringLiteral(data, "__rt_fs_invalid_utf8", "Ashes.Fs.readText() encountered invalid UTF-8");
+        EnsureStringLiteral(data, "__rt_fs_read_failed", "Ashes.File.readText() failed");
+        EnsureStringLiteral(data, "__rt_fs_write_failed", "Ashes.File.writeText() failed");
+        EnsureStringLiteral(data, "__rt_fs_invalid_utf8", "Ashes.File.readText() encountered invalid UTF-8");
         EnsureStringLiteral(data, "__rt_tcp_connect_failed", "Ashes.Net.Tcp.connect() failed");
         EnsureStringLiteral(data, "__rt_tcp_send_failed", "Ashes.Net.Tcp.send() failed");
         EnsureStringLiteral(data, "__rt_tcp_receive_failed", "Ashes.Net.Tcp.receive() failed");
@@ -339,7 +339,7 @@ public sealed class X64CodegenIced
         asm.syscall();
         asm.ret();
 
-        // read_line() -> RAX = OptionString
+        // read_line() -> RAX = Maybe<Str>
         asm.Label(ref L_read_line);
         var L_read_line_heap_ok = asm.CreateLabel();
         var L_read_line_loop = asm.CreateLabel();

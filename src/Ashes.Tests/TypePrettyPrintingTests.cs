@@ -41,14 +41,14 @@ public sealed class TypePrettyPrintingTests
             .Single(m => m.Name == "Pretty" && m.GetParameters().Length == 1);
 
         var typeSymbol = new TypeSymbol(
-            "Option",
+            "Maybe",
             [new TypeParameterSymbol("T")],
             [],
-            new TypeDecl("Option", [new TypeParameter("T")], [new TypeConstructor("None", [])]));
+            new TypeDecl("Maybe", [new TypeParameter("T")], [new TypeConstructor("None", [])]));
         var namedType = new TypeRef.TNamedType(typeSymbol, [new TypeRef.TFun(new TypeRef.TVar(0), new TypeRef.TVar(0))]);
 
         var rendered = (string)prettyMethod.Invoke(lowering, [namedType])!;
-        rendered.ShouldBe("Option<(a -> a)>");
+        rendered.ShouldBe("Maybe<(a -> a)>");
     }
 
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)

@@ -1,7 +1,3 @@
-type Option =
-    | None
-    | Some(T)
-
 let x = Some([1])
 in 
     Ashes.IO.print(match x with

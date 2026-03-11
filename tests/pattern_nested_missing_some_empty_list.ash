@@ -1,5 +1,5 @@
 // expect-compile-error: Non-exhaustive match expression. Missing case: Some([])
-type Option =
+type Maybe =
     | None
     | Some(T)
 
