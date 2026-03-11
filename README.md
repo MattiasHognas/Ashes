@@ -101,6 +101,7 @@ The README provides only a high-level overview.
 |---|---|
 | `Ashes.IO` | Console IO, panic, args, and line-based input |
 | `Ashes.File` | UTF-8 file read/write/existence helpers returning `Result` |
+| `Ashes.Http` | Small HTTP/1.1 client helpers for plain `http://` URLs |
 | `Ashes.Net.Tcp` | Blocking TCP client primitives |
 | `Ashes.List` | Helper functions for the built-in list type |
 | `Ashes.Maybe` | Helper functions for the built-in `Maybe(T)` type |
@@ -117,10 +118,15 @@ Standard library functions live under `Ashes.*` modules. The core IO surface liv
 -   `Ashes.File.readText(path)` — `Result<String, String>` UTF-8 file read
 -   `Ashes.File.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
 -   `Ashes.File.exists(path)` — `Result<String, Bool>` existence check
+-   `Ashes.Http.get(url)` — `Result<String, String>` HTTP GET body for plain `http://` URLs
+-   `Ashes.Http.post(url, body)` — `Result<String, String>` HTTP POST body for plain `http://` URLs
 -   `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
 -   `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Int>` TCP send
 -   `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
 -   `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
+
+Current `Ashes.Http` support is intentionally small: `https://` is not supported yet, and
+responses using `Transfer-Encoding: chunked` currently return `unsupported transfer encoding`.
 
 `Ashes` is reserved for compiler-provided standard library modules and cannot be defined by user projects.
 
@@ -163,6 +169,7 @@ Start with these runnable examples:
 - `examples/fs_read_text.ash` --- read UTF-8 text from a file
 - `examples/fs_write_text.ash` --- write and reread UTF-8 text
 - `examples/fs_exists.ash` --- filesystem existence check
+- `examples/http_get.ash` --- simple HTTP GET against a plain local/non-chunked endpoint
 - `examples/result_flow.ash` --- standalone `Result` workflow using `Ashes.Result`
 - `examples/tcp_connect.ash` --- TCP connect with Result handling
 - `examples/tcp_send.ash` --- TCP send with Result handling

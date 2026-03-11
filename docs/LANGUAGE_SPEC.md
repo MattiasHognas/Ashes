@@ -44,6 +44,8 @@ Canonical built-ins available today include:
 - `Ashes.File.readText(path)`
 - `Ashes.File.writeText(path, text)`
 - `Ashes.File.exists(path)`
+- `Ashes.Http.get(url)`
+- `Ashes.Http.post(url, body)`
 - `Ashes.Net.Tcp.connect(host)(port)`
 - `Ashes.Net.Tcp.send(socket)(text)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)`
@@ -127,6 +129,19 @@ Networking rules:
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
 - `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
+
+Basic HTTP client APIs live under `Ashes.Http`:
+
+- `Ashes.Http.get(url)` returns `Result(Str, Str)`.
+- `Ashes.Http.post(url, body)` returns `Result(Str, Str)`.
+
+Current HTTP rules:
+
+- Only `http://` URLs are supported.
+- `https://` returns `Error(...)`.
+- Non-2xx responses return `Error("HTTP <status>")`.
+- Chunked transfer encoding is not supported and returns `Error(...)`.
+- The successful payload is the response body text after the HTTP header separator.
 
 ## 2.3 Booleans
 
