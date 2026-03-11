@@ -7,7 +7,7 @@ using Ashes.Semantics;
 using Ashes.TestRunner;
 using Spectre.Console;
 
-static int Usage()
+static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
@@ -37,7 +37,7 @@ static int Usage()
     AnsiConsole.MarkupLine("  [bold]ashes run[/] --expr [italic]\"Ashes.IO.print(40 + 2)\"[/] -- arg1 arg2");
     AnsiConsole.MarkupLine("  [bold]ashes test[/] tests");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/] examples -w");
-    return 2;
+    return exitCode;
 }
 
 static string DeriveOutputPath(string inputPath, string targetId)
@@ -390,6 +390,11 @@ if (args.Length == 0)
 
 var command = args[0].ToLowerInvariant();
 
+if (command is "--help" or "-h")
+{
+    return Usage(0);
+}
+
 try
 {
     return command switch
@@ -421,6 +426,11 @@ catch (Exception ex)
 
 async Task<int> RunCompileAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     string? target = null;
     string? outPath = null;
     string? expr = null;
@@ -511,6 +521,11 @@ async Task<int> RunCompileAsync(string[] a)
 
 async Task<int> RunRunAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     var idx = Array.IndexOf(a, "--");
     var cliArgs = idx >= 0 ? a[..idx] : a;
     var progArgs = idx >= 0 ? a[(idx + 1)..] : Array.Empty<string>();
@@ -584,6 +599,11 @@ async Task<int> RunRunAsync(string[] a)
 
 async Task<int> RunReplAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     string? target = null;
 
     for (int i = 0; i < a.Length; i++)
@@ -745,6 +765,11 @@ async Task<int> RunReplAsync(string[] a)
 
 int RunTest(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     // ashes test [--project ...] [--target ...] [paths...]
     string? target = null;
     string? projectPath = null;
@@ -771,6 +796,11 @@ int RunTest(string[] a)
 
 async Task<int> RunFmtAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     // ashes fmt <file|dir> [-w]
     if (a.Length == 0)
     {

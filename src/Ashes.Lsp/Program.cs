@@ -281,8 +281,14 @@ internal static class Program
             return;
         }
 
-        var constructors = DocumentService.GetCompletions(source, UriToFilePath(uri));
-        var items = constructors
+        var position = parameters.GetProperty("position");
+        var line = position.GetProperty("line").GetInt32();
+        var character = position.GetProperty("character").GetInt32();
+        var lineStarts = LspTextUtils.GetLineStarts(source);
+        var absolutePosition = LspTextUtils.FromLineCharacter(lineStarts, source.Length, line, character);
+
+        var completions = DocumentService.GetCompletions(source, absolutePosition, UriToFilePath(uri));
+        var items = completions
             .Select(name => new { label = name, kind = 20 }) // kind 20 = EnumMember in LSP
             .ToArray();
         SendResponse(output, id, items);

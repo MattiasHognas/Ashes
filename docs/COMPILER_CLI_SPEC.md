@@ -18,6 +18,9 @@ ashes <command> [options] [arguments]
 
 Running `ashes` with no arguments (or an unrecognised command) prints the help text and exits with code **2**.
 
+Running `ashes --help` (or `ashes -h`) prints the same help text and exits with code **0**.
+Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI help text and exits with code **0**.
+
 ---
 
 ## Command List
@@ -33,6 +36,12 @@ Running `ashes` with no arguments (or an unrecognised command) prints the help t
 ---
 
 ## Common Options
+
+The following help flags are accepted at the top level and for each command:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--help` / `-h` | — | — | No | Print CLI help text and exit successfully. |
 
 The following option is accepted by **compile**, **run**, **repl**, and **test**:
 

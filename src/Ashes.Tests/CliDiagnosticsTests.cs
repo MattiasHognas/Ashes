@@ -405,6 +405,145 @@ public sealed class CliDiagnosticsTests
         }
     }
 
+    [Test]
+    public async Task Cli_with_no_arguments_should_print_help_and_exit_2()
+    {
+        var result = await RunCliAsync(Array.Empty<string>());
+
+        result.ExitCode.ShouldBe(2);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes compile");
+        result.Output.ShouldContain("ashes run");
+        result.Output.ShouldContain("ashes test");
+    }
+
+    [Test]
+    public async Task Cli_with_unknown_command_should_print_help_and_exit_2()
+    {
+        var result = await RunCliAsync("unknown-command");
+
+        result.ExitCode.ShouldBe(2);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes fmt");
+    }
+
+    [Test]
+    public async Task Cli_with_help_should_print_help_and_exit_0()
+    {
+        var result = await RunCliAsync("--help");
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes compile");
+    }
+
+    [Test]
+    public async Task Command_help_should_print_help_and_exit_0()
+    {
+        var compile = await RunCliAsync("compile", "--help");
+        var fmt = await RunCliAsync("fmt", "--help");
+
+        compile.ExitCode.ShouldBe(0);
+        compile.Output.ShouldContain("Commands:");
+        fmt.ExitCode.ShouldBe(0);
+        fmt.Output.ShouldContain("Commands:");
+    }
+
+    [Test]
+    public async Task Compile_should_reject_invalid_target_with_exit_1()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "hello.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+
+            var result = await RunCliAsync("compile", filePath, "--target", "nope-x64");
+
+            result.ExitCode.ShouldBe(1);
+            result.Output.ShouldContain("Unknown target");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Compile_should_succeed_with_exit_0()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "hello.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+
+            var result = await RunCliAsync("compile", filePath);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Wrote");
+            result.Output.ShouldContain("Target:");
+            result.Output.ShouldContain("Time:");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Version_should_print_version_and_exit_0()
+    {
+        var result = await RunCliAsync("--version");
+
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldNotBeEmpty();
+        result.Stderr.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Fmt_without_write_should_print_formatted_source_to_stdout()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "format.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+
+            var result = await RunCliAsync("fmt", filePath);
+
+            result.ExitCode.ShouldBe(0);
+            result.Stdout.ShouldContain("Ashes.IO.print(40 + 2)");
+            result.Stderr.ShouldBeEmpty();
+            (await File.ReadAllTextAsync(filePath)).ShouldBe("Ashes.IO.print(40+2)");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Fmt_with_write_should_modify_file_in_place()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "format_write.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+
+            var result = await RunCliAsync("fmt", filePath, "-w");
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Formatted 1 file(s)");
+            (await File.ReadAllTextAsync(filePath)).ShouldContain("Ashes.IO.print(40 + 2)");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static (int Line, int Column) GetLocation(string source, int position)
     {
         var line = 1;

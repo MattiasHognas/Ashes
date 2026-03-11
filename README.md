@@ -46,6 +46,27 @@ This repository is:
 
 ------------------------------------------------------------------------
 
+## Quick Start
+
+Build the workspace:
+
+    dotnet build Ashes.slnx
+
+Run a file:
+
+    echo Ashes.IO.print("hello world") > hello.ash
+    dotnet run --project src/Ashes.Cli -- run hello.ash
+
+Run an inline expression:
+
+    dotnet run --project src/Ashes.Cli -- run --expr "Ashes.IO.print(40 + 2)"
+
+Run the compiler test host:
+
+    dotnet run --project src/Ashes.Tests -- --no-progress
+
+------------------------------------------------------------------------
+
 ## Repository Structure
 
 Ashes is split into independent components:
@@ -73,6 +94,19 @@ Authoritative specifications:
 - [Standard Library Reference](docs/STANDARD_LIBRARY.md)
 
 The README provides only a high-level overview.
+
+## Standard Library Overview
+
+| Module / Type | Purpose |
+|---|---|
+| `Ashes.IO` | Console IO, panic, args, and line-based input |
+| `Ashes.File` | UTF-8 file read/write/existence helpers returning `Result` |
+| `Ashes.Net.Tcp` | Blocking TCP client primitives |
+| `Ashes.List` | Helper functions for the built-in list type |
+| `Ashes.Maybe` | Helper functions for the built-in `Maybe(T)` type |
+| `Ashes.Result` | Helper functions for the built-in `Result(E, A)` type |
+| `Ashes.Test` | Assertion helpers for `.ash` tests and small programs |
+| `Unit`, `Maybe`, `Result`, `List`, `Socket` | Built-in runtime types |
 
 Standard library functions live under `Ashes.*` modules. The core IO surface lives under
 `Ashes.IO`:
@@ -240,7 +274,7 @@ multiple concrete types. `let rec` remains monomorphic during inference.
 
 -   type declarations
 
-        type Option =
+    type Maybe =
             | None
             | Some(T)
 
@@ -260,6 +294,10 @@ multiple concrete types. `let rec` remains monomorphic during inference.
 
     dotnet build Ashes.slnx
     dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj
+
+### Run end-to-end `.ash` tests
+
+    dotnet run --project src/Ashes.Cli -- test tests
 
 ### Compile to native executable
 
@@ -289,6 +327,14 @@ Example:
 ------------------------------------------------------------------------
 
 ## CLI
+
+Core commands:
+
+-   `ashes compile`
+-   `ashes run`
+-   `ashes repl`
+-   `ashes test`
+-   `ashes fmt`
 
 Compile file:
 
@@ -362,6 +408,7 @@ Canonical formatting (4-space indentation):
 
 -   Extension sources: `vscode-extension/`
 -   Language server: `src/Ashes.Lsp/`
+-   Current editor features include diagnostics, formatting, hover, definition lookup, semantic tokens, and basic completions.
 
 Build server executables:
 
@@ -382,6 +429,19 @@ artifacts from GitHub Releases:
 ..or if you want to target VS Code Insiders:
 
     .\scripts\install-vscode-extension-local.ps1 -CodeCommand code-insiders.cmd
+
+------------------------------------------------------------------------
+
+## Contributing
+
+Useful local commands:
+
+    dotnet build Ashes.slnx
+    dotnet run --project src/Ashes.Tests -- --no-progress
+    dotnet run --project src/Ashes.Cli -- test tests
+
+Use the documents in `docs/` as the source of truth before changing language or CLI behavior.
+
 ------------------------------------------------------------------------
 
 ## License
