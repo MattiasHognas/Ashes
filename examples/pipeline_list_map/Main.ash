@@ -1,4 +1,4 @@
-import List
+import Ashes.List
 let inc = 
     fun (x) -> x + 1
 in 

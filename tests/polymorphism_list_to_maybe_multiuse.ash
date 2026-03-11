@@ -1,8 +1,4 @@
 // expect: ok
-type Option =
-    | None
-    | Some(T)
-
 let firstOrNone = 
     fun (xs) -> 
         match xs with

@@ -147,7 +147,9 @@ Project-local resolution must produce exactly one match. If a module exists in m
 
 If a module exists in multiple project roots, compilation fails.
 
-Shipped libraries are only considered after project-local resolution fails to find any match, so projects can intentionally override shipped modules by defining their own module with the same name.
+For non-reserved modules, shipped libraries are only considered after project-local
+resolution fails to find any match. Reserved `Ashes.*` standard-library modules are
+compiler-provided and are not overridable by project-local modules.
 
 ### 4.5 Cycles
 

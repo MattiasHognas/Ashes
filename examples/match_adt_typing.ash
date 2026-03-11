@@ -1,7 +1,3 @@
-type Option =
-    | None
-    | Some(T)
-
 let unwrapOr = 
     fun (opt) -> 
         fun (def) -> 

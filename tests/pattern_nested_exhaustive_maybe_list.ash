@@ -1,8 +1,4 @@
 // expect: 2
-type Option =
-    | None
-    | Some(T)
-
 let x = Some([])
 in 
     Ashes.IO.print(match x with

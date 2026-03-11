@@ -1,9 +1,9 @@
 // expect-compile-error: Constructor patterns from different ADTs
-type Option =
+type MyMaybe =
     | None
     | Some(T)
 
-type Result =
+type MyResult =
     | Ok(T)
     | Error(T)
 

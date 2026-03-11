@@ -116,15 +116,13 @@ public sealed class ProjectSupportTests
                 """{"entry":"src/Main.ash","sourceRoots":["src"],"include":["vendor"]}""");
             Directory.CreateDirectory(Path.Combine(root, "src"));
             Directory.CreateDirectory(Path.Combine(root, "vendor"));
-            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import List\nAshes.IO.print(1)");
+            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import Ashes.List\nAshes.IO.print(1)");
             File.WriteAllText(Path.Combine(root, "src", "List.ash"), "1");
             File.WriteAllText(Path.Combine(root, "vendor", "List.ash"), "2");
 
             var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
-            var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationPlan(project));
-            ex.Message.ShouldContain("Ambiguous module resolution for 'List'");
-            ex.Message.ShouldContain(Path.Combine(root, "src", "List.ash"));
-            ex.Message.ShouldContain(Path.Combine(root, "vendor", "List.ash"));
+            var plan = ProjectSupport.BuildCompilationPlan(project);
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.List");
         }
         finally
         {
@@ -139,11 +137,11 @@ public sealed class ProjectSupportTests
         try
         {
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
-            File.WriteAllText(Path.Combine(root, "Main.ash"), "import List\nAshes.IO.print(List.length([1, 2, 3, 4]))");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import Ashes.List\nAshes.IO.print(Ashes.List.length([1, 2, 3, 4]))");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
-            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("List");
-            plan.OrderedModules.Single(x => x.ModuleName == "List").FilePath.ShouldEndWith(Path.Combine("lib", "List.ash"));
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.List");
+            plan.OrderedModules.Single(x => x.ModuleName == "Ashes.List").FilePath.ShouldBe("<std:Ashes.List>");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
@@ -532,10 +530,10 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
+                "import Ashes.File\nmatch Ashes.File.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
-            plan.ImportedStdModules.ShouldContain("Ashes.Fs");
+            plan.ImportedStdModules.ShouldContain("Ashes.File");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 

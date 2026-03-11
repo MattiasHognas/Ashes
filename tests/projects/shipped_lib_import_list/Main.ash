@@ -1,3 +1,3 @@
 // expect: 3
-import List
+import Ashes.List
 Ashes.IO.print(List.length([1, 2, 3]))

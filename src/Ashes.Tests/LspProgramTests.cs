@@ -271,7 +271,7 @@ public sealed class LspProgramTests
         caps.TryGetProperty("completionProvider", out _).ShouldBeTrue();
 
         const string uri = "file:///tmp/adt_test.ash";
-        const string source = "type Option = | None | Some(T)\nAshes.IO.print(1)";
+        const string source = "type Maybe = | None | Some(T)\nAshes.IO.print(1)";
 
         await WriteMessageAsync(process, new
         {
@@ -295,7 +295,7 @@ public sealed class LspProgramTests
         var data = tokenResponse.GetProperty("result").GetProperty("data");
         data.GetArrayLength().ShouldBeGreaterThan(0);
         var decodedTokens = DecodeSemanticTokens(data, source);
-        decodedTokens.ShouldContain(t => t.Text == "Option" && t.TokenType == DocumentService.TokenTypeType);
+        decodedTokens.ShouldContain(t => t.Text == "Maybe" && t.TokenType == DocumentService.TokenTypeType);
         decodedTokens.ShouldContain(t => t.Text == "None" && t.TokenType == DocumentService.TokenTypeEnumMember);
         decodedTokens.ShouldContain(t => t.Text == "Some" && t.TokenType == DocumentService.TokenTypeEnumMember);
         decodedTokens.ShouldContain(t => t.Text == "T" && t.TokenType == DocumentService.TokenTypeTypeParameter);

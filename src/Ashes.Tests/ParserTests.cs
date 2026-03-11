@@ -194,11 +194,11 @@ public sealed class ParserTests
     [Test]
     public void ParseProgram_should_parse_type_declaration_with_parameterized_constructors()
     {
-        var program = ParseProgram("type Option = | None | Some(T)\nprint(1)");
+        var program = ParseProgram("type Maybe = | None | Some(T)\nprint(1)");
 
         program.TypeDecls.Count.ShouldBe(1);
         var decl = program.TypeDecls[0];
-        decl.Name.ShouldBe("Option");
+        decl.Name.ShouldBe("Maybe");
         decl.TypeParameters.ShouldBeEmpty();
         decl.Constructors.Count.ShouldBe(2);
         decl.Constructors[0].Name.ShouldBe("None");
@@ -243,11 +243,11 @@ public sealed class ParserTests
     [Test]
     public void ParseProgram_should_parse_multiline_type_declaration()
     {
-        var program = ParseProgram("type Option =\n  | None\n  | Some(T)\nprint(1)");
+        var program = ParseProgram("type Maybe =\n  | None\n  | Some(T)\nprint(1)");
 
         program.TypeDecls.Count.ShouldBe(1);
         var decl = program.TypeDecls[0];
-        decl.Name.ShouldBe("Option");
+        decl.Name.ShouldBe("Maybe");
         decl.Constructors.Count.ShouldBe(2);
         decl.Constructors[0].Name.ShouldBe("None");
         decl.Constructors[1].Name.ShouldBe("Some");
@@ -257,7 +257,7 @@ public sealed class ParserTests
     [Test]
     public void ParseProgram_should_ignore_line_comments()
     {
-        var program = ParseProgram("// expect: ok\ntype Option =\n  | None\n  | Some(T)\n\n// body\nprint(1)");
+        var program = ParseProgram("// expect: ok\ntype Maybe =\n  | None\n  | Some(T)\n\n// body\nprint(1)");
 
         program.TypeDecls.Count.ShouldBe(1);
         program.Body.ShouldBeOfType<Expr.Call>();
@@ -287,9 +287,9 @@ public sealed class ParserTests
     {
         var typeParam = new TypeParameter("'a");
         var ctor = new TypeConstructor("Some", ["'a"]);
-        var decl = new TypeDecl("Option", [typeParam], [ctor]);
+        var decl = new TypeDecl("Maybe", [typeParam], [ctor]);
 
-        decl.Name.ShouldBe("Option");
+        decl.Name.ShouldBe("Maybe");
         decl.TypeParameters.Count.ShouldBe(1);
         decl.TypeParameters[0].Name.ShouldBe("'a");
         decl.Constructors.Count.ShouldBe(1);

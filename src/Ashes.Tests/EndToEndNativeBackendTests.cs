@@ -251,11 +251,11 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            type Option = | None | Some(T)
+            type LocalMaybe = | None | Some(T)
             let unwrapOr = fun (opt, def) ->
-              match opt with
-              | None -> def
-              | Some(x) -> x
+            match opt with
+            | None -> def
+            | Some(x) -> x
             in Ashes.IO.print(unwrapOr(Some(42), 0))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
@@ -270,12 +270,12 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-                        type Outcome = | Left(T) | Right(T)
-                        let tag = fun (value) ->
-                            match value with
-                            | Left(x) -> 1
-                            | Right(x) -> 2
-                        in Ashes.IO.print(tag(Left(0)) + tag(Right(0)))
+            type Outcome = | Left(T) | Right(T)
+            let tag = fun (value) ->
+                match value with
+                | Left(x) -> 1
+                | Right(x) -> 2
+            in Ashes.IO.print(tag(Left(0)) + tag(Right(0)))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
     }
