@@ -888,7 +888,7 @@ public static partial class DocumentService
 
             case Expr.QualifiedVar qualifiedVar:
                 return ContainsPosition(AstSpans.GetOrDefault(qualifiedVar), position)
-                    ? ResolveQualifiedDefinition(qualifiedVar.Module, qualifiedVar.Name, currentFilePath)
+                    ? ResolveQualifiedDefinition(qualifiedVar.Module, qualifiedVar.Name, currentFilePath, imports)
                     : null;
 
             case Expr.Add add:
@@ -1173,9 +1173,47 @@ public static partial class DocumentService
         return match;
     }
 
-    private static DefinitionLocation? ResolveQualifiedDefinition(string moduleName, string exportName, string? currentFilePath)
+    private static DefinitionLocation? ResolveQualifiedDefinition(
+        string moduleName,
+        string exportName,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports)
     {
-        return ResolveModuleExportDefinition(moduleName, exportName, currentFilePath);
+        var exactMatch = ResolveModuleExportDefinition(moduleName, exportName, currentFilePath);
+        if (exactMatch is not null)
+        {
+            return exactMatch;
+        }
+
+        if (moduleName.Contains('.', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        DefinitionLocation? shortQualifiedMatch = null;
+        foreach (var import in imports)
+        {
+            var lastDot = import.ModuleName.LastIndexOf('.');
+            if (lastDot < 0 || !string.Equals(import.ModuleName[(lastDot + 1)..], moduleName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var definition = ResolveModuleExportDefinition(import.ModuleName, exportName, currentFilePath);
+            if (definition is null)
+            {
+                continue;
+            }
+
+            if (shortQualifiedMatch is not null)
+            {
+                return null;
+            }
+
+            shortQualifiedMatch = definition;
+        }
+
+        return shortQualifiedMatch;
     }
 
     private static DefinitionLocation? ResolveModuleExportDefinition(string moduleName, string exportName, string? currentFilePath)

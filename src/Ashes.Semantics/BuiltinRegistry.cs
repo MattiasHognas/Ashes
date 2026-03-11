@@ -54,12 +54,7 @@ public static class BuiltinRegistry
             ["Ashes"] = new(
                 "Ashes",
                 null,
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
-                {
-                    ["print"] = new("print", BuiltinValueKind.Print, IsCallable: true, Arity: 1),
-                    ["panic"] = new("panic", BuiltinValueKind.Panic, IsCallable: true, Arity: 1),
-                    ["args"] = new("args", BuiltinValueKind.Args, IsCallable: false, Arity: 0)
-                }),
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.IO"] = new(
                 "Ashes.IO",
                 null,

@@ -506,6 +506,35 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void GetDefinition_should_return_leaf_qualified_imported_binding_location_for_multisegment_modules()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes_lsp_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            Directory.CreateDirectory(Path.Combine(root, "M"));
+            File.WriteAllText(Path.Combine(root, "M", "X.ash"), "let z = 1 in z");
+
+            var mainPath = Path.Combine(root, "Main.ash");
+            const string source = "import M.X\nAshes.IO.print(X.z)";
+            File.WriteAllText(mainPath, source);
+
+            var definition = DocumentService.GetDefinition(source, source.IndexOf("z", StringComparison.Ordinal), mainPath);
+            var modulePath = Path.Combine(root, "M", "X.ash");
+
+            definition.ShouldNotBeNull();
+            definition.Value.FilePath.ShouldBe(modulePath);
+            definition.Value.Start.ShouldBe(4);
+            definition.Value.End.ShouldBe(5);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void GetDefinition_should_return_unqualified_imported_binding_location()
     {
         var root = CreateTempProjectDirectory("let add = fun (x) -> x + 1 in add");

@@ -1,4 +1,4 @@
 // expect: []
-match Ashes.args with
-    | [] -> Ashes.print("[]")
-    | _ -> Ashes.print("bad")
+match Ashes.IO.args with
+    | [] -> Ashes.IO.print("[]")
+    | _ -> Ashes.IO.print("bad")
