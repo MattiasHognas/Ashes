@@ -621,7 +621,7 @@ public static partial class DocumentService
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
-            return [];
+            return Array.Empty<SemanticTokenItem>();
         }
 
         var strippedSource = context.StrippedSource;
@@ -689,10 +689,21 @@ public static partial class DocumentService
 
     public static IReadOnlyList<string> GetCompletions(string source, string? filePath = null)
     {
+        return GetCompletions(source, position: null, filePath);
+    }
+
+    public static IReadOnlyList<string> GetCompletions(string source, int? position, string? filePath = null)
+    {
+        var header = StripImportHeader(source);
+        if (position is not null && TryGetModuleCompletions(source, position.Value, header.Imports, out var moduleCompletions))
+        {
+            return moduleCompletions;
+        }
+
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
-            return [];
+            return Array.Empty<string>();
         }
 
         var diag = new Diagnostics();
@@ -703,6 +714,97 @@ public static partial class DocumentService
         return lowering.ConstructorSymbols.Keys
             .OrderBy(k => k, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static bool TryGetModuleCompletions(string source, int position, IReadOnlyList<ImportItem> imports, out IReadOnlyList<string> completions)
+    {
+        completions = Array.Empty<string>();
+
+        if (position < 0 || position > source.Length)
+        {
+            return false;
+        }
+
+        var prefix = ExtractCompletionPrefix(source, position);
+        if (string.IsNullOrEmpty(prefix) || !prefix.EndsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var qualifier = prefix[..^1];
+        var moduleName = ResolveCompletionModuleName(qualifier, imports);
+        if (moduleName is null)
+        {
+            return false;
+        }
+
+        completions = GetModuleCompletionItems(moduleName);
+        return completions.Count > 0;
+    }
+
+    private static string ExtractCompletionPrefix(string source, int position)
+    {
+        var start = position;
+        while (start > 0)
+        {
+            var ch = source[start - 1];
+            if (char.IsLetterOrDigit(ch) || ch == '_' || ch == '.')
+            {
+                start--;
+                continue;
+            }
+
+            break;
+        }
+
+        return source[start..position];
+    }
+
+    private static string? ResolveCompletionModuleName(string qualifier, IReadOnlyList<ImportItem> imports)
+    {
+        if (qualifier == "Ashes")
+        {
+            return "Ashes";
+        }
+
+        if (qualifier == "Ashes.Net")
+        {
+            return qualifier;
+        }
+
+        if (BuiltinRegistry.TryGetModule(qualifier, out _))
+        {
+            return qualifier;
+        }
+
+        var matches = imports
+            .Where(import => string.Equals(GetLeafQualifier(import.ModuleName), qualifier, StringComparison.Ordinal))
+            .Select(import => import.ModuleName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static string GetLeafQualifier(string moduleName)
+    {
+        var lastDot = moduleName.LastIndexOf('.');
+        return lastDot < 0 ? moduleName : moduleName[(lastDot + 1)..];
+    }
+
+    private static IReadOnlyList<string> GetModuleCompletionItems(string moduleName)
+    {
+        return moduleName switch
+        {
+            "Ashes" => ["File", "IO", "List", "Maybe", "Net", "Result", "Test"],
+            "Ashes.Net" => ["Tcp"],
+            "Ashes.List" => ["append", "filter", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
+            "Ashes.Maybe" => ["flatMap", "getOrElse", "isNone", "isSome", "map"],
+            "Ashes.Result" => ["flatMap", "getOrElse", "isError", "isOk", "map"],
+            "Ashes.Test" => ["assertEqual", "fail"],
+            _ when BuiltinRegistry.TryGetModule(moduleName, out var module) => module.Members.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            _ => Array.Empty<string>()
+        };
     }
 
     public static HoverItem? GetHover(string source, int position, string? filePath = null)
