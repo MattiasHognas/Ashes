@@ -205,7 +205,7 @@ Ashes prioritizes:
 3. explicit behavior over implicit magic
 4. small composable features over large abstractions
 
-## Memory Safety Roadmap (Post-1.0)
+## Memory Safety Roadmap
 
 Ashes explicitly plans:
 - no GC

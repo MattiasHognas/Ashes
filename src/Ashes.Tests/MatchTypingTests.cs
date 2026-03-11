@@ -42,7 +42,6 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result = | Ok(T) | Error(T)
             let resTag = match Error(1) with
               | Ok(x) -> 1
               | Error(x) -> 2
@@ -222,10 +221,54 @@ public sealed class MatchTypingTests
         diag.Errors.ShouldNotContain(x => x.Contains("Non-exhaustive match expression.", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Match_missing_result_error_branch_reports_result_specific_message()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            match Ok(1) with
+            | Ok(x) -> x
+            """);
+
+        diag.Errors.ShouldContain(x => x.Contains("Non-exhaustive match on Result: missing Error.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Match_with_both_result_branches_does_not_report_result_specific_message()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            match Ok(1) with
+            | Ok(x) -> x
+            | Error(_) -> 0
+            """);
+
+        diag.Errors.ShouldNotContain(x => x.Contains("Non-exhaustive match on Result", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Match_with_print_calls_of_different_argument_types_typechecks_without_error()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            import Ashes.Fs
+            match Ashes.Fs.exists("out.txt") with
+            | Ok(found) ->
+                if found
+                then Ashes.IO.print(1)
+                else Ashes.IO.print(0)
+            | Error(msg) -> Ashes.IO.print(msg)
+            """);
+
+        diag.Errors.ShouldBeEmpty();
+    }
+
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)
     {
         var diag = new Diagnostics();
-        var program = new Parser(source, diag).ParseProgram();
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var program = new Parser(layout.Source, diag).ParseProgram();
         var lowering = new Lowering(diag);
         lowering.Lower(program);
         return (lowering, diag);

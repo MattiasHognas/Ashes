@@ -236,6 +236,12 @@ public static class ProjectSupport
             traversal.Push(module);
             foreach (var import in module.Imports)
             {
+                if (string.Equals(import, "Ashes", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Module name 'Ashes' is reserved for the standard library.");
+                }
+
                 if (IsStdModule(import))
                 {
                     importedStdModules.Add(import);

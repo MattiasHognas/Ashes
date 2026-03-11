@@ -86,6 +86,17 @@ public sealed class SymbolRegistrationTests
     }
 
     [Test]
+    public void Lower_program_registers_builtin_socket_type_without_constructors()
+    {
+        var (lowering, diag) = LowerProgram("Ashes.IO.print(1)");
+
+        diag.Errors.ShouldBeEmpty();
+        lowering.TypeSymbols.ContainsKey("Socket").ShouldBeTrue();
+        lowering.TypeSymbols["Socket"].IsBuiltin.ShouldBeTrue();
+        lowering.TypeSymbols["Socket"].Constructors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Lower_program_reports_reserved_runtime_type_diagnostic()
     {
         var (_, diag) = LowerProgram("type OptionString = | Nope\nAshes.IO.print(1)");
@@ -105,6 +116,14 @@ public sealed class SymbolRegistrationTests
     public void Lower_program_reports_reserved_ashes_type_diagnostic()
     {
         var (_, diag) = LowerProgram("type Ashes = | Nope\nAshes.IO.print(1)");
+
+        diag.Errors.ShouldContain(x => x.Contains("built-in runtime types are reserved", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Lower_program_reports_reserved_socket_type_diagnostic()
+    {
+        var (_, diag) = LowerProgram("type Socket = | Nope\nAshes.IO.print(1)");
 
         diag.Errors.ShouldContain(x => x.Contains("built-in runtime types are reserved", StringComparison.Ordinal));
     }

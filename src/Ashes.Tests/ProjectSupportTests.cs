@@ -408,6 +408,30 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public async Task BuildCompilationSource_should_resolve_ashes_test_in_project_mode()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(
+                Path.Combine(root, "Main.ash"),
+                "import Ashes.Test\nlet checked = assertEqual(1, 1)\nin Ashes.IO.print(\"ok\")");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Test");
+
+            var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("ok\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task BuildCompilationSource_should_allow_intrinsic_standard_library_modules_without_source_files()
     {
         var root = CreateTempDirectory();
@@ -416,7 +440,7 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.Fs\nif Ashes.Fs.exists(\"file.txt\") then Ashes.IO.print(1) else Ashes.IO.print(0)");
+                "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             plan.ImportedStdModules.ShouldContain("Ashes.Fs");

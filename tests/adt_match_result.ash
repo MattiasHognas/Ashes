@@ -1,8 +1,4 @@
 // expect: 1
-type Result =
-    | Ok(T)
-    | Error(T)
-
 let getOrDefault = 
     fun (res) -> 
         fun (def) -> 

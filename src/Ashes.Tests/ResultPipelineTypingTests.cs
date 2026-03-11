@@ -11,7 +11,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             let x = Ok(3) |?> (fun (n) -> n + 1)
             in match x with
             | Ok(v) -> Ashes.IO.print(v)
@@ -26,7 +25,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             let parse = fun (x) -> Ok(x + 1)
             in let y = Ok(41) |?> parse
             in match y with
@@ -42,7 +40,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             type AppError = | Wrapped(String)
             let x = Error("boom") |!> Wrapped
             in match x with
@@ -58,7 +55,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             type ParseError = | NotAnInt(String)
             type AppError = | Parse(ParseError)
             let parse = fun (x) -> if x == "41" then Ok(41) else Error(NotAnInt(x))
@@ -76,7 +72,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             type JsonError = | MissingField(String)
             type AppError = | Json(JsonError)
             let x = Error(Json(MissingField("age")))
@@ -93,7 +88,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             let x =
                 let? n = Ok(42)
                 in
@@ -111,7 +105,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             let x =
                 let? a = 42
                 in
@@ -127,7 +120,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             let x =
                 let? a = Ok(42)
                 in
@@ -143,7 +135,6 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type Result(E, A) = | Ok(A) | Error(E)
             type AppError = | Fail(String)
             let x =
                 let? a = Error(Fail("fail"))
