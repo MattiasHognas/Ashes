@@ -96,11 +96,11 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetSemanticTokens_should_return_correct_type_and_constructor_and_type_parameter_spans()
     {
-        const string source = "type Option =\n| None\n| Some(T)\nAshes.IO.print(1)";
+        const string source = "type Maybe =\n| None\n| Some(T)\nAshes.IO.print(1)";
 
         var tokens = DocumentService.GetSemanticTokens(source);
 
-        tokens.ShouldContain(t => IsTokenWithText(source, t, DocumentService.TokenTypeType, "Option"));
+        tokens.ShouldContain(t => IsTokenWithText(source, t, DocumentService.TokenTypeType, "Maybe"));
         tokens.ShouldContain(t => IsTokenWithText(source, t, DocumentService.TokenTypeEnumMember, "None"));
         tokens.ShouldContain(t => IsTokenWithText(source, t, DocumentService.TokenTypeEnumMember, "Some"));
         tokens.ShouldContain(t => IsTokenWithText(source, t, DocumentService.TokenTypeTypeParameter, "T"));
@@ -117,7 +117,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetCompletions_should_return_constructor_names_for_declared_types()
     {
-        const string source = "type Option = | None | Some(T)\nAshes.IO.print(1)";
+        const string source = "type Maybe = | None | Some(T)\nAshes.IO.print(1)";
 
         var completions = DocumentService.GetCompletions(source);
 
@@ -136,7 +136,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetCompletions_should_return_constructors_from_multiple_types()
     {
-        const string source = "type Outcome = | Ok(T) | Err(E)\ntype Option = | None | Some(T)\nAshes.IO.print(1)";
+        const string source = "type Outcome = | Ok(T) | Err(E)\ntype Maybe = | None | Some(T)\nAshes.IO.print(1)";
 
         var completions = DocumentService.GetCompletions(source);
 
@@ -199,9 +199,9 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
-    public void Analyze_should_allow_standalone_import_of_Ashes_Fs()
+    public void Analyze_should_allow_standalone_import_of_Ashes_File()
     {
-        const string source = "import Ashes.Fs\nmatch Ashes.Fs.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
+        const string source = "import Ashes.File\nmatch Ashes.File.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -280,11 +280,11 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Format_should_preserve_standalone_comment_lines_inside_body()
     {
-        const string source = "type Option =\n  | None\n  | Some(T)\n\n// body\nAshes.IO.print(40+2)";
+        const string source = "type Maybe =\n  | None\n  | Some(T)\n\n// body\nAshes.IO.print(40+2)";
 
         var formatted = DocumentService.Format(source);
 
-        formatted.ShouldBe("type Option =\n    | None\n    | Some(T)\n\n// body\nAshes.IO.print(40 + 2)\n");
+        formatted.ShouldBe("type Maybe =\n    | None\n    | Some(T)\n\n// body\nAshes.IO.print(40 + 2)\n");
     }
 
     [Test]
@@ -301,14 +301,14 @@ public sealed class LspDocumentServiceTests
     public void GetSemanticTokens_should_report_token_positions_relative_to_original_source_with_import_header()
     {
         // "import Ashes.IO\n" is 16 chars; tokens in the body start on line 1.
-        const string source = "import Ashes.IO\ntype Option =\n| None\n| Some(T)\nAshes.IO.print(1)";
+        const string source = "import Ashes.IO\ntype Maybe =\n| None\n| Some(T)\nAshes.IO.print(1)";
 
         var tokens = DocumentService.GetSemanticTokens(source);
 
-        // "Option" appears on line 1 (0-indexed) after the import header.
+        // "Maybe" appears on line 1 (0-indexed) after the import header.
         tokens.ShouldContain(t => t.TokenType == DocumentService.TokenTypeType &&
                                   t.Line == 1 &&
-                                  LspSemanticTokenTestHelpers.ExtractTokenText(source, t.Line, t.Character, t.Length) == "Option");
+                                  LspSemanticTokenTestHelpers.ExtractTokenText(source, t.Line, t.Character, t.Length) == "Maybe");
     }
 
     [Test]

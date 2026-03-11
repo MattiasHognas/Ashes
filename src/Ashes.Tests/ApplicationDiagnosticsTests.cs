@@ -104,10 +104,10 @@ public sealed class ApplicationDiagnosticsTests
     [Test]
     public void Unknown_builtin_fs_module_member_reports_member_diagnostic()
     {
-        var diag = LowerExpression("Ashes.Fs.nope(\"hello\")", importAshesIO: false);
+        var diag = LowerExpression("Ashes.File.nope(\"hello\")", importAshesIO: false);
 
-        diag.Errors.ShouldContain(x => x.Contains("Unknown member 'nope' in module Ashes.Fs.", StringComparison.Ordinal));
-        diag.Errors.ShouldNotContain(x => x.Contains("Unknown module 'Ashes.Fs'.", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(x => x.Contains("Unknown member 'nope' in module Ashes.File.", StringComparison.Ordinal));
+        diag.Errors.ShouldNotContain(x => x.Contains("Unknown module 'Ashes.File'.", StringComparison.Ordinal));
     }
 
     [Test]

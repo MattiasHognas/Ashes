@@ -71,12 +71,20 @@ public static class BuiltinRegistry
                 "Ashes.Result",
                 "Ashes.Semantics.StdLib.Ashes.Result.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.List"] = new(
+                "Ashes.List",
+                "Ashes.Semantics.StdLib.Ashes.List.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Maybe"] = new(
+                "Ashes.Maybe",
+                "Ashes.Semantics.StdLib.Ashes.Maybe.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Test"] = new(
                 "Ashes.Test",
                 "Ashes.Semantics.StdLib.Ashes.Test.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.Fs"] = new(
-                "Ashes.Fs",
+            ["Ashes.File"] = new(
+                "Ashes.File",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -150,13 +158,25 @@ public static class BuiltinRegistry
             [],
             [new TypeConstructor("Unit", [])]);
 
-        var optionStringTypeParameters = Array.Empty<TypeParameterSymbol>();
-        var optionStringDecl = new TypeDecl(
-            "OptionString",
-            [],
+        var listTypeParameters = new[]
+        {
+            new TypeParameterSymbol("T")
+        };
+        var listDecl = new TypeDecl(
+            "List",
+            [new TypeParameter("T")],
+            []);
+
+        var maybeTypeParameters = new[]
+        {
+            new TypeParameterSymbol("T")
+        };
+        var maybeDecl = new TypeDecl(
+            "Maybe",
+            [new TypeParameter("T")],
             [
                 new TypeConstructor("None", []),
-                new TypeConstructor("Some", ["Str"])
+                new TypeConstructor("Some", ["T"])
             ]);
 
         var resultTypeParameters = new[]
@@ -190,20 +210,25 @@ public static class BuiltinRegistry
                         unitDecl.Constructors[0])
                 ],
                 unitDecl),
-            ["OptionString"] = new(
-                "OptionString",
-                optionStringTypeParameters,
+            ["List"] = new(
+                "List",
+                listTypeParameters,
+                [],
+                listDecl),
+            ["Maybe"] = new(
+                "Maybe",
+                maybeTypeParameters,
                 [
                     new BuiltinConstructor(
                         "None",
                         [],
-                        optionStringDecl.Constructors[0]),
+                        maybeDecl.Constructors[0]),
                     new BuiltinConstructor(
                         "Some",
-                        [new TypeRef.TStr()],
-                        optionStringDecl.Constructors[1])
+                        [new TypeRef.TTypeParam(maybeTypeParameters[0])],
+                        maybeDecl.Constructors[1])
                 ],
-                optionStringDecl),
+                maybeDecl),
             ["Result"] = new(
                 "Result",
                 resultTypeParameters,

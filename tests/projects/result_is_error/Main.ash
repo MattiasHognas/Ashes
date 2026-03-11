@@ -1,3 +1,3 @@
 // expect: true
-import Result
+import Ashes.Result
 Ashes.IO.print(Result.isError(Error("boom")))

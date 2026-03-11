@@ -1,4 +1,4 @@
-type Option =
+type Maybe =
     | None
     | Some(T)
 

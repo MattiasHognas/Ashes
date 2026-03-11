@@ -307,7 +307,7 @@ public sealed class FormatterTests
             new[]
             {
                 new TypeDecl(
-                    "Option",
+                    "Maybe",
                     [],
                     new[]
                     {
@@ -319,13 +319,13 @@ public sealed class FormatterTests
 
         var formatted = Ashes.Formatter.Formatter.Format(program);
 
-        formatted.ShouldBe("type Option =\n    | None\n    | Some(T)\n\nprint(\"ok\")\n");
+        formatted.ShouldBe("type Maybe =\n    | None\n    | Some(T)\n\nprint(\"ok\")\n");
     }
 
     [Test]
     public void Format_type_declaration_is_idempotent()
     {
-        const string source = "type Option =\n    | None\n    | Some(T)\n\nprint(\"ok\")\n";
+        const string source = "type Maybe =\n    | None\n    | Some(T)\n\nprint(\"ok\")\n";
         var diag = new Ashes.Frontend.Diagnostics();
         var program = new Ashes.Frontend.Parser(source, diag).ParseProgram();
         var formatted = Ashes.Formatter.Formatter.Format(program);

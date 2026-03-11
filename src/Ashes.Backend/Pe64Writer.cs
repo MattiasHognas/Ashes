@@ -130,9 +130,9 @@ public sealed class Pe64Writer
         string trueLabel = InternStringLiteral(rdata, rdataOffsets, "true", label: null);
         string falseLabel = InternStringLiteral(rdata, rdataOffsets, "false", label: null);
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_readline_too_long", "readLine() exceeded max line length");
-        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_read_failed", "Ashes.Fs.readText() failed");
-        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_write_failed", "Ashes.Fs.writeText() failed");
-        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_invalid_utf8", "Ashes.Fs.readText() encountered invalid UTF-8");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_read_failed", "Ashes.File.readText() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_write_failed", "Ashes.File.writeText() failed");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_fs_invalid_utf8", "Ashes.File.readText() encountered invalid UTF-8");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_connect_failed", "Ashes.Net.Tcp.connect() failed");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_send_failed", "Ashes.Net.Tcp.send() failed");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_receive_failed", "Ashes.Net.Tcp.receive() failed");

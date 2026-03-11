@@ -9,7 +9,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Nullary_constructor_typechecks_without_error()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nlet x = None\nin Ashes.IO.print(1)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nlet x = None\nin Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
     }
@@ -17,7 +17,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Constructor_with_argument_typechecks_without_error()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nlet x = Some(42)\nin Ashes.IO.print(1)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nlet x = Some(42)\nin Ashes.IO.print(1)");
 
         diag.Errors.ShouldBeEmpty();
     }
@@ -26,7 +26,7 @@ public sealed class ConstructorExpressionTests
     public void Nullary_constructor_produces_parent_adt_type()
     {
         var diag = new Diagnostics();
-        var program = new Parser("type Option = | None | Some(T)\nNone", diag).ParseProgram();
+        var program = new Parser("type LocalMaybe = | None | Some(T)\nNone", diag).ParseProgram();
         var lowering = new Lowering(diag);
         lowering.Lower(program);
 
@@ -37,7 +37,7 @@ public sealed class ConstructorExpressionTests
     public void Constructor_call_produces_parent_adt_type()
     {
         var diag = new Diagnostics();
-        var program = new Parser("type Option = | None | Some(T)\nSome(42)", diag).ParseProgram();
+        var program = new Parser("type LocalMaybe = | None | Some(T)\nSome(42)", diag).ParseProgram();
         var lowering = new Lowering(diag);
         lowering.Lower(program);
 
@@ -47,7 +47,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Nullary_constructor_used_with_argument_reports_arity_error()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nNone(42)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nNone(42)");
 
         diag.Errors.ShouldContain(x => x.Contains("Constructor 'None' expects 0 argument(s) but got 1", StringComparison.Ordinal));
     }
@@ -55,7 +55,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Constructor_used_without_arguments_can_be_used_as_function_value()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nlet wrap = Some\nin match wrap(42) with | Some(x) -> Ashes.IO.print(x) | None -> Ashes.IO.print(0)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nlet wrap = Some\nin match wrap(42) with | Some(x) -> Ashes.IO.print(x) | None -> Ashes.IO.print(0)");
 
         diag.Errors.ShouldBeEmpty();
     }
@@ -63,7 +63,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Unknown_constructor_in_expression_reports_improved_message()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nFoo(1)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nFoo(1)");
 
         diag.Errors.ShouldContain(x => x.Contains("Unknown constructor 'Foo'", StringComparison.Ordinal));
     }
@@ -71,7 +71,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Unknown_constructor_in_expression_includes_did_you_mean_hint()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nFoo(1)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nFoo(1)");
 
         diag.Errors.ShouldContain(x => x.Contains("Did you mean:", StringComparison.Ordinal));
     }
@@ -79,7 +79,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Nullary_constructor_used_with_argument_reports_arity_error_with_shape()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nNone(42)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nNone(42)");
 
         diag.Errors.ShouldContain(x =>
             x.Contains("Constructor 'None' expects 0 argument(s) but got 1", StringComparison.Ordinal) &&
@@ -97,7 +97,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Unknown_constructor_in_expression_does_not_cascade_non_function_type_error()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nFoo(1)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nFoo(1)");
 
         diag.Errors.ShouldNotContain(x => x.Contains("non-function type", StringComparison.Ordinal));
     }
@@ -105,7 +105,7 @@ public sealed class ConstructorExpressionTests
     [Test]
     public void Constructor_application_with_wrong_arg_count_reports_shape_hint()
     {
-        var (_, diag) = LowerProgram("type Option = | None | Some(T)\nSome(1, 2)");
+        var (_, diag) = LowerProgram("type LocalMaybe = | None | Some(T)\nSome(1, 2)");
 
         diag.Errors.ShouldContain(x =>
             x.Contains("Constructor 'Some' expects 1 argument(s) but got 2", StringComparison.Ordinal) &&
@@ -121,7 +121,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_none_typechecks_without_error()
+    public void Builtin_maybe_string_none_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("let x = None\nin Ashes.IO.print(1)");
 
@@ -129,7 +129,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_some_typechecks_without_error()
+    public void Builtin_maybe_string_some_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("let x = Some(\"hi\")\nin Ashes.IO.print(1)");
 
@@ -137,7 +137,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_match_typechecks_without_error()
+    public void Builtin_maybe_string_match_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("match Some(\"a\") with | None -> 0 | Some(x) -> 1");
 
@@ -145,13 +145,11 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_some_rejects_non_string_payload()
+    public void Builtin_maybe_some_accepts_non_string_payload()
     {
         var (_, diag) = LowerProgram("Some(1)");
 
-        diag.Errors.ShouldContain(x => x.Contains("Type mismatch", StringComparison.OrdinalIgnoreCase)
-            || x.Contains("cannot unify", StringComparison.OrdinalIgnoreCase)
-            || x.Contains("Int", StringComparison.Ordinal));
+        diag.Errors.ShouldBeEmpty();
     }
 
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)

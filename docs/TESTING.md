@@ -203,7 +203,7 @@ Example:
 ```ash
 // file: data/input.txt = hello
 // expect: hello
-match Ashes.Fs.readText("data/input.txt") with
+match Ashes.File.readText("data/input.txt") with
 		| Ok(text) -> Ashes.IO.print(text)
 		| Error(msg) -> Ashes.IO.print(msg)
 ```
@@ -224,8 +224,8 @@ Example:
 
 ```ash
 // file-bytes: bad.bin = FF FE FD
-// expect: Ashes.Fs.readText() encountered invalid UTF-8
-match Ashes.Fs.readText("bad.bin") with
+// expect: Ashes.File.readText() encountered invalid UTF-8
+match Ashes.File.readText("bad.bin") with
 		| Ok(text) -> Ashes.IO.print(text)
 		| Error(msg) -> Ashes.IO.print(msg)
 ```

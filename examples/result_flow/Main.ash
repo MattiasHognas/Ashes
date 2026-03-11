@@ -1,4 +1,4 @@
-import Result
+import Ashes.Result
 let parseOr = 
     fun (x) -> 
         if x >= 0

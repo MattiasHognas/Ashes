@@ -41,9 +41,9 @@ Canonical built-ins available today include:
 - `Ashes.IO.write(expr)`
 - `Ashes.IO.writeLine(expr)`
 - `Ashes.IO.readLine()`
-- `Ashes.Fs.readText(path)`
-- `Ashes.Fs.writeText(path, text)`
-- `Ashes.Fs.exists(path)`
+- `Ashes.File.readText(path)`
+- `Ashes.File.writeText(path, text)`
+- `Ashes.File.exists(path)`
 - `Ashes.Net.Tcp.connect(host)(port)`
 - `Ashes.Net.Tcp.send(socket)(text)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)`
@@ -102,11 +102,11 @@ Ashes strings represent UTF-8 text.
 
 Filesystem text APIs operate on UTF-8 encoded files:
 
-- `Ashes.Fs.readText(path)` returns `Result(Str, Str)`.
-- `Ashes.Fs.writeText(path, text)` returns `Result(Str, Unit)`.
-- `Ashes.Fs.exists(path)` returns `Result(Str, Bool)`.
+- `Ashes.File.readText(path)` returns `Result(Str, Str)`.
+- `Ashes.File.writeText(path, text)` returns `Result(Str, Unit)`.
+- `Ashes.File.exists(path)` returns `Result(Str, Bool)`.
 - Filesystem text is interpreted and written as UTF-8.
-- Invalid UTF-8 passed through `Ashes.Fs.readText` returns `Error(...)`.
+- Invalid UTF-8 passed through `Ashes.File.readText` returns `Error(...)`.
 - Binary file APIs are not part of the current language surface.
 
 Networking APIs live under `Ashes.Net.Tcp`:
@@ -715,9 +715,7 @@ Rules:
 
 Example:
 
-type Option =
-    | None
-    | Some(T)
+import Ashes.Maybe
 
 let unwrapOr =
     fun (opt) ->
@@ -845,11 +843,15 @@ The compiler also provides built-in runtime ADTs:
     type Unit =
         | Unit
 
-    type OptionString =
+    type Maybe(T) =
         | None
-        | Some(Str)
+        | Some(T)
 
-`OptionString` behaves like any other algebraic data type during type checking
+    type Result(E, A) =
+        | Ok(A)
+        | Error(E)
+
+`Maybe` and `Result` behave like any other algebraic data type during type checking
 and pattern matching.
 
 Examples:
@@ -863,14 +865,17 @@ Examples:
 Rules:
 
 - `Unit` is always available; no import is required.
-- `OptionString` is always available; no import is required.
+- `Maybe` is always available; no import is required.
+- `Result` is always available; no import is required.
 - `type Unit = ...` is reserved and rejected in user code.
-- `type OptionString = ...` is reserved and rejected in user code.
+- `type Maybe = ...` is reserved and rejected in user code.
+- `type Result = ...` is reserved and rejected in user code.
 - `None` and `Some` participate in normal constructor resolution rules.
+- `Ok` and `Error` participate in normal constructor resolution rules.
 
 `Ashes.IO.write` and `Ashes.IO.writeLine` return `Unit`.
 `Ashes.IO.print` has type `a -> Unit`.
-`Ashes.IO.readLine` has type `Unit -> OptionString` and `Ashes.IO.readLine()` is
+`Ashes.IO.readLine` has type `Unit -> Maybe(Str)` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
 
 `Ashes.IO.readLine` removes a trailing `\n` from the returned line and also
@@ -883,6 +888,8 @@ Ashes also ships pure library modules implemented in Ashes source.
 
 Current shipped modules include:
 
+- `Ashes.List` — helper functions for the built-in list type.
+- `Ashes.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
 - `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
 - `Ashes.Test` — assertion helpers for tests and small programs.
 
@@ -902,23 +909,14 @@ Example:
 Like other multi-argument calls in Ashes, `assertEqual(expected, actual)` is
 surface sugar for curried application.
 
-The compiler also ships project-resolved library modules outside the reserved
-`Ashes.*` namespace, including:
-
-- `List`
-- `Option`
-- `Result`
-
-These modules are resolved as shipped libraries in project mode unless a project
-defines its own module with the same name.
+These helper modules are compiler-shipped and live under the reserved `Ashes.*`
+namespace. User projects cannot override them with project-local modules.
 
 ## 13.5 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules will also live
 under `Ashes`:
 
-    Ashes.List
-    Ashes.Option
     Ashes.String
     Ashes.Bytes
     Ashes.Net.Http
@@ -932,7 +930,9 @@ This applies to `Ashes` itself and to any `Ashes.*` module path.
 Language-level syntax constructs remain built into the compiler:
 
 - `Int`, `Bool`, `String` types
+- `Maybe(T)` and `Result(E, A)` runtime ADTs
 - list literals `[1, 2, 3]`
+- list type semantics (`List<T>` in type displays)
 - tuple syntax `(a, b)`
 - function types
 - ADT declarations (`type`)
