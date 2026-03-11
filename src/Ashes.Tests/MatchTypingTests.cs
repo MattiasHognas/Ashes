@@ -7,7 +7,7 @@ namespace Ashes.Tests;
 public sealed class MatchTypingTests
 {
     [Test]
-    public void Match_with_option_constructors_typechecks_without_error()
+    public void Match_with_local_maybe_constructors_typechecks_without_error()
     {
         var (_, diag) = LowerProgram(
             """

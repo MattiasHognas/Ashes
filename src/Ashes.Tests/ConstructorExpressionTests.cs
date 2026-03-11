@@ -121,7 +121,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_none_typechecks_without_error()
+    public void Builtin_maybe_string_none_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("let x = None\nin Ashes.IO.print(1)");
 
@@ -129,7 +129,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_some_typechecks_without_error()
+    public void Builtin_maybe_string_some_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("let x = Some(\"hi\")\nin Ashes.IO.print(1)");
 
@@ -137,7 +137,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_string_match_typechecks_without_error()
+    public void Builtin_maybe_string_match_typechecks_without_error()
     {
         var (_, diag) = LowerProgram("match Some(\"a\") with | None -> 0 | Some(x) -> 1");
 
@@ -145,7 +145,7 @@ public sealed class ConstructorExpressionTests
     }
 
     [Test]
-    public void Builtin_option_some_accepts_non_string_payload()
+    public void Builtin_maybe_some_accepts_non_string_payload()
     {
         var (_, diag) = LowerProgram("Some(1)");
 
