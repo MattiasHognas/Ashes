@@ -7,6 +7,14 @@ namespace Ashes.Tests;
 public sealed class BuiltinModuleRegistryTests
 {
     [Test]
+    public void Ashes_root_module_is_reserved_but_has_no_value_members()
+    {
+        BuiltinRegistry.TryGetModule("Ashes", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes");
+        module.Members.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Ashes_net_tcp_module_is_registered()
     {
         BuiltinRegistry.TryGetModule("Ashes.Net.Tcp", out var module).ShouldBeTrue();

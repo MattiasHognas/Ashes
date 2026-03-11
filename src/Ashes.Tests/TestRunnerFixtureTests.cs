@@ -119,4 +119,42 @@ public sealed class TestRunnerFixtureTests
             }
         }
     }
+
+    [Test]
+    public void RunTests_discovers_nearest_project_for_nested_test_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "M"));
+            Directory.CreateDirectory(Path.Combine(root, "tests"));
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "Ashes.IO.print(0)");
+            File.WriteAllText(Path.Combine(root, "M", "X.ash"), "let z = 1 in z");
+            File.WriteAllText(Path.Combine(root, "M", "Y.ash"), "let z = 2 in z");
+            File.WriteAllText(
+                Path.Combine(root, "tests", "leaf_qualified.ash"),
+                "// expect: 3\nimport M.X\nimport M.Y\nAshes.IO.print(X.z + Y.z)\n");
+
+            using var output = new StringWriter();
+            var console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output)
+            });
+
+            var exitCode = Runner.RunTests([Path.Combine(root, "tests")], BackendFactory.DefaultForCurrentOS(), console);
+
+            exitCode.ShouldBe(0, output.ToString());
+            output.ToString().ShouldContain("leaf_qualified.ash");
+            output.ToString().ShouldContain("PASS");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
 }

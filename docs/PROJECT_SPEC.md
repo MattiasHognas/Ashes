@@ -163,8 +163,12 @@ Project modules are single-value modules.
 - When a module body has the shape `let name = expr in name` or `let rec name = expr in name`,
   `import Module` also brings `name` into local scope for the importing module.
 - Qualified access `Module.name` resolves to that exported name.
+- For multi-segment imports such as `import Foo.Bar`, short qualification `Bar.name`
+  also resolves when `Bar` is the unique imported leaf module qualifier.
 - If two imported modules would introduce the same unqualified exported name,
   compilation fails with an import-name collision diagnostic.
+- If two imported modules would use the same short leaf qualifier, short
+  qualification is ambiguous and compilation must require full qualification.
 
 ### 4.7 Reserved module names
 
@@ -176,6 +180,8 @@ Project modules are single-value modules.
 
 - Qualified identifiers use `Module.name` syntax.
 - Multi-segment module paths such as `Foo.Bar.value` are supported.
+- If `Foo.Bar` is imported and `Bar` is unique among imported leaf qualifiers,
+  `Bar.value` is also valid.
 - Referring to a module that is not imported is a compile-time error.
 - Referring to a name that the imported module does not export is a compile-time error.
 

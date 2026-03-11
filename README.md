@@ -73,13 +73,9 @@ Authoritative specifications:
 
 The README provides only a high-level overview.
 
-Standard library functions live under `Ashes.*` modules. Canonical root access is available for
-`Ashes.print`, `Ashes.panic`, and `Ashes.args`, while the `Ashes.IO` module continues to expose the
-same IO surface:
+Standard library functions live under `Ashes.*` modules. The core IO surface lives under
+`Ashes.IO`:
 
--   `Ashes.print(expr)` — prints to standard output
--   `Ashes.panic("message")` — aborts execution
--   `Ashes.args` — `List<String>` of command-line arguments
 -   `Ashes.IO.print(expr)` — prints to standard output
 -   `Ashes.IO.panic("message")` — aborts execution
 -   `Ashes.IO.args` — `List<String>` of command-line arguments
@@ -92,6 +88,11 @@ same IO surface:
 -   `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
 
 `Ashes` is reserved for compiler-provided standard library modules and cannot be defined by user projects.
+
+When importing multi-segment modules, full qualification such as `Foo.Bar.value` always works.
+Short qualification such as `Bar.value` also works when `Bar` is the unique imported leaf module
+qualifier. If imported exports collide, unqualified access fails; if imported leaf qualifiers
+collide, short qualification fails and full qualification must be used.
 
 Pure shipped libraries live under the compiler `lib/` folder and are available in project mode without additional configuration. Project-local modules still win first, so a project can intentionally override a shipped module such as `List` by defining its own `List.ash`.
 

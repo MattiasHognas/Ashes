@@ -35,10 +35,9 @@ Built-in standard library members live under reserved `Ashes` modules.
 
 Canonical built-ins available today include:
 
-- `Ashes.print(expr)`
-- `Ashes.panic("message")`
-- `Ashes.args`
 - `Ashes.IO.print(expr)`
+- `Ashes.IO.panic("message")`
+- `Ashes.IO.args`
 - `Ashes.IO.write(expr)`
 - `Ashes.IO.writeLine(expr)`
 - `Ashes.IO.readLine()`
@@ -51,6 +50,8 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.close(socket)`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
+The reserved `Ashes` namespace is a module root, not a direct alias surface for
+`print`, `panic`, or `args`; those live under `Ashes.IO` only.
 
 ---
 
@@ -446,9 +447,26 @@ Ashes supports two equivalent syntaxes for calling functions.
 The traditional syntax wraps arguments in parentheses:
 
 f(x)
+f(x, y)
 f(x)(y)
 f()
 Ashes.IO.print(42)
+
+Multiple parenthesized arguments are syntax sugar for curried application:
+
+f(x, y)
+
+is equivalent to:
+
+f(x)(y)
+
+This also extends to longer calls:
+
+f(a, b, c)
+
+is equivalent to:
+
+f(a)(b)(c)
 
 An empty argument list is sugar for passing the built-in `Unit` value:
 
@@ -795,6 +813,16 @@ There are two common ways to use standard library functions:
 `import Module` brings the module's exported names into local scope. The import
 must appear at the top of the source file, before any expressions.
 
+For multi-segment module imports, both full and short qualification are supported:
+
+- `import Foo.Bar` allows `Foo.Bar.value`.
+- `import Foo.Bar` also allows `Bar.value` when `Bar` is the unique imported leaf
+    module qualifier.
+- If two imported modules share the same exported name, unqualified access is a
+    compile-time error.
+- If two imported modules share the same leaf qualifier, short qualification is a
+    compile-time error and full qualification must be used.
+
 Both styles may be mixed freely.
 
 ## 13.2 Ashes.IO Module
@@ -849,25 +877,57 @@ equivalent to `Ashes.IO.readLine(Unit)`.
 normalizes Windows `\r\n` input so the returned string never includes the trailing
 newline bytes.
 
-## 13.4 Future Standard Library Modules
+## 13.4 Shipped Standard Library Modules
+
+Ashes also ships pure library modules implemented in Ashes source.
+
+Current shipped modules include:
+
+- `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
+- `Ashes.Test` — assertion helpers for tests and small programs.
+
+`Ashes.Test` currently exports:
+
+- `assertEqual(expected, actual)` — succeeds when the two values are equal and
+    aborts via `Ashes.IO.panic` when they are not.
+- `fail(message)` — always aborts via `Ashes.IO.panic`.
+
+Example:
+
+        import Ashes.Test
+
+        let checked = assertEqual(3, 3)
+        in Ashes.IO.print("ok")
+
+Like other multi-argument calls in Ashes, `assertEqual(expected, actual)` is
+surface sugar for curried application.
+
+The compiler also ships project-resolved library modules outside the reserved
+`Ashes.*` namespace, including:
+
+- `List`
+- `Option`
+- `Result`
+
+These modules are resolved as shipped libraries in project mode unless a project
+defines its own module with the same name.
+
+## 13.5 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules will also live
 under `Ashes`:
 
     Ashes.List
     Ashes.Option
-    Ashes.Result
     Ashes.String
     Ashes.Bytes
-    Ashes.Fs
-    Ashes.Net
     Ashes.Net.Http
     Ashes.Math
 
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
 
-## 13.5 Core Language vs Library
+## 13.6 Core Language vs Library
 
 Language-level syntax constructs remain built into the compiler:
 
