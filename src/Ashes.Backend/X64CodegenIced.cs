@@ -921,18 +921,18 @@ public sealed class X64CodegenIced
         asm.je(L_fs_read_empty);
 
         asm.lea(rbx, __[r14 + 8]);
-        asm.mov(r11, r13);
+        asm.mov(r10, r13);
         asm.Label(ref L_fs_read_loop);
-        asm.cmp(r11, 0);
+        asm.cmp(r10, 0);
         asm.je(L_fs_read_after);
         asm.mov(rdi, r12);
         asm.mov(rsi, rbx);
-        asm.mov(rdx, r11);
+        asm.mov(rdx, r10);
         asm.mov(rax, 0);
         asm.syscall();
         asm.cmp(rax, 0);
         asm.jle(L_fs_read_fail);
-        asm.sub(r11, rax);
+        asm.sub(r10, rax);
         asm.add(rbx, rax);
         asm.jmp(L_fs_read_loop);
 
@@ -1044,7 +1044,11 @@ public sealed class X64CodegenIced
         asm.jle(L_tcp_connect_fail);
         asm.cmp(r12, 65535);
         asm.jg(L_tcp_connect_fail);
+        asm.sub(rsp, 0x10);
+        asm.mov(__[rsp], r12);
         asm.call(L_resolve_host_ipv4);
+        asm.mov(r12, __[rsp]);
+        asm.add(rsp, 0x10);
         asm.cmp(eax, 0);
         asm.je(L_tcp_connect_resolve_fail);
         asm.mov(r13d, edx);
