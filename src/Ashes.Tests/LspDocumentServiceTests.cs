@@ -229,6 +229,16 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_allow_standalone_import_of_Ashes_Http()
+    {
+        const string source = "import Ashes.Http\nmatch Ashes.Http.get(\"http://example.com\") with | Ok(text) -> 1 | Error(_) -> 0";
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Net_Tcp()
     {
         const string source = "import Ashes.Net.Tcp\nmatch Ashes.Net.Tcp.connect(\"127.0.0.1\")(80) with | Ok(sock) -> 1 | Error(_) -> 0";
@@ -351,6 +361,7 @@ public sealed class LspDocumentServiceTests
 
         completions.ShouldContain("IO");
         completions.ShouldContain("File");
+        completions.ShouldContain("Http");
         completions.ShouldContain("Net");
         completions.ShouldContain("List");
     }

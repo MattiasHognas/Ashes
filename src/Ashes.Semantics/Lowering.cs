@@ -611,9 +611,11 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.Write => LowerQualifiedBuiltinFunctionReference(name, CreateWriteBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.WriteLine => LowerQualifiedBuiltinFunctionReference(name, CreateWriteLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateReadLineBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FsReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFsReadTextBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FsWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFsWriteTextBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FsExists => LowerQualifiedBuiltinFunctionReference(name, CreateFsExistsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.HttpGet => LowerQualifiedBuiltinFunctionReference(name, CreateHttpGetBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.HttpPost => LowerQualifiedBuiltinFunctionReference(name, CreateHttpPostBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpConnectBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
@@ -1441,7 +1443,7 @@ public sealed class Lowering
         return LowerNullaryConstructor(unitConstructor);
     }
 
-    private (int, TypeRef) LowerFsReadText(Expr pathArg)
+    private (int, TypeRef) LowerFileReadText(Expr pathArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
         var (pathTemp, pathType) = LowerExpr(pathArg);
@@ -1465,11 +1467,11 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FsReadText(target, pathTemp));
+        _inst.Add(new IrInst.FileReadText(target, pathTemp));
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
-    private (int, TypeRef) LowerFsWriteText(Expr pathArg, Expr textArg)
+    private (int, TypeRef) LowerFileWriteText(Expr pathArg, Expr textArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
         var (pathTemp, pathType) = LowerExpr(pathArg);
@@ -1514,11 +1516,11 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FsWriteText(target, pathTemp, textTemp));
+        _inst.Add(new IrInst.FileWriteText(target, pathTemp, textTemp));
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
-    private (int, TypeRef) LowerFsExists(Expr pathArg)
+    private (int, TypeRef) LowerFileExists(Expr pathArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
         var (pathTemp, pathType) = LowerExpr(pathArg);
@@ -1542,7 +1544,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FsExists(target, pathTemp));
+        _inst.Add(new IrInst.FileExists(target, pathTemp));
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
@@ -1619,6 +1621,80 @@ public sealed class Lowering
         var target = NewTemp();
         _inst.Add(new IrInst.NetTcpConnect(target, hostTemp, portTemp));
         return (target, CreateStringResultType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerHttpGet(Expr urlArg)
+    {
+        using var urlSpan = PushDiagnosticSpan(urlArg);
+        var (urlTemp, urlType) = LowerExpr(urlArg);
+        var prunedUrlType = Prune(urlType);
+        if (prunedUrlType is TypeRef.TNever)
+        {
+            return (urlTemp, prunedUrlType);
+        }
+
+        if (prunedUrlType is TypeRef.TVar)
+        {
+            Unify(prunedUrlType, new TypeRef.TStr());
+            prunedUrlType = new TypeRef.TStr();
+        }
+
+        if (prunedUrlType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Http.get() expects Str for url but got {Pretty(prunedUrlType)}.");
+            return (urlTemp, prunedUrlType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.HttpGet(target, urlTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
+    }
+
+    private (int, TypeRef) LowerHttpPost(Expr urlArg, Expr bodyArg)
+    {
+        using var urlSpan = PushDiagnosticSpan(urlArg);
+        var (urlTemp, urlType) = LowerExpr(urlArg);
+        var prunedUrlType = Prune(urlType);
+        if (prunedUrlType is TypeRef.TNever)
+        {
+            return (urlTemp, prunedUrlType);
+        }
+
+        if (prunedUrlType is TypeRef.TVar)
+        {
+            Unify(prunedUrlType, new TypeRef.TStr());
+            prunedUrlType = new TypeRef.TStr();
+        }
+
+        if (prunedUrlType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Http.post() expects Str for url but got {Pretty(prunedUrlType)}.");
+            return (urlTemp, prunedUrlType);
+        }
+
+        using var bodySpan = PushDiagnosticSpan(bodyArg);
+        var (bodyTemp, bodyType) = LowerExpr(bodyArg);
+        var prunedBodyType = Prune(bodyType);
+        if (prunedBodyType is TypeRef.TNever)
+        {
+            return (bodyTemp, prunedBodyType);
+        }
+
+        if (prunedBodyType is TypeRef.TVar)
+        {
+            Unify(prunedBodyType, new TypeRef.TStr());
+            prunedBodyType = new TypeRef.TStr();
+        }
+
+        if (prunedBodyType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(bodyArg), $"Ashes.Http.post() expects Str for body but got {Pretty(prunedBodyType)}.");
+            return (bodyTemp, prunedBodyType);
+        }
+
+        var target = NewTemp();
+        _inst.Add(new IrInst.HttpPost(target, urlTemp, bodyTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerNetTcpSend(Expr socketArg, Expr textArg)
@@ -2240,9 +2316,11 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
                 BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
                 BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.FsReadText => LowerFsReadText(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.FsWriteText => LowerFsWriteText(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.FsExists => LowerFsExists(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+                BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
@@ -4066,7 +4144,7 @@ public sealed class Lowering
         return new TypeRef.TNamedType(maybeSymbol, [innerType]);
     }
 
-    private Binding.Intrinsic CreateFsReadTextBinding()
+    private Binding.Intrinsic CreateFileReadTextBinding()
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
@@ -4074,7 +4152,7 @@ public sealed class Lowering
         );
     }
 
-    private Binding.Intrinsic CreateFsWriteTextBinding()
+    private Binding.Intrinsic CreateFileWriteTextBinding()
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
@@ -4082,11 +4160,27 @@ public sealed class Lowering
         );
     }
 
-    private Binding.Intrinsic CreateFsExistsBinding()
+    private Binding.Intrinsic CreateFileExistsBinding()
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())))
+        );
+    }
+
+    private Binding.Intrinsic CreateHttpGetBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())))
+        );
+    }
+
+    private Binding.Intrinsic CreateHttpPostBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr()))))
         );
     }
 

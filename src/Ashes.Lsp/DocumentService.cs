@@ -796,7 +796,7 @@ public static partial class DocumentService
     {
         return moduleName switch
         {
-            "Ashes" => ["File", "IO", "List", "Maybe", "Net", "Result", "Test"],
+            "Ashes" => ["File", "Http", "IO", "List", "Maybe", "Net", "Result", "Test"],
             "Ashes.Net" => ["Tcp"],
             "Ashes.List" => ["append", "filter", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
             "Ashes.Maybe" => ["flatMap", "getOrElse", "isNone", "isSome", "map"],
