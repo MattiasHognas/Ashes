@@ -1496,7 +1496,7 @@ public sealed class WindowsX64CodegenIced
         CallLabel(L_make_string_slice);
         asm.mov(r12, rax);
         asm.cmp(r10, 200);
-        asm.jb(L_http_return_result);
+        asm.jb(L_http_status_success);
         asm.cmp(r10, 299);
         asm.ja(L_http_status_success);
         asm.mov(rdi, r12);

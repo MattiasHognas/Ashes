@@ -227,6 +227,192 @@ jobs:
             }
           }
 
+      - name: Run http example (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+
+          $job = Start-Job -ScriptBlock {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+              $acceptTask = $listener.AcceptTcpClientAsync()
+              if (-not $acceptTask.Wait([TimeSpan]::FromSeconds(10))) {
+                throw "Timed out waiting for HTTP example connection"
+              }
+
+              $client = $acceptTask.Result
+              try {
+                $stream = $client.GetStream()
+                try {
+                  $buffer = New-Object byte[] 4096
+                  [void]$stream.Read($buffer, 0, $buffer.Length)
+                  $response = [System.Text.Encoding]::UTF8.GetBytes("HTTP/1.1 200 OK`r`nConnection: close`r`n`r`nhello from http")
+                  $stream.Write($response, 0, $response.Length)
+                  $stream.Flush()
+                }
+                finally {
+                  $stream.Dispose()
+                }
+              }
+              finally {
+                $client.Dispose()
+              }
+            }
+            finally {
+              $listener.Stop()
+            }
+          }
+
+          try {
+            & $ashesCli run examples/http_get.ash
+            if ($LASTEXITCODE -ne 0) {
+              throw "HTTP example failed: examples/http_get.ash (exit code: $LASTEXITCODE)"
+            }
+
+            Wait-Job $job | Out-Null
+            Receive-Job $job -AutoRemoveJob | Out-Null
+          }
+          finally {
+            if ($job.State -eq 'Running') {
+              Stop-Job $job | Out-Null
+            }
+
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Run tcp examples (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+
+          function Invoke-ExampleWithServer([string]$examplePath, [scriptblock]$serverScript, [string]$failureLabel) {
+            $job = Start-Job -ScriptBlock $serverScript
+            try {
+              & $ashesCli run $examplePath
+              if ($LASTEXITCODE -ne 0) {
+                throw "$failureLabel failed: $examplePath (exit code: $LASTEXITCODE)"
+              }
+
+              Wait-Job $job | Out-Null
+              Receive-Job $job -AutoRemoveJob | Out-Null
+            }
+            finally {
+              if ($job.State -eq 'Running') {
+                Stop-Job $job | Out-Null
+              }
+
+              Remove-Job $job -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          Invoke-ExampleWithServer "examples/tcp_connect.ash" {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+              $acceptTask = $listener.AcceptTcpClientAsync()
+              if (-not $acceptTask.Wait([TimeSpan]::FromSeconds(10))) {
+                throw "Timed out waiting for tcp_connect example connection"
+              }
+
+              $client = $acceptTask.Result
+              try {
+                Start-Sleep -Milliseconds 200
+              }
+              finally {
+                $client.Dispose()
+              }
+            }
+            finally {
+              $listener.Stop()
+            }
+          } "TCP connect example"
+
+          Invoke-ExampleWithServer "examples/tcp_send.ash" {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+              $acceptTask = $listener.AcceptTcpClientAsync()
+              if (-not $acceptTask.Wait([TimeSpan]::FromSeconds(10))) {
+                throw "Timed out waiting for tcp_send example connection"
+              }
+
+              $client = $acceptTask.Result
+              try {
+                $stream = $client.GetStream()
+                try {
+                  $buffer = New-Object byte[] 64
+                  [void]$stream.Read($buffer, 0, $buffer.Length)
+                }
+                finally {
+                  $stream.Dispose()
+                }
+              }
+              finally {
+                $client.Dispose()
+              }
+            }
+            finally {
+              $listener.Stop()
+            }
+          } "TCP send example"
+
+          Invoke-ExampleWithServer "examples/tcp_receive.ash" {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+              $acceptTask = $listener.AcceptTcpClientAsync()
+              if (-not $acceptTask.Wait([TimeSpan]::FromSeconds(10))) {
+                throw "Timed out waiting for tcp_receive example connection"
+              }
+
+              $client = $acceptTask.Result
+              try {
+                $stream = $client.GetStream()
+                try {
+                  $payload = [System.Text.Encoding]::UTF8.GetBytes("hello-from-server")
+                  $stream.Write($payload, 0, $payload.Length)
+                  $stream.Flush()
+                }
+                finally {
+                  $stream.Dispose()
+                }
+              }
+              finally {
+                $client.Dispose()
+              }
+            }
+            finally {
+              $listener.Stop()
+            }
+          } "TCP receive example"
+
+          Invoke-ExampleWithServer "examples/tcp_close.ash" {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+              $acceptTask = $listener.AcceptTcpClientAsync()
+              if (-not $acceptTask.Wait([TimeSpan]::FromSeconds(10))) {
+                throw "Timed out waiting for tcp_close example connection"
+              }
+
+              $client = $acceptTask.Result
+              try {
+                Start-Sleep -Milliseconds 200
+              }
+              finally {
+                $client.Dispose()
+              }
+            }
+            finally {
+              $listener.Stop()
+            }
+          } "TCP close example"
+
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 2
