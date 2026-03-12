@@ -392,6 +392,17 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void GetCompletions_should_return_local_bindings_in_scope()
+    {
+        const string source = "let value = 1 in let next = value + 1 in ne";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("value");
+        completions.ShouldContain("next");
+    }
+
+    [Test]
     public void GetHover_should_return_type_for_let_binding_name()
     {
         const string source = "let id = fun (x) -> x in id(1)";
