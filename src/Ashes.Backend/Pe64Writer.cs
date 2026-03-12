@@ -141,6 +141,19 @@ public sealed class Pe64Writer
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_max_bytes", "Ashes.Net.Tcp.receive() maxBytes must be positive");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_invalid_host", "Ashes.Net.Tcp.connect() requires an IPv4 address literal");
         EnsureStringLiteral(rdata, rdataOffsets, "__rt_tcp_resolve_failed", "Ashes.Net.Tcp.connect() could not resolve host");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_empty", "");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_default_path", "/");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_get_prefix", "GET ");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_post_prefix", "POST ");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_host_header", " HTTP/1.1\r\nHost: ");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_content_length_header", "\r\nContent-Length: ");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_request_suffix", "\r\nConnection: close\r\n\r\n");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_status_prefix", "HTTP ");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_chunked_header", "Transfer-Encoding: chunked");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_https_not_supported", "https not supported");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_malformed_url", "malformed URL");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_malformed_response", "malformed HTTP response");
+        EnsureStringLiteral(rdata, rdataOffsets, "__rt_http_unsupported_transfer_encoding", "unsupported transfer encoding");
 
         foreach (var s in p.StringLiterals)
         {

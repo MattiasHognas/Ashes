@@ -44,14 +44,9 @@ CodeCoverage/
 # MSBuild Binary and Structured Log
 *.binlog
 
-# MSTest test Results
+# Test Results
 [Tt]est[Rr]esult*/
-[Bb]uild[Ll]og.*
 
-# NUnit
-*.VisualState.xml
-TestResult.xml
-nunit-*.xml
 
 # VS Code extension
 .pnpm-store/
@@ -72,6 +67,7 @@ tests/*.exe
 examples/*.exe
 /*.exe
 /*.txt
+*.received.txt
 
 # Personal files
 PLANNED_ISSUES*.md

@@ -18,6 +18,9 @@ ashes <command> [options] [arguments]
 
 Running `ashes` with no arguments (or an unrecognised command) prints the help text and exits with code **2**.
 
+Running `ashes --help` (or `ashes -h`) prints the same help text and exits with code **0**.
+Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI help text and exits with code **0**.
+
 ---
 
 ## Command List
@@ -33,6 +36,12 @@ Running `ashes` with no arguments (or an unrecognised command) prints the help t
 ---
 
 ## Common Options
+
+The following help flags are accepted at the top level and for each command:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--help` / `-h` | — | — | No | Print CLI help text and exit successfully. |
 
 The following option is accepted by **compile**, **run**, **repl**, and **test**:
 
@@ -107,12 +116,12 @@ ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upwa
 | Code | Meaning |
 |------|---------|
 | `0` | Compilation succeeded; binary written to disk. |
-| `1` | Compilation error (parse, type, or code-generation failure), or I/O error. |
-| `2` | Usage error (bad flag, missing input, conflicting options). |
+| `1` | Compilation error (parse, type, or code-generation failure), or user/input error such as missing input, file not found, wrong extension, or I/O failure. |
+| `2` | Usage error (bad flag or conflicting options). |
 
 #### Output (stdout / stderr)
 
-All status messages are written to **stdout** via Spectre.Console.
+Successful status messages are written to **stdout** via Spectre.Console.
 On success, a confirmation line is printed:
 
 ```
@@ -124,7 +133,7 @@ OK  Wrote <size> to <output>
 `<size>` is human-readable (e.g. `8.1 KB`).
 `<elapsed>` is the compilation wall-clock time (e.g. `159ms` or `1.23s`).
 
-Errors are prefixed with `Error:` and written to **stdout** (Spectre.Console output stream).
+Compiler diagnostics and command errors are written to **stderr**.
 No machine-readable output format is currently supported.
 
 #### Examples
@@ -187,14 +196,14 @@ ashes run [--target <id>] [-- <args...>]   # auto-discovers ashes.json
 |------|---------|
 | `0` | Program compiled and exited with code 0. |
 | Non-zero (from program) | The compiled program's own exit code is propagated as-is. |
-| `1` | Compilation error or I/O failure (before the program starts). |
+| `1` | Compilation error or user/input failure (before the program starts). |
 | `2` | Usage error. |
 
 #### Output (stdout / stderr)
 
 The compiled program's **stdout** and **stderr** flow directly to the terminal without interception.
 No extra diagnostic lines (timing, size, etc.) are printed, so `ashes run` output is safe to pipe.
-Compiler diagnostics are printed to the CLI's **stdout** before the program runs.
+Compiler diagnostics are printed to the CLI's **stderr** before the program runs.
 
 #### Examples
 
@@ -393,8 +402,8 @@ ashes fmt <file|dir> [-w]
 | Code | Meaning |
 |------|---------|
 | `0` | Formatting succeeded (or no `.ash` files found). |
-| `1` | Parse error in one of the source files. |
-| `2` | Usage error (path not found, wrong extension, ambiguous arguments). |
+| `1` | Parse error in one of the source files, or user/input error such as missing path, wrong extension, or path not found. |
+| `2` | Usage error (bad flag or ambiguous arguments). |
 
 #### Output (stdout / stderr)
 
@@ -464,8 +473,8 @@ import Namespace.ModuleName
 | Code | Meaning |
 |------|---------|
 | `0` | Success. |
-| `1` | Compilation error, runtime error, or test failure. |
-| `2` | Usage / argument error (bad flag, missing required argument, etc.). |
+| `1` | Compilation error, runtime error, test failure, or concrete user/input error. |
+| `2` | Usage / argument error (bad flag, conflicting options, or unknown command syntax). |
 
 The exit code from `ashes run` is the compiled program's own exit code when compilation succeeds.
 
@@ -476,10 +485,11 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | Condition | Error message / behaviour | Exit code |
 |-----------|--------------------------|-----------|
 | Unknown command | Help text printed | `2` |
-| Unknown flag | `Unknown argument.` + help text | `2` |
-| Missing required argument | Descriptive message + help text | `2` |
-| Input file not found | `File not found: <path>` | `2` |
-| Input file has wrong extension | `Input file must have .ash extension (or use --expr).` | `2` |
+| Unknown flag | `Unknown argument.` | `2` |
+| Missing required compile/run input | `Missing input file or --expr.` | `1` |
+| Missing required fmt path | `Missing file or directory.` | `1` |
+| Input file not found | `File not found: <path>` | `1` |
+| Input file has wrong extension | `Input file must have .ash extension (or use --expr).` | `1` |
 | `--project` combined with file/`--expr` | `Cannot combine --project with input file or --expr.` | `2` |
 | `--target` receives unknown value | Message indicating unknown target, e.g. `Unknown target '<value>'.` | `1` |
 | `ashes.json` missing `entry` field | `Project file is missing required string field 'entry'.` | `1` |
@@ -487,7 +497,7 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | Import cycle detected | `Import cycle detected: A -> B -> A` | `1` |
 | Parse / type error in source | Diagnostic message | `1` |
 | `ashes fmt` given more or fewer than one path | `Provide exactly one file or directory.` | `2` |
-| `ashes fmt` path does not exist | `Path not found: <path>` | `2` |
+| `ashes fmt` path does not exist | `Path not found: <path>` | `1` |
 
 ---
 

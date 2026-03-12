@@ -33,6 +33,40 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_http_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Http", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Http");
+        module.Members.ContainsKey("get").ShouldBeTrue();
+        module.Members.ContainsKey("post").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Ashes_http_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.Http").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Http");
+    }
+
+    [Test]
+    public void Ashes_http_builtins_typecheck_through_result_flow()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            match Ashes.Http.get("http://example.com") with
+                | Error(_) -> Ashes.IO.print("fail")
+                | Ok(text) -> Ashes.IO.print(text)
+            """,
+            diag).ParseProgram();
+        var lowering = new Lowering(diag);
+
+        lowering.Lower(program);
+
+        diag.Errors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Ashes_net_tcp_builtins_typecheck_through_result_flow()
     {
         var diag = new Diagnostics();

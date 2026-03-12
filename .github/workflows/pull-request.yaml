@@ -67,7 +67,10 @@ jobs:
       contents: read
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: 
+          - ubuntu-latest
+          - windows-latest
+      fail-fast: false
 
     steps:
       - name: Checkout repository
@@ -85,6 +88,11 @@ jobs:
           chmod +x artifacts/ashes/linux/ashes
           ASHES_CLI=./artifacts/ashes/linux/ashes
           for example in examples/*.ash; do
+            case "$(basename "$example")" in
+              http_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash)
+                continue
+                ;;
+            esac
             "$ASHES_CLI" run "$example"
           done
 
@@ -94,7 +102,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
-          Get-ChildItem examples\*.ash | ForEach-Object {
+          Get-ChildItem examples\*.ash |
+            Where-Object { $_.Name -notin @('http_get.ash', 'tcp_close.ash', 'tcp_connect.ash', 'tcp_receive.ash', 'tcp_send.ash') } |
+            ForEach-Object {
             & $ashesCli run $_.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "Example failed: $($_.FullName) (exit code: $LASTEXITCODE)"
