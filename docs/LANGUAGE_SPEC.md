@@ -44,6 +44,8 @@ Canonical built-ins available today include:
 - `Ashes.File.readText(path)`
 - `Ashes.File.writeText(path, text)`
 - `Ashes.File.exists(path)`
+- `Ashes.Http.get(url)`
+- `Ashes.Http.post(url, body)`
 - `Ashes.Net.Tcp.connect(host)(port)`
 - `Ashes.Net.Tcp.send(socket)(text)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)`
@@ -127,6 +129,19 @@ Networking rules:
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
 - `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
+
+Basic HTTP client APIs live under `Ashes.Http`:
+
+- `Ashes.Http.get(url)` returns `Result(Str, Str)`.
+- `Ashes.Http.post(url, body)` returns `Result(Str, Str)`.
+
+Current HTTP rules:
+
+- Only `http://` URLs are supported.
+- `https://` returns `Error(...)`.
+- Non-2xx responses return `Error("HTTP <status>")`.
+- Chunked transfer encoding is not supported and returns `Error(...)`.
+- The successful payload is the response body text after the HTTP header separator.
 
 ## 2.3 Booleans
 
@@ -245,15 +260,15 @@ It evaluates a `Result(E, A)` expression, binds the `Ok` payload inside the body
 
 Example:
 
-let parseAge text =
-    let? n = String.toInt text
+let bumpIfOk result =
+    let? n = result
     in
     Ok(n)
 
 This is equivalent to:
 
-let parseAge text =
-    match String.toInt text with
+let bumpIfOk result =
+    match result with
         | Ok(n) ->
             Ok(n)
         | Error(e) ->
@@ -265,12 +280,12 @@ Use `match` when success and error branches must be handled explicitly.
 
 Both Result workflows are valid:
 
-let parseAge1 text =
-    String.toInt text
+let bumpIfOk1 result =
+    result
     |?> (fun (n) -> n + 1)
 
-let parseAge2 text =
-    let? n = String.toInt text
+let bumpIfOk2 result =
+    let? n = result
     in
     Ok(n + 1)
 
@@ -392,8 +407,8 @@ Recursive bindings must be declared with `rec`.
 
 Syntax:
 
-let rec  = 
-in 
+let rec name = value
+in body
 
 Example:
 
@@ -424,7 +439,7 @@ Anonymous functions are declared using `fun`.
 
 Syntax:
 
-fun (param1, param2, …) -> 
+fun (param1, param2, ...) -> expr
 
 Example:
 
@@ -552,15 +567,15 @@ whitespace arguments.
 
 Syntax:
 
-if 
-then 
-else 
+if condition
+then whenTrue
+else whenFalse
 
 Example:
 
 if 10 >= 10
-then “true”
-else “false”
+then "true"
+else "false"
 
 All branches must return compatible types.
 
@@ -604,11 +619,11 @@ Type rule:
 If:
 
 x : T
-xs : List
+xs : List<T>
 
 Then:
 
-x :: xs : List
+x :: xs : List<T>
 
 ---
 
@@ -618,9 +633,9 @@ Pattern matching is performed using `match`.
 
 Syntax:
 
-match  with
-|  -> 
-|  -> 
+match value with
+| pattern1 -> expr1
+| pattern2 -> expr2
 
 ---
 
@@ -836,6 +851,18 @@ The built-in `Ashes.IO` module exports:
 - `writeLine("text")` — writes a string to standard output and then writes `\n`.
 - `readLine()` — reads one line from standard input and returns `Some(line)` or `None` on EOF.
 
+Other built-in runtime modules are also always available through qualified access:
+
+- `Ashes.File.readText(path)` — `Result(Str, Str)` UTF-8 file read.
+- `Ashes.File.writeText(path, text)` — `Result(Str, Unit)` UTF-8 file write.
+- `Ashes.File.exists(path)` — `Result(Str, Bool)` filesystem existence check.
+- `Ashes.Net.Tcp.connect(host)(port)` — `Result(Str, Socket)` blocking TCP connect.
+- `Ashes.Net.Tcp.send(socket)(text)` — `Result(Str, Int)` blocking TCP send.
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result(Str, Str)` blocking TCP receive.
+- `Ashes.Net.Tcp.close(socket)` — `Result(Str, Unit)` explicit socket close.
+- `Ashes.Http.get(url)` — `Result(Str, Str)` blocking HTTP GET for plain `http://` URLs.
+- `Ashes.Http.post(url, body)` — `Result(Str, Str)` blocking HTTP POST for plain `http://` URLs.
+
 ## 13.3 Built-in Runtime Types
 
 The compiler also provides built-in runtime ADTs:
@@ -882,7 +909,30 @@ equivalent to `Ashes.IO.readLine(Unit)`.
 normalizes Windows `\r\n` input so the returned string never includes the trailing
 newline bytes.
 
-## 13.4 Shipped Standard Library Modules
+## 13.4 Error Handling
+
+Ashes uses explicit `Result(E, A)` values for recoverable failures.
+
+Idiomatic Result handling patterns are:
+
+- `match value with | Ok(x) -> ... | Error(e) -> ...` when both branches must be handled explicitly.
+- `let? name = value in body` when a sequence of Result-returning operations should short-circuit on `Error`.
+- `|?>` when a Result-success pipeline reads more clearly than nested matches.
+- `|!>` when only the error payload should be transformed.
+
+Example:
+
+let describe =
+    fun (result) ->
+        match result with
+            | Ok(value) -> Ashes.IO.writeLine("ok")
+            | Error(message) -> Ashes.IO.writeLine(message)
+in describe(Ok(1))
+
+`Ashes.IO.panic(message)` is reserved for unrecoverable failures.
+It prints the provided message and terminates execution with a non-zero exit code.
+
+## 13.5 Shipped Standard Library Modules
 
 Ashes also ships pure library modules implemented in Ashes source.
 
@@ -892,6 +942,42 @@ Current shipped modules include:
 - `Ashes.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
 - `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
 - `Ashes.Test` — assertion helpers for tests and small programs.
+
+Stable helper surfaces:
+
+### `Ashes.List`
+
+- `Ashes.List.append : List<a> -> List<a> -> List<a>`
+- `Ashes.List.length : List<a> -> Int`
+- `Ashes.List.head : List<a> -> Maybe(a)`
+- `Ashes.List.tail : List<a> -> Maybe(List<a>)`
+- `Ashes.List.map : (a -> b) -> List<a> -> List<b>`
+- `Ashes.List.filter : (a -> Bool) -> List<a> -> List<a>`
+- `Ashes.List.foldLeft : (b -> a -> b) -> b -> List<a> -> b`
+- `Ashes.List.fold : (a -> b -> b) -> b -> List<a> -> b`
+- `Ashes.List.isEmpty : List<a> -> Bool`
+- `Ashes.List.reverse : List<a> -> List<a>`
+
+### `Ashes.Maybe`
+
+- `Ashes.Maybe.default : a -> Maybe(a) -> a`
+- `Ashes.Maybe.flatMap : (a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`
+- `Ashes.Maybe.getOrElse : a -> Maybe(a) -> a`
+- `Ashes.Maybe.isNone : Maybe(a) -> Bool`
+- `Ashes.Maybe.isSome : Maybe(a) -> Bool`
+- `Ashes.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
+- `Ashes.Maybe.unwrapOr : Maybe(a) -> a -> a`
+
+### `Ashes.Result`
+
+- `Ashes.Result.default : a -> Result(E, a) -> a`
+- `Ashes.Result.bind : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Result.map : (a -> b) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Result.flatMap : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Result.getOrElse : a -> Result(E, a) -> a`
+- `Ashes.Result.isOk : Result(E, a) -> Bool`
+- `Ashes.Result.isError : Result(E, a) -> Bool`
+- `Ashes.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
 
 `Ashes.Test` currently exports:
 
@@ -912,7 +998,7 @@ surface sugar for curried application.
 These helper modules are compiler-shipped and live under the reserved `Ashes.*`
 namespace. User projects cannot override them with project-local modules.
 
-## 13.5 Future Standard Library Modules
+## 13.6 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules will also live
 under `Ashes`:
@@ -925,7 +1011,7 @@ under `Ashes`:
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
 
-## 13.6 Core Language vs Library
+## 13.7 Core Language vs Library
 
 Language-level syntax constructs remain built into the compiler:
 

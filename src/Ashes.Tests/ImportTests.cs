@@ -3,9 +3,11 @@ using System.Runtime.CompilerServices;
 using Ashes.Semantics;
 using Ashes.Frontend;
 using Shouldly;
+using TUnit.Core;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class ImportTests
 {
     private static string GetImportTestsRoot([CallerFilePath] string? callerFile = null)

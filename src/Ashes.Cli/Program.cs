@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
@@ -7,7 +8,7 @@ using Ashes.Semantics;
 using Ashes.TestRunner;
 using Spectre.Console;
 
-static int Usage()
+static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
@@ -37,7 +38,7 @@ static int Usage()
     AnsiConsole.MarkupLine("  [bold]ashes run[/] --expr [italic]\"Ashes.IO.print(40 + 2)\"[/] -- arg1 arg2");
     AnsiConsole.MarkupLine("  [bold]ashes test[/] tests");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/] examples -w");
-    return 2;
+    return exitCode;
 }
 
 static string DeriveOutputPath(string inputPath, string targetId)
@@ -91,17 +92,17 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
 
     if (string.IsNullOrEmpty(inputFile))
     {
-        throw new CliUsageException("Missing input file or --expr.");
+        throw new CliUserException("Missing input file or --expr.");
     }
 
     if (!inputFile.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
     {
-        throw new CliUsageException("Input file must have .ash extension (or use --expr).");
+        throw new CliUserException("Input file must have .ash extension (or use --expr).");
     }
 
     if (!File.Exists(inputFile))
     {
-        throw new CliUsageException($"File not found: {inputFile}");
+        throw new CliUserException($"File not found: {inputFile}");
     }
 
     return await File.ReadAllTextAsync(inputFile);
@@ -173,11 +174,7 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
         psi.ArgumentList.Add(arg);
     }
 
-    using var p = Process.Start(psi);
-    if (p is null)
-    {
-        throw new InvalidOperationException("Failed to start compiled executable.");
-    }
+    using var p = StartCompiledProcess(psi);
 
     var stdoutTask = p.StandardOutput.ReadToEndAsync();
     var stderrTask = p.StandardError.ReadToEndAsync();
@@ -218,14 +215,35 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
         psi.ArgumentList.Add(arg);
     }
 
-    using var p = Process.Start(psi);
-    if (p is null)
-    {
-        throw new InvalidOperationException("Failed to start compiled executable.");
-    }
+    using var p = StartCompiledProcess(psi);
 
     await p.WaitForExitAsync();
     return p.ExitCode;
+}
+
+static Process StartCompiledProcess(ProcessStartInfo startInfo)
+{
+    const int maxAttempts = 20;
+
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            return Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start compiled executable.");
+        }
+        catch (Win32Exception ex) when (attempt < maxAttempts && IsTextFileBusy(ex))
+        {
+            Thread.Sleep(25);
+        }
+    }
+}
+
+static bool IsTextFileBusy(Win32Exception ex)
+{
+    return OperatingSystem.IsLinux()
+        && (ex.NativeErrorCode == 26
+            || ex.Message.Contains("Text file busy", StringComparison.OrdinalIgnoreCase));
 }
 
 static string BuildReplSessionSource(IReadOnlyList<ReplBinding> bindings, string exprSource)
@@ -390,6 +408,11 @@ if (args.Length == 0)
 
 var command = args[0].ToLowerInvariant();
 
+if (command is "--help" or "-h")
+{
+    return Usage(0);
+}
+
 try
 {
     return command switch
@@ -405,8 +428,13 @@ try
 }
 catch (CliUsageException ex)
 {
-    AnsiConsole.Write(new Text(DiagnosticTextRenderer.RenderFailure("error", ex.Message)));
-    return Usage();
+    Console.Error.Write(DiagnosticTextRenderer.RenderFailure("error", ex.Message));
+    return 2;
+}
+catch (CliUserException ex)
+{
+    Console.Error.Write(DiagnosticTextRenderer.RenderFailure("error", ex.Message));
+    return 1;
 }
 catch (CompileDiagnosticException ex)
 {
@@ -415,12 +443,17 @@ catch (CompileDiagnosticException ex)
 }
 catch (Exception ex)
 {
-    AnsiConsole.Write(new Text(DiagnosticTextRenderer.RenderFailure("error", ex.Message)));
+    Console.Error.Write(DiagnosticTextRenderer.RenderFailure("error", ex.Message));
     return 1;
 }
 
 async Task<int> RunCompileAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     string? target = null;
     string? outPath = null;
     string? expr = null;
@@ -511,6 +544,11 @@ async Task<int> RunCompileAsync(string[] a)
 
 async Task<int> RunRunAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     var idx = Array.IndexOf(a, "--");
     var cliArgs = idx >= 0 ? a[..idx] : a;
     var progArgs = idx >= 0 ? a[(idx + 1)..] : Array.Empty<string>();
@@ -584,6 +622,11 @@ async Task<int> RunRunAsync(string[] a)
 
 async Task<int> RunReplAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     string? target = null;
 
     for (int i = 0; i < a.Length; i++)
@@ -745,6 +788,11 @@ async Task<int> RunReplAsync(string[] a)
 
 int RunTest(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     // ashes test [--project ...] [--target ...] [paths...]
     string? target = null;
     string? projectPath = null;
@@ -771,10 +819,15 @@ int RunTest(string[] a)
 
 async Task<int> RunFmtAsync(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     // ashes fmt <file|dir> [-w]
     if (a.Length == 0)
     {
-        throw new CliUsageException("Missing file or directory.");
+        throw new CliUserException("Missing file or directory.");
     }
 
     var writeInPlace = a.Contains("-w", StringComparer.Ordinal) || a.Contains("--write", StringComparer.Ordinal);
@@ -791,7 +844,7 @@ async Task<int> RunFmtAsync(string[] a)
     {
         if (!path.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
         {
-            throw new CliUsageException("Input file must be .ash");
+            throw new CliUserException("Input file must be .ash");
         }
 
         files.Add(path);
@@ -802,7 +855,7 @@ async Task<int> RunFmtAsync(string[] a)
     }
     else
     {
-        throw new CliUsageException($"Path not found: {path}");
+        throw new CliUserException($"Path not found: {path}");
     }
 
     files = files.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
@@ -927,12 +980,12 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
 
 static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? source, string displayPath)
 {
-    AnsiConsole.Write(new Text(DiagnosticTextRenderer.RenderCompilerDiagnostics(ex, source, displayPath)));
+    Console.Error.Write(DiagnosticTextRenderer.RenderCompilerDiagnostics(ex, source, displayPath));
 }
 
 static void PrintCompileFailure(string message, string displayPath)
 {
-    AnsiConsole.Write(new Text(DiagnosticTextRenderer.RenderFailure("compile error", message, displayPath)));
+    Console.Error.Write(DiagnosticTextRenderer.RenderFailure("compile error", message, displayPath));
 }
 
 static void PrintRuntimeFailure(int exitCode, string stdout, string stderr)
@@ -969,3 +1022,4 @@ static int RunVersion()
 }
 
 sealed class CliUsageException(string message) : Exception(message);
+sealed class CliUserException(string message) : Exception(message);

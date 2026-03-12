@@ -621,7 +621,7 @@ public static partial class DocumentService
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
-            return [];
+            return Array.Empty<SemanticTokenItem>();
         }
 
         var strippedSource = context.StrippedSource;
@@ -689,10 +689,21 @@ public static partial class DocumentService
 
     public static IReadOnlyList<string> GetCompletions(string source, string? filePath = null)
     {
+        return GetCompletions(source, position: null, filePath);
+    }
+
+    public static IReadOnlyList<string> GetCompletions(string source, int? position, string? filePath = null)
+    {
+        var header = StripImportHeader(source);
+        if (position is not null && TryGetModuleCompletions(source, position.Value, header.Imports, out var moduleCompletions))
+        {
+            return moduleCompletions;
+        }
+
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
-            return [];
+            return Array.Empty<string>();
         }
 
         var diag = new Diagnostics();
@@ -700,9 +711,310 @@ public static partial class DocumentService
         var lowering = new Lowering(diag, context.ImportedStdModules);
         lowering.Lower(program);
 
-        return lowering.ConstructorSymbols.Keys
+        var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
+
+        if (position is not null)
+        {
+            var strippedPosition = position.Value - header.HeaderOffset;
+            if (strippedPosition >= 0 && strippedPosition <= header.StrippedSource.Length)
+            {
+                var strippedDiag = new Diagnostics();
+                var strippedProgram = new Parser(header.StrippedSource, strippedDiag).ParseProgram();
+                if (strippedDiag.StructuredErrors.Count == 0)
+                {
+                    foreach (var name in CollectVisibleBindingsInProgram(strippedProgram, strippedPosition))
+                    {
+                        completionNames.Add(name);
+                    }
+                }
+            }
+        }
+
+        return completionNames
             .OrderBy(k => k, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInProgram(Frontend.Program program, int position)
+    {
+        return CollectVisibleBindingsInExpr(program.Body, position, new Dictionary<string, byte>(StringComparer.Ordinal));
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInExpr(
+        Expr expr,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        if (!ContainsCompletionPosition(AstSpans.GetOrDefault(expr), position))
+        {
+            return Array.Empty<string>();
+        }
+
+        switch (expr)
+        {
+            case Expr.IntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+            case Expr.Var:
+            case Expr.QualifiedVar:
+                return scope.Keys.ToArray();
+
+            case Expr.Add add:
+                return CollectVisibleBindingsInBinary(add.Left, add.Right, position, scope);
+
+            case Expr.Subtract sub:
+                return CollectVisibleBindingsInBinary(sub.Left, sub.Right, position, scope);
+
+            case Expr.Multiply mul:
+                return CollectVisibleBindingsInBinary(mul.Left, mul.Right, position, scope);
+
+            case Expr.Divide div:
+                return CollectVisibleBindingsInBinary(div.Left, div.Right, position, scope);
+
+            case Expr.GreaterOrEqual ge:
+                return CollectVisibleBindingsInBinary(ge.Left, ge.Right, position, scope);
+
+            case Expr.LessOrEqual le:
+                return CollectVisibleBindingsInBinary(le.Left, le.Right, position, scope);
+
+            case Expr.Equal eq:
+                return CollectVisibleBindingsInBinary(eq.Left, eq.Right, position, scope);
+
+            case Expr.NotEqual ne:
+                return CollectVisibleBindingsInBinary(ne.Left, ne.Right, position, scope);
+
+            case Expr.ResultPipe pipe:
+                return CollectVisibleBindingsInBinary(pipe.Left, pipe.Right, position, scope);
+
+            case Expr.ResultMapErrorPipe pipe:
+                return CollectVisibleBindingsInBinary(pipe.Left, pipe.Right, position, scope);
+
+            case Expr.Let letExpr:
+                {
+                    var inValue = CollectVisibleBindingsInExpr(letExpr.Value, position, scope);
+                    if (inValue.Count > 0)
+                    {
+                        return inValue;
+                    }
+
+                    var bodyScope = CloneCompletionScope(scope);
+                    bodyScope[letExpr.Name] = 0;
+                    return CollectVisibleBindingsInExpr(letExpr.Body, position, bodyScope);
+                }
+
+            case Expr.LetResult letResultExpr:
+                {
+                    var inValue = CollectVisibleBindingsInExpr(letResultExpr.Value, position, scope);
+                    if (inValue.Count > 0)
+                    {
+                        return inValue;
+                    }
+
+                    var bodyScope = CloneCompletionScope(scope);
+                    bodyScope[letResultExpr.Name] = 0;
+                    return CollectVisibleBindingsInExpr(letResultExpr.Body, position, bodyScope);
+                }
+
+            case Expr.LetRec letRecExpr:
+                {
+                    var recursiveScope = CloneCompletionScope(scope);
+                    recursiveScope[letRecExpr.Name] = 0;
+
+                    var inValue = CollectVisibleBindingsInExpr(letRecExpr.Value, position, recursiveScope);
+                    if (inValue.Count > 0)
+                    {
+                        return inValue;
+                    }
+
+                    return CollectVisibleBindingsInExpr(letRecExpr.Body, position, recursiveScope);
+                }
+
+            case Expr.If ifExpr:
+                return CollectVisibleBindingsInExpr(ifExpr.Cond, position, scope)
+                    .Concat(CollectVisibleBindingsInExpr(ifExpr.Then, position, scope))
+                    .Concat(CollectVisibleBindingsInExpr(ifExpr.Else, position, scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+
+            case Expr.Lambda lambda:
+                {
+                    var lambdaScope = CloneCompletionScope(scope);
+                    lambdaScope[lambda.ParamName] = 0;
+                    return CollectVisibleBindingsInExpr(lambda.Body, position, lambdaScope);
+                }
+
+            case Expr.Call call:
+                return CollectVisibleBindingsInExpr(call.Func, position, scope)
+                    .Concat(CollectVisibleBindingsInExpr(call.Arg, position, scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+
+            case Expr.TupleLit tuple:
+                return tuple.Elements
+                    .SelectMany(element => CollectVisibleBindingsInExpr(element, position, scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+
+            case Expr.ListLit list:
+                return list.Elements
+                    .SelectMany(element => CollectVisibleBindingsInExpr(element, position, scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+
+            case Expr.Cons cons:
+                return CollectVisibleBindingsInExpr(cons.Head, position, scope)
+                    .Concat(CollectVisibleBindingsInExpr(cons.Tail, position, scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+
+            case Expr.Match match:
+                {
+                    var inValue = CollectVisibleBindingsInExpr(match.Value, position, scope);
+                    if (inValue.Count > 0)
+                    {
+                        return inValue;
+                    }
+
+                    foreach (var matchCase in match.Cases)
+                    {
+                        var caseScope = CloneCompletionScope(scope);
+                        foreach (var binding in CollectPatternBindings(matchCase.Pattern, currentFilePath: null))
+                        {
+                            caseScope[binding.Key] = 0;
+                        }
+
+                        var inBody = CollectVisibleBindingsInExpr(matchCase.Body, position, caseScope);
+                        if (inBody.Count > 0)
+                        {
+                            return inBody;
+                        }
+                    }
+
+                    return Array.Empty<string>();
+                }
+
+            default:
+                return Array.Empty<string>();
+        }
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInBinary(
+        Expr left,
+        Expr right,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        return CollectVisibleBindingsInExpr(left, position, scope)
+            .Concat(CollectVisibleBindingsInExpr(right, position, scope))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static Dictionary<string, byte> CloneCompletionScope(IReadOnlyDictionary<string, byte> scope)
+    {
+        return new Dictionary<string, byte>(scope, StringComparer.Ordinal);
+    }
+
+    private static bool ContainsCompletionPosition(TextSpan span, int position)
+    {
+        if (ContainsPosition(span, position))
+        {
+            return true;
+        }
+
+        return position == span.End;
+    }
+
+    private static bool TryGetModuleCompletions(string source, int position, IReadOnlyList<ImportItem> imports, out IReadOnlyList<string> completions)
+    {
+        completions = Array.Empty<string>();
+
+        if (position < 0 || position > source.Length)
+        {
+            return false;
+        }
+
+        var prefix = ExtractCompletionPrefix(source, position);
+        if (string.IsNullOrEmpty(prefix) || !prefix.EndsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var qualifier = prefix[..^1];
+        var moduleName = ResolveCompletionModuleName(qualifier, imports);
+        if (moduleName is null)
+        {
+            return false;
+        }
+
+        completions = GetModuleCompletionItems(moduleName);
+        return completions.Count > 0;
+    }
+
+    private static string ExtractCompletionPrefix(string source, int position)
+    {
+        var start = position;
+        while (start > 0)
+        {
+            var ch = source[start - 1];
+            if (char.IsLetterOrDigit(ch) || ch == '_' || ch == '.')
+            {
+                start--;
+                continue;
+            }
+
+            break;
+        }
+
+        return source[start..position];
+    }
+
+    private static string? ResolveCompletionModuleName(string qualifier, IReadOnlyList<ImportItem> imports)
+    {
+        if (qualifier == "Ashes")
+        {
+            return "Ashes";
+        }
+
+        if (qualifier == "Ashes.Net")
+        {
+            return qualifier;
+        }
+
+        if (BuiltinRegistry.TryGetModule(qualifier, out _))
+        {
+            return qualifier;
+        }
+
+        var matches = imports
+            .Where(import => string.Equals(GetLeafQualifier(import.ModuleName), qualifier, StringComparison.Ordinal))
+            .Select(import => import.ModuleName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static string GetLeafQualifier(string moduleName)
+    {
+        var lastDot = moduleName.LastIndexOf('.');
+        return lastDot < 0 ? moduleName : moduleName[(lastDot + 1)..];
+    }
+
+    private static IReadOnlyList<string> GetModuleCompletionItems(string moduleName)
+    {
+        return moduleName switch
+        {
+            "Ashes" => ["File", "Http", "IO", "List", "Maybe", "Net", "Result", "Test"],
+            "Ashes.Net" => ["Tcp"],
+            "Ashes.List" => ["append", "filter", "fold", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
+            "Ashes.Maybe" => ["default", "flatMap", "getOrElse", "isNone", "isSome", "map", "unwrapOr"],
+            "Ashes.Result" => ["bind", "default", "flatMap", "getOrElse", "isError", "isOk", "map", "mapError"],
+            "Ashes.Test" => ["assertEqual", "fail"],
+            _ when BuiltinRegistry.TryGetModule(moduleName, out var module) => module.Members.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            _ => Array.Empty<string>()
+        };
     }
 
     public static HoverItem? GetHover(string source, int position, string? filePath = null)

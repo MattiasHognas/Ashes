@@ -116,6 +116,35 @@ public sealed class LspHarness : IAsyncDisposable
         return result.ValueKind == JsonValueKind.Null ? null : result.Clone();
     }
 
+    public async Task<IReadOnlyList<string>> CompletionAsync(string uri, int line, int character)
+    {
+        var response = await SendRequestAsync("textDocument/completion", new
+        {
+            textDocument = new { uri },
+            position = new { line, character }
+        });
+
+        var result = response.GetProperty("result");
+        return result.ValueKind == JsonValueKind.Array
+            ? result.EnumerateArray()
+                .Select(item => item.GetProperty("label").GetString())
+                .Where(label => !string.IsNullOrEmpty(label))
+                .Cast<string>()
+                .ToArray()
+            : Array.Empty<string>();
+    }
+
+    public async Task<JsonElement> FormatAsync(string uri, bool insertSpaces = true, int tabSize = 4)
+    {
+        var response = await SendRequestAsync("textDocument/formatting", new
+        {
+            textDocument = new { uri },
+            options = new { insertSpaces, tabSize }
+        });
+
+        return response.GetProperty("result").Clone();
+    }
+
     public async Task ShutdownAsync()
     {
         ThrowIfDisposed();

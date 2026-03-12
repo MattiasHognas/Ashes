@@ -30,6 +30,18 @@ These types are always available without imports:
 - `readText(path)` returning `Result(Str, Str)`
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
+ 
+### `Ashes.Http`
+
+- `get(url)` returning `Result(Str, Str)`
+- `post(url, body)` returning `Result(Str, Str)`
+
+Current HTTP support is intentionally small:
+
+- Only `http://` URLs are supported.
+- `https://` returns `Error("https not supported")`.
+- Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
+- `Transfer-Encoding: chunked` currently returns `Error("unsupported transfer encoding")`.
 
 ### `Ashes.Net.Tcp`
 
@@ -45,31 +57,37 @@ namespace. They are not overridable by project-local modules.
 
 ### `Ashes.List`
 
-- `length`
-- `head`
-- `tail`
-- `map`
-- `filter`
-- `foldLeft`
-- `reverse`
 - `append`
+- `filter`
+- `fold`
+- `foldLeft`
+- `head`
 - `isEmpty`
+- `length`
+- `map`
+- `reverse`
+- `tail`
 
 ### `Ashes.Maybe`
 
-- `map`
+- `default`
 - `flatMap`
 - `getOrElse`
-- `isSome`
 - `isNone`
+- `isSome`
+- `map`
+- `unwrapOr`
 
 ### `Ashes.Result`
 
+- `default`
+- `bind`
 - `map`
 - `flatMap`
 - `getOrElse`
 - `isOk`
 - `isError`
+- `mapError`
 
 ### `Ashes.Test`
 

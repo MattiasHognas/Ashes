@@ -337,6 +337,56 @@ public sealed class LspProgramTests
         process.ExitCode.ShouldBe(0);
     }
 
+    [Test]
+    public async Task Lsp_program_should_return_module_member_completions_for_qualified_modules()
+    {
+        using var process = StartLspProcess();
+
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "initialize",
+            @params = new { }
+        });
+        _ = await ReadMessageAsync(process);
+
+        const string uri = "file:///tmp/module_completion.ash";
+        const string source = "import Ashes.List\nAshes.IO.";
+
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new { textDocument = new { uri, text = source } }
+        });
+        _ = await ReadMessageAsync(process);
+
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 2,
+            method = "textDocument/completion",
+            @params = new { textDocument = new { uri }, position = new { line = 1, character = 9 } }
+        });
+
+        var completionResponse = await ReadMessageAsync(process);
+        completionResponse.GetProperty("id").GetInt32().ShouldBe(2);
+        var items = completionResponse.GetProperty("result");
+        var labels = Enumerable.Range(0, items.GetArrayLength())
+            .Select(i => items[i].GetProperty("label").GetString()!)
+            .ToArray();
+        labels.ShouldContain("print");
+        labels.ShouldContain("panic");
+        labels.ShouldContain("args");
+
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 3, method = "shutdown", @params = new { } });
+        _ = await ReadMessageAsync(process);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" });
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0);
+    }
+
     private static Process StartLspProcess()
     {
         var lspAssemblyPath = Path.Combine(AppContext.BaseDirectory, "Ashes.Lsp.dll");

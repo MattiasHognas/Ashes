@@ -20,10 +20,11 @@ public sealed class CliDiagnosticsTests
             var result = await RunCliAsync("compile", filePath);
 
             result.ExitCode.ShouldBe(1);
-            result.Output.ShouldContain(Path.GetFileName(filePath));
-            result.Output.ShouldContain(":1:8");
-            result.Output.ShouldContain(DiagnosticCodes.ParseError);
-            result.Output.ShouldContain("Expected");
+            result.Stdout.ShouldBeEmpty();
+            result.Stderr.ShouldContain(Path.GetFileName(filePath));
+            result.Stderr.ShouldContain(":1:8");
+            result.Stderr.ShouldContain(DiagnosticCodes.ParseError);
+            result.Stderr.ShouldContain("Expected");
         }
         finally
         {
@@ -43,11 +44,12 @@ public sealed class CliDiagnosticsTests
             var result = await RunCliAsync("compile", filePath);
 
             result.ExitCode.ShouldBe(1);
-            result.Output.ShouldContain(Path.GetFileName(filePath));
-            result.Output.ShouldContain(":1:16");
-            result.Output.ShouldContain(DiagnosticCodes.TypeMismatch);
-            result.Output.ShouldContain("'+' requires Int+Int, Float+Float, or Str+Str");
-            result.Output.ShouldContain("got Int and");
+            result.Stdout.ShouldBeEmpty();
+            result.Stderr.ShouldContain(Path.GetFileName(filePath));
+            result.Stderr.ShouldContain(":1:16");
+            result.Stderr.ShouldContain(DiagnosticCodes.TypeMismatch);
+            result.Stderr.ShouldContain("'+' requires Int+Int, Float+Float, or Str+Str");
+            result.Stderr.ShouldContain("got Int and");
         }
         finally
         {
@@ -70,9 +72,10 @@ public sealed class CliDiagnosticsTests
             var result = await RunCliAsync("compile", "--project", projectPath);
 
             result.ExitCode.ShouldBe(1);
-            result.Output.ShouldContain("compile error:");
-            result.Output.ShouldContain("Main.ash");
-            result.Output.ShouldContain("Could not resolve module 'Missing'");
+            result.Stdout.ShouldBeEmpty();
+            result.Stderr.ShouldContain("compile error:");
+            result.Stderr.ShouldContain("Main.ash");
+            result.Stderr.ShouldContain("Could not resolve module 'Missing'");
         }
         finally
         {
@@ -398,6 +401,217 @@ public sealed class CliDiagnosticsTests
             diagnosticCode.ShouldNotBeNull();
             normalizedOutput.ShouldContain(diagnosticCode);
             normalizedOutput.ShouldContain(lspDiagnostic.Message);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Cli_with_no_arguments_should_print_help_and_exit_2()
+    {
+        var result = await RunCliAsync(Array.Empty<string>());
+
+        result.ExitCode.ShouldBe(2);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes compile");
+        result.Output.ShouldContain("ashes run");
+        result.Output.ShouldContain("ashes test");
+    }
+
+    [Test]
+    public async Task Cli_with_unknown_command_should_print_help_and_exit_2()
+    {
+        var result = await RunCliAsync("unknown-command");
+
+        result.ExitCode.ShouldBe(2);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes fmt");
+    }
+
+    [Test]
+    public async Task Compile_with_missing_input_should_exit_1_and_write_error_to_stderr()
+    {
+        var result = await RunCliAsync("compile");
+
+        result.ExitCode.ShouldBe(1);
+        result.Stdout.ShouldBeEmpty();
+        result.Stderr.ShouldContain("Missing input file or --expr");
+    }
+
+    [Test]
+    public async Task Command_with_unknown_argument_should_exit_2_and_write_error_to_stderr()
+    {
+        var result = await RunCliAsync("compile", "--wat");
+
+        result.ExitCode.ShouldBe(2);
+        result.Stdout.ShouldBeEmpty();
+        result.Stderr.ShouldContain("Unknown argument");
+    }
+
+    [Test]
+    public async Task Cli_with_help_should_print_help_and_exit_0()
+    {
+        var result = await RunCliAsync("--help");
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands:");
+        result.Output.ShouldContain("ashes compile");
+    }
+
+    [Test]
+    public async Task Command_help_should_print_help_and_exit_0()
+    {
+        var compile = await RunCliAsync("compile", "--help");
+        var fmt = await RunCliAsync("fmt", "--help");
+
+        compile.ExitCode.ShouldBe(0);
+        compile.Output.ShouldContain("Commands:");
+        fmt.ExitCode.ShouldBe(0);
+        fmt.Output.ShouldContain("Commands:");
+    }
+
+    [Test]
+    public async Task Compile_should_reject_invalid_target_with_exit_1()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "hello.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+
+            var result = await RunCliAsync("compile", filePath, "--target", "nope-x64");
+
+            result.ExitCode.ShouldBe(1);
+            result.Stdout.ShouldBeEmpty();
+            result.Stderr.ShouldContain("Unknown target");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Compile_should_succeed_with_exit_0()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "hello.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+
+            var result = await RunCliAsync("compile", filePath);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Wrote");
+            result.Output.ShouldContain("Target:");
+            result.Output.ShouldContain("Time:");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Compile_without_out_should_derive_output_path_from_input_name()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "hello.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+
+            var result = await RunCliAsync("compile", filePath);
+            var expectedOutput = Path.Combine(tempDir, OperatingSystem.IsWindows() ? "hello.exe" : "hello");
+
+            result.ExitCode.ShouldBe(0);
+            File.Exists(expectedOutput).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Version_should_print_version_and_exit_0()
+    {
+        var result = await RunCliAsync("--version");
+
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldNotBeEmpty();
+        result.Stderr.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Repl_with_unknown_argument_should_exit_2_and_write_error_to_stderr()
+    {
+        var result = await RunCliAsync("repl", "--wat");
+
+        result.ExitCode.ShouldBe(2);
+        result.Stdout.ShouldBeEmpty();
+        result.Stderr.ShouldContain("Unknown argument");
+    }
+
+    [Test]
+    public async Task Fmt_without_write_should_print_formatted_source_to_stdout()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "format.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+
+            var result = await RunCliAsync("fmt", filePath);
+
+            result.ExitCode.ShouldBe(0);
+            result.Stdout.ShouldContain("Ashes.IO.print(40 + 2)");
+            result.Stderr.ShouldBeEmpty();
+            (await File.ReadAllTextAsync(filePath)).ShouldBe("Ashes.IO.print(40+2)");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Fmt_with_write_should_modify_file_in_place()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "format_write.ash");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+
+            var result = await RunCliAsync("fmt", filePath, "-w");
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Formatted 1 file(s)");
+            (await File.ReadAllTextAsync(filePath)).ShouldContain("Ashes.IO.print(40 + 2)");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Fmt_with_missing_path_should_exit_1_and_write_error_to_stderr()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var missingPath = Path.Combine(tempDir, "missing.ash");
+
+            var result = await RunCliAsync("fmt", missingPath);
+
+            result.ExitCode.ShouldBe(1);
+            result.Stdout.ShouldBeEmpty();
+            result.Stderr.ShouldContain("Path not found");
         }
         finally
         {

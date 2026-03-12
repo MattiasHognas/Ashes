@@ -17,6 +17,26 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_return_parse_diagnostic_for_empty_file_without_crashing()
+    {
+        var diagnostics = DocumentService.Analyze(string.Empty);
+
+        diagnostics.Count.ShouldBe(1);
+        diagnostics[0].Code.ShouldBe("ASH003");
+        diagnostics[0].Message.ShouldContain("Expected expression");
+    }
+
+    [Test]
+    public void Analyze_should_return_parse_diagnostic_for_comment_only_file_without_crashing()
+    {
+        var diagnostics = DocumentService.Analyze("// comment\n");
+
+        diagnostics.Count.ShouldBe(1);
+        diagnostics[0].Code.ShouldBe("ASH003");
+        diagnostics[0].Message.ShouldContain("Expected expression");
+    }
+
+    [Test]
     public void Format_should_return_canonical_output_for_valid_source()
     {
         var formatted = DocumentService.Format("Ashes.IO.print(40+2)");
@@ -209,6 +229,16 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_allow_standalone_import_of_Ashes_Http()
+    {
+        const string source = "import Ashes.Http\nmatch Ashes.Http.get(\"http://example.com\") with | Ok(text) -> 1 | Error(_) -> 0";
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Net_Tcp()
     {
         const string source = "import Ashes.Net.Tcp\nmatch Ashes.Net.Tcp.connect(\"127.0.0.1\")(80) with | Ok(sock) -> 1 | Error(_) -> 0";
@@ -320,6 +350,56 @@ public sealed class LspDocumentServiceTests
 
         completions.ShouldContain("Ok");
         completions.ShouldContain("Error");
+    }
+
+    [Test]
+    public void GetCompletions_should_return_root_module_members_after_Ashes_dot()
+    {
+        const string source = "Ashes.";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("IO");
+        completions.ShouldContain("File");
+        completions.ShouldContain("Http");
+        completions.ShouldContain("Net");
+        completions.ShouldContain("List");
+    }
+
+    [Test]
+    public void GetCompletions_should_return_builtin_module_members_after_Ashes_IO_dot()
+    {
+        const string source = "Ashes.IO.";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("print");
+        completions.ShouldContain("panic");
+        completions.ShouldContain("args");
+        completions.ShouldContain("readLine");
+    }
+
+    [Test]
+    public void GetCompletions_should_return_imported_leaf_module_members()
+    {
+        const string source = "import Ashes.List\nList.";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("length");
+        completions.ShouldContain("map");
+        completions.ShouldContain("filter");
+    }
+
+    [Test]
+    public void GetCompletions_should_return_local_bindings_in_scope()
+    {
+        const string source = "let value = 1 in let next = value + 1 in ne";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("value");
+        completions.ShouldContain("next");
     }
 
     [Test]
