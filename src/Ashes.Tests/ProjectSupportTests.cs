@@ -2,9 +2,11 @@ using Ashes.Semantics;
 using Ashes.Frontend;
 using Shouldly;
 using System.Diagnostics;
+using TUnit.Core;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class ProjectSupportTests
 {
     [Test]

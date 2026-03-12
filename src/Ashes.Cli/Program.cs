@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
@@ -173,11 +174,7 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
         psi.ArgumentList.Add(arg);
     }
 
-    using var p = Process.Start(psi);
-    if (p is null)
-    {
-        throw new InvalidOperationException("Failed to start compiled executable.");
-    }
+    using var p = StartCompiledProcess(psi);
 
     var stdoutTask = p.StandardOutput.ReadToEndAsync();
     var stderrTask = p.StandardError.ReadToEndAsync();
@@ -218,14 +215,35 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
         psi.ArgumentList.Add(arg);
     }
 
-    using var p = Process.Start(psi);
-    if (p is null)
-    {
-        throw new InvalidOperationException("Failed to start compiled executable.");
-    }
+    using var p = StartCompiledProcess(psi);
 
     await p.WaitForExitAsync();
     return p.ExitCode;
+}
+
+static Process StartCompiledProcess(ProcessStartInfo startInfo)
+{
+    const int maxAttempts = 20;
+
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            return Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start compiled executable.");
+        }
+        catch (Win32Exception ex) when (attempt < maxAttempts && IsTextFileBusy(ex))
+        {
+            Thread.Sleep(25);
+        }
+    }
+}
+
+static bool IsTextFileBusy(Win32Exception ex)
+{
+    return OperatingSystem.IsLinux()
+        && (ex.NativeErrorCode == 26
+            || ex.Message.Contains("Text file busy", StringComparison.OrdinalIgnoreCase));
 }
 
 static string BuildReplSessionSource(IReadOnlyList<ReplBinding> bindings, string exprSource)

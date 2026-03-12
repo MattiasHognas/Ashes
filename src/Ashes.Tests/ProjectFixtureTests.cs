@@ -3,9 +3,11 @@ using System.Runtime.CompilerServices;
 using Ashes.Frontend;
 using Ashes.Semantics;
 using Shouldly;
+using TUnit.Core;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class ProjectFixtureTests
 {
     private static string GetProjectsRoot([CallerFilePath] string? callerFile = null)
