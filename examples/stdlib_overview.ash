@@ -1,4 +1,3 @@
-
 import Ashes.IO
 import Ashes.List
 import Ashes.Maybe
@@ -6,13 +5,29 @@ import Ashes.Result
 let nums = [1, 2, 3, 4, 5]
 in 
     let doubled = 
-        map(fun (x) -> x * 2)(nums)
+        List.map(fun (x) -> x * 2)(nums)
     in 
-        let maybeCount = Some(length(doubled))
+        let large = 
+            List.filter(fun (x) -> x >= 6)(doubled)
         in 
-            let resultCount = 
-                map(fun (count) -> count + 1)(Ok(getOrElse(0)(maybeCount)))
+            let count = List.length(large)
             in 
-                match resultCount with
-                    | Ok(value) -> print(value)
-                    | Error(_) -> print(0)
+                let maybeTop = List.head(List.reverse(large))
+                in 
+                    let maybeAdjusted = 
+                        Maybe.map(fun (x) -> x + count)(maybeTop)
+                    in 
+                        let safeValue = 
+                            if Maybe.isSome(maybeAdjusted)
+                            then Maybe.getOrElse(0)(maybeAdjusted)
+                            else 0
+                        in 
+                            let resultValue = 
+                                Result.map(fun (x) -> x + 1)(Ok(safeValue))
+                            in 
+                                if Result.isOk(resultValue)
+                                then 
+                                    match resultValue with
+                                        | Ok(value) -> print(value)
+                                        | Error(_) -> print(0)
+                                else print(0)
