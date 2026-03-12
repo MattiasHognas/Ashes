@@ -1,12 +1,12 @@
 # Ashes
 
-Ashes is a small experimental **pure functional programming language**
+Ashes is a small **pure functional programming language** in the ML family,
 compiled by a compiler written in .NET directly to native executables
-(ELF on Linux and PE on Windows), without requiring an external
-assembler or toolchain.
+(ELF on Linux and PE on Windows) without requiring an external assembler,
+toolchain, or runtime at program execution time.
 
-Ashes is both a learning project and an exploration of what a minimal
-modern functional language can look like.
+This repository contains the compiler, formatter, test runner, language
+server, and VS Code extension support for the current language surface.
 
 ------------------------------------------------------------------------
 
@@ -16,20 +16,20 @@ Ashes belongs to the **ML family** of functional languages.
 
 It is inspired by:
 
--   **ML / OCaml / F#** --- algebraic data types, pattern matching, and
-    type inference
--   **Elm** --- simplicity and explicit data modeling with algebraic data types
--   **Haskell** --- purity and type-driven design
--   **Rust** --- strict memory safety without the need of a GC
+- **ML / OCaml / F#** --- algebraic data types, pattern matching, and
+  type inference
+- **Elm** --- simplicity and explicit data modeling with algebraic data types
+- **Haskell** --- purity and type-driven design
+- **Rust** --- strict memory safety without the need of a GC
 
 Ashes intentionally keeps a small core:
 
--   everything is an expression
--   immutable bindings only
--   strict evaluation
--   recursion instead of loops
--   explicit data modeling via pattern matching
--   clarity over feature count
+- everything is an expression
+- immutable bindings only
+- strict evaluation
+- recursion instead of loops
+- explicit data modeling via pattern matching
+- clarity over feature count
 
 ------------------------------------------------------------------------
 
@@ -40,28 +40,35 @@ anything new mirrors the spirit of this project.
 
 This repository is:
 
--   an experiment
--   a learning journey
--   and a personal exploration of functional language design.
+- an experiment
+- a learning journey
+- and a personal exploration of functional language design.
 
 ------------------------------------------------------------------------
 
 ## Quick Start
 
-Build the workspace:
+Build from source:
 
     dotnet build Ashes.slnx
 
-Run a file:
+Write a small program in `hello.ash`:
 
-    echo Ashes.IO.print("hello world") > hello.ash
+    Ashes.IO.print("hello world")
+
+Run it:
+
     dotnet run --project src/Ashes.Cli -- run hello.ash
 
-Run an inline expression:
+Try an inline expression:
 
     dotnet run --project src/Ashes.Cli -- run --expr "Ashes.IO.print(40 + 2)"
 
-Run the compiler test host:
+Run the end-to-end `.ash` suite:
+
+    dotnet run --project src/Ashes.Cli -- test tests
+
+Run the compiler/unit test host:
 
     dotnet run --project src/Ashes.Tests -- --no-progress
 
@@ -71,13 +78,13 @@ Run the compiler test host:
 
 Ashes is split into independent components:
 
--   **Frontend** --- lexer, parser, AST
--   **Semantics** --- binding and type inference
--   **Backend** --- native code generation
--   **Formatter** --- canonical source formatting
--   **CLI** --- compiler interface
--   **LSP** --- language server
--   **TestRunner** --- `.ash` program testing
+- **Frontend** --- lexer, parser, AST
+- **Semantics** --- binding and type inference
+- **Backend** --- native code generation
+- **Formatter** --- canonical source formatting
+- **CLI** --- compiler interface
+- **LSP** --- language server
+- **TestRunner** --- `.ash` program testing
 
 ------------------------------------------------------------------------
 
@@ -94,6 +101,15 @@ Authoritative specifications:
 - [Standard Library Reference](docs/STANDARD_LIBRARY.md)
 
 The README provides only a high-level overview.
+
+## Tooling Overview
+
+Ashes ships with:
+
+- `ashes compile`, `run`, `repl`, `test`, and `fmt` in [docs/COMPILER_CLI_SPEC.md](docs/COMPILER_CLI_SPEC.md)
+- a language server in `src/Ashes.Lsp/`
+- a VS Code extension in `vscode-extension/`
+- deterministic `.ash` test execution documented in [docs/TESTING.md](docs/TESTING.md)
 
 ## Standard Library Overview
 
@@ -112,18 +128,18 @@ The README provides only a high-level overview.
 Standard library functions live under `Ashes.*` modules. The core IO surface lives under
 `Ashes.IO`:
 
--   `Ashes.IO.print(expr)` — prints to standard output
--   `Ashes.IO.panic("message")` — aborts execution
--   `Ashes.IO.args` — `List<String>` of command-line arguments
--   `Ashes.File.readText(path)` — `Result<String, String>` UTF-8 file read
--   `Ashes.File.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
--   `Ashes.File.exists(path)` — `Result<String, Bool>` existence check
--   `Ashes.Http.get(url)` — `Result<String, String>` HTTP GET body for plain `http://` URLs
--   `Ashes.Http.post(url, body)` — `Result<String, String>` HTTP POST body for plain `http://` URLs
--   `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
--   `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Int>` TCP send
--   `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
--   `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
+- `Ashes.IO.print(expr)` — prints to standard output
+- `Ashes.IO.panic("message")` — aborts execution
+- `Ashes.IO.args` — `List<String>` of command-line arguments
+- `Ashes.File.readText(path)` — `Result<String, String>` UTF-8 file read
+- `Ashes.File.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
+- `Ashes.File.exists(path)` — `Result<String, Bool>` existence check
+- `Ashes.Http.get(url)` — `Result<String, String>` HTTP GET body for plain `http://` URLs
+- `Ashes.Http.post(url, body)` — `Result<String, String>` HTTP POST body for plain `http://` URLs
+- `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
+- `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Unit>` TCP send
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
+- `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
 
 Current `Ashes.Http` support is intentionally small: `https://` is not supported yet, and
 responses using `Transfer-Encoding: chunked` currently return `unsupported transfer encoding`.
@@ -154,7 +170,7 @@ Example:
 
 ------------------------------------------------------------------------
 
-## Examples
+### Examples
 
 Start with these runnable examples:
 
@@ -171,6 +187,7 @@ Start with these runnable examples:
 - `examples/fs_exists.ash` --- filesystem existence check
 - `examples/http_get.ash` --- simple HTTP GET against a plain local/non-chunked endpoint
 - `examples/result_flow.ash` --- standalone `Result` workflow using `Ashes.Result`
+- `examples/stdlib_overview.ash` --- overview of `Ashes.IO`, `Ashes.List`, `Ashes.Maybe`, and `Ashes.Result`
 - `examples/tcp_connect.ash` --- TCP connect with Result handling
 - `examples/tcp_send.ash` --- TCP send with Result handling
 - `examples/tcp_receive.ash` --- TCP receive with Result handling
@@ -195,7 +212,7 @@ Project-style examples also live under:
 
 ------------------------------------------------------------------------
 
-## Example
+### Example
 
     import Ashes.IO
     let rec sum =
@@ -216,38 +233,38 @@ Output:
 
 ### Core
 
--   integers
+- integers
 
--   booleans (`true`, `false`)
+- booleans (`true`, `false`)
 
--   strings with escapes
+- strings with escapes
 
--   `if / then / else`
+- `if / then / else`
 
--   immutable bindings
+- immutable bindings
 
-        let x = expr in expr
-        let rec f = fun (...) -> ... in expr
+      let x = expr in expr
+      let rec f = fun (...) -> ... in expr
 
--   lambdas: `fun (x, y) -> expr`
+- lambdas: `fun (x, y) -> expr`
 
--   function application: `f(x)` or `f x` (ML-style whitespace application)
+- function application: `f(x)` or `f x` (ML-style w espace application)
 
--   `+` for integers and strings
+- `+` for integers and strings
 
--   `-`, `*`, `/` for integer arithmetic
+- `-`, `*`, `/` for integer arithmetic
 
--   unary `-` negation for integers (for example `-x`, `-1`)
+- unary `-` negation for integers (for example `-x`, `-1`)
 
--   `>=` and `<=` for integer comparison
+- `>=` and `<=` for integer comparison
 
--   `==` and `!=` for integer/string equality comparison
+- `==` and `!=` for integer/string equality comparison
 
--   tuples: `(a, b, ...)` with tuple patterns in `match`
+- tuples: `(a, b, ...)` with tuple patterns in `match`
 
--   standard library: `Ashes.IO` module (`print`, `panic`, `args`)
+- standard library: `Ashes.IO` module (`print`, `panic`, ` s`)
 
--   let-polymorphism (Hindley-Milner style) for non-recursive `let` bindings
+- let-polymorphism (Hindley-Milner style) for non-recursive `let` bindings
 
 ### Polymorphism
 
@@ -263,31 +280,31 @@ multiple concrete types. `let rec` remains monomorphic during inference.
 
 ### Lists
 
--   empty list: `[]`
+- empty list: `[]`
 
--   literals: `[1,2,3]`
+- literals: `[1,2,3]`
 
--   cons operator: `x :: xs`
+- cons operator: `x :: xs`
 
--   pattern matching
+- pattern matching
 
-        match xs with
-            | [] -> ...
-            | x :: rest -> ...
+      match xs with
+          | [] -> ...
+          | x :: rest -> ...
 
--   wildcard: `_` matches any value and binds nothing
+- wildcard: `_` matches any value and binds nothing
 
 ### Algebraic Data Types
 
--   type declarations
+- type declarations
 
-    type Maybe =
-            | None
-            | Some(T)
+  type Maybe =
+          | None
+          | Some(T)
 
--   constructor expressions: `Some(10)`, `None`
+- constructor expressions: `Some(10)`, `None`
 
--   constructor patterns in `match`
+- constructor patterns in `match`
 
         match opt with
             | None -> def
