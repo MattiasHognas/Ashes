@@ -248,7 +248,7 @@ Output:
 
 - lambdas: `fun (x, y) -> expr`
 
-- function application: `f(x)` or `f x` (ML-style w espace application)
+- function application: `f(x)` or `f x` (ML-style whitespace application)
 
 - `+` for integers and strings
 
