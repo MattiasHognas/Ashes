@@ -945,25 +945,39 @@ Current shipped modules include:
 
 Stable helper surfaces:
 
+### `Ashes.List`
+
+- `Ashes.List.append : List<a> -> List<a> -> List<a>`
 - `Ashes.List.length : List<a> -> Int`
 - `Ashes.List.head : List<a> -> Maybe(a)`
 - `Ashes.List.tail : List<a> -> Maybe(List<a>)`
 - `Ashes.List.map : (a -> b) -> List<a> -> List<b>`
 - `Ashes.List.filter : (a -> Bool) -> List<a> -> List<a>`
 - `Ashes.List.foldLeft : (b -> a -> b) -> b -> List<a> -> b`
-- `Ashes.List.reverse : List<a> -> List<a>`
-- `Ashes.List.append : List<a> -> List<a> -> List<a>`
+- `Ashes.List.fold : (a -> b -> b) -> b -> List<a> -> b`
 - `Ashes.List.isEmpty : List<a> -> Bool`
-- `Ashes.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
+- `Ashes.List.reverse : List<a> -> List<a>`
+
+### `Ashes.Maybe`
+
+- `Ashes.Maybe.default : a -> Maybe(a) -> a`
 - `Ashes.Maybe.flatMap : (a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`
 - `Ashes.Maybe.getOrElse : a -> Maybe(a) -> a`
-- `Ashes.Maybe.isSome : Maybe(a) -> Bool`
 - `Ashes.Maybe.isNone : Maybe(a) -> Bool`
+- `Ashes.Maybe.isSome : Maybe(a) -> Bool`
+- `Ashes.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
+- `Ashes.Maybe.unwrapOr : Maybe(a) -> a -> a`
+
+### `Ashes.Result`
+
+- `Ashes.Result.default : a -> Result(E, a) -> a`
+- `Ashes.Result.bind : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
 - `Ashes.Result.map : (a -> b) -> Result(E, a) -> Result(E, b)`
 - `Ashes.Result.flatMap : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
 - `Ashes.Result.getOrElse : a -> Result(E, a) -> a`
 - `Ashes.Result.isOk : Result(E, a) -> Bool`
 - `Ashes.Result.isError : Result(E, a) -> Bool`
+- `Ashes.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
 
 `Ashes.Test` currently exports:
 

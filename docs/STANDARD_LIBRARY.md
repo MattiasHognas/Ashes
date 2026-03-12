@@ -57,31 +57,37 @@ namespace. They are not overridable by project-local modules.
 
 ### `Ashes.List`
 
-- `length`
-- `head`
-- `tail`
-- `map`
-- `filter`
-- `foldLeft`
-- `reverse`
 - `append`
+- `filter`
+- `fold`
+- `foldLeft`
+- `head`
 - `isEmpty`
+- `length`
+- `map`
+- `reverse`
+- `tail`
 
 ### `Ashes.Maybe`
 
-- `map`
+- `default`
 - `flatMap`
 - `getOrElse`
-- `isSome`
 - `isNone`
+- `isSome`
+- `map`
+- `unwrapOr`
 
 ### `Ashes.Result`
 
+- `default`
+- `bind`
 - `map`
 - `flatMap`
 - `getOrElse`
 - `isOk`
 - `isError`
+- `mapError`
 
 ### `Ashes.Test`
 
