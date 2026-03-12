@@ -85,8 +85,132 @@ jobs:
           chmod +x artifacts/ashes/linux/ashes
           ASHES_CLI=./artifacts/ashes/linux/ashes
           for example in examples/*.ash; do
+            case "$(basename "$example")" in
+              http_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash)
+                continue
+                ;;
+            esac
             "$ASHES_CLI" run "$example"
           done
+
+      - name: Run http example (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          chmod +x artifacts/ashes/linux/ashes
+          ASHES_CLI=./artifacts/ashes/linux/ashes
+
+          python3 - <<'PY' &
+          import socket
+
+          server = socket.socket()
+          server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          server.bind(("127.0.0.1", 8080))
+          server.listen(1)
+          server.settimeout(10)
+
+          connection, _ = server.accept()
+          connection.recv(4096)
+          connection.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from http")
+          connection.close()
+          server.close()
+          PY
+
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          "$ASHES_CLI" run examples/http_get.ash
+          wait "$server_pid"
+          trap - EXIT
+
+      - name: Run tcp examples (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          chmod +x artifacts/ashes/linux/ashes
+          ASHES_CLI=./artifacts/ashes/linux/ashes
+
+          python3 - <<'PY' &
+          import socket
+          import time
+
+          server = socket.socket()
+          server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          server.bind(("127.0.0.1", 8080))
+          server.listen(1)
+          server.settimeout(10)
+
+          connection, _ = server.accept()
+          time.sleep(0.2)
+          connection.close()
+          server.close()
+          PY
+
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          "$ASHES_CLI" run examples/tcp_connect.ash
+          wait "$server_pid"
+
+          python3 - <<'PY' &
+          import socket
+
+          server = socket.socket()
+          server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          server.bind(("127.0.0.1", 8080))
+          server.listen(1)
+          server.settimeout(10)
+
+          connection, _ = server.accept()
+          connection.recv(64)
+          connection.close()
+          server.close()
+          PY
+
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          "$ASHES_CLI" run examples/tcp_send.ash
+          wait "$server_pid"
+
+          python3 - <<'PY' &
+          import socket
+
+          server = socket.socket()
+          server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          server.bind(("127.0.0.1", 8080))
+          server.listen(1)
+          server.settimeout(10)
+
+          connection, _ = server.accept()
+          connection.sendall(b"hello-from-server")
+          connection.close()
+          server.close()
+          PY
+
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          "$ASHES_CLI" run examples/tcp_receive.ash
+          wait "$server_pid"
+
+          python3 - <<'PY' &
+          import socket
+          import time
+
+          server = socket.socket()
+          server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          server.bind(("127.0.0.1", 8080))
+          server.listen(1)
+          server.settimeout(10)
+
+          connection, _ = server.accept()
+          time.sleep(0.2)
+          connection.close()
+          server.close()
+          PY
+
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          "$ASHES_CLI" run examples/tcp_close.ash
+          wait "$server_pid"
+          trap - EXIT
 
       - name: Run examples (Windows)
         if: runner.os == 'Windows'
@@ -94,7 +218,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
-          Get-ChildItem examples\*.ash | ForEach-Object {
+          Get-ChildItem examples\*.ash |
+            Where-Object { $_.Name -notin @('http_get.ash', 'tcp_close.ash', 'tcp_connect.ash', 'tcp_receive.ash', 'tcp_send.ash') } |
+            ForEach-Object {
             & $ashesCli run $_.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "Example failed: $($_.FullName) (exit code: $LASTEXITCODE)"
