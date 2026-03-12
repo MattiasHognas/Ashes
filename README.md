@@ -262,7 +262,7 @@ Output:
 
 - tuples: `(a, b, ...)` with tuple patterns in `match`
 
-- standard library: `Ashes.IO` module (`print`, `panic`, ` s`)
+- standard library: `Ashes.IO` module (`print`, `panic`, `args`)
 
 - let-polymorphism (Hindley-Milner style) for non-recursive `let` bindings
 
