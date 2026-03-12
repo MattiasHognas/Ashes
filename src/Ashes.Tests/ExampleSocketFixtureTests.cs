@@ -5,13 +5,13 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Ashes.Backend.Backends;
 using Shouldly;
+using TUnit.Core;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class ExampleSocketFixtureTests
 {
-    private static readonly SemaphoreSlim SocketExampleGate = new(1, 1);
-
     [Test]
     public async Task Http_get_example_should_run_against_loopback_fixture()
     {
@@ -36,7 +36,7 @@ public sealed class ExampleSocketFixtureTests
     {
         await RunExampleWithServerAsync(
             "tcp_connect.ash",
-            async client =>
+            async _ =>
             {
                 await Task.Delay(200);
             },
@@ -77,7 +77,7 @@ public sealed class ExampleSocketFixtureTests
     {
         await RunExampleWithServerAsync(
             "tcp_close.ash",
-            async client =>
+            async _ =>
             {
                 await Task.Delay(200);
             },
@@ -86,28 +86,21 @@ public sealed class ExampleSocketFixtureTests
 
     private static async Task RunExampleWithServerAsync(string exampleName, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
     {
-        await SocketExampleGate.WaitAsync();
-        try
-        {
-            var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
-            File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
+        var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
+        File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), examplePath);
 
-            using var listener = new TcpListener(IPAddress.Loopback, 8080);
-            listener.Start();
+        using var listener = new TcpListener(IPAddress.Loopback, 8080);
+        listener.Start();
 
-            var serverTask = RunServerAsync(listener, handleClientAsync);
-            var (exitCode, stdout, stderr) = await RunCliAsync(examplePath);
-            var serverException = await serverTask;
+        var serverTask = RunServerAsync(listener, handleClientAsync);
+        var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+        var serverException = await serverTask;
 
-            serverException.ShouldBeNull(serverException?.ToString());
-            exitCode.ShouldBe(0, stderr);
-            stdout.ShouldBe(expectedStdout, customMessage: stderr);
-            stderr.ShouldBeEmpty();
-        }
-        finally
-        {
-            SocketExampleGate.Release();
-        }
+        serverException.ShouldBeNull(serverException?.ToString());
+        exitCode.ShouldBe(0, stderr);
+        stdout.ShouldBe(expectedStdout, customMessage: stderr);
+        stderr.ShouldBeEmpty();
     }
 
     private static async Task<Exception?> RunServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
@@ -131,10 +124,8 @@ public sealed class ExampleSocketFixtureTests
         }
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(string examplePath)
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(ProcessStartInfo startInfo)
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), examplePath);
-
         using var process = Process.Start(startInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();

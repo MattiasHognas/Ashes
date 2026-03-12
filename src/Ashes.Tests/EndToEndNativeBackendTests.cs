@@ -2,9 +2,11 @@ using System.Diagnostics;
 using Ashes.Semantics;
 using Shouldly;
 using Ashes.Frontend;
+using TUnit.Core;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class EndToEndNativeBackendTests
 {
     [Test]
