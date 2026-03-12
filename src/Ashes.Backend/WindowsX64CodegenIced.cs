@@ -309,8 +309,14 @@ public sealed class WindowsX64CodegenIced
 
         // alloc(size in RDI) -> RAX
         asm.Label(ref L_alloc);
+        var L_alloc_heap_ok = asm.CreateLabel();
         asm.mov(rbx, (long)addrOf("heap_ptr"));
         asm.mov(rax, __[rbx]);
+        asm.cmp(rax, 0);
+        asm.jne(L_alloc_heap_ok);
+        CallLabel(L_init_heap);
+        asm.mov(rax, __[rbx]);
+        asm.Label(ref L_alloc_heap_ok);
         asm.mov(r11, rax);
         asm.add(r11, rdi);
         asm.mov(__[rbx], r11);
