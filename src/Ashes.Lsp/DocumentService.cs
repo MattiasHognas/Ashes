@@ -1008,9 +1008,9 @@ public static partial class DocumentService
         {
             "Ashes" => ["File", "Http", "IO", "List", "Maybe", "Net", "Result", "Test"],
             "Ashes.Net" => ["Tcp"],
-            "Ashes.List" => ["append", "filter", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
-            "Ashes.Maybe" => ["flatMap", "getOrElse", "isNone", "isSome", "map"],
-            "Ashes.Result" => ["flatMap", "getOrElse", "isError", "isOk", "map"],
+            "Ashes.List" => ["append", "filter", "fold", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
+            "Ashes.Maybe" => ["default", "flatMap", "getOrElse", "isNone", "isSome", "map", "unwrapOr"],
+            "Ashes.Result" => ["bind", "default", "flatMap", "getOrElse", "isError", "isOk", "map", "mapError"],
             "Ashes.Test" => ["assertEqual", "fail"],
             _ when BuiltinRegistry.TryGetModule(moduleName, out var module) => module.Members.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
             _ => Array.Empty<string>()
