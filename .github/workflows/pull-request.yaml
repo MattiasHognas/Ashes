@@ -67,7 +67,10 @@ jobs:
       contents: read
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: 
+          - ubuntu-latest
+          - windows-latest
+      fail-fast: false
 
     steps:
       - name: Checkout repository
