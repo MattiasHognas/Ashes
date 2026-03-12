@@ -72,6 +72,7 @@ tests/*.exe
 examples/*.exe
 /*.exe
 /*.txt
+*.recieved.txt
 
 # Personal files
 PLANNED_ISSUES*.md
