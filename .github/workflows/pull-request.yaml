@@ -6,7 +6,7 @@ on:
 
 jobs:
   quality:
-    runs-on: winndows-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: read
 

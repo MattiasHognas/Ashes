@@ -347,8 +347,15 @@ public sealed class WindowsX64CodegenIced
         // make_string_slice(RDI=src bytes ptr, RSI=len) -> RAX=string*
         asm.Label(ref L_make_string_slice);
         var L_make_string_slice_done = asm.CreateLabel();
+        var L_make_string_slice_heap_ok = asm.CreateLabel();
         asm.mov(r12, rdi);
         asm.mov(r13, rsi);
+        asm.mov(rbx, (long)addrOf("heap_ptr"));
+        asm.mov(rax, __[rbx]);
+        asm.cmp(rax, 0);
+        asm.jne(L_make_string_slice_heap_ok);
+        CallLabel(L_init_heap);
+        asm.Label(ref L_make_string_slice_heap_ok);
         asm.mov(rdi, r13);
         asm.add(rdi, 8);
         CallLabel(L_alloc);
