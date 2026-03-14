@@ -1,473 +1,325 @@
 # Ashes
 
-Ashes is a small **pure functional programming language** in the ML family,
-compiled by a compiler written in .NET directly to native executables
-(ELF on Linux and PE on Windows) without requiring an external assembler,
-toolchain, or runtime at program execution time.
+A small, **pure functional language** in the ML family — compiled directly to
+native executables without runtime dependencies.
 
-This repository contains the compiler, formatter, test runner, language
-server, and VS Code extension support for the current language surface.
+```ash
+import Ashes.List
+import Ashes.Result
+
+type Shape =
+    | Circle(Float)
+    | Rect(Float, Float)
+
+let area = fun (s) ->
+    match s with
+        | Circle(r)    -> 3.14159 * r * r
+        | Rect(w, h)   -> w * h
+
+in
+    let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
+    in
+        shapes
+        |> List.map(area)
+        |> List.map(fun (a) -> if a >= 10.0 then Ok(a) else Error("too small"))
+        |> List.filter(Result.isOk)
+        |> List.length
+        |> Ashes.IO.print
+```
+
+```
+2
+```
+
+No GC. No runtime. Just a native binary.
 
 ------------------------------------------------------------------------
 
-## Language Philosophy
+## What is Ashes?
 
-Ashes belongs to the **ML family** of functional languages.
+Ashes compiles `.ash` source files to **standalone native executables**
+(ELF on Linux, PE on Windows) using a compiler written in .NET. The
+produced binaries have **zero runtime dependencies** — no external
+assembler, toolchain, or garbage collector required.
 
-It is inspired by:
+This repository contains the full toolchain: compiler, formatter, test
+runner, language server, and VS Code extension.
 
-- **ML / OCaml / F#** --- algebraic data types, pattern matching, and
-  type inference
-- **Elm** --- simplicity and explicit data modeling with algebraic data types
-- **Haskell** --- purity and type-driven design
-- **Rust** --- strict memory safety without the need of a GC
+### Design Principles
 
-Ashes intentionally keeps a small core:
+| Principle | What it means |
+|---|---|
+| **Pure** | No mutation, no side effects in expressions |
+| **Immutable** | All bindings are immutable, lists are linked lists |
+| **Expression-based** | Everything evaluates to a value — no statements |
+| **Strictly evaluated** | No lazy evaluation — arguments evaluated before calls |
+| **Recursion-based** | Recursion and pattern matching replace loops |
+| **Type-inferred** | Hindley-Milner type inference — types without annotations |
 
-- everything is an expression
-- immutable bindings only
-- strict evaluation
-- recursion instead of loops
-- explicit data modeling via pattern matching
-- clarity over feature count
+### Inspirations
 
-------------------------------------------------------------------------
-
-## Why?
-
-The name *Ashes* comes from my beloved dog. Her enthusiasm for trying
-anything new mirrors the spirit of this project.
-
-This repository is:
-
-- an experiment
-- a learning journey
-- and a personal exploration of functional language design.
+- **ML / OCaml / F#** — algebraic data types, pattern matching, type inference
+- **Elm** — simplicity and explicit data modeling
+- **Haskell** — purity and type-driven design
+- **Rust** — deterministic memory management without a GC
 
 ------------------------------------------------------------------------
 
 ## Quick Start
 
-Build from source:
+**Build the compiler:**
 
-    dotnet build Ashes.slnx
+```sh
+dotnet build Ashes.slnx
+```
 
-Write a small program in `hello.ash`:
+**Write a program** (`hello.ash`):
 
-    Ashes.IO.print("hello world")
+```ash
+Ashes.IO.print("hello world")
+```
 
-Run it:
+**Run it:**
 
-    dotnet run --project src/Ashes.Cli -- run hello.ash
+```sh
+dotnet run --project src/Ashes.Cli -- run hello.ash
+```
 
-Try an inline expression:
+**Or try an inline expression:**
 
-    dotnet run --project src/Ashes.Cli -- run --expr "Ashes.IO.print(40 + 2)"
+```sh
+dotnet run --project src/Ashes.Cli -- run --expr "Ashes.IO.print(40 + 2)"
+```
 
-Run the end-to-end `.ash` suite:
+**Compile to a native executable:**
 
-    dotnet run --project src/Ashes.Cli -- test tests
-
-Run the compiler/unit test host:
-
-    dotnet run --project src/Ashes.Tests -- --no-progress
-
-------------------------------------------------------------------------
-
-## Repository Structure
-
-Ashes is split into independent components:
-
-- **Frontend** --- lexer, parser, AST
-- **Semantics** --- binding and type inference
-- **Backend** --- native code generation
-- **Formatter** --- canonical source formatting
-- **CLI** --- compiler interface
-- **LSP** --- language server
-- **TestRunner** --- `.ash` program testing
+```sh
+dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
+./hello     # runs without dotnet, without anything
+```
 
 ------------------------------------------------------------------------
 
-## Specifications
+## A Tour of Ashes
 
-Authoritative specifications:
+### Bindings & Functions
 
-- [Language Specification](docs/LANGUAGE_SPEC.md)
-- [Project Specification](docs/PROJECT_SPEC.md)
-- [Compiler CLI Specification](docs/COMPILER_CLI_SPEC.md)
-- [Formatter Specification](docs/FORMATTER_SPEC.md)
-- [Diagnostics Reference](docs/DIAGNOSTICS.md)
-- [Testing Reference](docs/TESTING.md)
-- [Standard Library Reference](docs/STANDARD_LIBRARY.md)
+```ash
+let double = fun (x) -> x + x
+in Ashes.IO.print(double(21))
+```
 
-The README provides only a high-level overview.
+### Pattern Matching & ADTs
 
-## Tooling Overview
+```ash
+type Color =
+    | Red
+    | Green
+    | Blue
 
-Ashes ships with:
+let name = fun (c) ->
+    match c with
+        | Red   -> "red"
+        | Green -> "green"
+        | Blue  -> "blue"
 
-- `ashes compile`, `run`, `repl`, `test`, and `fmt` in [docs/COMPILER_CLI_SPEC.md](docs/COMPILER_CLI_SPEC.md)
-- a language server in `src/Ashes.Lsp/`
-- a VS Code extension in `vscode-extension/`
-- deterministic `.ash` test execution documented in [docs/TESTING.md](docs/TESTING.md)
+in Ashes.IO.print(name(Green))
+```
 
-## Standard Library Overview
+### Lists & Recursion
 
-| Module / Type | Purpose |
-|---|---|
-| `Ashes.IO` | Console IO, panic, args, and line-based input |
-| `Ashes.File` | UTF-8 file read/write/existence helpers returning `Result` |
-| `Ashes.Http` | Small HTTP/1.1 client helpers for plain `http://` URLs |
-| `Ashes.Net.Tcp` | Blocking TCP client primitives |
-| `Ashes.List` | Helper functions for the built-in list type |
-| `Ashes.Maybe` | Helper functions for the built-in `Maybe(T)` type |
-| `Ashes.Result` | Helper functions for the built-in `Result(E, A)` type |
-| `Ashes.Test` | Assertion helpers for `.ash` tests and small programs |
-| `Unit`, `Maybe`, `Result`, `List`, `Socket` | Built-in runtime types |
+```ash
+let rec sum = fun (lst) -> fun (acc) ->
+    match lst with
+        | []        -> acc
+        | x :: rest -> sum(rest)(acc + x)
 
-Standard library functions live under `Ashes.*` modules. The core IO surface lives under
-`Ashes.IO`:
+in Ashes.IO.print(sum([1, 2, 3, 4, 5])(0))
+```
 
-- `Ashes.IO.print(expr)` — prints to standard output
-- `Ashes.IO.panic("message")` — aborts execution
-- `Ashes.IO.args` — `List<String>` of command-line arguments
-- `Ashes.File.readText(path)` — `Result<String, String>` UTF-8 file read
-- `Ashes.File.writeText(path, text)` — `Result<String, Unit>` UTF-8 file write
-- `Ashes.File.exists(path)` — `Result<String, Bool>` existence check
-- `Ashes.Http.get(url)` — `Result<String, String>` HTTP GET body for plain `http://` URLs
-- `Ashes.Http.post(url, body)` — `Result<String, String>` HTTP POST body for plain `http://` URLs
-- `Ashes.Net.Tcp.connect(host)(port)` — `Result<String, Socket>` TCP connect
-- `Ashes.Net.Tcp.send(socket)(text)` — `Result<String, Unit>` TCP send
-- `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result<String, String>` TCP receive
-- `Ashes.Net.Tcp.close(socket)` — `Result<String, Unit>` TCP close
+### Pipelines
 
-Current `Ashes.Http` support is intentionally small: `https://` is not supported yet, and
-responses using `Transfer-Encoding: chunked` currently return `unsupported transfer encoding`.
+```ash
+import Ashes.Result
 
-`Ashes` is reserved for compiler-provided standard library modules and cannot be defined by user projects.
-
-When importing multi-segment modules, full qualification such as `Foo.Bar.value` always works.
-Short qualification such as `Bar.value` also works when `Bar` is the unique imported leaf module
-qualifier. If imported exports collide, unqualified access fails; if imported leaf qualifiers
-collide, short qualification fails and full qualification must be used.
-
-Pure shipped helper libraries live under the compiler `lib/` folder. Reserved
-`Ashes.*` modules are compiler-provided and are not overridable by project-local
-modules.
-
-Shipped source-backed standard-library helper modules currently include:
-
-- `Ashes.List`
-- `Ashes.Maybe`
-- `Ashes.Result`
-- `Ashes.Test`
-
-Example:
-
-    import Ashes.List
-    import Ashes.IO
-    print(Ashes.List.length([1, 2, 3]))
-
-------------------------------------------------------------------------
-
-### Examples
-
-Start with these runnable examples:
-
-- `examples/hello.ash` --- minimal output
-- `examples/args_demo.ash` --- command-line argument access via `Ashes.IO.args`
-- `examples/io_hello.ash` --- minimal explicit IO output via `Ashes.IO.writeLine`
-- `examples/io_prompt.ash` --- prompt and response using `Ashes.IO.readLine()`
-- `examples/io_echo_once.ash` --- single-line pipe-friendly echo
-- `examples/io_echo_all.ash` --- recursive echo until EOF
-- `examples/float_ops.ash` --- float arithmetic and comparison smoke test
-- `examples/float_backend_demo.ash` --- backend float arithmetic/comparison smoke test
-- `examples/fs_read_text.ash` --- read UTF-8 text from a file
-- `examples/fs_write_text.ash` --- write and reread UTF-8 text
-- `examples/fs_exists.ash` --- filesystem existence check
-- `examples/http_get.ash` --- simple HTTP GET against a plain local/non-chunked endpoint
-- `examples/result_flow.ash` --- standalone `Result` workflow using `Ashes.Result`
-- `examples/stdlib_overview.ash` --- overview of `Ashes.IO`, `Ashes.List`, `Ashes.Maybe`, and `Ashes.Result`
-- `examples/tcp_connect.ash` --- TCP connect with Result handling
-- `examples/tcp_send.ash` --- TCP send with Result handling
-- `examples/tcp_receive.ash` --- TCP receive with Result handling
-- `examples/tcp_close.ash` --- TCP close with Result handling
-
-Project-mode shipped-library examples:
-
-- `examples/pipeline_list_map/`
-- `examples/list_filter_fold/`
-- `examples/maybe_default/`
-- `examples/result_flow/`
-- `examples/args_demo.ash` --- command-line argument access via `Ashes.IO.args`
-
-Project-style examples also live under:
-
-- `examples/project_imports/`
-- `examples/project_using_libs/`
-- `examples/list_pipeline/`
-- `examples/list_fold/`
-- `examples/maybe_flow/`
-- `examples/result_flow/`
-
-------------------------------------------------------------------------
-
-### Example
-
-    import Ashes.IO
-    let rec sum =
-        fun (lst) ->
-            fun (acc) ->
-                match lst with
-                    | [] -> acc
-                    | x :: rest -> sum(rest)(acc + x)
-    in print(sum([1, 2, 3])(1))
-
-Output:
-
-    7
-
-------------------------------------------------------------------------
-
-## Supported Language Features
-
-### Core
-
-- integers
-
-- booleans (`true`, `false`)
-
-- strings with escapes
-
-- `if / then / else`
-
-- immutable bindings
-
-      let x = expr in expr
-      let rec f = fun (...) -> ... in expr
-
-- lambdas: `fun (x, y) -> expr`
-
-- function application: `f(x)` or `f x` (ML-style whitespace application)
-
-- `+` for integers and strings
-
-- `-`, `*`, `/` for integer arithmetic
-
-- unary `-` negation for integers (for example `-x`, `-1`)
-
-- `>=` and `<=` for integer comparison
-
-- `==` and `!=` for integer/string equality comparison
-
-- tuples: `(a, b, ...)` with tuple patterns in `match`
-
-- standard library: `Ashes.IO` module (`print`, `panic`, `args`)
-
-- let-polymorphism (Hindley-Milner style) for non-recursive `let` bindings
+"42"
+|> parseOr
+|> Ashes.Result.map(fun (n) -> n + 1)
+|> Ashes.Result.default(0)
+|> Ashes.IO.print
+```
 
 ### Polymorphism
 
-Ashes generalizes non-recursive `let` bindings, so polymorphic helpers can be reused at
-multiple concrete types. `let rec` remains monomorphic during inference.
+Hindley-Milner let-polymorphism — use the same function at different types:
 
-    let id = fun (x) -> x
-        in
-        let _a = id(1)
-            in
-            let _b = id("x")
-                in Ashes.IO.print("ok")
-
-### Lists
-
-- empty list: `[]`
-
-- literals: `[1,2,3]`
-
-- cons operator: `x :: xs`
-
-- pattern matching
-
-      match xs with
-          | [] -> ...
-          | x :: rest -> ...
-
-- wildcard: `_` matches any value and binds nothing
-
-### Algebraic Data Types
-
-- type declarations
-
-  type Maybe =
-          | None
-          | Some(T)
-
-- constructor expressions: `Some(10)`, `None`
-
-- constructor patterns in `match`
-
-        match opt with
-            | None -> def
-            | Some(x) -> x
+```ash
+let id = fun (x) -> x
+in
+    let _ = id(42)
+    in
+        let _ = id("hello")
+        in Ashes.IO.print("ok")
+```
 
 ------------------------------------------------------------------------
 
-## Build & Run
+## Standard Library
 
-### Build compiler and tests
+| Module | Purpose |
+|---|---|
+| `Ashes.IO` | Console I/O, `print`, `panic`, `args`, line-based input |
+| `Ashes.File` | UTF-8 file read/write/exists returning `Result` |
+| `Ashes.Http` | HTTP/1.1 GET/POST for plain `http://` URLs |
+| `Ashes.Net.Tcp` | Blocking TCP client (connect, send, receive, close) |
+| `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
+| `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
+| `Ashes.Result` | Helpers for the built-in `Result(E, A)` type |
+| `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-    dotnet build Ashes.slnx
-    dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj
-
-### Run end-to-end `.ash` tests
-
-    dotnet run --project src/Ashes.Cli -- test tests
-
-### Compile to native executable
-
-    dotnet run --project src/Ashes.Cli -- compile \
-      --expr "Ashes.IO.print(\"hello \" + \"world\")" -o out
-
-    chmod +x out
-    ./out
-
-Output:
-
-    hello world
+Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`
 
 ------------------------------------------------------------------------
 
-## Targets
+## Compiler Architecture
 
-Frontend stages are shared; backends are selectable:
+Ashes is split into focused phases:
 
--   `linux-x64` ELF64
--   `windows-x64` PE32+
+| Project | Responsibility |
+|---|---|
+| **Ashes.Frontend** | Lexer, parser, AST |
+| **Ashes.Semantics** | Binding, scope resolution, type inference |
+| **Ashes.Backend** | IR lowering and native code generation |
+| **Ashes.Formatter** | Canonical source formatting |
+| **Ashes.Cli** | CLI orchestration (`compile`, `run`, `repl`, `test`, `fmt`) |
+| **Ashes.Lsp** | Language server (diagnostics, formatting, hover, completions) |
+| **Ashes.TestRunner** | End-to-end `.ash` test execution |
 
-Example:
+### Compile Targets
 
-    ashes compile --target linux-x64 --expr "Ashes.IO.print(42)" -o out
+| Target | Format |
+|---|---|
+| `linux-x64` | ELF64 |
+| `windows-x64` | PE32+ |
 
-------------------------------------------------------------------------
-
-## CLI
-
-Core commands:
-
--   `ashes compile`
--   `ashes run`
--   `ashes repl`
--   `ashes test`
--   `ashes fmt`
-
-Compile file:
-
-    ashes compile hello.ash
-
-Compile expression:
-
-    ashes compile --expr "Ashes.IO.print(40 + 2)" -o out
-
-Compile project:
-
-    ashes compile
-    ashes compile --project path/to/ashes.json
+```sh
+dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello
+```
 
 ------------------------------------------------------------------------
 
-## Run Programs
+## Tooling
 
-    ashes run examples/hello.ash
-    ashes run -- hello world
+### CLI
 
-------------------------------------------------------------------------
+```sh
+ashes compile hello.ash              # compile to native binary
+ashes run hello.ash                   # compile and run
+ashes run -- arg1 arg2               # pass arguments
+ashes repl                            # interactive REPL
+ashes test tests                      # run end-to-end test suite
+ashes fmt examples -w                 # auto-format in place
+```
 
-## REPL
+### VS Code Extension
 
-    ashes repl
+Full editor support with diagnostics, formatting, hover, go-to-definition,
+semantic tokens, and completions.
+
+```sh
+cd vscode-extension && npm run build-server
+code --install-extension ashes-vscode.vsix
+```
+
+For local development:
+
+```powershell
+.\scripts\install-vscode-extension-local.ps1
+```
 
 ------------------------------------------------------------------------
 
 ## Testing
 
-`ashes test` runs `.ash` programs and compares stdout against:
+End-to-end tests use `// expect:` directives:
 
-    // expect:
-    42
+```ash
+// expect: 15
+let rec sum = fun (lst) -> fun (acc) ->
+    match lst with
+        | []        -> acc
+        | x :: rest -> sum(rest)(acc + x)
+in Ashes.IO.print(sum([1, 2, 3, 4, 5])(0))
+```
 
-Ashes source supports `// ...` line comments (including these directives), and
-comments are ignored by compilation.
+```sh
+dotnet run --project src/Ashes.Cli -- test tests     # end-to-end suite
+dotnet run --project src/Ashes.Tests -- --no-progress # compiler unit tests
+```
 
-Runtime failure tests:
-
-    // exit: 1
-    // expect: oh no!
-    panic("oh no!")
-
-Tests are discovered recursively under `tests/`, execute in stable
-lexicographic order, and become project-aware automatically when an
-`ashes.json` project file is discovered.
-
-Supported directives are documented in [docs/TESTING.md](docs/TESTING.md).
-
-If a fixture is intentionally parser-invalid and should be skipped by CI `fmt`
-verification, annotate it with:
-
-    // fmt-skip: <reason>
-
-CI includes fast and full pipelines with coverage reporting.
+See [docs/TESTING.md](docs/TESTING.md) for the full testing reference.
 
 ------------------------------------------------------------------------
 
-## Formatting
+## Examples
 
-Canonical formatting (4-space indentation):
+Explore the [`examples/`](examples/) directory:
 
-    ashes fmt examples/hello.ash
-    ashes fmt examples -w
+| Example | What it shows |
+|---|---|
+| [`hello.ash`](examples/hello.ash) | Minimal output |
+| [`pipeline.ash`](examples/pipeline.ash) | Pipeline operator `\|>` |
+| [`color_match.ash`](examples/color_match.ash) | ADTs and pattern matching |
+| [`tail_recursion.ash`](examples/tail_recursion.ash) | Tail-call optimization |
+| [`closures.ash`](examples/closures.ash) | Closures capturing bindings |
+| [`result_flow.ash`](examples/result_flow.ash) | `Result` pipelines |
+| [`stdlib_overview.ash`](examples/stdlib_overview.ash) | Standard library tour |
+| [`polymorphism_basics.ash`](examples/polymorphism_basics.ash) | Let-polymorphism |
+| [`io_echo_all.ash`](examples/io_echo_all.ash) | Recursive I/O until EOF |
+| [`http_get.ash`](examples/http_get.ash) | HTTP GET request |
+
+Multi-file project examples: [`project_imports/`](examples/project_imports/),
+[`project_using_libs/`](examples/project_using_libs/),
+[`list_pipeline/`](examples/list_pipeline/),
+[`result_flow/`](examples/result_flow/)
 
 ------------------------------------------------------------------------
 
-## VS Code Extension
+## Documentation
 
--   Extension sources: `vscode-extension/`
--   Language server: `src/Ashes.Lsp/`
--   Current editor features include diagnostics, formatting, hover, definition lookup, semantic tokens, and basic completions.
+| Document | Contents |
+|---|---|
+| [Language Specification](docs/LANGUAGE_SPEC.md) | Authoritative syntax and semantics |
+| [Project Specification](docs/PROJECT_SPEC.md) | Multi-file project format |
+| [CLI Specification](docs/COMPILER_CLI_SPEC.md) | All CLI commands and flags |
+| [Formatter Specification](docs/FORMATTER_SPEC.md) | Canonical formatting rules |
+| [Diagnostics Reference](docs/DIAGNOSTICS.md) | Error codes and messages |
+| [Testing Reference](docs/TESTING.md) | Test directives and conventions |
+| [Standard Library](docs/STANDARD_LIBRARY.md) | Module-by-module API reference |
 
-Build server executables:
+------------------------------------------------------------------------
 
-    cd vscode-extension
-    npm run build-server
+## Why "Ashes"?
 
-Install extension:
-
-    code --install-extension ashes-vscode.vsix
-
-### VS Code Extension Development
-
-Install a local VSIX from the current Debug build without downloading compiler
-artifacts from GitHub Releases:
-
-    .\scripts\install-vscode-extension-local.ps1
-
-..or if you want to target VS Code Insiders:
-
-    .\scripts\install-vscode-extension-local.ps1 -CodeCommand code-insiders.cmd
+The name comes from my beloved dog. Her enthusiasm for trying anything new
+mirrors the spirit of this project — an experiment, a learning journey, and
+a personal exploration of functional language design.
 
 ------------------------------------------------------------------------
 
 ## Contributing
 
-Useful local commands:
+```sh
+dotnet build Ashes.slnx
+dotnet run --project src/Ashes.Tests -- --no-progress
+dotnet run --project src/Ashes.Cli -- test tests
+```
 
-    dotnet build Ashes.slnx
-    dotnet run --project src/Ashes.Tests -- --no-progress
-    dotnet run --project src/Ashes.Cli -- test tests
-
-Use the documents in `docs/` as the source of truth before changing language or CLI behavior.
+Use the documents in [`docs/`](docs/) as the source of truth before changing
+language or CLI behavior.
 
 ------------------------------------------------------------------------
 
 ## License
 
-MIT License --- see LICENSE.
+MIT — see [LICENSE](LICENSE).
