@@ -68,10 +68,14 @@ examples/*.exe
 /*.exe
 /*.txt
 *.received.txt
+llvm-material
+lib/Ashes/win-x64/
+lib/Ashes/linux-x64/
 
 # Personal files
 PLANNED_ISSUES*.md
 ROADMAP.md
+LLVM_IMPLEMENTATION.md
 
 # Git
 .git/
