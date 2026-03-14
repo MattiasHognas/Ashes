@@ -75,7 +75,7 @@ lib/Ashes/linux-x64/
 # Personal files
 PLANNED_ISSUES*.md
 ROADMAP.md
-LLVM_IMPLEMENTATION.md
+LLVM_*.md
 
 # Git
 .git/
