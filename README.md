@@ -6,6 +6,7 @@ native executables without runtime dependencies.
 ```ash
 import Ashes.List
 import Ashes.Result
+import Ashes.IO
 
 type Shape =
     | Circle(Float)
@@ -24,7 +25,7 @@ in
         |> List.map(fun (a) -> if a >= 10.0 then Ok(a) else Error("too small"))
         |> List.filter(Result.isOk)
         |> List.length
-        |> Ashes.IO.print
+        |> print
 ```
 
 ```
