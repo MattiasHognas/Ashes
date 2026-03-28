@@ -12,24 +12,22 @@ type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area = fun (s) ->
+let area s = 
     match s with
-        | Circle(r)    -> 3.14159 * r * r
-        | Rect(w, h)   -> w * h
-
-in
+        | Circle(r) -> 3.14159 * r * r
+        | Rect(w, h) -> w * h
+in 
     let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
-    in
+    in 
         shapes
         |> List.map(area)
-        |> List.map(fun (a) -> if a >= 10.0 then Ok(a) else Error("too small"))
+        |> List.map(fun (a) ->
+            if a >= 10.0
+            then Ok(a)
+            else Error("too small"))
         |> List.filter(Result.isOk)
         |> List.length
         |> print
-```
-
-```
-2
 ```
 
 No GC. No runtime. Just a native binary.
