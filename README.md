@@ -12,13 +12,13 @@ type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area s = 
+let area s =
     match s with
         | Circle(r) -> 3.14159 * r * r
         | Rect(w, h) -> w * h
-in 
+in
     let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
-    in 
+    in
         shapes
         |> List.map(area)
         |> List.map(fun (a) ->
