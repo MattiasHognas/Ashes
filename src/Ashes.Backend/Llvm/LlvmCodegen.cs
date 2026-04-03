@@ -482,7 +482,7 @@ internal static class LlvmCodegen
         public LLVMBasicBlockRef GetNextReachableBlock(int instructionIndex)
         {
             int nextIndex = instructionIndex + 1;
-            return nextIndex < TempSlots.Length + LocalSlots.Length + 10 && FallthroughBlocks.TryGetValue(nextIndex, out LLVMBasicBlockRef block)
+            return FallthroughBlocks.TryGetValue(nextIndex, out LLVMBasicBlockRef block)
                 ? block
                 : GetOrCreateFallthroughBlock(nextIndex);
         }
