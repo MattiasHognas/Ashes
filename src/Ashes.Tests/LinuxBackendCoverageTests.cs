@@ -68,6 +68,14 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_support_check_should_accept_program_args_programs()
+    {
+        var ir = LowerExpression("match Ashes.IO.args with | a :: b :: [] -> 1 | _ -> 0");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_closure_programs()
     {
         var ir = LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)");
@@ -85,6 +93,20 @@ public sealed class LinuxBackendCoverageTests
 
         var stdout = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
         stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_program_args_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var stdout = await CompileRunWithLinuxLlvmAsync(
+            "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
+            ["first", "second"]);
+        stdout.ShouldBe("first:second\n");
     }
 
     private static byte[] CompileForLinux(string source)
@@ -123,7 +145,7 @@ public sealed class LinuxBackendCoverageTests
         return (bool)method.Invoke(null, [ir])!;
     }
 
-    private static async Task<string> CompileRunWithLinuxLlvmAsync(string source)
+    private static async Task<string> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null)
     {
         var ir = LowerExpression(source);
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
@@ -147,6 +169,13 @@ public sealed class LinuxBackendCoverageTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        if (args is not null)
+        {
+            foreach (var arg in args)
+            {
+                psi.ArgumentList.Add(arg);
+            }
+        }
 
         using var proc = Process.Start(psi)!;
         var stdout = await proc.StandardOutput.ReadToEndAsync();

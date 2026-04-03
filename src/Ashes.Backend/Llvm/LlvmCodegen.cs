@@ -105,6 +105,10 @@ internal static class LlvmCodegen
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
+        LLVMValueRef programArgsGlobal = target.Module.AddGlobal(i64, "__ashes_program_args");
+        programArgsGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        programArgsGlobal.Initializer = LLVMValueRef.CreateConstInt(i64, 0, false);
+        bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
 
         LLVMValueRef entryFunction = target.Module.AddFunction(entryFunctionName, LLVMTypeRef.CreateFunction(voidType, []));
         entryFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
@@ -123,7 +127,9 @@ internal static class LlvmCodegen
             program.EntryFunction,
             stringLiterals,
             liftedFunctions,
+            programArgsGlobal,
             flavor,
+            usesProgramArgs,
             isEntry: true);
 
         foreach (IrFunction function in program.Functions)
@@ -134,14 +140,23 @@ internal static class LlvmCodegen
                 function,
                 stringLiterals,
                 liftedFunctions,
+                programArgsGlobal,
                 flavor,
+                usesProgramArgs,
                 isEntry: false);
         }
     }
 
+    private static bool ProgramUsesInstruction<TInstruction>(IrProgram program)
+        where TInstruction : IrInst
+    {
+        return program.EntryFunction.Instructions.Any(static instruction => instruction is TInstruction)
+            || program.Functions.Any(static function => function.Instructions.Any(static instruction => instruction is TInstruction));
+    }
+
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs;
     }
 
     private static void EmitFunctionBody(
@@ -150,7 +165,9 @@ internal static class LlvmCodegen
         IrFunction function,
         IReadOnlyDictionary<string, string> stringLiterals,
         IReadOnlyDictionary<string, LLVMValueRef> liftedFunctions,
+        LLVMValueRef programArgsGlobal,
         LlvmCodegenFlavor flavor,
+        bool usesProgramArgs,
         bool isEntry)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -216,6 +233,7 @@ internal static class LlvmCodegen
             llvmFunction,
             stringLiterals,
             liftedFunctions,
+            programArgsGlobal,
             tempSlots,
             localSlots,
             heapCursorSlot,
@@ -227,7 +245,13 @@ internal static class LlvmCodegen
             i8Ptr,
             i64Ptr,
             flavor,
+            usesProgramArgs,
             isEntry);
+
+        if (isEntry && usesProgramArgs)
+        {
+            EmitEntryProgramArgsInitialization(state);
+        }
 
         bool terminated = false;
         for (int index = 0; index < function.Instructions.Count; index++)
@@ -283,6 +307,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LLVMValueRef.CreateConstReal(state.F64, loadConstFloat.Value)),
             IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
+            IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsGlobal, "program_args")),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -793,6 +818,127 @@ internal static class LlvmCodegen
             name);
     }
 
+    private static void EmitEntryProgramArgsInitialization(LlvmCodegenState state)
+    {
+        state.Target.Builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.ProgramArgsGlobal);
+
+        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        {
+            EmitLinuxProgramArgsInitialization(state);
+            return;
+        }
+
+        throw new InvalidOperationException("The minimal Windows LLVM path does not yet support program args initialization.");
+    }
+
+    private static void EmitLinuxProgramArgsInitialization(LlvmCodegenState state)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef listSlot = builder.BuildAlloca(state.I64, "program_args_list");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, "program_args_index");
+        LLVMValueRef argPtrSlot = builder.BuildAlloca(state.I64, "program_args_arg_ptr");
+        LLVMValueRef lenSlot = builder.BuildAlloca(state.I64, "program_args_arg_len");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), listSlot);
+
+        LLVMValueRef stackPtr = EmitReadStackPointer(state);
+        LLVMValueRef argc = LoadMemory(state, stackPtr, 0, "program_args_argc");
+
+        var initBlock = state.Function.AppendBasicBlock("program_args_init");
+        var loopCheckBlock = state.Function.AppendBasicBlock("program_args_loop_check");
+        var lenCheckBlock = state.Function.AppendBasicBlock("program_args_len_check");
+        var lenBodyBlock = state.Function.AppendBasicBlock("program_args_len_body");
+        var buildNodeBlock = state.Function.AppendBasicBlock("program_args_build_node");
+        var doneBlock = state.Function.AppendBasicBlock("program_args_done");
+
+        LLVMValueRef hasArgs = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntSGT,
+            argc,
+            LLVMValueRef.CreateConstInt(state.I64, 1, false),
+            "program_args_has_args");
+        builder.BuildCondBr(hasArgs, initBlock, doneBlock);
+
+        builder.PositionAtEnd(initBlock);
+        builder.BuildStore(
+            builder.BuildSub(argc, LLVMValueRef.CreateConstInt(state.I64, 1, false), "program_args_start_index"),
+            indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, "program_args_index_value");
+        LLVMValueRef shouldContinue = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntSGT,
+            index,
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "program_args_continue");
+        builder.BuildCondBr(shouldContinue, lenCheckBlock, doneBlock);
+
+        builder.PositionAtEnd(lenCheckBlock);
+        LLVMValueRef argvEntryOffset = builder.BuildMul(index, LLVMValueRef.CreateConstInt(state.I64, 8, false), "program_args_argv_entry_offset");
+        LLVMValueRef argvEntryAddress = builder.BuildAdd(
+            stackPtr,
+            builder.BuildAdd(LLVMValueRef.CreateConstInt(state.I64, 8, false), argvEntryOffset, "program_args_argv_offset"),
+            "program_args_argv_entry_addr");
+        LLVMValueRef argPtr = LoadMemory(state, argvEntryAddress, 0, "program_args_argv_entry");
+        builder.BuildStore(argPtr, argPtrSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), lenSlot);
+
+        var lenLoopCheckBlock = state.Function.AppendBasicBlock("program_args_len_loop_check");
+        builder.BuildBr(lenLoopCheckBlock);
+
+        builder.PositionAtEnd(lenLoopCheckBlock);
+        LLVMValueRef currentLen = builder.BuildLoad2(state.I64, lenSlot, "program_args_current_len");
+        LLVMValueRef currentArgPtr = builder.BuildLoad2(state.I64, argPtrSlot, "program_args_current_arg_ptr");
+        LLVMValueRef currentBytePtr = builder.BuildGEP2(
+            state.I8,
+            builder.BuildIntToPtr(currentArgPtr, state.I8Ptr, "program_args_arg_bytes"),
+            [currentLen],
+            "program_args_current_byte_ptr");
+        LLVMValueRef currentByte = builder.BuildLoad2(state.I8, currentBytePtr, "program_args_current_byte");
+        LLVMValueRef reachedTerminator = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntEQ,
+            currentByte,
+            LLVMValueRef.CreateConstInt(state.I8, 0, false),
+            "program_args_reached_terminator");
+        builder.BuildCondBr(reachedTerminator, buildNodeBlock, lenBodyBlock);
+
+        builder.PositionAtEnd(lenBodyBlock);
+        builder.BuildStore(
+            builder.BuildAdd(currentLen, LLVMValueRef.CreateConstInt(state.I64, 1, false), "program_args_next_len"),
+            lenSlot);
+        builder.BuildBr(lenLoopCheckBlock);
+
+        builder.PositionAtEnd(buildNodeBlock);
+        LLVMValueRef argLen = builder.BuildLoad2(state.I64, lenSlot, "program_args_arg_len_value");
+        LLVMValueRef stringRef = EmitAllocDynamic(
+            state,
+            builder.BuildAdd(argLen, LLVMValueRef.CreateConstInt(state.I64, 8, false), "program_args_string_bytes"));
+        StoreMemory(state, stringRef, 0, argLen, "program_args_string_len");
+        EmitCopyBytes(
+            state,
+            GetStringBytesPointer(state, stringRef, "program_args_string_dest"),
+            builder.BuildIntToPtr(builder.BuildLoad2(state.I64, argPtrSlot, "program_args_copy_arg_ptr"), state.I8Ptr, "program_args_string_src"),
+            argLen,
+            "program_args_copy_bytes");
+        LLVMValueRef consRef = EmitAlloc(state, 16);
+        StoreMemory(state, consRef, 0, stringRef, "program_args_cons_head");
+        StoreMemory(state, consRef, 8, builder.BuildLoad2(state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
+        builder.BuildStore(consRef, listSlot);
+        builder.BuildStore(
+            builder.BuildSub(builder.BuildLoad2(state.I64, indexSlot, "program_args_index_before_dec"), LLVMValueRef.CreateConstInt(state.I64, 1, false), "program_args_index_dec"),
+            indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(doneBlock);
+        builder.BuildStore(builder.BuildLoad2(state.I64, listSlot, "program_args_final_list"), state.ProgramArgsGlobal);
+    }
+
+    private static LLVMValueRef EmitReadStackPointer(LlvmCodegenState state)
+    {
+        LLVMTypeRef readRspType = LLVMTypeRef.CreateFunction(state.I64, []);
+        LLVMValueRef readRsp = LLVMValueRef.CreateConstInlineAsm(readRspType, "movq %rsp, $0", "=r", true, false);
+        return state.Target.Builder.BuildCall2(readRspType, readRsp, [], "stack_ptr");
+    }
+
     private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
     {
         EmitSyscall(
@@ -831,6 +977,7 @@ internal static class LlvmCodegen
         LLVMValueRef Function,
         IReadOnlyDictionary<string, string> StringLiterals,
         IReadOnlyDictionary<string, LLVMValueRef> LiftedFunctions,
+        LLVMValueRef ProgramArgsGlobal,
         LLVMValueRef[] TempSlots,
         LLVMValueRef[] LocalSlots,
         LLVMValueRef HeapCursorSlot,
@@ -842,6 +989,7 @@ internal static class LlvmCodegen
         LLVMTypeRef I8Ptr,
         LLVMTypeRef I64Ptr,
         LlvmCodegenFlavor Flavor,
+        bool UsesProgramArgs,
         bool IsEntry)
     {
         public LLVMBasicBlockRef GetLabelBlock(string name) => LabelBlocks[name];
@@ -874,6 +1022,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstFloat => true,
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
+            IrInst.LoadProgramArgs => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
