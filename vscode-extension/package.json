@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "publisher": "mattiashognas",
   "engines": {
-    "vscode": "^1.90.0",
+    "vscode": "^1.110.0",
     "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "icon": "icon.png",
@@ -85,12 +85,12 @@
     "build-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64"
   },
   "devDependencies": {
-    "@types/node": "^25.3.5",
-    "@types/vscode": "^1.90.0",
-    "@typescript-eslint/eslint-plugin": "^8.56.1",
-    "@typescript-eslint/parser": "^8.56.1",
-    "esbuild": "^0.27.3",
-    "eslint": "^10.0.3",
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.110.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.2",
+    "esbuild": "^0.27.4",
+    "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",
     "typescript": "^5.5.3"
