@@ -94,6 +94,14 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_closure_programs()
+    {
+        var ir = LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);
