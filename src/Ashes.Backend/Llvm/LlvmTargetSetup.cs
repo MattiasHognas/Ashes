@@ -1,4 +1,5 @@
 using Ashes.Backend.Backends;
+using System.Runtime.InteropServices;
 using LLVMSharp.Interop;
 
 namespace Ashes.Backend.Llvm;
@@ -39,12 +40,25 @@ internal static class LlvmTargetSetup
             string.Empty,
             optLevel,
             LLVMRelocMode.LLVMRelocStatic,
-            LLVMCodeModel.LLVMCodeModelLarge);
+            LLVMCodeModel.LLVMCodeModelDefault);
 
         LLVMContextRef context = LLVMContextRef.Create();
         LLVMModuleRef module = context.CreateModuleWithName($"ashes.{targetId}.module");
         module.Target = targetTriple;
-        module.DataLayout = machine.CreateTargetDataLayout().ToString();
+        unsafe
+        {
+            var dataLayout = machine.CreateTargetDataLayout();
+            sbyte* layoutText = LLVM.CopyStringRepOfTargetData(dataLayout);
+            try
+            {
+                module.DataLayout = Marshal.PtrToStringAnsi((nint)layoutText)
+                    ?? throw new InvalidOperationException("LLVM returned an empty target data layout.");
+            }
+            finally
+            {
+                LLVM.DisposeMessage(layoutText);
+            }
+        }
 
         LLVMBuilderRef builder = context.CreateBuilder();
         return new LlvmTargetContext(context, module, builder, machine, targetTriple);

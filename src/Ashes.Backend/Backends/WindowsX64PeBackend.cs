@@ -12,8 +12,6 @@ public sealed class WindowsX64PeBackend : IBackend
 
     public byte[] Compile(IrProgram program, BackendCompileOptions? options = null)
     {
-        var codegen = new WindowsX64CodegenIced();
-        var writer = new Pe64Writer(codegen);
-        return writer.CompileToPe(program);
+        return new WindowsX64LlvmBackend().Compile(program, options);
     }
 }
