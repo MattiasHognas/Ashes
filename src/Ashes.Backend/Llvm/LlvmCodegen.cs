@@ -57,9 +57,9 @@ internal static class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        if (program.Functions.Count != 0 || program.UsesClosures)
+        if (!SupportsMinimalLinuxLlvm(program))
         {
-            throw new InvalidOperationException("The LLVM Linux backend does not yet support closures or lowered lambda functions.");
+            return new X64CodegenIced().CompileToElf(program);
         }
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
@@ -566,6 +566,48 @@ internal static class LlvmCodegen
                 case IrInst.CmpIntLe:
                 case IrInst.CmpIntEq:
                 case IrInst.CmpIntNe:
+                case IrInst.AllocAdt { FieldCount: 0 }:
+                case IrInst.Jump:
+                case IrInst.JumpIfFalse:
+                case IrInst.Return:
+                case IrInst.Label:
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SupportsMinimalLinuxLlvm(IrProgram program)
+    {
+        if (program.Functions.Count != 0 || program.UsesClosures)
+        {
+            return false;
+        }
+
+        foreach (IrInst instruction in program.EntryFunction.Instructions)
+        {
+            switch (instruction)
+            {
+                case IrInst.LoadConstInt:
+                case IrInst.LoadConstBool:
+                case IrInst.LoadConstStr:
+                case IrInst.LoadLocal:
+                case IrInst.StoreLocal:
+                case IrInst.AddInt:
+                case IrInst.SubInt:
+                case IrInst.MulInt:
+                case IrInst.DivInt:
+                case IrInst.CmpIntGe:
+                case IrInst.CmpIntLe:
+                case IrInst.CmpIntEq:
+                case IrInst.CmpIntNe:
+                case IrInst.PrintInt:
+                case IrInst.PrintStr:
+                case IrInst.WriteStr:
+                case IrInst.PrintBool:
                 case IrInst.AllocAdt { FieldCount: 0 }:
                 case IrInst.Jump:
                 case IrInst.JumpIfFalse:
