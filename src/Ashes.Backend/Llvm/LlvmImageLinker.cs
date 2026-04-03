@@ -4,6 +4,8 @@ namespace Ashes.Backend.Llvm;
 
 internal static class LlvmImageLinker
 {
+    private const uint SectionTypeRela = 4;
+    private const uint SectionTypeRel = 9;
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
 
@@ -118,7 +120,9 @@ internal static class LlvmImageLinker
             {
                 symtab = sections[i];
             }
-            else if ((sections[i].Type == 4 || sections[i].Type == 9) && sections[i].Info == (uint)textSectionIndex && sections[i].Size != 0)
+            else if ((sections[i].Type == SectionTypeRela || sections[i].Type == SectionTypeRel)
+                     && sections[i].Info == (uint)textSectionIndex
+                     && sections[i].Size != 0)
             {
                 throw new InvalidOperationException("LLVM emitted text relocations that are not supported by the current ELF linker path.");
             }

@@ -144,16 +144,24 @@ static byte[] CompileProjectToImage(AshesProject project, string targetId, Backe
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
 {
-    level = arg switch
+    switch (arg)
     {
-        "-O0" => BackendOptimizationLevel.O0,
-        "-O1" => BackendOptimizationLevel.O1,
-        "-O2" => BackendOptimizationLevel.O2,
-        "-O3" => BackendOptimizationLevel.O3,
-        _ => BackendOptimizationLevel.O2,
-    };
-
-    return arg is "-O0" or "-O1" or "-O2" or "-O3";
+        case "-O0":
+            level = BackendOptimizationLevel.O0;
+            return true;
+        case "-O1":
+            level = BackendOptimizationLevel.O1;
+            return true;
+        case "-O2":
+            level = BackendOptimizationLevel.O2;
+            return true;
+        case "-O3":
+            level = BackendOptimizationLevel.O3;
+            return true;
+        default:
+            level = BackendCompileOptions.Default.OptimizationLevel;
+            return false;
+    }
 }
 
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
