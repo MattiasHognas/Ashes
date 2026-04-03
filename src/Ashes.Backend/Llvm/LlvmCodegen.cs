@@ -544,43 +544,61 @@ internal static class LlvmCodegen
 
     private static bool SupportsMinimalWindowsLlvm(IrProgram program)
     {
-        if (program.Functions.Count != 0 || program.UsesClosures)
+        return SupportsMinimalLlvm(program, static instruction => instruction switch
         {
-            return false;
-        }
-
-        foreach (IrInst instruction in program.EntryFunction.Instructions)
-        {
-            switch (instruction)
-            {
-                case IrInst.LoadConstInt:
-                case IrInst.LoadConstBool:
-                case IrInst.LoadConstStr:
-                case IrInst.LoadLocal:
-                case IrInst.StoreLocal:
-                case IrInst.AddInt:
-                case IrInst.SubInt:
-                case IrInst.MulInt:
-                case IrInst.DivInt:
-                case IrInst.CmpIntGe:
-                case IrInst.CmpIntLe:
-                case IrInst.CmpIntEq:
-                case IrInst.CmpIntNe:
-                case IrInst.AllocAdt { FieldCount: 0 }:
-                case IrInst.Jump:
-                case IrInst.JumpIfFalse:
-                case IrInst.Return:
-                case IrInst.Label:
-                    continue;
-                default:
-                    return false;
-            }
-        }
-
-        return true;
+            IrInst.LoadConstInt => true,
+            IrInst.LoadConstBool => true,
+            IrInst.LoadConstStr => true,
+            IrInst.LoadLocal => true,
+            IrInst.StoreLocal => true,
+            IrInst.AddInt => true,
+            IrInst.SubInt => true,
+            IrInst.MulInt => true,
+            IrInst.DivInt => true,
+            IrInst.CmpIntGe => true,
+            IrInst.CmpIntLe => true,
+            IrInst.CmpIntEq => true,
+            IrInst.CmpIntNe => true,
+            IrInst.AllocAdt { FieldCount: 0 } => true,
+            IrInst.Jump => true,
+            IrInst.JumpIfFalse => true,
+            IrInst.Return => true,
+            IrInst.Label => true,
+            _ => false
+        });
     }
 
     private static bool SupportsMinimalLinuxLlvm(IrProgram program)
+    {
+        return SupportsMinimalLlvm(program, static instruction => instruction switch
+        {
+            IrInst.LoadConstInt => true,
+            IrInst.LoadConstBool => true,
+            IrInst.LoadConstStr => true,
+            IrInst.LoadLocal => true,
+            IrInst.StoreLocal => true,
+            IrInst.AddInt => true,
+            IrInst.SubInt => true,
+            IrInst.MulInt => true,
+            IrInst.DivInt => true,
+            IrInst.CmpIntGe => true,
+            IrInst.CmpIntLe => true,
+            IrInst.CmpIntEq => true,
+            IrInst.CmpIntNe => true,
+            IrInst.PrintInt => true,
+            IrInst.PrintStr => true,
+            IrInst.WriteStr => true,
+            IrInst.PrintBool => true,
+            IrInst.AllocAdt { FieldCount: 0 } => true,
+            IrInst.Jump => true,
+            IrInst.JumpIfFalse => true,
+            IrInst.Return => true,
+            IrInst.Label => true,
+            _ => false
+        });
+    }
+
+    private static bool SupportsMinimalLlvm(IrProgram program, Func<IrInst, bool> isSupportedInstruction)
     {
         if (program.Functions.Count != 0 || program.UsesClosures)
         {
@@ -589,33 +607,9 @@ internal static class LlvmCodegen
 
         foreach (IrInst instruction in program.EntryFunction.Instructions)
         {
-            switch (instruction)
+            if (!isSupportedInstruction(instruction))
             {
-                case IrInst.LoadConstInt:
-                case IrInst.LoadConstBool:
-                case IrInst.LoadConstStr:
-                case IrInst.LoadLocal:
-                case IrInst.StoreLocal:
-                case IrInst.AddInt:
-                case IrInst.SubInt:
-                case IrInst.MulInt:
-                case IrInst.DivInt:
-                case IrInst.CmpIntGe:
-                case IrInst.CmpIntLe:
-                case IrInst.CmpIntEq:
-                case IrInst.CmpIntNe:
-                case IrInst.PrintInt:
-                case IrInst.PrintStr:
-                case IrInst.WriteStr:
-                case IrInst.PrintBool:
-                case IrInst.AllocAdt { FieldCount: 0 }:
-                case IrInst.Jump:
-                case IrInst.JumpIfFalse:
-                case IrInst.Return:
-                case IrInst.Label:
-                    continue;
-                default:
-                    return false;
+                return false;
             }
         }
 
