@@ -127,7 +127,7 @@ internal static class LlvmCodegen
         }
 
         LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
-        bool needsHeap = function.Instructions.Any(static inst => inst is IrInst.Alloc or IrInst.AllocAdt);
+        bool needsHeap = function.Instructions.Any(static inst => inst is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr);
         if (needsHeap)
         {
             LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
@@ -240,10 +240,13 @@ internal static class LlvmCodegen
             IrInst.CmpFloatEq cmpFloatEq => StoreTemp(state, cmpFloatEq.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOEQ, LoadTempAsFloat(state, cmpFloatEq.Left), LoadTempAsFloat(state, cmpFloatEq.Right), $"fcmp_eq_{cmpFloatEq.Target}")),
             IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntNE, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
             IrInst.CmpFloatNe cmpFloatNe => StoreTemp(state, cmpFloatNe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealONE, LoadTempAsFloat(state, cmpFloatNe.Left), LoadTempAsFloat(state, cmpFloatNe.Right), $"fcmp_ne_{cmpFloatNe.Target}")),
+            IrInst.CmpStrEq cmpStrEq => StoreTemp(state, cmpStrEq.Target, EmitStringComparison(state, LoadTemp(state, cmpStrEq.Left), LoadTemp(state, cmpStrEq.Right))),
+            IrInst.CmpStrNe cmpStrNe => StoreTemp(state, cmpStrNe.Target, EmitInvertBool(state, EmitStringComparison(state, LoadTemp(state, cmpStrNe.Left), LoadTemp(state, cmpStrNe.Right)), $"cmp_str_ne_{cmpStrNe.Target}")),
             IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : ThrowWindowsInstructionNotSupported(printInt),
             IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : ThrowWindowsInstructionNotSupported(printStr),
             IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
             IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : ThrowWindowsInstructionNotSupported(printBool),
+            IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
@@ -303,6 +306,11 @@ internal static class LlvmCodegen
         return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
     }
 
+    private static LLVMValueRef EmitInvertBool(LlvmCodegenState state, LLVMValueRef value, string name)
+    {
+        return state.Target.Builder.BuildXor(value, LLVMValueRef.CreateConstInt(state.I64, 1, false), name);
+    }
+
     private static LLVMValueRef EmitAlloc(LlvmCodegenState state, int sizeBytes)
     {
         LLVMValueRef cursor = state.Target.Builder.BuildLoad2(state.I64, state.HeapCursorSlot, "heap_cursor_value");
@@ -343,6 +351,126 @@ internal static class LlvmCodegen
             },
             name + "_byte");
         return state.Target.Builder.BuildBitCast(bytePtr, state.I64Ptr, name);
+    }
+
+    private static LLVMValueRef EmitStringComparison(LlvmCodegenState state, LLVMValueRef leftRef, LLVMValueRef rightRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "str_cmp_result");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, "str_cmp_idx");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+
+        LLVMValueRef leftLen = LoadStringLength(state, leftRef, "str_cmp_left_len");
+        LLVMValueRef rightLen = LoadStringLength(state, rightRef, "str_cmp_right_len");
+        LLVMValueRef leftBytes = GetStringBytesPointer(state, leftRef, "str_cmp_left_bytes");
+        LLVMValueRef rightBytes = GetStringBytesPointer(state, rightRef, "str_cmp_right_bytes");
+
+        var lenEqBlock = state.Function.AppendBasicBlock("str_cmp_len_eq");
+        var notEqBlock = state.Function.AppendBasicBlock("str_cmp_not_eq");
+        var loopCheckBlock = state.Function.AppendBasicBlock("str_cmp_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock("str_cmp_loop_body");
+        var eqBlock = state.Function.AppendBasicBlock("str_cmp_eq");
+        var continueBlock = state.Function.AppendBasicBlock("str_cmp_continue");
+
+        LLVMValueRef lenEq = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, leftLen, rightLen, "str_cmp_len_match");
+        builder.BuildCondBr(lenEq, lenEqBlock, notEqBlock);
+
+        builder.PositionAtEnd(notEqBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(lenEqBlock);
+        LLVMValueRef isEmpty = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, leftLen, LLVMValueRef.CreateConstInt(state.I64, 0, false), "str_cmp_empty");
+        builder.BuildCondBr(isEmpty, eqBlock, loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, "str_cmp_index");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, index, leftLen, "str_cmp_done");
+        builder.BuildCondBr(done, eqBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef leftBytePtr = builder.BuildGEP2(state.I8, leftBytes, new[] { index }, "str_cmp_left_byte_ptr");
+        LLVMValueRef rightBytePtr = builder.BuildGEP2(state.I8, rightBytes, new[] { index }, "str_cmp_right_byte_ptr");
+        LLVMValueRef leftByte = builder.BuildLoad2(state.I8, leftBytePtr, "str_cmp_left_byte");
+        LLVMValueRef rightByte = builder.BuildLoad2(state.I8, rightBytePtr, "str_cmp_right_byte");
+        LLVMValueRef bytesEq = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, leftByte, rightByte, "str_cmp_bytes_eq");
+        LLVMValueRef nextIndex = builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), "str_cmp_next_index");
+        builder.BuildStore(nextIndex, indexSlot);
+        builder.BuildCondBr(bytesEq, loopCheckBlock, notEqBlock);
+
+        builder.PositionAtEnd(eqBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "str_cmp_result_value");
+    }
+
+    private static LLVMValueRef EmitStringConcat(LlvmCodegenState state, LLVMValueRef leftRef, LLVMValueRef rightRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef leftLen = LoadStringLength(state, leftRef, "str_cat_left_len");
+        LLVMValueRef rightLen = LoadStringLength(state, rightRef, "str_cat_right_len");
+        LLVMValueRef totalLen = builder.BuildAdd(leftLen, rightLen, "str_cat_total_len");
+        LLVMValueRef totalBytes = builder.BuildAdd(totalLen, LLVMValueRef.CreateConstInt(state.I64, 8, false), "str_cat_total_bytes");
+        LLVMValueRef destRef = EmitAllocDynamic(state, totalBytes);
+        StoreMemory(state, destRef, 0, totalLen, "str_cat_len");
+
+        LLVMValueRef destBytes = GetStringBytesPointer(state, destRef, "str_cat_dest_bytes");
+        LLVMValueRef leftBytes = GetStringBytesPointer(state, leftRef, "str_cat_left_bytes");
+        LLVMValueRef rightBytes = GetStringBytesPointer(state, rightRef, "str_cat_right_bytes");
+        EmitCopyBytes(state, destBytes, leftBytes, leftLen, "str_cat_copy_left");
+        LLVMValueRef rightDest = builder.BuildGEP2(state.I8, destBytes, new[] { leftLen }, "str_cat_right_dest");
+        EmitCopyBytes(state, rightDest, rightBytes, rightLen, "str_cat_copy_right");
+        return destRef;
+    }
+
+    private static void EmitCopyBytes(LlvmCodegenState state, LLVMValueRef destBytes, LLVMValueRef sourceBytes, LLVMValueRef length, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_idx");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+
+        var checkBlock = state.Function.AppendBasicBlock(prefix + "_check");
+        var bodyBlock = state.Function.AppendBasicBlock(prefix + "_body");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        builder.BuildBr(checkBlock);
+
+        builder.PositionAtEnd(checkBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, index, length, prefix + "_done");
+        builder.BuildCondBr(done, continueBlock, bodyBlock);
+
+        builder.PositionAtEnd(bodyBlock);
+        LLVMValueRef sourcePtr = builder.BuildGEP2(state.I8, sourceBytes, new[] { index }, prefix + "_src_ptr");
+        LLVMValueRef destPtr = builder.BuildGEP2(state.I8, destBytes, new[] { index }, prefix + "_dst_ptr");
+        LLVMValueRef value = builder.BuildLoad2(state.I8, sourcePtr, prefix + "_value");
+        builder.BuildStore(value, destPtr);
+        LLVMValueRef nextIndex = builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_next");
+        builder.BuildStore(nextIndex, indexSlot);
+        builder.BuildBr(checkBlock);
+
+        builder.PositionAtEnd(continueBlock);
+    }
+
+    private static LLVMValueRef LoadStringLength(LlvmCodegenState state, LLVMValueRef stringRef, string name)
+    {
+        return LoadMemory(state, stringRef, 0, name);
+    }
+
+    private static LLVMValueRef GetStringBytesPointer(LlvmCodegenState state, LLVMValueRef stringRef, string name)
+    {
+        LLVMValueRef byteAddress = state.Target.Builder.BuildAdd(stringRef, LLVMValueRef.CreateConstInt(state.I64, 8, false), name + "_addr");
+        return state.Target.Builder.BuildIntToPtr(byteAddress, state.I8Ptr, name);
+    }
+
+    private static LLVMValueRef EmitAllocDynamic(LlvmCodegenState state, LLVMValueRef sizeBytes)
+    {
+        LLVMValueRef cursor = state.Target.Builder.BuildLoad2(state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
+        LLVMValueRef nextCursor = state.Target.Builder.BuildAdd(cursor, NormalizeToI64(state, sizeBytes), "heap_cursor_next_dyn");
+        state.Target.Builder.BuildStore(nextCursor, state.HeapCursorSlot);
+        return cursor;
     }
 
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
@@ -666,8 +794,11 @@ internal static class LlvmCodegen
             IrInst.CmpFloatEq => true,
             IrInst.CmpIntNe => true,
             IrInst.CmpFloatNe => true,
+            IrInst.CmpStrEq => true,
+            IrInst.CmpStrNe => true,
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
+            IrInst.ConcatStr => true,
             IrInst.AllocAdt => true,
             IrInst.SetAdtField => true,
             IrInst.GetAdtTag => true,
@@ -707,12 +838,15 @@ internal static class LlvmCodegen
             IrInst.CmpFloatEq => true,
             IrInst.CmpIntNe => true,
             IrInst.CmpFloatNe => true,
+            IrInst.CmpStrEq => true,
+            IrInst.CmpStrNe => true,
             IrInst.PrintInt => true,
             IrInst.PrintStr => true,
             IrInst.WriteStr => true,
             IrInst.PrintBool => true,
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
+            IrInst.ConcatStr => true,
             IrInst.AllocAdt => true,
             IrInst.SetAdtField => true,
             IrInst.GetAdtTag => true,

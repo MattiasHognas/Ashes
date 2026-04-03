@@ -86,6 +86,14 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_string_compare_and_concat_programs()
+    {
+        var ir = LowerExpression("if (\"he\" + \"llo\") == \"hello\" then 1 else 0");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);

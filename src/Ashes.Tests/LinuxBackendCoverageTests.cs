@@ -58,6 +58,14 @@ public sealed class LinuxBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_string_compare_and_concat_programs()
+    {
+        var ir = LowerExpression("if (\"he\" + \"llo\") == \"hello\" then 1 else 0");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForLinux(string source)
     {
         var ir = LowerExpression(source);

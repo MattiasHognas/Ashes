@@ -34,6 +34,18 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task String_comparison_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var stdout = await CompileRunCaptureAsync("if (\"he\" + \"llo\") == \"hello\" then if \"hello\" != \"world\" then Ashes.IO.print(\"ok\") else Ashes.IO.print(\"bad\") else Ashes.IO.print(\"bad\")");
+        stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())
