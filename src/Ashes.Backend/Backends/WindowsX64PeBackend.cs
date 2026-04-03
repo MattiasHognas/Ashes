@@ -10,7 +10,7 @@ public sealed class WindowsX64PeBackend : IBackend
 {
     public string TargetId => TargetIds.WindowsX64;
 
-    public byte[] Compile(IrProgram program)
+    public byte[] Compile(IrProgram program, BackendCompileOptions? options = null)
     {
         var codegen = new WindowsX64CodegenIced();
         var writer = new Pe64Writer(codegen);
