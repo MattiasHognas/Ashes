@@ -30,7 +30,7 @@ internal static class LlvmCodegen
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitEntryModule(target, program.EntryFunction, literals, "entry", LlvmCodegenFlavor.Windows);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows);
 
         if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
         {
@@ -65,7 +65,7 @@ internal static class LlvmCodegen
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitEntryModule(target, program.EntryFunction, literals, "_start", LlvmCodegenFlavor.Linux);
+        EmitProgramModule(target, program, "_start", LlvmCodegenFlavor.Linux);
 
         if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
         {
@@ -91,11 +91,10 @@ internal static class LlvmCodegen
         }
     }
 
-    private static void EmitEntryModule(
+    private static void EmitProgramModule(
         LlvmTargetContext target,
-        IrFunction function,
-        IReadOnlyDictionary<string, string> stringLiterals,
-        string functionName,
+        IrProgram program,
+        string entryFunctionName,
         LlvmCodegenFlavor flavor)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -104,10 +103,61 @@ internal static class LlvmCodegen
         LLVMTypeRef voidType = target.Context.VoidType;
         LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
+        var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
+        LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
 
-        LLVMTypeRef functionType = LLVMTypeRef.CreateFunction(voidType, []);
-        LLVMValueRef llvmFunction = target.Module.AddFunction(functionName, functionType);
-        llvmFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        LLVMValueRef entryFunction = target.Module.AddFunction(entryFunctionName, LLVMTypeRef.CreateFunction(voidType, []));
+        entryFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
+
+        var liftedFunctions = new Dictionary<string, LLVMValueRef>(StringComparer.Ordinal);
+        foreach (IrFunction function in program.Functions)
+        {
+            LLVMValueRef llvmFunction = target.Module.AddFunction(function.Label, closureFunctionType);
+            llvmFunction.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            liftedFunctions.Add(function.Label, llvmFunction);
+        }
+
+        EmitFunctionBody(
+            target,
+            entryFunction,
+            program.EntryFunction,
+            stringLiterals,
+            liftedFunctions,
+            flavor,
+            isEntry: true);
+
+        foreach (IrFunction function in program.Functions)
+        {
+            EmitFunctionBody(
+                target,
+                liftedFunctions[function.Label],
+                function,
+                stringLiterals,
+                liftedFunctions,
+                flavor,
+                isEntry: false);
+        }
+    }
+
+    private static bool InstructionNeedsHeap(IrInst instruction)
+    {
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
+    }
+
+    private static void EmitFunctionBody(
+        LlvmTargetContext target,
+        LLVMValueRef llvmFunction,
+        IrFunction function,
+        IReadOnlyDictionary<string, string> stringLiterals,
+        IReadOnlyDictionary<string, LLVMValueRef> liftedFunctions,
+        LlvmCodegenFlavor flavor,
+        bool isEntry)
+    {
+        LLVMTypeRef i64 = target.Context.Int64Type;
+        LLVMTypeRef i8 = target.Context.Int8Type;
+        LLVMTypeRef f64 = target.Context.DoubleType;
+        LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
+        LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
 
         LLVMBasicBlockRef entryBlock = llvmFunction.AppendBasicBlock("entry");
         target.Builder.PositionAtEnd(entryBlock);
@@ -127,7 +177,7 @@ internal static class LlvmCodegen
         }
 
         LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
-        bool needsHeap = function.Instructions.Any(static inst => inst is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr);
+        bool needsHeap = function.Instructions.Any(InstructionNeedsHeap);
         if (needsHeap)
         {
             LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
@@ -148,6 +198,12 @@ internal static class LlvmCodegen
             target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), heapCursorSlot);
         }
 
+        if (!isEntry && function.HasEnvAndArgParams)
+        {
+            target.Builder.BuildStore(llvmFunction.GetParam(0), localSlots[0]);
+            target.Builder.BuildStore(llvmFunction.GetParam(1), localSlots[1]);
+        }
+
         var labelBlocks = new Dictionary<string, LLVMBasicBlockRef>(StringComparer.Ordinal);
         foreach (IrInst.Label label in function.Instructions.OfType<IrInst.Label>())
         {
@@ -159,6 +215,7 @@ internal static class LlvmCodegen
             target,
             llvmFunction,
             stringLiterals,
+            liftedFunctions,
             tempSlots,
             localSlots,
             heapCursorSlot,
@@ -169,9 +226,9 @@ internal static class LlvmCodegen
             f64,
             i8Ptr,
             i64Ptr,
-            flavor);
+            flavor,
+            isEntry);
 
-        LLVMBasicBlockRef currentBlock = entryBlock;
         bool terminated = false;
         for (int index = 0; index < function.Instructions.Count; index++)
         {
@@ -183,16 +240,14 @@ internal static class LlvmCodegen
                     target.Builder.BuildBr(state.GetLabelBlock(label.Name));
                 }
 
-                currentBlock = state.GetLabelBlock(label.Name);
-                target.Builder.PositionAtEnd(currentBlock);
+                target.Builder.PositionAtEnd(state.GetLabelBlock(label.Name));
                 terminated = false;
                 continue;
             }
 
             if (terminated)
             {
-                currentBlock = state.GetOrCreateFallthroughBlock(index);
-                target.Builder.PositionAtEnd(currentBlock);
+                target.Builder.PositionAtEnd(state.GetOrCreateFallthroughBlock(index));
                 terminated = false;
             }
 
@@ -201,13 +256,20 @@ internal static class LlvmCodegen
 
         if (!terminated)
         {
-            if (state.Flavor == LlvmCodegenFlavor.Linux)
+            if (state.IsEntry)
             {
-                EmitExit(state, LLVMValueRef.CreateConstInt(i64, 0, false));
+                if (state.Flavor == LlvmCodegenFlavor.Linux)
+                {
+                    EmitExit(state, LLVMValueRef.CreateConstInt(i64, 0, false));
+                }
+                else
+                {
+                    target.Builder.BuildRetVoid();
+                }
             }
             else
             {
-                target.Builder.BuildRetVoid();
+                target.Builder.BuildRet(LLVMValueRef.CreateConstInt(i64, 0, false));
             }
         }
     }
@@ -223,6 +285,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
+            IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
             IrInst.Alloc alloc => StoreTemp(state, alloc.Target, EmitAlloc(state, alloc.SizeBytes)),
             IrInst.AddInt addInt => StoreTemp(state, addInt.Target, builder.BuildAdd(LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
             IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, builder.BuildFAdd(LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
@@ -247,6 +310,8 @@ internal static class LlvmCodegen
             IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
             IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : ThrowWindowsInstructionNotSupported(printBool),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
+            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp))),
+            IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp))),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
@@ -255,7 +320,7 @@ internal static class LlvmCodegen
             IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadMemory(state, LoadTemp(state, getAdtField.Ptr), 8 + (getAdtField.FieldIndex * 8), $"get_adt_field_{getAdtField.Target}")),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
-            IrInst.Return => state.Flavor == LlvmCodegenFlavor.Linux ? EmitReturn(state) : EmitReturnVoid(state),
+            IrInst.Return ret => EmitReturn(state, ret.Source),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }
@@ -473,6 +538,29 @@ internal static class LlvmCodegen
         return cursor;
     }
 
+    private static LLVMValueRef EmitMakeClosure(LlvmCodegenState state, string funcLabel, LLVMValueRef envPtr)
+    {
+        LLVMValueRef closurePtr = EmitAlloc(state, 16);
+        LLVMValueRef codePtr = state.Target.Builder.BuildPtrToInt(state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
+        StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
+        return closurePtr;
+    }
+
+    private static LLVMValueRef EmitCallClosure(LlvmCodegenState state, LLVMValueRef closurePtr, LLVMValueRef argValue)
+    {
+        LLVMValueRef codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
+        LLVMValueRef envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
+        LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(state.I64, [state.I64, state.I64]);
+        LLVMTypeRef closureFunctionPtrType = LLVMTypeRef.CreatePointer(closureFunctionType, 0);
+        LLVMValueRef typedCodePtr = state.Target.Builder.BuildIntToPtr(codePtr, closureFunctionPtrType, "closure_code_ptr");
+        return state.Target.Builder.BuildCall2(
+            closureFunctionType,
+            typedCodePtr,
+            new[] { envPtr, argValue },
+            "closure_call");
+    }
+
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
     {
         state.Target.Builder.BuildBr(state.GetLabelBlock(targetLabel));
@@ -490,15 +578,24 @@ internal static class LlvmCodegen
         return false;
     }
 
-    private static bool EmitReturn(LlvmCodegenState state)
+    private static bool EmitReturn(LlvmCodegenState state, int source)
     {
-        EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 0, false));
-        return true;
-    }
+        if (state.IsEntry)
+        {
+            if (state.Flavor == LlvmCodegenFlavor.Linux)
+            {
+                EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 0, false));
+            }
+            else
+            {
+                state.Target.Builder.BuildRetVoid();
+            }
+        }
+        else
+        {
+            state.Target.Builder.BuildRet(LoadTemp(state, source));
+        }
 
-    private static bool EmitReturnVoid(LlvmCodegenState state)
-    {
-        state.Target.Builder.BuildRetVoid();
         return true;
     }
 
@@ -733,6 +830,7 @@ internal static class LlvmCodegen
         LlvmTargetContext Target,
         LLVMValueRef Function,
         IReadOnlyDictionary<string, string> StringLiterals,
+        IReadOnlyDictionary<string, LLVMValueRef> LiftedFunctions,
         LLVMValueRef[] TempSlots,
         LLVMValueRef[] LocalSlots,
         LLVMValueRef HeapCursorSlot,
@@ -743,7 +841,8 @@ internal static class LlvmCodegen
         LLVMTypeRef F64,
         LLVMTypeRef I8Ptr,
         LLVMTypeRef I64Ptr,
-        LlvmCodegenFlavor Flavor)
+        LlvmCodegenFlavor Flavor,
+        bool IsEntry)
     {
         public LLVMBasicBlockRef GetLabelBlock(string name) => LabelBlocks[name];
 
@@ -821,6 +920,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
+            IrInst.LoadEnv => true,
             IrInst.Alloc => true,
             IrInst.AddInt => true,
             IrInst.AddFloat => true,
@@ -847,6 +947,8 @@ internal static class LlvmCodegen
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
             IrInst.ConcatStr => true,
+            IrInst.MakeClosure => true,
+            IrInst.CallClosure => true,
             IrInst.AllocAdt => true,
             IrInst.SetAdtField => true,
             IrInst.GetAdtTag => true,
@@ -861,16 +963,27 @@ internal static class LlvmCodegen
 
     private static bool SupportsMinimalLlvm(IrProgram program, Func<IrInst, bool> isSupportedInstruction)
     {
-        if (program.Functions.Count != 0 || program.UsesClosures)
-        {
-            return false;
-        }
-
         foreach (IrInst instruction in program.EntryFunction.Instructions)
         {
             if (!isSupportedInstruction(instruction))
             {
                 return false;
+            }
+        }
+
+        foreach (IrFunction function in program.Functions)
+        {
+            if (function.Instructions.Any(InstructionNeedsHeap))
+            {
+                return false;
+            }
+
+            foreach (IrInst instruction in function.Instructions)
+            {
+                if (!isSupportedInstruction(instruction))
+                {
+                    return false;
+                }
             }
         }
 

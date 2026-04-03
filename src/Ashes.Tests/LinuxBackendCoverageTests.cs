@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -66,6 +67,26 @@ public sealed class LinuxBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_closure_programs()
+    {
+        var ir = LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_first_order_closure_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var stdout = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        stdout.ShouldBe("42\n");
+    }
+
     private static byte[] CompileForLinux(string source)
     {
         var ir = LowerExpression(source);
@@ -100,5 +121,39 @@ public sealed class LinuxBackendCoverageTests
             .GetType("Ashes.Backend.Llvm.LlvmCodegen", throwOnError: true)!
             .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
         return (bool)method.Invoke(null, [ir])!;
+    }
+
+    private static async Task<string> CompileRunWithLinuxLlvmAsync(string source)
+    {
+        var ir = LowerExpression(source);
+        var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
+        Directory.CreateDirectory(tmpDir);
+
+        var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}");
+        await File.WriteAllBytesAsync(exePath, elfBytes);
+
+#pragma warning disable CA1416
+        File.SetUnixFileMode(exePath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+
+        var psi = new ProcessStartInfo(exePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        using var proc = Process.Start(psi)!;
+        var stdout = await proc.StandardOutput.ReadToEndAsync();
+        var stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+        return stdout;
     }
 }
