@@ -65,7 +65,7 @@ internal static class LlvmCodegen
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "_start", LlvmCodegenFlavor.Linux);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux);
 
         if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
         {
@@ -77,7 +77,7 @@ internal static class LlvmCodegen
         try
         {
             byte[] objectBytes = File.ReadAllBytes(objectPath);
-            return LlvmImageLinker.LinkLinuxExecutable(objectBytes);
+            return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
         }
         finally
         {
@@ -105,12 +105,13 @@ internal static class LlvmCodegen
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
-        LLVMValueRef programArgsGlobal = target.Module.AddGlobal(i64, "__ashes_program_args");
-        programArgsGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
-        programArgsGlobal.Initializer = LLVMValueRef.CreateConstInt(i64, 0, false);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
 
-        LLVMValueRef entryFunction = target.Module.AddFunction(entryFunctionName, LLVMTypeRef.CreateFunction(voidType, []));
+        LLVMValueRef entryFunction = target.Module.AddFunction(
+            entryFunctionName,
+            flavor == LlvmCodegenFlavor.Linux
+                ? LLVMTypeRef.CreateFunction(voidType, [i64])
+                : LLVMTypeRef.CreateFunction(voidType, []));
         entryFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
 
         var liftedFunctions = new Dictionary<string, LLVMValueRef>(StringComparer.Ordinal);
@@ -127,7 +128,6 @@ internal static class LlvmCodegen
             program.EntryFunction,
             stringLiterals,
             liftedFunctions,
-            programArgsGlobal,
             flavor,
             usesProgramArgs,
             isEntry: true);
@@ -140,7 +140,6 @@ internal static class LlvmCodegen
                 function,
                 stringLiterals,
                 liftedFunctions,
-                programArgsGlobal,
                 flavor,
                 usesProgramArgs,
                 isEntry: false);
@@ -165,7 +164,6 @@ internal static class LlvmCodegen
         IrFunction function,
         IReadOnlyDictionary<string, string> stringLiterals,
         IReadOnlyDictionary<string, LLVMValueRef> liftedFunctions,
-        LLVMValueRef programArgsGlobal,
         LlvmCodegenFlavor flavor,
         bool usesProgramArgs,
         bool isEntry)
@@ -178,6 +176,10 @@ internal static class LlvmCodegen
 
         LLVMBasicBlockRef entryBlock = llvmFunction.AppendBasicBlock("entry");
         target.Builder.PositionAtEnd(entryBlock);
+
+        LLVMValueRef entryStackPointer = isEntry && flavor == LlvmCodegenFlavor.Linux
+            ? llvmFunction.GetParam(0)
+            : default;
 
         var tempSlots = new LLVMValueRef[function.TempCount];
         for (int i = 0; i < tempSlots.Length; i++)
@@ -192,6 +194,9 @@ internal static class LlvmCodegen
             localSlots[i] = target.Builder.BuildAlloca(i64, $"local_{i}");
             target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), localSlots[i]);
         }
+
+        LLVMValueRef programArgsSlot = target.Builder.BuildAlloca(i64, "program_args");
+        target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), programArgsSlot);
 
         LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
         bool needsHeap = function.Instructions.Any(RequiresEntryHeapStorage);
@@ -233,7 +238,7 @@ internal static class LlvmCodegen
             llvmFunction,
             stringLiterals,
             liftedFunctions,
-            programArgsGlobal,
+            programArgsSlot,
             tempSlots,
             localSlots,
             heapCursorSlot,
@@ -244,6 +249,7 @@ internal static class LlvmCodegen
             f64,
             i8Ptr,
             i64Ptr,
+            entryStackPointer,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -307,7 +313,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LLVMValueRef.CreateConstReal(state.F64, loadConstFloat.Value)),
             IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
-            IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsGlobal, "program_args")),
+            IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -820,7 +826,7 @@ internal static class LlvmCodegen
 
     private static void EmitEntryProgramArgsInitialization(LlvmCodegenState state)
     {
-        state.Target.Builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.ProgramArgsGlobal);
+        state.Target.Builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.ProgramArgsSlot);
 
         if (state.Flavor == LlvmCodegenFlavor.Linux)
         {
@@ -840,7 +846,7 @@ internal static class LlvmCodegen
         LLVMValueRef lenSlot = builder.BuildAlloca(state.I64, "program_args_arg_len");
         builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), listSlot);
 
-        LLVMValueRef stackPtr = EmitReadStackPointer(state);
+        LLVMValueRef stackPtr = state.EntryStackPointer;
         LLVMValueRef argc = LoadMemory(state, stackPtr, 0, "program_args_argc");
 
         var initBlock = state.Function.AppendBasicBlock("program_args_init");
@@ -891,7 +897,7 @@ internal static class LlvmCodegen
         LLVMValueRef currentBytePtr = builder.BuildGEP2(
             state.I8,
             builder.BuildIntToPtr(currentArgPtr, state.I8Ptr, "program_args_arg_bytes"),
-            [currentLen],
+            new[] { currentLen },
             "program_args_current_byte_ptr");
         LLVMValueRef currentByte = builder.BuildLoad2(state.I8, currentBytePtr, "program_args_current_byte");
         LLVMValueRef reachedTerminator = builder.BuildICmp(
@@ -929,14 +935,7 @@ internal static class LlvmCodegen
         builder.BuildBr(loopCheckBlock);
 
         builder.PositionAtEnd(doneBlock);
-        builder.BuildStore(builder.BuildLoad2(state.I64, listSlot, "program_args_final_list"), state.ProgramArgsGlobal);
-    }
-
-    private static LLVMValueRef EmitReadStackPointer(LlvmCodegenState state)
-    {
-        LLVMTypeRef readRspType = LLVMTypeRef.CreateFunction(state.I64, []);
-        LLVMValueRef readRsp = LLVMValueRef.CreateConstInlineAsm(readRspType, "movq %rsp, $0", "=r", true, false);
-        return state.Target.Builder.BuildCall2(readRspType, readRsp, [], "stack_ptr");
+        builder.BuildStore(builder.BuildLoad2(state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
     }
 
     private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
@@ -977,7 +976,7 @@ internal static class LlvmCodegen
         LLVMValueRef Function,
         IReadOnlyDictionary<string, string> StringLiterals,
         IReadOnlyDictionary<string, LLVMValueRef> LiftedFunctions,
-        LLVMValueRef ProgramArgsGlobal,
+        LLVMValueRef ProgramArgsSlot,
         LLVMValueRef[] TempSlots,
         LLVMValueRef[] LocalSlots,
         LLVMValueRef HeapCursorSlot,
@@ -988,6 +987,7 @@ internal static class LlvmCodegen
         LLVMTypeRef F64,
         LLVMTypeRef I8Ptr,
         LLVMTypeRef I64Ptr,
+        LLVMValueRef EntryStackPointer,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -1070,6 +1070,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstFloat => true,
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
+            IrInst.LoadProgramArgs => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
@@ -1125,6 +1126,11 @@ internal static class LlvmCodegen
 
         foreach (IrFunction function in program.Functions)
         {
+            if (function.Instructions.Any(static instruction => instruction is IrInst.LoadProgramArgs))
+            {
+                return false;
+            }
+
             if (function.Instructions.Any(RequiresEntryHeapStorage))
             {
                 return false;

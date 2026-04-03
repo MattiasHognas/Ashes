@@ -12,6 +12,7 @@ internal static class LlvmImageLinker
     private const uint SectionTypeRel = 9;
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
+    private const int LinuxTrampolineLength = 20;
     private const uint PeTextRva = 0x00001000;
     private const uint PeSectionAlignment = 0x00001000;
     private const int WindowsTrampolineLength = 24;
@@ -19,19 +20,23 @@ internal static class LlvmImageLinker
     private const uint ElfRelocX86_64_32S = 11;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
 
-    public static byte[] LinkLinuxExecutable(byte[] objectBytes)
+    public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
     {
-        var parsed = ParseElfObject(objectBytes);
+        ulong textVa = ElfBaseVa + (ulong)PageSize;
+        ulong objectTextVa = textVa + LinuxTrampolineLength;
+        var parsed = ParseElfObject(objectBytes, entrySymbolName, objectTextVa);
         int textFileOffset = PageSize;
-        int dataFileOffset = Align(textFileOffset + parsed.TextBytes.Length, PageSize);
-        ulong textVa = ElfBaseVa + (ulong)textFileOffset;
+        byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
+            .Concat(parsed.TextBytes)
+            .ToArray();
+        int dataFileOffset = Align(textFileOffset + codeBytes.Length, PageSize);
         ulong dataVa = ElfBaseVa + (ulong)dataFileOffset;
 
         return Elf64ImageWriter.BuildTwoSegmentElf(
-            textBytes: parsed.TextBytes,
+            textBytes: codeBytes,
             dataBytes: [],
             bssSize: 0,
-            entryOffsetInText: parsed.EntryOffsetInText,
+            entryOffsetInText: 0,
             textFileOff: textFileOffset,
             dataFileOff: dataFileOffset,
             textVA: textVa,
@@ -91,7 +96,7 @@ internal static class LlvmImageLinker
         return output.ToArray();
     }
 
-    private static ParsedElfObject ParseElfObject(byte[] objectBytes)
+    private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName, ulong loadedTextVa)
     {
         ReadOnlySpan<byte> bytes = objectBytes;
         if (bytes.Length < 64
@@ -166,8 +171,8 @@ internal static class LlvmImageLinker
             .ToList();
 
         var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
-        int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex);
-        ApplyElfTextRelocations(bytes, textBytes, textRelocationSections, symtab.Value, textSectionIndex);
+        int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex, entrySymbolName);
+        ApplyElfTextRelocations(bytes, textBytes, textRelocationSections, symtab.Value, textSectionIndex, loadedTextVa);
         return new ParsedElfObject(textBytes, entryOffset);
     }
 
@@ -176,7 +181,8 @@ internal static class LlvmImageLinker
         byte[] textBytes,
         List<ElfSectionHeader> relocationSections,
         ElfSectionHeader symtab,
-        int textSectionIndex)
+        int textSectionIndex,
+        ulong loadedTextVa)
     {
         foreach (ElfSectionHeader relocationSection in relocationSections)
         {
@@ -203,7 +209,7 @@ internal static class LlvmImageLinker
                     throw new InvalidOperationException("LLVM ELF text relocation targeted an unsupported non-text symbol.");
                 }
 
-                long targetVa = checked((long)(ElfBaseVa + (ulong)PageSize + symbol.Value) + addend);
+                long targetVa = checked((long)(loadedTextVa + symbol.Value) + addend);
                 Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                 switch (relocationType)
                 {
@@ -238,7 +244,7 @@ internal static class LlvmImageLinker
         return bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray();
     }
 
-    private static int FindEntryOffset(ReadOnlySpan<byte> bytes, ElfSectionHeader symtab, byte[] symbolStrings, int textSectionIndex)
+    private static int FindEntryOffset(ReadOnlySpan<byte> bytes, ElfSectionHeader symtab, byte[] symbolStrings, int textSectionIndex, string entrySymbolName)
     {
         if (symtab.EntrySize == 0)
         {
@@ -253,18 +259,18 @@ internal static class LlvmImageLinker
             ushort sectionIndex = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 6, 2));
             ulong value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8));
             string name = ReadElfString(symbolStrings, nameOffset);
-            if (name == "_start")
+            if (name == entrySymbolName)
             {
                 if (sectionIndex != textSectionIndex)
                 {
-                    throw new InvalidOperationException("LLVM entry symbol '_start' was not emitted in the .text section.");
+                    throw new InvalidOperationException($"LLVM entry symbol '{entrySymbolName}' was not emitted in the .text section.");
                 }
 
                 return checked((int)value);
             }
         }
 
-        throw new InvalidOperationException("LLVM object did not define the '_start' entry symbol.");
+        throw new InvalidOperationException($"LLVM object did not define the '{entrySymbolName}' entry symbol.");
     }
 
     private static string ReadElfString(byte[] table, uint offset)
@@ -447,6 +453,28 @@ internal static class LlvmImageLinker
         bytes[index++] = 0xFF;
         bytes[index++] = 0x10;
         bytes[index] = 0xCC;
+        return bytes;
+    }
+
+    private static byte[] BuildLinuxTrampoline(int entryOffsetInText)
+    {
+        var bytes = new byte[LinuxTrampolineLength];
+        int index = 0;
+        bytes[index++] = 0x48;
+        bytes[index++] = 0x89;
+        bytes[index++] = 0xE7;
+        bytes[index++] = 0xE8;
+        int relativeCall = checked(LinuxTrampolineLength + entryOffsetInText - 8);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(index, 4), relativeCall);
+        index += 4;
+        bytes[index++] = 0xBF;
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(index, 4), 0);
+        index += 4;
+        bytes[index++] = 0xB8;
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(index, 4), 60);
+        index += 4;
+        bytes[index++] = 0x0F;
+        bytes[index] = 0x05;
         return bytes;
     }
 
