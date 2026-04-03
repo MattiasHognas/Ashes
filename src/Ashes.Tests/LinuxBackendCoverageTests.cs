@@ -37,6 +37,27 @@ public sealed class LinuxBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_heap_backed_tuple_and_list_programs()
+    {
+        var ir = LowerExpression("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b) | _ -> Ashes.IO.print(0)");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_adt_field_programs()
+    {
+        var ir = LowerProgram("""
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> Ashes.IO.print(a + b)
+            """);
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForLinux(string source)
     {
         var ir = LowerExpression(source);
@@ -50,6 +71,17 @@ public sealed class LinuxBackendCoverageTests
         diagnostics.ThrowIfAny();
 
         var ir = new Lowering(diagnostics).Lower(ast);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }

@@ -294,6 +294,23 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
     }
 
+    [Test]
+    public async Task Adt_constructor_with_multiple_fields_and_match()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = """
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> Ashes.IO.print(a + b)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

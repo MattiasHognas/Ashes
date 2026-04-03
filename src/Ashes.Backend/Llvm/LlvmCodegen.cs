@@ -7,6 +7,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static class LlvmCodegen
 {
+    private const int HeapSizeBytes = 2048;
     private const long SyscallWrite = 1;
     private const long SyscallExit = 60;
 
@@ -125,6 +126,28 @@ internal static class LlvmCodegen
             target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), localSlots[i]);
         }
 
+        LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
+        bool needsHeap = function.Instructions.Any(static inst => inst is IrInst.Alloc or IrInst.AllocAdt);
+        if (needsHeap)
+        {
+            LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
+            LLVMValueRef heapStorage = target.Builder.BuildAlloca(heapType, "heap");
+            LLVMValueRef heapBasePtr = target.Builder.BuildGEP2(
+                heapType,
+                heapStorage,
+                new[]
+                {
+                    LLVMValueRef.CreateConstInt(i64, 0, false),
+                    LLVMValueRef.CreateConstInt(i64, 0, false)
+                },
+                "heap_base_ptr");
+            target.Builder.BuildStore(target.Builder.BuildPtrToInt(heapBasePtr, i64, "heap_base_i64"), heapCursorSlot);
+        }
+        else
+        {
+            target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), heapCursorSlot);
+        }
+
         var labelBlocks = new Dictionary<string, LLVMBasicBlockRef>(StringComparer.Ordinal);
         foreach (IrInst.Label label in function.Instructions.OfType<IrInst.Label>())
         {
@@ -138,6 +161,7 @@ internal static class LlvmCodegen
             stringLiterals,
             tempSlots,
             localSlots,
+            heapCursorSlot,
             labelBlocks,
             fallthroughBlocks,
             i64,
@@ -199,6 +223,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
+            IrInst.Alloc alloc => StoreTemp(state, alloc.Target, EmitAlloc(state, alloc.SizeBytes)),
             IrInst.AddInt addInt => StoreTemp(state, addInt.Target, builder.BuildAdd(LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
             IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, builder.BuildFAdd(LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
             IrInst.SubInt subInt => StoreTemp(state, subInt.Target, builder.BuildSub(LoadTemp(state, subInt.Left), LoadTemp(state, subInt.Right), $"sub_{subInt.Target}")),
@@ -219,7 +244,12 @@ internal static class LlvmCodegen
             IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : ThrowWindowsInstructionNotSupported(printStr),
             IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
             IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : ThrowWindowsInstructionNotSupported(printBool),
-            IrInst.AllocAdt allocAdt when allocAdt.FieldCount == 0 => StoreTemp(state, allocAdt.Target, LLVMValueRef.CreateConstInt(state.I64, 0, false)),
+            IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
+            IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
+            IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
+            IrInst.SetAdtField setAdtField => StoreMemory(state, LoadTemp(state, setAdtField.Ptr), 8 + (setAdtField.FieldIndex * 8), LoadTemp(state, setAdtField.Source), $"set_adt_field_{setAdtField.FieldIndex}"),
+            IrInst.GetAdtTag getAdtTag => StoreTemp(state, getAdtTag.Target, LoadMemory(state, LoadTemp(state, getAdtTag.Ptr), 0, $"get_adt_tag_{getAdtTag.Target}")),
+            IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadMemory(state, LoadTemp(state, getAdtField.Ptr), 8 + (getAdtField.FieldIndex * 8), $"get_adt_field_{getAdtField.Target}")),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
             IrInst.Return => state.Flavor == LlvmCodegenFlavor.Linux ? EmitReturn(state) : EmitReturnVoid(state),
@@ -271,6 +301,48 @@ internal static class LlvmCodegen
     {
         LLVMValueRef cmp = state.Target.Builder.BuildFCmp(predicate, left, right, name);
         return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
+    }
+
+    private static LLVMValueRef EmitAlloc(LlvmCodegenState state, int sizeBytes)
+    {
+        LLVMValueRef cursor = state.Target.Builder.BuildLoad2(state.I64, state.HeapCursorSlot, "heap_cursor_value");
+        LLVMValueRef nextCursor = state.Target.Builder.BuildAdd(cursor, LLVMValueRef.CreateConstInt(state.I64, (ulong)sizeBytes, false), "heap_cursor_next");
+        state.Target.Builder.BuildStore(nextCursor, state.HeapCursorSlot);
+        return cursor;
+    }
+
+    private static LLVMValueRef EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
+    {
+        LLVMValueRef ptr = EmitAlloc(state, (1 + fieldCount) * 8);
+        StoreMemory(state, ptr, 0, LLVMValueRef.CreateConstInt(state.I64, (ulong)tag, false), $"adt_tag_{tag}");
+        return ptr;
+    }
+
+    private static bool StoreMemory(LlvmCodegenState state, LLVMValueRef baseAddress, int offsetBytes, LLVMValueRef value, string name)
+    {
+        LLVMValueRef ptr = GetMemoryPointer(state, baseAddress, offsetBytes, name + "_ptr");
+        state.Target.Builder.BuildStore(NormalizeToI64(state, value), ptr);
+        return false;
+    }
+
+    private static LLVMValueRef LoadMemory(LlvmCodegenState state, LLVMValueRef baseAddress, int offsetBytes, string name)
+    {
+        LLVMValueRef ptr = GetMemoryPointer(state, baseAddress, offsetBytes, name + "_ptr");
+        return state.Target.Builder.BuildLoad2(state.I64, ptr, name);
+    }
+
+    private static LLVMValueRef GetMemoryPointer(LlvmCodegenState state, LLVMValueRef baseAddress, int offsetBytes, string name)
+    {
+        LLVMValueRef basePtr = state.Target.Builder.BuildIntToPtr(baseAddress, state.I8Ptr, name + "_base");
+        LLVMValueRef bytePtr = state.Target.Builder.BuildGEP2(
+            state.I8,
+            basePtr,
+            new[]
+            {
+                LLVMValueRef.CreateConstInt(state.I64, (ulong)offsetBytes, false)
+            },
+            name + "_byte");
+        return state.Target.Builder.BuildBitCast(bytePtr, state.I64Ptr, name);
     }
 
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
@@ -535,6 +607,7 @@ internal static class LlvmCodegen
         IReadOnlyDictionary<string, string> StringLiterals,
         LLVMValueRef[] TempSlots,
         LLVMValueRef[] LocalSlots,
+        LLVMValueRef HeapCursorSlot,
         Dictionary<string, LLVMBasicBlockRef> LabelBlocks,
         Dictionary<int, LLVMBasicBlockRef> FallthroughBlocks,
         LLVMTypeRef I64,
@@ -576,6 +649,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
+            IrInst.Alloc => true,
             IrInst.AddInt => true,
             IrInst.AddFloat => true,
             IrInst.SubInt => true,
@@ -592,7 +666,12 @@ internal static class LlvmCodegen
             IrInst.CmpFloatEq => true,
             IrInst.CmpIntNe => true,
             IrInst.CmpFloatNe => true,
-            IrInst.AllocAdt { FieldCount: 0 } => true,
+            IrInst.LoadMemOffset => true,
+            IrInst.StoreMemOffset => true,
+            IrInst.AllocAdt => true,
+            IrInst.SetAdtField => true,
+            IrInst.GetAdtTag => true,
+            IrInst.GetAdtField => true,
             IrInst.Jump => true,
             IrInst.JumpIfFalse => true,
             IrInst.Return => true,
@@ -611,6 +690,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
+            IrInst.Alloc => true,
             IrInst.AddInt => true,
             IrInst.AddFloat => true,
             IrInst.SubInt => true,
@@ -631,7 +711,12 @@ internal static class LlvmCodegen
             IrInst.PrintStr => true,
             IrInst.WriteStr => true,
             IrInst.PrintBool => true,
-            IrInst.AllocAdt { FieldCount: 0 } => true,
+            IrInst.LoadMemOffset => true,
+            IrInst.StoreMemOffset => true,
+            IrInst.AllocAdt => true,
+            IrInst.SetAdtField => true,
+            IrInst.GetAdtTag => true,
+            IrInst.GetAdtField => true,
             IrInst.Jump => true,
             IrInst.JumpIfFalse => true,
             IrInst.Return => true,

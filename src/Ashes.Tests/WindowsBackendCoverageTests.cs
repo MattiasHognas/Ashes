@@ -65,6 +65,27 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_heap_backed_tuple_and_list_programs()
+    {
+        var ir = LowerExpression("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> x + a + b | _ -> 0");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_adt_field_programs()
+    {
+        var ir = LowerProgram("""
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> a + b
+            """);
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);
@@ -78,6 +99,17 @@ public sealed class WindowsBackendCoverageTests
         diagnostics.ThrowIfAny();
 
         var ir = new Lowering(diagnostics).Lower(ast);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }
