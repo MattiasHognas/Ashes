@@ -178,6 +178,18 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Float_arithmetic_and_comparisons_work()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = "if ((1.5 + 2.5) * 2.0 / 2.0) == 4.0 then if 4.0 >= 4.0 then if 3.0 <= 4.0 then if 3.0 != 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0)";
+        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
     public async Task Match_with_list_literal_works()
     {
         if (!OperatingSystem.IsLinux())

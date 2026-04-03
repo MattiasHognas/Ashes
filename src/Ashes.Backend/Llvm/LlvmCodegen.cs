@@ -99,6 +99,7 @@ internal static class LlvmCodegen
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
         LLVMTypeRef i8 = target.Context.Int8Type;
+        LLVMTypeRef f64 = target.Context.DoubleType;
         LLVMTypeRef voidType = target.Context.VoidType;
         LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
@@ -141,6 +142,7 @@ internal static class LlvmCodegen
             fallthroughBlocks,
             i64,
             i8,
+            f64,
             i8Ptr,
             i64Ptr,
             flavor);
@@ -192,18 +194,27 @@ internal static class LlvmCodegen
         return instruction switch
         {
             IrInst.LoadConstInt loadConstInt => StoreTemp(state, loadConstInt.Target, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)loadConstInt.Value), true)),
+            IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LLVMValueRef.CreateConstReal(state.F64, loadConstFloat.Value)),
             IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.AddInt addInt => StoreTemp(state, addInt.Target, builder.BuildAdd(LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
+            IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, builder.BuildFAdd(LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
             IrInst.SubInt subInt => StoreTemp(state, subInt.Target, builder.BuildSub(LoadTemp(state, subInt.Left), LoadTemp(state, subInt.Right), $"sub_{subInt.Target}")),
+            IrInst.SubFloat subFloat => StoreTemp(state, subFloat.Target, builder.BuildFSub(LoadTempAsFloat(state, subFloat.Left), LoadTempAsFloat(state, subFloat.Right), $"fsub_{subFloat.Target}")),
             IrInst.MulInt mulInt => StoreTemp(state, mulInt.Target, builder.BuildMul(LoadTemp(state, mulInt.Left), LoadTemp(state, mulInt.Right), $"mul_{mulInt.Target}")),
+            IrInst.MulFloat mulFloat => StoreTemp(state, mulFloat.Target, builder.BuildFMul(LoadTempAsFloat(state, mulFloat.Left), LoadTempAsFloat(state, mulFloat.Right), $"fmul_{mulFloat.Target}")),
             IrInst.DivInt divInt => StoreTemp(state, divInt.Target, builder.BuildSDiv(LoadTemp(state, divInt.Left), LoadTemp(state, divInt.Right), $"div_{divInt.Target}")),
+            IrInst.DivFloat divFloat => StoreTemp(state, divFloat.Target, builder.BuildFDiv(LoadTempAsFloat(state, divFloat.Left), LoadTempAsFloat(state, divFloat.Right), $"fdiv_{divFloat.Target}")),
             IrInst.CmpIntGe cmpIntGe => StoreTemp(state, cmpIntGe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSGE, LoadTemp(state, cmpIntGe.Left), LoadTemp(state, cmpIntGe.Right), $"cmp_ge_{cmpIntGe.Target}")),
+            IrInst.CmpFloatGe cmpFloatGe => StoreTemp(state, cmpFloatGe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOGE, LoadTempAsFloat(state, cmpFloatGe.Left), LoadTempAsFloat(state, cmpFloatGe.Right), $"fcmp_ge_{cmpFloatGe.Target}")),
             IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSLE, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
+            IrInst.CmpFloatLe cmpFloatLe => StoreTemp(state, cmpFloatLe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOLE, LoadTempAsFloat(state, cmpFloatLe.Left), LoadTempAsFloat(state, cmpFloatLe.Right), $"fcmp_le_{cmpFloatLe.Target}")),
             IrInst.CmpIntEq cmpIntEq => StoreTemp(state, cmpIntEq.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntEQ, LoadTemp(state, cmpIntEq.Left), LoadTemp(state, cmpIntEq.Right), $"cmp_eq_{cmpIntEq.Target}")),
+            IrInst.CmpFloatEq cmpFloatEq => StoreTemp(state, cmpFloatEq.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOEQ, LoadTempAsFloat(state, cmpFloatEq.Left), LoadTempAsFloat(state, cmpFloatEq.Right), $"fcmp_eq_{cmpFloatEq.Target}")),
             IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntNE, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
+            IrInst.CmpFloatNe cmpFloatNe => StoreTemp(state, cmpFloatNe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealONE, LoadTempAsFloat(state, cmpFloatNe.Left), LoadTempAsFloat(state, cmpFloatNe.Right), $"fcmp_ne_{cmpFloatNe.Target}")),
             IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : ThrowWindowsInstructionNotSupported(printInt),
             IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : ThrowWindowsInstructionNotSupported(printStr),
             IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
@@ -233,12 +244,18 @@ internal static class LlvmCodegen
         return state.Target.Builder.BuildLoad2(state.I64, state.TempSlots[temp], $"tmpv_{temp}");
     }
 
+    private static LLVMValueRef LoadTempAsFloat(LlvmCodegenState state, int temp)
+    {
+        return state.Target.Builder.BuildBitCast(LoadTemp(state, temp), state.F64, $"tmpf_{temp}");
+    }
+
     private static LLVMValueRef NormalizeToI64(LlvmCodegenState state, LLVMValueRef value)
     {
         return value.TypeOf.Kind switch
         {
             LLVMTypeKind.LLVMIntegerTypeKind when value.TypeOf.IntWidth == 64 => value,
             LLVMTypeKind.LLVMIntegerTypeKind => state.Target.Builder.BuildZExt(value, state.I64, "zext_i64"),
+            LLVMTypeKind.LLVMDoubleTypeKind => state.Target.Builder.BuildBitCast(value, state.I64, "f64_i64"),
             LLVMTypeKind.LLVMPointerTypeKind => state.Target.Builder.BuildPtrToInt(value, state.I64, "ptr_i64"),
             _ => throw new InvalidOperationException($"Cannot normalize LLVM value of type '{value.TypeOf.Kind}' to i64.")
         };
@@ -247,6 +264,12 @@ internal static class LlvmCodegen
     private static LLVMValueRef EmitIntComparison(LlvmCodegenState state, LLVMIntPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
     {
         LLVMValueRef cmp = state.Target.Builder.BuildICmp(predicate, left, right, name);
+        return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
+    }
+
+    private static LLVMValueRef EmitFloatComparison(LlvmCodegenState state, LLVMRealPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
+    {
+        LLVMValueRef cmp = state.Target.Builder.BuildFCmp(predicate, left, right, name);
         return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
     }
 
@@ -516,6 +539,7 @@ internal static class LlvmCodegen
         Dictionary<int, LLVMBasicBlockRef> FallthroughBlocks,
         LLVMTypeRef I64,
         LLVMTypeRef I8,
+        LLVMTypeRef F64,
         LLVMTypeRef I8Ptr,
         LLVMTypeRef I64Ptr,
         LlvmCodegenFlavor Flavor)
@@ -547,18 +571,27 @@ internal static class LlvmCodegen
         return SupportsMinimalLlvm(program, static instruction => instruction switch
         {
             IrInst.LoadConstInt => true,
+            IrInst.LoadConstFloat => true,
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.AddInt => true,
+            IrInst.AddFloat => true,
             IrInst.SubInt => true,
+            IrInst.SubFloat => true,
             IrInst.MulInt => true,
+            IrInst.MulFloat => true,
             IrInst.DivInt => true,
+            IrInst.DivFloat => true,
             IrInst.CmpIntGe => true,
+            IrInst.CmpFloatGe => true,
             IrInst.CmpIntLe => true,
+            IrInst.CmpFloatLe => true,
             IrInst.CmpIntEq => true,
+            IrInst.CmpFloatEq => true,
             IrInst.CmpIntNe => true,
+            IrInst.CmpFloatNe => true,
             IrInst.AllocAdt { FieldCount: 0 } => true,
             IrInst.Jump => true,
             IrInst.JumpIfFalse => true,
@@ -573,18 +606,27 @@ internal static class LlvmCodegen
         return SupportsMinimalLlvm(program, static instruction => instruction switch
         {
             IrInst.LoadConstInt => true,
+            IrInst.LoadConstFloat => true,
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.AddInt => true,
+            IrInst.AddFloat => true,
             IrInst.SubInt => true,
+            IrInst.SubFloat => true,
             IrInst.MulInt => true,
+            IrInst.MulFloat => true,
             IrInst.DivInt => true,
+            IrInst.DivFloat => true,
             IrInst.CmpIntGe => true,
+            IrInst.CmpFloatGe => true,
             IrInst.CmpIntLe => true,
+            IrInst.CmpFloatLe => true,
             IrInst.CmpIntEq => true,
+            IrInst.CmpFloatEq => true,
             IrInst.CmpIntNe => true,
+            IrInst.CmpFloatNe => true,
             IrInst.PrintInt => true,
             IrInst.PrintStr => true,
             IrInst.WriteStr => true,

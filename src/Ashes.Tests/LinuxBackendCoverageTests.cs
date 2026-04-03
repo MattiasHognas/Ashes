@@ -1,3 +1,4 @@
+using System.Reflection;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -28,7 +29,21 @@ public sealed class LinuxBackendCoverageTests
         first.ShouldNotBe(second);
     }
 
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_float_arithmetic_and_comparisons()
+    {
+        var ir = LowerExpression("if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForLinux(string source)
+    {
+        var ir = LowerExpression(source);
+        return new LinuxX64LlvmBackend().Compile(ir);
+    }
+
+    private static IrProgram LowerExpression(string source)
     {
         var diagnostics = new Diagnostics();
         var ast = new Parser(source, diagnostics).ParseExpression();
@@ -36,7 +51,14 @@ public sealed class LinuxBackendCoverageTests
 
         var ir = new Lowering(diagnostics).Lower(ast);
         diagnostics.ThrowIfAny();
+        return ir;
+    }
 
-        return new LinuxX64LlvmBackend().Compile(ir);
+    private static bool SupportsMinimalLlvm(string methodName, IrProgram ir)
+    {
+        var method = typeof(LinuxX64LlvmBackend).Assembly
+            .GetType("Ashes.Backend.Llvm.LlvmCodegen", throwOnError: true)!
+            .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        return (bool)method.Invoke(null, [ir])!;
     }
 }
