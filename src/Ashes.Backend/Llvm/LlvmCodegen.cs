@@ -97,10 +97,9 @@ internal static class LlvmCodegen
         string functionName,
         LlvmCodegenFlavor flavor)
     {
-        LLVMTypeRef voidType = LLVMTypeRef.Void;
         LLVMTypeRef i64 = target.Context.Int64Type;
         LLVMTypeRef i8 = target.Context.Int8Type;
-        voidType = target.Context.VoidType;
+        LLVMTypeRef voidType = target.Context.VoidType;
         LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
 
@@ -205,10 +204,10 @@ internal static class LlvmCodegen
             IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSLE, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
             IrInst.CmpIntEq cmpIntEq => StoreTemp(state, cmpIntEq.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntEQ, LoadTemp(state, cmpIntEq.Left), LoadTemp(state, cmpIntEq.Right), $"cmp_eq_{cmpIntEq.Target}")),
             IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntNE, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
-            IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : false,
-            IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : false,
-            IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : false,
-            IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : false,
+            IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : ThrowWindowsInstructionNotSupported(printInt),
+            IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : ThrowWindowsInstructionNotSupported(printStr),
+            IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
+            IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : ThrowWindowsInstructionNotSupported(printBool),
             IrInst.AllocAdt allocAdt when allocAdt.FieldCount == 0 => StoreTemp(state, allocAdt.Target, LLVMValueRef.CreateConstInt(state.I64, 0, false)),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
@@ -567,10 +566,6 @@ internal static class LlvmCodegen
                 case IrInst.CmpIntLe:
                 case IrInst.CmpIntEq:
                 case IrInst.CmpIntNe:
-                case IrInst.PrintInt:
-                case IrInst.PrintStr:
-                case IrInst.WriteStr:
-                case IrInst.PrintBool:
                 case IrInst.AllocAdt { FieldCount: 0 }:
                 case IrInst.Jump:
                 case IrInst.JumpIfFalse:
@@ -583,6 +578,12 @@ internal static class LlvmCodegen
         }
 
         return true;
+    }
+
+    private static bool ThrowWindowsInstructionNotSupported(IrInst instruction)
+    {
+        throw new InvalidOperationException(
+            $"The minimal Windows LLVM path does not yet support instruction '{instruction.GetType().Name}'.");
     }
 
     private enum LlvmCodegenFlavor

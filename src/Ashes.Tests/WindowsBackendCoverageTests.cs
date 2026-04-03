@@ -50,8 +50,8 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public void Windows_backend_compile_should_not_emit_a_constant_stub_for_simple_programs()
     {
-        var first = CompileForWindows("Ashes.IO.print(40 + 2)");
-        var second = CompileForWindows("Ashes.IO.print(40 + 3)");
+        var first = CompileForWindows("40 + 2");
+        var second = CompileForWindows("40 + 3");
 
         first.ShouldNotBe(second);
     }
