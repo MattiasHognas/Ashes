@@ -144,6 +144,11 @@ internal static class LlvmCodegen
         return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
     }
 
+    private static bool LiftedFunctionRequiresUnsupportedEscapingHeap(IrInst instruction)
+    {
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
+    }
+
     private static void EmitFunctionBody(
         LlvmTargetContext target,
         LLVMValueRef llvmFunction,
@@ -973,7 +978,7 @@ internal static class LlvmCodegen
 
         foreach (IrFunction function in program.Functions)
         {
-            if (function.Instructions.Any(InstructionNeedsHeap))
+            if (function.Instructions.Any(LiftedFunctionRequiresUnsupportedEscapingHeap))
             {
                 return false;
             }

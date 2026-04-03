@@ -134,7 +134,6 @@ internal static class LlvmImageLinker
         var sectionNames = ReadStringTable(bytes, sections[sectionNamesIndex]);
         int textSectionIndex = -1;
         ElfSectionHeader? symtab = null;
-        var textRelocationSections = new List<ElfSectionHeader>();
         for (int i = 0; i < sections.Length; i++)
         {
             string name = ReadElfString(sectionNames, sections[i].NameOffset);
@@ -145,12 +144,6 @@ internal static class LlvmImageLinker
             else if (name == ".symtab")
             {
                 symtab = sections[i];
-            }
-            else if ((sections[i].Type == SectionTypeRela || sections[i].Type == SectionTypeRel)
-                     && sections[i].Info == (uint)textSectionIndex
-                      && sections[i].Size != 0)
-            {
-                textRelocationSections.Add(sections[i]);
             }
         }
 
@@ -166,6 +159,10 @@ internal static class LlvmImageLinker
 
         var textSection = sections[textSectionIndex];
         byte[] textBytes = bytes.Slice(checked((int)textSection.Offset), checked((int)textSection.Size)).ToArray();
+        var textRelocationSections = sections
+            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
+            .Where(section => section.Info == (uint)textSectionIndex)
+            .ToList();
 
         var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
         int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex);
