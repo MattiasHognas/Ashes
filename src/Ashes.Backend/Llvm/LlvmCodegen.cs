@@ -139,12 +139,7 @@ internal static class LlvmCodegen
         }
     }
 
-    private static bool InstructionNeedsHeap(IrInst instruction)
-    {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
-    }
-
-    private static bool LiftedFunctionRequiresUnsupportedEscapingHeap(IrInst instruction)
+    private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
         return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure;
     }
@@ -182,7 +177,7 @@ internal static class LlvmCodegen
         }
 
         LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
-        bool needsHeap = function.Instructions.Any(InstructionNeedsHeap);
+        bool needsHeap = function.Instructions.Any(RequiresEntryHeapStorage);
         if (needsHeap)
         {
             LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
@@ -981,7 +976,7 @@ internal static class LlvmCodegen
 
         foreach (IrFunction function in program.Functions)
         {
-            if (function.Instructions.Any(LiftedFunctionRequiresUnsupportedEscapingHeap))
+            if (function.Instructions.Any(RequiresEntryHeapStorage))
             {
                 return false;
             }
