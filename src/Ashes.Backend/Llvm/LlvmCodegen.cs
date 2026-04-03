@@ -131,7 +131,7 @@ internal static class LlvmCodegen
         }
 
         var fallthroughBlocks = new Dictionary<int, LLVMBasicBlockRef>();
-        var state = new LinuxCodegenState(
+        var state = new LlvmCodegenState(
             target,
             llvmFunction,
             stringLiterals,
@@ -186,7 +186,7 @@ internal static class LlvmCodegen
         }
     }
 
-    private static bool EmitInstruction(LinuxCodegenState state, IrInst instruction, int index)
+    private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index)
     {
         LLVMBuilderRef builder = state.Target.Builder;
         return instruction switch
@@ -216,24 +216,24 @@ internal static class LlvmCodegen
         };
     }
 
-    private static bool StoreTemp(LinuxCodegenState state, int target, LLVMValueRef value)
+    private static bool StoreTemp(LlvmCodegenState state, int target, LLVMValueRef value)
     {
         state.Target.Builder.BuildStore(NormalizeToI64(state, value), state.TempSlots[target]);
         return false;
     }
 
-    private static bool StoreLocal(LinuxCodegenState state, int slot, LLVMValueRef value)
+    private static bool StoreLocal(LlvmCodegenState state, int slot, LLVMValueRef value)
     {
         state.Target.Builder.BuildStore(NormalizeToI64(state, value), state.LocalSlots[slot]);
         return false;
     }
 
-    private static LLVMValueRef LoadTemp(LinuxCodegenState state, int temp)
+    private static LLVMValueRef LoadTemp(LlvmCodegenState state, int temp)
     {
         return state.Target.Builder.BuildLoad2(state.I64, state.TempSlots[temp], $"tmpv_{temp}");
     }
 
-    private static LLVMValueRef NormalizeToI64(LinuxCodegenState state, LLVMValueRef value)
+    private static LLVMValueRef NormalizeToI64(LlvmCodegenState state, LLVMValueRef value)
     {
         return value.TypeOf.Kind switch
         {
@@ -244,19 +244,19 @@ internal static class LlvmCodegen
         };
     }
 
-    private static LLVMValueRef EmitIntComparison(LinuxCodegenState state, LLVMIntPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
+    private static LLVMValueRef EmitIntComparison(LlvmCodegenState state, LLVMIntPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
     {
         LLVMValueRef cmp = state.Target.Builder.BuildICmp(predicate, left, right, name);
         return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
     }
 
-    private static bool EmitJump(LinuxCodegenState state, string targetLabel)
+    private static bool EmitJump(LlvmCodegenState state, string targetLabel)
     {
         state.Target.Builder.BuildBr(state.GetLabelBlock(targetLabel));
         return true;
     }
 
-    private static bool EmitJumpIfFalse(LinuxCodegenState state, LLVMValueRef condValue, string targetLabel, int instructionIndex)
+    private static bool EmitJumpIfFalse(LlvmCodegenState state, LLVMValueRef condValue, string targetLabel, int instructionIndex)
     {
         LLVMValueRef zero = LLVMValueRef.CreateConstInt(state.I64, 0, false);
         LLVMValueRef cond = state.Target.Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, condValue, zero, $"cond_{instructionIndex}");
@@ -267,25 +267,25 @@ internal static class LlvmCodegen
         return false;
     }
 
-    private static bool EmitReturn(LinuxCodegenState state)
+    private static bool EmitReturn(LlvmCodegenState state)
     {
         EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 0, false));
         return true;
     }
 
-    private static bool EmitReturnVoid(LinuxCodegenState state)
+    private static bool EmitReturnVoid(LlvmCodegenState state)
     {
         state.Target.Builder.BuildRetVoid();
         return true;
     }
 
-    private static void EmitExit(LinuxCodegenState state, LLVMValueRef exitCode)
+    private static void EmitExit(LlvmCodegenState state, LLVMValueRef exitCode)
     {
         EmitSyscall(state, SyscallExit, exitCode, LLVMValueRef.CreateConstInt(state.I64, 0, false), LLVMValueRef.CreateConstInt(state.I64, 0, false), "sys_exit");
         state.Target.Builder.BuildUnreachable();
     }
 
-    private static bool EmitPrintStringFromTemp(LinuxCodegenState state, LLVMValueRef stringRef, bool appendNewline)
+    private static bool EmitPrintStringFromTemp(LlvmCodegenState state, LLVMValueRef stringRef, bool appendNewline)
     {
         LLVMBuilderRef builder = state.Target.Builder;
         LLVMValueRef basePtr = builder.BuildIntToPtr(stringRef, state.I64Ptr, "str_len_ptr");
@@ -301,7 +301,7 @@ internal static class LlvmCodegen
         return false;
     }
 
-    private static bool EmitPrintBool(LinuxCodegenState state, LLVMValueRef boolValue)
+    private static bool EmitPrintBool(LlvmCodegenState state, LLVMValueRef boolValue)
     {
         LLVMValueRef zero = LLVMValueRef.CreateConstInt(state.I64, 0, false);
         LLVMValueRef isTrue = state.Target.Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, boolValue, zero, "bool_is_true");
@@ -309,7 +309,7 @@ internal static class LlvmCodegen
         return false;
     }
 
-    private static bool EmitPrintInt(LinuxCodegenState state, LLVMValueRef value)
+    private static bool EmitPrintInt(LlvmCodegenState state, LLVMValueRef value)
     {
         LLVMBuilderRef builder = state.Target.Builder;
         LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, "print_idx");
@@ -383,7 +383,7 @@ internal static class LlvmCodegen
         return false;
     }
 
-    private static void EmitConditionalWrite(LinuxCodegenState state, LLVMValueRef condition, string whenTrue, string whenFalse, bool appendNewline)
+    private static void EmitConditionalWrite(LlvmCodegenState state, LLVMValueRef condition, string whenTrue, string whenFalse, bool appendNewline)
     {
         var trueBlock = state.Function.AppendBasicBlock("bool_true");
         var falseBlock = state.Function.AppendBasicBlock("bool_false");
@@ -409,7 +409,7 @@ internal static class LlvmCodegen
         state.Target.Builder.PositionAtEnd(continueBlock);
     }
 
-    private static LLVMValueRef EmitStackStringObject(LinuxCodegenState state, string value)
+    private static LLVMValueRef EmitStackStringObject(LlvmCodegenState state, string value)
     {
         byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
         LLVMTypeRef objectType = LLVMTypeRef.CreateArray(state.I8, (uint)(utf8.Length + 8));
@@ -433,7 +433,7 @@ internal static class LlvmCodegen
         return state.Target.Builder.BuildPtrToInt(storage, state.I64, "str_obj_i64");
     }
 
-    private static LLVMValueRef EmitStackByteArray(LinuxCodegenState state, IReadOnlyList<byte> bytes)
+    private static LLVMValueRef EmitStackByteArray(LlvmCodegenState state, IReadOnlyList<byte> bytes)
     {
         LLVMTypeRef arrayType = LLVMTypeRef.CreateArray(state.I8, (uint)bytes.Count);
         LLVMValueRef storage = state.Target.Builder.BuildAlloca(arrayType, "byte_array");
@@ -446,12 +446,12 @@ internal static class LlvmCodegen
         return GetArrayElementPointer(state, arrayType, storage, LLVMValueRef.CreateConstInt(state.I64, 0, false), "byte_array_ptr");
     }
 
-    private static void StoreBufferByte(LinuxCodegenState state, LLVMValueRef buffer, LLVMValueRef index, byte value)
+    private static void StoreBufferByte(LlvmCodegenState state, LLVMValueRef buffer, LLVMValueRef index, byte value)
     {
         StoreBufferByte(state, buffer, index, LLVMValueRef.CreateConstInt(state.I64, value, false));
     }
 
-    private static void StoreBufferByte(LinuxCodegenState state, LLVMValueRef buffer, LLVMValueRef index, LLVMValueRef value)
+    private static void StoreBufferByte(LlvmCodegenState state, LLVMValueRef buffer, LLVMValueRef index, LLVMValueRef value)
     {
         LLVMValueRef ptr = GetArrayElementPointer(state, LLVMTypeRef.CreateArray(state.I8, 32), buffer, index, "buf_ptr");
         LLVMValueRef byteValue = value.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind && value.TypeOf.IntWidth == 8
@@ -460,7 +460,7 @@ internal static class LlvmCodegen
         state.Target.Builder.BuildStore(byteValue, ptr);
     }
 
-    private static LLVMValueRef GetArrayElementPointer(LinuxCodegenState state, LLVMTypeRef arrayType, LLVMValueRef storage, LLVMValueRef index, string name)
+    private static LLVMValueRef GetArrayElementPointer(LlvmCodegenState state, LLVMTypeRef arrayType, LLVMValueRef storage, LLVMValueRef index, string name)
     {
         return state.Target.Builder.BuildGEP2(
             arrayType,
@@ -473,7 +473,7 @@ internal static class LlvmCodegen
             name);
     }
 
-    private static void EmitWriteBytes(LinuxCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
     {
         EmitSyscall(
             state,
@@ -484,7 +484,7 @@ internal static class LlvmCodegen
             "sys_write");
     }
 
-    private static LLVMValueRef EmitSyscall(LinuxCodegenState state, long nr, LLVMValueRef arg1, LLVMValueRef arg2, LLVMValueRef arg3, string name)
+    private static LLVMValueRef EmitSyscall(LlvmCodegenState state, long nr, LLVMValueRef arg1, LLVMValueRef arg2, LLVMValueRef arg3, string name)
     {
         LLVMTypeRef syscallType = LLVMTypeRef.CreateFunction(state.I64, [state.I64, state.I64, state.I64, state.I64]);
         LLVMValueRef syscall = LLVMValueRef.CreateConstInlineAsm(
@@ -506,7 +506,7 @@ internal static class LlvmCodegen
             name);
     }
 
-    private sealed record LinuxCodegenState(
+    private sealed record LlvmCodegenState(
         LlvmTargetContext Target,
         LLVMValueRef Function,
         IReadOnlyDictionary<string, string> StringLiterals,
