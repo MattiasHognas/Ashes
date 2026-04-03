@@ -15,9 +15,44 @@ internal static class LlvmCodegen
         return targetId switch
         {
             Backends.TargetIds.LinuxX64 => CompileLinux(program, options),
-            Backends.TargetIds.WindowsX64 => LlvmImageLinker.BuildMinimalWindowsStub(),
+            Backends.TargetIds.WindowsX64 => CompileWindows(program, options),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
+    }
+
+    private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
+    {
+        if (!SupportsMinimalWindowsLlvm(program))
+        {
+            return new Pe64Writer().CompileToPe(program);
+        }
+
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
+        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
+        EmitEntryModule(target, program.EntryFunction, literals, "entry", LlvmCodegenFlavor.Windows);
+
+        if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
+        {
+            throw new InvalidOperationException($"LLVM module verification failed: {verifyError}");
+        }
+
+        string objectPath = Path.Combine(Path.GetTempPath(), $"ashes-llvm-{Guid.NewGuid():N}.obj");
+        target.TargetMachine.EmitToFile(target.Module, objectPath, LLVMCodeGenFileType.LLVMObjectFile);
+        try
+        {
+            byte[] objectBytes = File.ReadAllBytes(objectPath);
+            return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(objectPath);
+            }
+            catch
+            {
+            }
+        }
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
@@ -29,7 +64,7 @@ internal static class LlvmCodegen
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitLinuxEntryModule(target, program.EntryFunction, literals);
+        EmitEntryModule(target, program.EntryFunction, literals, "_start", LlvmCodegenFlavor.Linux);
 
         if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
         {
@@ -55,7 +90,12 @@ internal static class LlvmCodegen
         }
     }
 
-    private static void EmitLinuxEntryModule(LlvmTargetContext target, IrFunction function, IReadOnlyDictionary<string, string> stringLiterals)
+    private static void EmitEntryModule(
+        LlvmTargetContext target,
+        IrFunction function,
+        IReadOnlyDictionary<string, string> stringLiterals,
+        string functionName,
+        LlvmCodegenFlavor flavor)
     {
         LLVMTypeRef voidType = LLVMTypeRef.Void;
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -65,7 +105,7 @@ internal static class LlvmCodegen
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
 
         LLVMTypeRef functionType = LLVMTypeRef.CreateFunction(voidType, []);
-        LLVMValueRef llvmFunction = target.Module.AddFunction("_start", functionType);
+        LLVMValueRef llvmFunction = target.Module.AddFunction(functionName, functionType);
         llvmFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
 
         LLVMBasicBlockRef entryBlock = llvmFunction.AppendBasicBlock("entry");
@@ -103,7 +143,8 @@ internal static class LlvmCodegen
             i64,
             i8,
             i8Ptr,
-            i64Ptr);
+            i64Ptr,
+            flavor);
 
         LLVMBasicBlockRef currentBlock = entryBlock;
         bool terminated = false;
@@ -135,7 +176,14 @@ internal static class LlvmCodegen
 
         if (!terminated)
         {
-            EmitExit(state, LLVMValueRef.CreateConstInt(i64, 0, false));
+            if (state.Flavor == LlvmCodegenFlavor.Linux)
+            {
+                EmitExit(state, LLVMValueRef.CreateConstInt(i64, 0, false));
+            }
+            else
+            {
+                target.Builder.BuildRetVoid();
+            }
         }
     }
 
@@ -157,14 +205,14 @@ internal static class LlvmCodegen
             IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSLE, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
             IrInst.CmpIntEq cmpIntEq => StoreTemp(state, cmpIntEq.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntEQ, LoadTemp(state, cmpIntEq.Left), LoadTemp(state, cmpIntEq.Right), $"cmp_eq_{cmpIntEq.Target}")),
             IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntNE, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
-            IrInst.PrintInt printInt => EmitPrintInt(state, LoadTemp(state, printInt.Source)),
-            IrInst.PrintStr printStr => EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true),
-            IrInst.WriteStr writeStr => EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false),
-            IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
+            IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : false,
+            IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : false,
+            IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : false,
+            IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : false,
             IrInst.AllocAdt allocAdt when allocAdt.FieldCount == 0 => StoreTemp(state, allocAdt.Target, LLVMValueRef.CreateConstInt(state.I64, 0, false)),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
-            IrInst.Return => EmitReturn(state),
+            IrInst.Return => state.Flavor == LlvmCodegenFlavor.Linux ? EmitReturn(state) : EmitReturnVoid(state),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }
@@ -223,6 +271,12 @@ internal static class LlvmCodegen
     private static bool EmitReturn(LinuxCodegenState state)
     {
         EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 0, false));
+        return true;
+    }
+
+    private static bool EmitReturnVoid(LinuxCodegenState state)
+    {
+        state.Target.Builder.BuildRetVoid();
         return true;
     }
 
@@ -464,7 +518,8 @@ internal static class LlvmCodegen
         LLVMTypeRef I64,
         LLVMTypeRef I8,
         LLVMTypeRef I8Ptr,
-        LLVMTypeRef I64Ptr)
+        LLVMTypeRef I64Ptr,
+        LlvmCodegenFlavor Flavor)
     {
         public LLVMBasicBlockRef GetLabelBlock(string name) => LabelBlocks[name];
 
@@ -486,5 +541,53 @@ internal static class LlvmCodegen
                 ? block
                 : GetOrCreateFallthroughBlock(nextIndex);
         }
+    }
+
+    private static bool SupportsMinimalWindowsLlvm(IrProgram program)
+    {
+        if (program.Functions.Count != 0 || program.UsesClosures)
+        {
+            return false;
+        }
+
+        foreach (IrInst instruction in program.EntryFunction.Instructions)
+        {
+            switch (instruction)
+            {
+                case IrInst.LoadConstInt:
+                case IrInst.LoadConstBool:
+                case IrInst.LoadConstStr:
+                case IrInst.LoadLocal:
+                case IrInst.StoreLocal:
+                case IrInst.AddInt:
+                case IrInst.SubInt:
+                case IrInst.MulInt:
+                case IrInst.DivInt:
+                case IrInst.CmpIntGe:
+                case IrInst.CmpIntLe:
+                case IrInst.CmpIntEq:
+                case IrInst.CmpIntNe:
+                case IrInst.PrintInt:
+                case IrInst.PrintStr:
+                case IrInst.WriteStr:
+                case IrInst.PrintBool:
+                case IrInst.AllocAdt { FieldCount: 0 }:
+                case IrInst.Jump:
+                case IrInst.JumpIfFalse:
+                case IrInst.Return:
+                case IrInst.Label:
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private enum LlvmCodegenFlavor
+    {
+        Linux,
+        Windows
     }
 }

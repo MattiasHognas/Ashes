@@ -1,13 +1,19 @@
 using System.Buffers.Binary;
+using System.Reflection.PortableExecutable;
+using System.Text;
+using LibObjectFile.PE;
 
 namespace Ashes.Backend.Llvm;
 
 internal static class LlvmImageLinker
 {
+    private const ulong PeImageBase = 0x0000000140000000UL;
     private const uint SectionTypeRela = 4;
     private const uint SectionTypeRel = 9;
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
+    private const uint PeTextRva = 0x00001000;
+    private const uint PeSectionAlignment = 0x00001000;
 
     public static byte[] LinkLinuxExecutable(byte[] objectBytes)
     {
@@ -28,41 +34,58 @@ internal static class LlvmImageLinker
             dataVA: dataVa);
     }
 
-    public static byte[] BuildMinimalWindowsStub()
+    public static byte[] LinkWindowsExecutable(byte[] objectBytes, string entrySymbolName)
     {
-        var bytes = new byte[1024];
-        bytes[0] = (byte)'M';
-        bytes[1] = (byte)'Z';
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x3C), 0x80);
-        bytes[0x80] = (byte)'P';
-        bytes[0x81] = (byte)'E';
-        bytes[0x82] = 0;
-        bytes[0x83] = 0;
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x84), 0x8664);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x86), 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x94), 0xF0);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x96), 0x0022);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x98), 0x20B);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xA8), 0x1000);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xAC), 0x1000);
-        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(0xB0), 0x0000000140000000UL);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xB8), 0x1000);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xBC), 0x200);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xD0), 0x2000);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0xD4), 0x200);
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0x104), 16);
-        bytes[0x188] = (byte)'.';
-        bytes[0x189] = (byte)'t';
-        bytes[0x18A] = (byte)'e';
-        bytes[0x18B] = (byte)'x';
-        bytes[0x18C] = (byte)'t';
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x190), 1);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x194), 0x1000);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x198), 0x200);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x19C), 0x200);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0x1A4), 0x60000020);
-        bytes[0x200] = 0xC3;
-        return bytes;
+        var parsed = ParseCoffObject(objectBytes, entrySymbolName);
+
+        var rdata = new PEStreamSectionData();
+        Align(rdata, 2);
+        int kernelNameOffset = (int)rdata.Stream.Position;
+        rdata.Stream.Write(Encoding.ASCII.GetBytes("KERNEL32.DLL\0"));
+        var kernelName = new PEAsciiStringLink(rdata, new RVO((uint)kernelNameOffset));
+        var exitProcessHintName = WriteImportHintName(rdata, 0, "ExitProcess");
+        Align(rdata, 8);
+        int iatSectionOffset = (int)rdata.Stream.Length;
+
+        var exitProcessIat = new PEImportAddressTable64() { exitProcessHintName };
+        var iatDirectory = new PEImportAddressTableDirectory() { exitProcessIat };
+        var exitProcessIlt = new PEImportLookupTable64() { exitProcessHintName };
+        var importDirectory = new PEImportDirectory
+        {
+            Entries =
+            {
+                new PEImportDirectoryEntry(kernelName, exitProcessIat, exitProcessIlt)
+            }
+        };
+
+        int trampolineLength = 24;
+        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(trampolineLength + parsed.TextBytes.Length)), PeSectionAlignment);
+        ulong exitProcessIatVa = PeImageBase + rdataRva + (ulong)iatSectionOffset;
+        byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, parsed.TextBytes.Length, exitProcessIatVa)
+            .Concat(parsed.TextBytes)
+            .ToArray();
+
+        var pe = new PEFile();
+        var textSection = pe.AddSection(PESectionName.Text, PeTextRva);
+        var rdataSection = pe.AddSection(PESectionName.RData, rdataRva);
+
+        var code = new PEStreamSectionData();
+        code.Stream.Write(codeBytes);
+        textSection.Content.Add(code);
+        rdataSection.Content.Add(rdata);
+        rdataSection.Content.Add(iatDirectory);
+        rdataSection.Content.Add(exitProcessIlt);
+        rdataSection.Content.Add(importDirectory);
+
+        pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);
+        pe.OptionalHeader.BaseOfCode = textSection;
+        pe.OptionalHeader.DllCharacteristics =
+            DllCharacteristics.NxCompatible |
+            DllCharacteristics.TerminalServerAware;
+
+        using var output = new MemoryStream();
+        pe.Write(output, new() { EnableStackTrace = true });
+        return output.ToArray();
     }
 
     private static ParsedElfObject ParseElfObject(byte[] objectBytes)
@@ -198,7 +221,169 @@ internal static class LlvmImageLinker
         return (value + mask) & ~mask;
     }
 
+    private static ParsedCoffObject ParseCoffObject(byte[] objectBytes, string entrySymbolName)
+    {
+        ReadOnlySpan<byte> bytes = objectBytes;
+        if (bytes.Length < 20)
+        {
+            throw new InvalidOperationException("LLVM did not emit a valid COFF object.");
+        }
+
+        ushort sectionCount = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(2, 2));
+        uint symbolTableOffset = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
+        uint symbolCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
+
+        var sections = new CoffSectionHeader[sectionCount];
+        int textSectionIndex = -1;
+        for (int i = 0; i < sectionCount; i++)
+        {
+            int offset = 20 + (i * 40);
+            string name = ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount);
+            sections[i] = new CoffSectionHeader(
+                Name: name,
+                SizeOfRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 16, 4)),
+                PointerToRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 20, 4)),
+                PointerToRelocations: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 24, 4)),
+                NumberOfRelocations: BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 32, 2)));
+
+            if (name == ".text")
+            {
+                textSectionIndex = i;
+            }
+        }
+
+        if (textSectionIndex < 0)
+        {
+            throw new InvalidOperationException("LLVM COFF object did not contain a .text section.");
+        }
+
+        CoffSectionHeader textSection = sections[textSectionIndex];
+        if (textSection.NumberOfRelocations != 0)
+        {
+            throw new InvalidOperationException("LLVM COFF object emitted text relocations that are not supported by the current PE linker path.");
+        }
+
+        byte[] textBytes = bytes.Slice(checked((int)textSection.PointerToRawData), checked((int)textSection.SizeOfRawData)).ToArray();
+        int entryOffset = FindCoffSymbolOffset(bytes, symbolTableOffset, symbolCount, sections, entrySymbolName, textSectionIndex + 1);
+        return new ParsedCoffObject(textBytes, entryOffset);
+    }
+
+    private static int FindCoffSymbolOffset(
+        ReadOnlySpan<byte> bytes,
+        uint symbolTableOffset,
+        uint symbolCount,
+        CoffSectionHeader[] sections,
+        string entrySymbolName,
+        int expectedSectionNumber)
+    {
+        int stringTableOffset = checked((int)(symbolTableOffset + symbolCount * 18));
+        for (int symbolIndex = 0; symbolIndex < symbolCount; symbolIndex++)
+        {
+            int offset = checked((int)symbolTableOffset + (symbolIndex * 18));
+            string name = ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount);
+            uint value = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4));
+            short sectionNumber = BinaryPrimitives.ReadInt16LittleEndian(bytes.Slice(offset + 12, 2));
+            byte auxCount = bytes[offset + 17];
+
+            if (name == entrySymbolName)
+            {
+                if (sectionNumber != expectedSectionNumber)
+                {
+                    throw new InvalidOperationException($"LLVM COFF symbol '{entrySymbolName}' was not emitted in the .text section.");
+                }
+
+                return checked((int)value);
+            }
+
+            symbolIndex += auxCount;
+        }
+
+        throw new InvalidOperationException($"LLVM COFF object did not define symbol '{entrySymbolName}'.");
+    }
+
+    private static string ReadCoffName(ReadOnlySpan<byte> nameBytes, ReadOnlySpan<byte> fileBytes, uint symbolTableOffset, uint symbolCount)
+    {
+        if (BinaryPrimitives.ReadUInt32LittleEndian(nameBytes[..4]) == 0)
+        {
+            int stringTableOffset = checked((int)(symbolTableOffset + symbolCount * 18));
+            int nameOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(nameBytes[4..8]));
+            int start = stringTableOffset + nameOffset;
+            int end = start;
+            while (end < fileBytes.Length && fileBytes[end] != 0)
+            {
+                end++;
+            }
+
+            return Encoding.ASCII.GetString(fileBytes.Slice(start, end - start));
+        }
+
+        int length = 0;
+        while (length < 8 && nameBytes[length] != 0)
+        {
+            length++;
+        }
+
+        return Encoding.ASCII.GetString(nameBytes[..length]);
+    }
+
+    private static byte[] BuildWindowsTrampoline(int entryOffsetInText, int textLength, ulong exitProcessIatVa)
+    {
+        var bytes = new byte[24];
+        int index = 0;
+        bytes[index++] = 0x48;
+        bytes[index++] = 0x83;
+        bytes[index++] = 0xEC;
+        bytes[index++] = 0x28;
+        bytes[index++] = 0xE8;
+        int relativeCall = checked(bytes.Length + entryOffsetInText - 9);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(index, 4), relativeCall);
+        index += 4;
+        bytes[index++] = 0x31;
+        bytes[index++] = 0xC9;
+        bytes[index++] = 0x48;
+        bytes[index++] = 0xB8;
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(index, 8), exitProcessIatVa);
+        index += 8;
+        bytes[index++] = 0xFF;
+        bytes[index++] = 0x10;
+        bytes[index] = 0xCC;
+        return bytes;
+    }
+
+    private static void Align(PEStreamSectionData stream, int align)
+    {
+        long pos = stream.Stream.Position;
+        long pad = (align - (pos % align)) % align;
+        for (int i = 0; i < pad; i++)
+        {
+            stream.Stream.WriteByte(0);
+        }
+    }
+
+    private static PEImportHintNameLink WriteImportHintName(PEStreamSectionData stream, ushort hint, string name)
+    {
+        Align(stream, 2);
+        int offset = (int)stream.Stream.Position;
+        stream.Stream.WriteByte((byte)(hint & 0xFF));
+        stream.Stream.WriteByte((byte)((hint >> 8) & 0xFF));
+        stream.Stream.Write(Encoding.ASCII.GetBytes(name));
+        stream.Stream.WriteByte(0);
+        if (stream.Stream.Position % 2 != 0)
+        {
+            stream.Stream.WriteByte(0);
+        }
+
+        return new PEImportHintNameLink(stream, new RVO((uint)offset));
+    }
+
+    private static uint AlignUp(uint value, uint alignment)
+    {
+        uint remainder = value % alignment;
+        return remainder == 0 ? value : checked(value + alignment - remainder);
+    }
+
     private readonly record struct ParsedElfObject(byte[] TextBytes, int EntryOffsetInText);
+    private readonly record struct ParsedCoffObject(byte[] TextBytes, int EntryOffsetInText);
 
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
@@ -208,4 +393,11 @@ internal static class LlvmImageLinker
         uint Link,
         uint Info,
         ulong EntrySize);
+
+    private readonly record struct CoffSectionHeader(
+        string Name,
+        uint SizeOfRawData,
+        uint PointerToRawData,
+        uint PointerToRelocations,
+        ushort NumberOfRelocations);
 }

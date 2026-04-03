@@ -47,6 +47,15 @@ public sealed class WindowsBackendCoverageTests
         bytes[1].ShouldBe((byte)'Z');
     }
 
+    [Test]
+    public void Windows_backend_compile_should_not_emit_a_constant_stub_for_simple_programs()
+    {
+        var first = CompileForWindows("Ashes.IO.print(40 + 2)");
+        var second = CompileForWindows("Ashes.IO.print(40 + 3)");
+
+        first.ShouldNotBe(second);
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var diagnostics = new Diagnostics();
