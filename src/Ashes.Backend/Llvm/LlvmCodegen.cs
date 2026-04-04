@@ -48,11 +48,6 @@ internal static class LlvmCodegen
 
     private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
     {
-        if (!SupportsMinimalWindowsLlvm(program))
-        {
-            return new Pe64Writer().CompileToPe(program);
-        }
-
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows);
@@ -83,11 +78,6 @@ internal static class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        if (!SupportsMinimalLinuxLlvm(program))
-        {
-            return new X64CodegenIced().CompileToElf(program);
-        }
-
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux);
@@ -139,9 +129,12 @@ internal static class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
-                || ProgramUsesInstruction<IrInst.PrintBool>(program));
+                || ProgramUsesInstruction<IrInst.PrintBool>(program)
+                || ProgramUsesInstruction<IrInst.PanicStr>(program)
+                || usesReadLine);
         bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.Windows
-            && ProgramUsesInstruction<IrInst.PanicStr>(program);
+            && (ProgramUsesInstruction<IrInst.PanicStr>(program)
+                || usesReadLine);
         bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.Windows
             && usesProgramArgs;
         bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.Windows
@@ -905,7 +898,7 @@ internal static class LlvmCodegen
             exitProcessType,
             exitProcessPtr,
             new[] { exitCode },
-            "exit_process");
+            string.Empty);
         builder.BuildUnreachable();
     }
 
@@ -3711,161 +3704,6 @@ internal static class LlvmCodegen
                 ? block
                 : GetOrCreateFallthroughBlock(nextIndex);
         }
-    }
-
-    private static bool SupportsMinimalWindowsLlvm(IrProgram program)
-    {
-        return SupportsMinimalLlvm(program, static instruction => instruction switch
-        {
-            IrInst.LoadConstInt => true,
-            IrInst.LoadConstFloat => true,
-            IrInst.LoadConstBool => true,
-            IrInst.LoadConstStr => true,
-            IrInst.LoadProgramArgs => true,
-            IrInst.ReadLine => true,
-            IrInst.FileReadText => true,
-            IrInst.FileWriteText => true,
-            IrInst.FileExists => true,
-            IrInst.HttpGet => true,
-            IrInst.HttpPost => true,
-            IrInst.NetTcpConnect => true,
-            IrInst.NetTcpSend => true,
-            IrInst.NetTcpReceive => true,
-            IrInst.NetTcpClose => true,
-            IrInst.LoadLocal => true,
-            IrInst.StoreLocal => true,
-            IrInst.LoadEnv => true,
-            IrInst.Alloc => true,
-            IrInst.AddInt => true,
-            IrInst.AddFloat => true,
-            IrInst.SubInt => true,
-            IrInst.SubFloat => true,
-            IrInst.MulInt => true,
-            IrInst.MulFloat => true,
-            IrInst.DivInt => true,
-            IrInst.DivFloat => true,
-            IrInst.CmpIntGe => true,
-            IrInst.CmpFloatGe => true,
-            IrInst.CmpIntLe => true,
-            IrInst.CmpFloatLe => true,
-            IrInst.CmpIntEq => true,
-            IrInst.CmpFloatEq => true,
-            IrInst.CmpIntNe => true,
-            IrInst.CmpFloatNe => true,
-            IrInst.CmpStrEq => true,
-            IrInst.CmpStrNe => true,
-            IrInst.PrintInt => true,
-            IrInst.PrintStr => true,
-            IrInst.WriteStr => true,
-            IrInst.PrintBool => true,
-            IrInst.PanicStr => true,
-            IrInst.LoadMemOffset => true,
-            IrInst.StoreMemOffset => true,
-            IrInst.ConcatStr => true,
-            IrInst.MakeClosure => true,
-            IrInst.CallClosure => true,
-            IrInst.AllocAdt => true,
-            IrInst.SetAdtField => true,
-            IrInst.GetAdtTag => true,
-            IrInst.GetAdtField => true,
-            IrInst.Jump => true,
-            IrInst.JumpIfFalse => true,
-            IrInst.Return => true,
-            IrInst.Label => true,
-            _ => false
-        });
-    }
-
-    private static bool SupportsMinimalLinuxLlvm(IrProgram program)
-    {
-        return SupportsMinimalLlvm(program, static instruction => instruction switch
-        {
-            IrInst.LoadConstInt => true,
-            IrInst.LoadConstFloat => true,
-            IrInst.LoadConstBool => true,
-            IrInst.LoadConstStr => true,
-            IrInst.LoadProgramArgs => true,
-            IrInst.ReadLine => true,
-            IrInst.FileReadText => true,
-            IrInst.FileWriteText => true,
-            IrInst.FileExists => true,
-            IrInst.HttpGet => true,
-            IrInst.HttpPost => true,
-            IrInst.NetTcpConnect => true,
-            IrInst.NetTcpSend => true,
-            IrInst.NetTcpReceive => true,
-            IrInst.NetTcpClose => true,
-            IrInst.LoadLocal => true,
-            IrInst.StoreLocal => true,
-            IrInst.LoadEnv => true,
-            IrInst.Alloc => true,
-            IrInst.AddInt => true,
-            IrInst.AddFloat => true,
-            IrInst.SubInt => true,
-            IrInst.SubFloat => true,
-            IrInst.MulInt => true,
-            IrInst.MulFloat => true,
-            IrInst.DivInt => true,
-            IrInst.DivFloat => true,
-            IrInst.CmpIntGe => true,
-            IrInst.CmpFloatGe => true,
-            IrInst.CmpIntLe => true,
-            IrInst.CmpFloatLe => true,
-            IrInst.CmpIntEq => true,
-            IrInst.CmpFloatEq => true,
-            IrInst.CmpIntNe => true,
-            IrInst.CmpFloatNe => true,
-            IrInst.CmpStrEq => true,
-            IrInst.CmpStrNe => true,
-            IrInst.PrintInt => true,
-            IrInst.PrintStr => true,
-            IrInst.WriteStr => true,
-            IrInst.PrintBool => true,
-            IrInst.PanicStr => true,
-            IrInst.LoadMemOffset => true,
-            IrInst.StoreMemOffset => true,
-            IrInst.ConcatStr => true,
-            IrInst.MakeClosure => true,
-            IrInst.CallClosure => true,
-            IrInst.AllocAdt => true,
-            IrInst.SetAdtField => true,
-            IrInst.GetAdtTag => true,
-            IrInst.GetAdtField => true,
-            IrInst.Jump => true,
-            IrInst.JumpIfFalse => true,
-            IrInst.Return => true,
-            IrInst.Label => true,
-            _ => false
-        });
-    }
-
-    private static bool SupportsMinimalLlvm(IrProgram program, Func<IrInst, bool> isSupportedInstruction)
-    {
-        foreach (IrInst instruction in program.EntryFunction.Instructions)
-        {
-            if (!isSupportedInstruction(instruction))
-            {
-                return false;
-            }
-        }
-
-        foreach (IrFunction function in program.Functions)
-        {
-            if (function.Instructions.Any(static instruction => instruction is IrInst.LoadProgramArgs))
-            {
-                return false;
-            }
-
-            foreach (IrInst instruction in function.Instructions)
-            {
-                if (!isSupportedInstruction(instruction))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     private enum LlvmCodegenFlavor
