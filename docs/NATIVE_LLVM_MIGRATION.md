@@ -37,26 +37,36 @@ The official LLVM 22+ Linux release only ships static `.a` archives — **no sha
 ```
 
 This runs `sudo apt-get install libllvm22` (adding the LLVM apt repo if needed),
-then symlinks the installed `libLLVM-22.so` into `lib/Ashes/linux-x64/libLLVM.so`.
+then copies the installed `libLLVM-22.so` into `lib/Ashes/linux-x64/libLLVM.so`.
 
-### Windows – download from LLVM release
+### Windows – download DLL + optional Linux .so via WSL
 
 The official Windows release (`clang+llvm-*-x86_64-pc-windows-msvc.tar.xz`)
 ships `LLVM-C.dll`, the shared C API library.
 
 ```powershell
-.\scripts\download-llvm-native.ps1                       # default: 22.1.2
-.\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3   # or specify a version
+# Windows DLL only (sufficient for Windows-only development)
+.\scripts\download-llvm-native.ps1
+
+# Windows DLL + Linux .so via WSL (for cross-platform builds)
+.\scripts\download-llvm-native.ps1 -Linux
+
+# Specify a different LLVM version
+.\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3 -Linux
 ```
 
-This downloads `LLVM-C.dll` and renames it to `libLLVM.dll` in
-`lib/Ashes/win-x64/`.
+The `-Linux` switch invokes the bash script inside WSL, which runs
+`apt install libllvm22` and copies the `.so` into the repo's
+`lib/Ashes/linux-x64/` directory — accessible from the Windows side.
+
+> **Prerequisites for `-Linux`:** WSL with Ubuntu installed.
+> Install with: `wsl --install -d Ubuntu`
 
 ### Result
 
 ```
 lib/Ashes/
-  linux-x64/libLLVM.so   ← symlink to /usr/lib/.../libLLVM-22.so (from apt)
+  linux-x64/libLLVM.so   ← libLLVM-22.so from apt (native Linux or WSL)
   win-x64/libLLVM.dll     ← LLVM-C.dll from LLVM release, renamed
 ```
 
