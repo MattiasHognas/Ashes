@@ -1,6 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -136,6 +139,14 @@ public sealed class LinuxBackendCoverageTests
     public void Linux_backend_llvm_support_check_should_accept_file_programs()
     {
         var ir = LowerExpression("""match Ashes.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0""");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_network_programs()
+    {
+        var ir = LowerExpression("""match Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg""");
 
         SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
     }
@@ -347,6 +358,153 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_run_tcp_connect_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> Ashes.IO.print(msg) | Ok(sock) -> match Ashes.Net.Tcp.close(sock) with | Ok(_) -> Ashes.IO.print("ok") | Error(msg) -> Ashes.IO.print(msg)""",
+            async _ => await Task.Delay(100));
+        result.Stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_resolve_localhost_tcp_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Net.Tcp.connect("localhost")(__PORT__) with | Error(msg) -> Ashes.IO.print(msg) | Ok(sock) -> match Ashes.Net.Tcp.close(sock) with | Ok(_) -> Ashes.IO.print("ok") | Error(msg) -> Ashes.IO.print(msg)""",
+            async _ => await Task.Delay(100));
+        result.Stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_tcp_send_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> Ashes.IO.print(msg) | Ok(sock) -> match Ashes.Net.Tcp.send(sock)("hello") with | Ok(n) -> Ashes.IO.print(n) | Error(msg) -> Ashes.IO.print(msg)""",
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                (await ReadTextAsync(stream, 64)).ShouldBe("hello");
+            });
+        result.Stdout.ShouldBe("5\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_tcp_receive_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> Ashes.IO.print(msg) | Ok(sock) -> match Ashes.Net.Tcp.receive(sock)(64) with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                var payload = Encoding.UTF8.GetBytes("hello");
+                await stream.WriteAsync(payload);
+                await stream.FlushAsync();
+            });
+        result.Stdout.ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_http_get_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Http.get("http://__HOST__:__PORT__/hello") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET /hello HTTP/1.1");
+                request.ShouldContain("Host: 127.0.0.1");
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from http");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            });
+        result.Stdout.ShouldBe("hello from http\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_http_post_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Http.post("http://__HOST__:__PORT__/echo")("hello") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("POST /echo HTTP/1.1");
+                request.ShouldContain("Content-Length: 5");
+                request.ShouldContain("\r\n\r\nhello");
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nposted");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            });
+        result.Stdout.ShouldBe("posted\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_report_https_not_supported()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.Http.get("https://example.com") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""");
+        result.Stdout.ShouldBe("https not supported\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_report_http_non_success_statuses()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmLoopbackAsync(
+            """match Ashes.Http.get("http://__HOST__:__PORT__/missing") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nmissing");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            });
+        result.Stdout.ShouldBe("HTTP 404\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_float_arithmetic_and_comparisons()
     {
         if (!OperatingSystem.IsLinux())
@@ -523,6 +681,19 @@ public sealed class LinuxBackendCoverageTests
         return new ExecutionResult(stdout, stderr, proc.ExitCode);
     }
 
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var serverTask = RunLoopbackServerAsync(listener, handleClientAsync);
+        var result = await CompileRunWithLinuxLlvmAsync(source);
+        var serverException = await serverTask;
+        serverException.ShouldBeNull(serverException?.ToString());
+        return result;
+    }
+
     private static async Task<Process> StartProcessWithRetryAsync(ProcessStartInfo psi)
     {
         const int textFileBusyError = 26;
@@ -538,6 +709,58 @@ public sealed class LinuxBackendCoverageTests
                 await Task.Delay(20 * (attempt + 1));
             }
         }
+    }
+
+    private static async Task<Exception?> RunLoopbackServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
+    {
+        try
+        {
+            using var acceptCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+            client.ReceiveTimeout = 5000;
+            client.SendTimeout = 5000;
+            await handleClientAsync(client);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static async Task<string> ReadTextAsync(NetworkStream stream, int maxBytes)
+    {
+        var buffer = new byte[maxBytes];
+        var total = 0;
+
+        while (total < buffer.Length)
+        {
+            try
+            {
+                using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                total += count;
+                if (!stream.DataAvailable)
+                {
+                    break;
+                }
+            }
+            catch (IOException) when (total > 0)
+            {
+                break;
+            }
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, total);
     }
 
     private static string CreateTempDirectory()

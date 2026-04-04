@@ -154,6 +154,14 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_llvm_support_check_should_accept_network_programs()
+    {
+        var ir = LowerExpression("""match Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg""");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_panic_programs()
     {
         var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
