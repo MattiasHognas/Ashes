@@ -535,6 +535,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstInt loadConstInt => StoreTemp(state, loadConstInt.Target, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)loadConstInt.Value), true)),
             IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LLVMValueRef.CreateConstReal(state.F64, loadConstFloat.Value)),
             IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
+            // Constant strings must remain valid when closures return them or wrap them in ADTs.
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitHeapStringLiteral(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
