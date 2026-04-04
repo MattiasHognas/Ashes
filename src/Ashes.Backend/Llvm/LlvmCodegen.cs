@@ -9,7 +9,7 @@ internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
-    private const int FileReadLimitBytes = 1024 * 1024;
+    private const int MaxFileReadBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
     private const uint StdInputHandle = 0xFFFFFFF6;
@@ -19,6 +19,9 @@ internal static class LlvmCodegen
     private const long SyscallClose = 3;
     private const long SyscallLseek = 8;
     private const long SyscallExit = 60;
+    private const string FileReadFailedMessage = "Ashes.File.readText() failed";
+    private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
+    private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
     {
@@ -1030,7 +1033,7 @@ internal static class LlvmCodegen
         builder.BuildCondBr(seekStartFailed, maybeCloseErrorBlock, allocBlock);
 
         builder.PositionAtEnd(allocBlock);
-        LLVMValueRef exceedsLimit = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, fileLength, LLVMValueRef.CreateConstInt(state.I64, FileReadLimitBytes, false), "fs_read_exceeds_limit");
+        LLVMValueRef exceedsLimit = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, fileLength, LLVMValueRef.CreateConstInt(state.I64, MaxFileReadBytes, false), "fs_read_exceeds_limit");
         var withinLimitBlock = state.Function.AppendBasicBlock("fs_read_within_limit");
         builder.BuildCondBr(exceedsLimit, maybeCloseErrorBlock, withinLimitBlock);
 
@@ -1093,7 +1096,7 @@ internal static class LlvmCodegen
             LLVMValueRef.CreateConstInt(state.I64, 0, false),
             LLVMValueRef.CreateConstInt(state.I64, 0, false),
             "fs_read_close_invalid_call");
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() encountered invalid UTF-8")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileReadInvalidUtf8Message)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(maybeCloseErrorBlock);
@@ -1112,7 +1115,7 @@ internal static class LlvmCodegen
         builder.BuildBr(returnErrorBlock);
 
         builder.PositionAtEnd(returnErrorBlock);
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() failed")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileReadFailedMessage)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(closeErrorBlock);
@@ -1208,7 +1211,7 @@ internal static class LlvmCodegen
         builder.BuildBr(returnErrorBlock);
 
         builder.PositionAtEnd(returnErrorBlock);
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.writeText() failed")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(continueBlock);
@@ -1291,13 +1294,13 @@ internal static class LlvmCodegen
         builder.BuildCondBr(openFailed, returnErrorBlock, readBlock);
 
         builder.PositionAtEnd(readBlock);
-        LLVMValueRef stringRef = EmitAllocDynamic(state, LLVMValueRef.CreateConstInt(state.I64, FileReadLimitBytes + 8, false));
+        LLVMValueRef stringRef = EmitAllocDynamic(state, LLVMValueRef.CreateConstInt(state.I64, MaxFileReadBytes + 8, false));
         StoreMemory(state, stringRef, 0, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_win_len_init");
         LLVMValueRef readSucceeded = EmitWindowsReadFile(
             state,
             builder.BuildLoad2(state.I64, handleSlot, "fs_read_handle_value"),
             GetStringBytesPointer(state, stringRef, "fs_read_win_bytes"),
-            LLVMValueRef.CreateConstInt(state.I32, FileReadLimitBytes, false),
+            LLVMValueRef.CreateConstInt(state.I32, MaxFileReadBytes, false),
             bytesReadSlot,
             "fs_read_win_read_call");
         builder.BuildStore(builder.BuildZExt(builder.BuildLoad2(state.I32, bytesReadSlot, "fs_read_bytes_read_value"), state.I64, "fs_read_bytes_i64"), GetMemoryPointer(state, stringRef, 0, "fs_read_win_len_ptr"));
@@ -1319,7 +1322,7 @@ internal static class LlvmCodegen
 
         builder.PositionAtEnd(closeInvalidBlock);
         EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_read_invalid_handle"), "fs_read_close_invalid");
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() encountered invalid UTF-8")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileReadInvalidUtf8Message)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(closeErrorBlock);
@@ -1327,7 +1330,7 @@ internal static class LlvmCodegen
         builder.BuildBr(returnErrorBlock);
 
         builder.PositionAtEnd(returnErrorBlock);
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() failed")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileReadFailedMessage)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(continueBlock);
@@ -1417,7 +1420,7 @@ internal static class LlvmCodegen
         builder.BuildBr(returnErrorBlock);
 
         builder.PositionAtEnd(returnErrorBlock);
-        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.writeText() failed")), resultSlot);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         builder.BuildBr(continueBlock);
 
         builder.PositionAtEnd(continueBlock);

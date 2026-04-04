@@ -285,10 +285,10 @@ public sealed class WindowsBackendCoverageTests
         var tmpDir = CreateTempDirectory();
         try
         {
-            await File.WriteAllBytesAsync(Path.Combine(tmpDir, "bad.bin"), [0xFF, 0xFE, 0xFD]);
+            await File.WriteAllBytesAsync(Path.Combine(tmpDir, "invalid_utf8.bin"), [0xFF, 0xFE, 0xFD]);
 
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match Ashes.File.readText("bad.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir);
             result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
         }
