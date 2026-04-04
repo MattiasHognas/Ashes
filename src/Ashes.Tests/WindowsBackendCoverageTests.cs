@@ -176,6 +176,42 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_run_heap_backed_tuple_and_list_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b) | _ -> Ashes.IO.print(0)");
+        result.Stdout.ShouldBe("8\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_string_compare_and_concat_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("if (\"he\" + \"llo\") == \"hello\" then Ashes.IO.print(42) else Ashes.IO.print(0)");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_print_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.write(\"hi\")");
+        result.Stdout.ShouldBe("hi");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_run_panic_programs()
     {
         if (!OperatingSystem.IsWindows())

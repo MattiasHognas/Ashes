@@ -179,6 +179,42 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_run_heap_backed_tuple_and_list_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b) | _ -> Ashes.IO.print(0)");
+        result.Stdout.ShouldBe("8\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_string_compare_and_concat_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync("if (\"he\" + \"llo\") == \"hello\" then Ashes.IO.print(42) else Ashes.IO.print(0)");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_print_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync("Ashes.IO.write(\"hi\")");
+        result.Stdout.ShouldBe("hi");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
