@@ -71,7 +71,6 @@ examples/*.exe
 llvm-material
 lib/Ashes/win-x64/
 lib/Ashes/linux-x64/
-src/Ashes.Backend/runtimes/
 
 # Personal files
 PLANNED_ISSUES*.md

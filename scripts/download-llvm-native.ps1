@@ -1,7 +1,7 @@
 # download-llvm-native.ps1
 # Downloads LLVM native libraries from official LLVM GitHub releases and places
-# them into src/Ashes.Backend/runtimes/{rid}/native/ so the .csproj can copy
-# them to the build output.
+# them into lib/Ashes/{linux,win}-x64/ alongside the existing LLVM tool bundle.
+# The publish scripts already copy the whole lib/ tree to the output.
 #
 # Usage:
 #   .\scripts\download-llvm-native.ps1                     # uses default version 22.1.2
@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 $LlvmMajor = $LlvmVersion.Split('.')[0]
 $ScriptDir = $PSScriptRoot
 $RepoRoot  = (Resolve-Path "$ScriptDir/..").Path
-$RuntimesDir = Join-Path $RepoRoot 'src/Ashes.Backend/runtimes'
+$LibDir    = Join-Path $RepoRoot 'lib/Ashes'
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "ashes-llvm-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
 
 New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
@@ -26,8 +26,8 @@ New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 $LinuxUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/LLVM-$LlvmVersion-Linux-X64.tar.xz"
 $WinUrl   = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/clang+llvm-$LlvmVersion-x86_64-pc-windows-msvc.tar.xz"
 
-$LinuxOut = Join-Path $RuntimesDir 'linux-x64/native'
-$WinOut   = Join-Path $RuntimesDir 'win-x64/native'
+$LinuxOut = Join-Path $LibDir 'linux-x64'
+$WinOut   = Join-Path $LibDir 'win-x64'
 
 New-Item -ItemType Directory -Force -Path $LinuxOut | Out-Null
 New-Item -ItemType Directory -Force -Path $WinOut   | Out-Null
@@ -78,6 +78,7 @@ try {
         throw "Could not find LLVM-C.dll in Windows archive"
     }
 
+    # Rename LLVM-C.dll -> libLLVM.dll to match DllImport name ("libLLVM")
     Copy-Item -Path $llvmCDll.FullName -Destination (Join-Path $WinOut 'libLLVM.dll') -Force
     $size = [math]::Round((Get-Item (Join-Path $WinOut 'libLLVM.dll')).Length / 1MB, 1)
     Write-Host "  -> $WinOut/libLLVM.dll ($size MB)"
@@ -89,7 +90,7 @@ try {
     Write-Host "  $LinuxOut/libLLVM.so"
     Write-Host "  $WinOut/libLLVM.dll"
     Write-Host ""
-    Write-Host "These will be copied to the build output by Ashes.Backend.csproj."
+    Write-Host "These are copied to the build output by Ashes.Backend.csproj."
 }
 finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue

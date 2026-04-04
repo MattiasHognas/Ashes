@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # download-llvm-native.sh
 # Downloads LLVM native libraries from official LLVM GitHub releases and places
-# them into src/Ashes.Backend/runtimes/{rid}/native/ so the .csproj can copy
-# them to the build output.
+# them into lib/Ashes/{linux,win}-x64/ alongside the existing LLVM tool bundle.
+# The publish scripts already copy the whole lib/ tree to the output.
 #
 # Usage:
 #   ./scripts/download-llvm-native.sh              # uses default version 22.1.2
@@ -17,7 +17,7 @@ LLVM_MAJOR="${LLVM_VERSION%%.*}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNTIMES_DIR="$REPO_ROOT/src/Ashes.Backend/runtimes"
+LIB_DIR="$REPO_ROOT/lib/Ashes"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() { rm -rf "$TMP_DIR"; }
@@ -26,8 +26,8 @@ trap cleanup EXIT
 LINUX_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
 WIN_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/clang+llvm-${LLVM_VERSION}-x86_64-pc-windows-msvc.tar.xz"
 
-LINUX_OUT="$RUNTIMES_DIR/linux-x64/native"
-WIN_OUT="$RUNTIMES_DIR/win-x64/native"
+LINUX_OUT="$LIB_DIR/linux-x64"
+WIN_OUT="$LIB_DIR/win-x64"
 mkdir -p "$LINUX_OUT" "$WIN_OUT"
 
 # ── Linux x64 ────────────────────────────────────────────────────────────────
@@ -66,6 +66,8 @@ if [ -z "$WIN_DLL" ]; then
 fi
 
 cp "$WIN_DLL" "$WIN_OUT/libLLVM.dll"
+# Renamed from LLVM-C.dll to libLLVM.dll to match the DllImport name ("libLLVM")
+# used by LLVMSharp and the future P/Invoke layer.
 echo "  -> $WIN_OUT/libLLVM.dll ($(du -h "$WIN_OUT/libLLVM.dll" | cut -f1))"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
@@ -75,4 +77,4 @@ echo "Native libraries installed into:"
 echo "  $LINUX_OUT/libLLVM.so"
 echo "  $WIN_OUT/libLLVM.dll"
 echo ""
-echo "These will be copied to the build output by Ashes.Backend.csproj."
+echo "These are copied to the build output by Ashes.Backend.csproj."
