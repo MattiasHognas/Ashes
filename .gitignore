@@ -69,8 +69,7 @@ examples/*.exe
 /*.txt
 *.received.txt
 llvm-material
-lib/Ashes/win-x64/
-lib/Ashes/linux-x64/
+
 
 # Personal files
 PLANNED_ISSUES*.md

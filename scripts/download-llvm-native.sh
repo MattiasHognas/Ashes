@@ -31,10 +31,11 @@ echo "=== Installing LLVM ${LLVM_MAJOR} shared library via apt ==="
 # Add the official LLVM apt repository if the package is not already available
 if ! apt-cache show "libllvm${LLVM_MAJOR}" &>/dev/null; then
     echo "Adding LLVM apt repository..."
-    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+        | gpg --dearmor | sudo tee /usr/share/keyrings/llvm-archive-keyring.gpg > /dev/null
     # Detect Ubuntu codename (e.g. jammy, noble)
     CODENAME=$(lsb_release -cs 2>/dev/null || echo "noble")
-    echo "deb http://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main" \
+    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main" \
         | sudo tee /etc/apt/sources.list.d/llvm-${LLVM_MAJOR}.list
     sudo apt-get update -qq
 fi
