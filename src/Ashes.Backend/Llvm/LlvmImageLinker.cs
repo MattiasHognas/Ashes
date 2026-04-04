@@ -72,6 +72,8 @@ internal static class LlvmImageLinker
 
         var rdata = new PEStreamSectionData();
         var extraSectionOffsets = new Dictionary<int, uint>();
+        uint bssTotalSize = 0;
+        var bssSectionOffsets = new Dictionary<int, uint>();
         for (int sectionIndex = 0; sectionIndex < parsed.Sections.Length; sectionIndex++)
         {
             CoffSectionHeader section = parsed.Sections[sectionIndex];
@@ -80,6 +82,16 @@ internal static class LlvmImageLinker
             bool isDataSection = section.Name is ".rdata" or ".data" or ".bss";
             if (sectionNumber == parsed.TextSectionNumber || totalSize == 0 || !isDataSection)
             {
+                continue;
+            }
+
+            bool isBss = section.Name == ".bss" || (section.PointerToRawData == 0 && totalSize > 0);
+            if (isBss)
+            {
+                uint bssAlign = (16 - (bssTotalSize % 16)) % 16;
+                bssTotalSize += bssAlign;
+                bssSectionOffsets[sectionNumber] = bssTotalSize;
+                bssTotalSize += totalSize;
                 continue;
             }
 
@@ -169,6 +181,15 @@ internal static class LlvmImageLinker
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
             pair => PeImageBase + rdataRva + pair.Value);
+        uint bssRva = 0;
+        if (bssTotalSize > 0)
+        {
+            bssRva = AlignUp(checked(rdataRva + (uint)rdata.Stream.Length + PeSectionAlignment), PeSectionAlignment);
+            foreach (var pair in bssSectionOffsets)
+            {
+                sectionBaseVas[pair.Key] = PeImageBase + bssRva + pair.Value;
+            }
+        }
         ApplyCoffTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -216,6 +237,12 @@ internal static class LlvmImageLinker
         rdataSection.Content.Add(shell32Ilt);
         rdataSection.Content.Add(ws2Ilt);
         rdataSection.Content.Add(importDirectory);
+
+        if (bssTotalSize > 0)
+        {
+            var bssSection = pe.AddSection(PESectionName.Bss, bssRva);
+            bssSection.SetVirtualSizeModeToFixed(bssTotalSize);
+        }
 
         pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);
         pe.OptionalHeader.BaseOfCode = textSection;
@@ -593,7 +620,7 @@ internal static class LlvmImageLinker
 
         if (sectionBaseVas.TryGetValue(symbol.SectionNumber, out ulong sectionBaseVa))
         {
-            return sectionBaseVa + NormalizeCoffSectionValue(symbol.Value);
+            return sectionBaseVa + symbol.Value;
         }
 
         if (symbol.SectionNumber == 0 && importSymbolVas.TryGetValue(symbol.Name, out ulong importVa))
@@ -602,15 +629,6 @@ internal static class LlvmImageLinker
         }
 
         throw new InvalidOperationException($"LLVM COFF text relocation targeted unsupported symbol '{symbol.Name}' in section {symbol.SectionNumber}.");
-    }
-
-    private static ulong NormalizeCoffSectionValue(uint value)
-    {
-        // LLVM can emit non-.text COFF symbols like __ashes_heap_cursor with an image-base-biased
-        // value even though sectionBaseVas already includes the final PE image base.
-        return value >= PeImageBase
-            ? value - PeImageBase
-            : value;
     }
 
     private static void SetPeImageBase(PEOptionalHeader optionalHeader, ulong imageBase)
