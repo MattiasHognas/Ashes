@@ -1,7 +1,8 @@
 # download-llvm-native.ps1
-# Downloads LLVM native libraries from official LLVM GitHub releases and places
-# them into lib/Ashes/{linux,win}-x64/ alongside the existing LLVM tool bundle.
-# The publish scripts already copy the whole lib/ tree to the output.
+# Downloads LLVM-C.dll from the official LLVM GitHub release for Windows
+# development, and renames it to libLLVM.dll to match the DllImport name.
+#
+# For Linux, use scripts/download-llvm-native.sh which installs libLLVM via apt.
 #
 # Usage:
 #   .\scripts\download-llvm-native.ps1                     # uses default version 22.1.2
@@ -15,7 +16,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$LlvmMajor = $LlvmVersion.Split('.')[0]
 $ScriptDir = $PSScriptRoot
 $RepoRoot  = (Resolve-Path "$ScriptDir/..").Path
 $LibDir    = Join-Path $RepoRoot 'lib/Ashes'
@@ -23,47 +23,14 @@ $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "ashes-llvm-$([Guid]::NewG
 
 New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 
-$LinuxUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/LLVM-$LlvmVersion-Linux-X64.tar.xz"
-$WinUrl   = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/clang+llvm-$LlvmVersion-x86_64-pc-windows-msvc.tar.xz"
+$WinUrl = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/clang+llvm-$LlvmVersion-x86_64-pc-windows-msvc.tar.xz"
+$WinOut = Join-Path $LibDir 'win-x64'
 
-$LinuxOut = Join-Path $LibDir 'linux-x64'
-$WinOut   = Join-Path $LibDir 'win-x64'
-
-New-Item -ItemType Directory -Force -Path $LinuxOut | Out-Null
-New-Item -ItemType Directory -Force -Path $WinOut   | Out-Null
+New-Item -ItemType Directory -Force -Path $WinOut | Out-Null
 
 try {
-    # ── Linux x64 ────────────────────────────────────────────────────────────
     Write-Host ""
-    Write-Host "=== Downloading LLVM $LlvmVersion Linux x64 ==="
-    $linuxArchive = Join-Path $TmpDir 'llvm-linux.tar.xz'
-    Invoke-WebRequest -Uri $LinuxUrl -OutFile $linuxArchive -UseBasicParsing
-
-    Write-Host "Extracting libLLVM..."
-    $linuxExtract = Join-Path $TmpDir 'linux'
-    New-Item -ItemType Directory -Force -Path $linuxExtract | Out-Null
-    tar -xf $linuxArchive -C $linuxExtract
-
-    # Find the real shared library (prefer versioned name, fall back to .so.*)
-    $libLlvm = Get-ChildItem -Path $linuxExtract -Recurse -Filter "libLLVM-$LlvmMajor.so" |
-        Where-Object { -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) } |
-        Select-Object -First 1
-    if (-not $libLlvm) {
-        $libLlvm = Get-ChildItem -Path $linuxExtract -Recurse -Filter "libLLVM.so.*" |
-            Where-Object { -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) } |
-            Select-Object -First 1
-    }
-    if (-not $libLlvm) {
-        throw "Could not find libLLVM shared library in Linux archive"
-    }
-
-    Copy-Item -Path $libLlvm.FullName -Destination (Join-Path $LinuxOut 'libLLVM.so') -Force
-    $size = [math]::Round((Get-Item (Join-Path $LinuxOut 'libLLVM.so')).Length / 1MB, 1)
-    Write-Host "  -> $LinuxOut/libLLVM.so ($size MB)"
-
-    # ── Windows x64 ──────────────────────────────────────────────────────────
-    Write-Host ""
-    Write-Host "=== Downloading LLVM $LlvmVersion Windows x64 ==="
+    Write-Host "=== Downloading LLVM $LlvmVersion Windows x64 (LLVM-C.dll) ==="
     $winArchive = Join-Path $TmpDir 'llvm-win.tar.xz'
     Invoke-WebRequest -Uri $WinUrl -OutFile $winArchive -UseBasicParsing
 
@@ -83,14 +50,15 @@ try {
     $size = [math]::Round((Get-Item (Join-Path $WinOut 'libLLVM.dll')).Length / 1MB, 1)
     Write-Host "  -> $WinOut/libLLVM.dll ($size MB)"
 
-    # ── Summary ──────────────────────────────────────────────────────────────
     Write-Host ""
     Write-Host "=== Done (LLVM $LlvmVersion) ==="
-    Write-Host "Native libraries installed into:"
-    Write-Host "  $LinuxOut/libLLVM.so"
+    Write-Host "Windows native library installed into:"
     Write-Host "  $WinOut/libLLVM.dll"
     Write-Host ""
-    Write-Host "These are copied to the build output by Ashes.Backend.csproj."
+    Write-Host "This is copied to the build output by Ashes.Backend.csproj."
+    Write-Host ""
+    Write-Host "NOTE: For Linux, run ./scripts/download-llvm-native.sh which"
+    Write-Host "      installs libLLVM-$($LlvmVersion.Split('.')[0]).so via apt."
 }
 finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue

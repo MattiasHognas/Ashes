@@ -24,26 +24,40 @@ After the migration:
 
 ---
 
-## Step 0 – Download native libraries
+## Step 0 – Provision native libraries
 
-Run one of:
+### Linux – apt install
+
+The official LLVM 22+ Linux release only ships static `.a` archives — **no shared
+`libLLVM.so`**. Use `apt` to install the shared library:
 
 ```bash
-# Linux / macOS
-./scripts/download-llvm-native.sh            # default: 22.1.2
-./scripts/download-llvm-native.sh 22.1.3     # or specify a version
-
-# Windows PowerShell
-.\scripts\download-llvm-native.ps1
-.\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3
+./scripts/download-llvm-native.sh        # default major = 22
+./scripts/download-llvm-native.sh 23     # or specify a different major
 ```
 
-This places:
+This runs `sudo apt-get install libllvm22` (adding the LLVM apt repo if needed),
+then symlinks the installed `libLLVM-22.so` into `lib/Ashes/linux-x64/libLLVM.so`.
+
+### Windows – download from LLVM release
+
+The official Windows release (`clang+llvm-*-x86_64-pc-windows-msvc.tar.xz`)
+ships `LLVM-C.dll`, the shared C API library.
+
+```powershell
+.\scripts\download-llvm-native.ps1                       # default: 22.1.2
+.\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3   # or specify a version
+```
+
+This downloads `LLVM-C.dll` and renames it to `libLLVM.dll` in
+`lib/Ashes/win-x64/`.
+
+### Result
 
 ```
 lib/Ashes/
-  linux-x64/libLLVM.so    ← libLLVM-22.so from LLVM release (contains C API)
-  win-x64/libLLVM.dll      ← LLVM-C.dll from LLVM release, renamed to libLLVM.dll
+  linux-x64/libLLVM.so   ← symlink to /usr/lib/.../libLLVM-22.so (from apt)
+  win-x64/libLLVM.dll     ← LLVM-C.dll from LLVM release, renamed
 ```
 
 > The files are named `libLLVM.{so,dll}` to match the existing DllImport name

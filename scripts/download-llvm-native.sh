@@ -1,80 +1,115 @@
 #!/usr/bin/env bash
 # download-llvm-native.sh
-# Downloads LLVM native libraries from official LLVM GitHub releases and places
-# them into lib/Ashes/{linux,win}-x64/ alongside the existing LLVM tool bundle.
-# The publish scripts already copy the whole lib/ tree to the output.
+# Provisions LLVM native libraries for Ashes development/CI.
+#
+# Linux:   installs libLLVM-<major>.so via apt (the official LLVM 22+ Linux
+#          release only ships static .a libraries, so apt is the simplest way
+#          to get the shared library).
+# Windows: downloads LLVM-C.dll from the official LLVM GitHub release and
+#          renames it to libLLVM.dll to match the DllImport name.
 #
 # Usage:
-#   ./scripts/download-llvm-native.sh              # uses default version 22.1.2
-#   ./scripts/download-llvm-native.sh 22.1.3       # specify a different version
+#   ./scripts/download-llvm-native.sh              # default LLVM major = 22
+#   ./scripts/download-llvm-native.sh 23           # specify a different major
 #
-# Prerequisites: curl, tar (with xz support)
+# Prerequisites:
+#   Linux  – apt / sudo, wget (for apt repo key)
+#   Windows (Git Bash / WSL) – curl, tar
 
 set -euo pipefail
 
-LLVM_VERSION="${1:-22.1.2}"
-LLVM_MAJOR="${LLVM_VERSION%%.*}"
+LLVM_MAJOR="${1:-22}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB_DIR="$REPO_ROOT/lib/Ashes"
-TMP_DIR="$(mktemp -d)"
 
-cleanup() { rm -rf "$TMP_DIR"; }
-trap cleanup EXIT
+# ── Linux ─────────────────────────────────────────────────────────────────────
+install_linux() {
+    echo ""
+    echo "=== Installing LLVM ${LLVM_MAJOR} shared library via apt ==="
 
-LINUX_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
-WIN_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/clang+llvm-${LLVM_VERSION}-x86_64-pc-windows-msvc.tar.xz"
+    # Add the official LLVM apt repository if not already present
+    if ! apt-cache show "libllvm${LLVM_MAJOR}" &>/dev/null; then
+        echo "Adding LLVM apt repository..."
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        # Detect Ubuntu codename (e.g. jammy, noble)
+        CODENAME=$(lsb_release -cs 2>/dev/null || echo "noble")
+        echo "deb http://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-${LLVM_MAJOR}.list
+        sudo apt-get update -qq
+    fi
 
-LINUX_OUT="$LIB_DIR/linux-x64"
-WIN_OUT="$LIB_DIR/win-x64"
-mkdir -p "$LINUX_OUT" "$WIN_OUT"
+    sudo apt-get install -y -qq "libllvm${LLVM_MAJOR}"
 
-# ── Linux x64 ────────────────────────────────────────────────────────────────
+    # Verify the shared library exists
+    SO_PATH=$(ldconfig -p | grep "libLLVM-${LLVM_MAJOR}.so" | awk '{print $NF}' | head -1)
+    if [ -z "$SO_PATH" ]; then
+        SO_PATH="/usr/lib/x86_64-linux-gnu/libLLVM-${LLVM_MAJOR}.so"
+    fi
+
+    if [ ! -f "$SO_PATH" ]; then
+        echo "ERROR: libLLVM-${LLVM_MAJOR}.so not found after install" >&2
+        exit 1
+    fi
+
+    echo "  -> $SO_PATH ($(du -h "$SO_PATH" | cut -f1))"
+
+    # Symlink into lib/Ashes/linux-x64/ so the csproj can copy it to build output
+    LINUX_OUT="$LIB_DIR/linux-x64"
+    mkdir -p "$LINUX_OUT"
+    ln -sf "$SO_PATH" "$LINUX_OUT/libLLVM.so"
+    echo "  -> Symlinked to $LINUX_OUT/libLLVM.so"
+}
+
+# ── Windows (LLVM-C.dll from official release) ───────────────────────────────
+install_windows_dll() {
+    # Determine the latest patch version for this major.
+    # Default to .1.2 which is a common patch; override with LLVM_VERSION env var.
+    LLVM_VERSION="${LLVM_VERSION:-${LLVM_MAJOR}.1.2}"
+
+    echo ""
+    echo "=== Downloading LLVM ${LLVM_VERSION} Windows x64 (LLVM-C.dll) ==="
+
+    TMP_DIR="$(mktemp -d)"
+    cleanup() { rm -rf "$TMP_DIR"; }
+    trap cleanup EXIT
+
+    WIN_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/clang+llvm-${LLVM_VERSION}-x86_64-pc-windows-msvc.tar.xz"
+    WIN_OUT="$LIB_DIR/win-x64"
+    mkdir -p "$WIN_OUT"
+
+    curl -fSL --progress-bar "$WIN_URL" -o "$TMP_DIR/llvm-win.tar.xz"
+
+    echo "Extracting LLVM-C.dll..."
+    tar -xf "$TMP_DIR/llvm-win.tar.xz" -C "$TMP_DIR" --wildcards "*/bin/LLVM-C.dll"
+
+    WIN_DLL=$(find "$TMP_DIR" -name "LLVM-C.dll" -type f | head -1)
+    if [ -z "$WIN_DLL" ]; then
+        echo "ERROR: Could not find LLVM-C.dll in Windows archive" >&2
+        exit 1
+    fi
+
+    # Rename to libLLVM.dll to match the DllImport name ("libLLVM")
+    cp "$WIN_DLL" "$WIN_OUT/libLLVM.dll"
+    echo "  -> $WIN_OUT/libLLVM.dll ($(du -h "$WIN_OUT/libLLVM.dll" | cut -f1))"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "$(uname -s)" in
+    Linux*)
+        install_linux
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        install_windows_dll
+        ;;
+    *)
+        echo "Unsupported OS: $(uname -s)" >&2
+        echo "On Linux, run this script directly."
+        echo "On Windows, use scripts/download-llvm-native.ps1 instead."
+        exit 1
+        ;;
+esac
+
 echo ""
-echo "=== Downloading LLVM ${LLVM_VERSION} Linux x64 ==="
-curl -fSL --progress-bar "$LINUX_URL" -o "$TMP_DIR/llvm-linux.tar.xz"
-
-echo "Extracting libLLVM..."
-tar -xf "$TMP_DIR/llvm-linux.tar.xz" -C "$TMP_DIR" --wildcards "*/lib/libLLVM*"
-
-# Find the real shared library (not a symlink)
-LINUX_LIB=$(find "$TMP_DIR" -name "libLLVM-${LLVM_MAJOR}.so" -type f 2>/dev/null | head -1)
-if [ -z "$LINUX_LIB" ]; then
-    LINUX_LIB=$(find "$TMP_DIR" -name "libLLVM.so*" ! -type l 2>/dev/null | head -1)
-fi
-if [ -z "$LINUX_LIB" ]; then
-    echo "ERROR: Could not find libLLVM shared library in Linux archive" >&2
-    exit 1
-fi
-
-cp "$LINUX_LIB" "$LINUX_OUT/libLLVM.so"
-echo "  -> $LINUX_OUT/libLLVM.so ($(du -h "$LINUX_OUT/libLLVM.so" | cut -f1))"
-
-# ── Windows x64 ──────────────────────────────────────────────────────────────
-echo ""
-echo "=== Downloading LLVM ${LLVM_VERSION} Windows x64 ==="
-curl -fSL --progress-bar "$WIN_URL" -o "$TMP_DIR/llvm-win.tar.xz"
-
-echo "Extracting LLVM-C.dll..."
-tar -xf "$TMP_DIR/llvm-win.tar.xz" -C "$TMP_DIR" --wildcards "*/bin/LLVM-C.dll"
-
-WIN_DLL=$(find "$TMP_DIR" -name "LLVM-C.dll" -type f | head -1)
-if [ -z "$WIN_DLL" ]; then
-    echo "ERROR: Could not find LLVM-C.dll in Windows archive" >&2
-    exit 1
-fi
-
-cp "$WIN_DLL" "$WIN_OUT/libLLVM.dll"
-# Renamed from LLVM-C.dll to libLLVM.dll to match the DllImport name ("libLLVM")
-# used by LLVMSharp and the future P/Invoke layer.
-echo "  -> $WIN_OUT/libLLVM.dll ($(du -h "$WIN_OUT/libLLVM.dll" | cut -f1))"
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Done (LLVM ${LLVM_VERSION}) ==="
-echo "Native libraries installed into:"
-echo "  $LINUX_OUT/libLLVM.so"
-echo "  $WIN_OUT/libLLVM.dll"
-echo ""
-echo "These are copied to the build output by Ashes.Backend.csproj."
+echo "=== Done (LLVM ${LLVM_MAJOR}) ==="
