@@ -140,8 +140,10 @@ are used.
 #### Updating LLVM native libraries
 
 The native libraries live in `runtimes/{linux-x64,win-x64}/` and are
-**not** checked into Git (see `.gitignore`). They must be provisioned
-before building `Ashes.Backend`:
+tracked in this repository via Git LFS. After cloning or switching
+commits, run `git lfs pull` if the actual native library files have not
+been fetched yet. They can also be provisioned or refreshed before
+building `Ashes.Backend` with the following scripts:
 
 | Platform | Command |
 |----------|---------|
