@@ -128,11 +128,34 @@ the target ID.
 
 ### External dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| LLVMSharp | 20.1.2 | .NET bindings to LLVM C API |
-| libLLVM.runtime.{linux,win}-x64 | 20.1.2 | Native LLVM libraries |
-| LibObjectFile | 2.1.0 | ELF64 and PE32+ executable construction |
+| Dependency | Source | Purpose |
+|------------|--------|---------|
+| libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
+| LibObjectFile | NuGet 2.1.0 | ELF64 and PE32+ executable construction |
+
+The compiler talks to LLVM through a thin P/Invoke interop layer
+(`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
+are used.
+
+#### Updating LLVM native libraries
+
+The native libraries live in `lib/Ashes/{linux-x64,win-x64}/` and are
+**not** checked into Git (see `.gitignore`). They must be provisioned
+before building `Ashes.Backend`:
+
+| Platform | Command |
+|----------|---------|
+| Linux / WSL | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) |
+| Windows | `.\scripts\download-llvm-native.ps1 [-LlvmVersion X.Y.Z]` |
+| Windows + Linux .so | `.\scripts\download-llvm-native.ps1 -Linux` |
+
+`Ashes.Backend.csproj` contains OS-conditional `<None>` items that copy
+the appropriate native library to the build output directory so that
+`dotnet run` / `dotnet test` can locate it at runtime.
+
+To bump the LLVM version, pass the new version to the download script —
+no source changes are needed because the LLVM C API is stable across
+releases.
 
 ------------------------------------------------------------------------
 

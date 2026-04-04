@@ -31,7 +31,13 @@ foreach ($RID in @("win-x64", "linux-x64")) {
         Remove-Item (Join-Path $OutputDir "lib") -Recurse -Force
     }
 
-    Copy-Item $LibSource (Join-Path $OutputDir "lib") -Recurse
+    # Copy standard library .ash files but exclude native LLVM binaries
+    # (the self-contained publish already includes libLLVM in the app root).
+    $DestLib = Join-Path $OutputDir "lib"
+    robocopy $LibSource $DestLib /E /XD linux-x64 win-x64 /NFL /NDL /NJH /NJS /NC /NS /NP
+    # robocopy returns 0-7 on success; only >=8 indicates failure.
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+    $LASTEXITCODE = 0
 }
 
 Write-Host "Done."
