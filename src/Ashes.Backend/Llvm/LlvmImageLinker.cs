@@ -606,6 +606,8 @@ internal static class LlvmImageLinker
 
     private static ulong NormalizeCoffSectionValue(uint value)
     {
+        // LLVM can emit non-.text COFF symbols like __ashes_heap_cursor with an image-base-biased
+        // value even though sectionBaseVas already includes the final PE image base.
         return value >= PeImageBase
             ? value - PeImageBase
             : value;
