@@ -19,6 +19,7 @@ internal static class LlvmImageLinker
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 1;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
+    private const uint ElfRelocX86_64Pc32 = 2;
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
@@ -306,9 +307,13 @@ internal static class LlvmImageLinker
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
                 long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas) + addend);
+                long placeVa = checked((long)loadedTextVa + (long)relocOffset);
                 Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                 switch (relocationType)
                 {
+                    case ElfRelocX86_64Pc32:
+                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                        break;
                     case ElfRelocX86_64_32:
                         BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
                         break;
