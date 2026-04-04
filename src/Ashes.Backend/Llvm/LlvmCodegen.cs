@@ -713,7 +713,7 @@ internal static class LlvmCodegen
         builder.BuildCall2(
             exitProcessType,
             exitProcessPtr,
-            [exitCode],
+            new[] { exitCode },
             "exit_process");
         builder.BuildUnreachable();
     }
