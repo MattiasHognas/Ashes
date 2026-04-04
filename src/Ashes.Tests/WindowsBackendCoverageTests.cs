@@ -102,6 +102,14 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_print_programs()
+    {
+        var ir = LowerExpression("Ashes.IO.write(\"hi\")");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);

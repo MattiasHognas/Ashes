@@ -19,6 +19,7 @@ internal static class LlvmImageLinker
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
+    private const ushort CoffRelocAmd64Rel32 = 0x0004;
 
     public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
     {
@@ -53,22 +54,38 @@ internal static class LlvmImageLinker
         rdata.Stream.Write(Encoding.ASCII.GetBytes("KERNEL32.DLL\0"));
         var kernelName = new PEAsciiStringLink(rdata, new RVO((uint)kernelNameOffset));
         var exitProcessHintName = WriteImportHintName(rdata, 0, "ExitProcess");
+        var getStdHandleHintName = WriteImportHintName(rdata, 0, "GetStdHandle");
+        var writeFileHintName = WriteImportHintName(rdata, 0, "WriteFile");
         Align(rdata, 8);
         int iatSectionOffset = (int)rdata.Stream.Length;
 
-        var exitProcessIat = new PEImportAddressTable64() { exitProcessHintName };
-        var iatDirectory = new PEImportAddressTableDirectory() { exitProcessIat };
-        var exitProcessIlt = new PEImportLookupTable64() { exitProcessHintName };
+        var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName };
+        var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat };
+        var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName };
         var importDirectory = new PEImportDirectory
         {
             Entries =
             {
-                new PEImportDirectoryEntry(kernelName, exitProcessIat, exitProcessIlt)
+                new PEImportDirectoryEntry(kernelName, kernel32Iat, kernel32Ilt)
             }
         };
 
         uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTrampolineLength + parsed.TextBytes.Length)), PeSectionAlignment);
         ulong exitProcessIatVa = PeImageBase + rdataRva + (ulong)iatSectionOffset;
+        ulong getStdHandleIatVa = exitProcessIatVa + 8;
+        ulong writeFileIatVa = exitProcessIatVa + 16;
+        ApplyCoffTextRelocations(
+            objectBytes,
+            parsed.TextBytes,
+            parsed.TextSection,
+            parsed.SymbolTableOffset,
+            parsed.SymbolCount,
+            parsed.TextSectionNumber,
+            new Dictionary<string, ulong>(StringComparer.Ordinal)
+            {
+                ["__imp_GetStdHandle"] = getStdHandleIatVa,
+                ["__imp_WriteFile"] = writeFileIatVa
+            });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, parsed.TextBytes.Length, exitProcessIatVa)
             .Concat(parsed.TextBytes)
             .ToArray();
@@ -329,9 +346,8 @@ internal static class LlvmImageLinker
 
         CoffSectionHeader textSection = sections[textSectionIndex];
         byte[] textBytes = bytes.Slice(checked((int)textSection.PointerToRawData), checked((int)textSection.SizeOfRawData)).ToArray();
-        ApplyCoffTextRelocations(bytes, textBytes, textSection, symbolTableOffset, symbolCount, textSectionIndex + 1);
         int entryOffset = FindCoffSymbolOffset(bytes, symbolTableOffset, symbolCount, sections, entrySymbolName, textSectionIndex + 1);
-        return new ParsedCoffObject(textBytes, entryOffset);
+        return new ParsedCoffObject(textBytes, entryOffset, textSection, symbolTableOffset, symbolCount, textSectionIndex + 1);
     }
 
     private static void ApplyCoffTextRelocations(
@@ -340,7 +356,8 @@ internal static class LlvmImageLinker
         CoffSectionHeader textSection,
         uint symbolTableOffset,
         uint symbolCount,
-        int textSectionNumber)
+        int textSectionNumber,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
     {
         for (int i = 0; i < textSection.NumberOfRelocations; i++)
         {
@@ -349,21 +366,38 @@ internal static class LlvmImageLinker
             int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
             ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
             CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolIndex);
-            if (symbol.SectionNumber != textSectionNumber)
-            {
-                throw new InvalidOperationException("LLVM COFF text relocation targeted an unsupported non-text symbol.");
-            }
 
             switch (relocationType)
             {
                 case CoffRelocAmd64Addr32:
-                    uint targetVa = checked((uint)(PeImageBase + PeTextRva + (uint)WindowsTrampolineLength + symbol.Value));
-                    BinaryPrimitives.WriteUInt32LittleEndian(textBytes.AsSpan(checked((int)relocationOffset), 4), targetVa);
+                    BinaryPrimitives.WriteUInt32LittleEndian(
+                        textBytes.AsSpan(checked((int)relocationOffset), 4),
+                        checked((uint)ResolveCoffTargetVa(symbol, textSectionNumber, importSymbolVas)));
+                    break;
+                case CoffRelocAmd64Rel32:
+                    long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTrampolineLength + relocationOffset + 4));
+                    long relativeTarget = checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, importSymbolVas) - nextInstructionVa);
+                    BinaryPrimitives.WriteInt32LittleEndian(textBytes.AsSpan(checked((int)relocationOffset), 4), checked((int)relativeTarget));
                     break;
                 default:
                     throw new InvalidOperationException($"LLVM COFF emitted unsupported .text relocation type 0x{relocationType:X4}.");
             }
         }
+    }
+
+    private static ulong ResolveCoffTargetVa(CoffSymbol symbol, int textSectionNumber, IReadOnlyDictionary<string, ulong> importSymbolVas)
+    {
+        if (symbol.SectionNumber == textSectionNumber)
+        {
+            return PeImageBase + PeTextRva + (uint)WindowsTrampolineLength + symbol.Value;
+        }
+
+        if (symbol.SectionNumber == 0 && importSymbolVas.TryGetValue(symbol.Name, out ulong importVa))
+        {
+            return importVa;
+        }
+
+        throw new InvalidOperationException("LLVM COFF text relocation targeted an unsupported non-text symbol.");
     }
 
     private static int FindCoffSymbolOffset(
@@ -403,6 +437,7 @@ internal static class LlvmImageLinker
     {
         int offset = checked((int)symbolTableOffset + (symbolIndex * 18));
         return new CoffSymbol(
+            Name: ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, 0),
             Value: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4)),
             SectionNumber: BinaryPrimitives.ReadInt16LittleEndian(bytes.Slice(offset + 12, 2)));
     }
@@ -511,7 +546,13 @@ internal static class LlvmImageLinker
     }
 
     private readonly record struct ParsedElfObject(byte[] TextBytes, int EntryOffsetInText);
-    private readonly record struct ParsedCoffObject(byte[] TextBytes, int EntryOffsetInText);
+    private readonly record struct ParsedCoffObject(
+        byte[] TextBytes,
+        int EntryOffsetInText,
+        CoffSectionHeader TextSection,
+        uint SymbolTableOffset,
+        uint SymbolCount,
+        int TextSectionNumber);
 
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
@@ -534,6 +575,7 @@ internal static class LlvmImageLinker
         ushort NumberOfRelocations);
 
     private readonly record struct CoffSymbol(
+        string Name,
         uint Value,
         short SectionNumber);
 }

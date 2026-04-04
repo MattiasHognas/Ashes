@@ -98,14 +98,32 @@ internal static class LlvmCodegen
         LlvmCodegenFlavor flavor)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
+        LLVMTypeRef i32 = target.Context.Int32Type;
         LLVMTypeRef i8 = target.Context.Int8Type;
         LLVMTypeRef f64 = target.Context.DoubleType;
         LLVMTypeRef voidType = target.Context.VoidType;
         LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
+        LLVMTypeRef i32Ptr = LLVMTypeRef.CreatePointer(i32, 0);
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
+        bool usesWindowsStdout = flavor == LlvmCodegenFlavor.Windows
+            && (ProgramUsesInstruction<IrInst.PrintInt>(program)
+                || ProgramUsesInstruction<IrInst.PrintStr>(program)
+                || ProgramUsesInstruction<IrInst.WriteStr>(program)
+                || ProgramUsesInstruction<IrInst.PrintBool>(program));
+        LLVMValueRef windowsGetStdHandleImport = default;
+        LLVMValueRef windowsWriteFileImport = default;
+        if (usesWindowsStdout)
+        {
+            LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
+            LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
+            windowsGetStdHandleImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getStdHandleType, 0), "__imp_GetStdHandle");
+            windowsGetStdHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsWriteFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(writeFileType, 0), "__imp_WriteFile");
+            windowsWriteFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
 
         LLVMValueRef entryFunction = target.Module.AddFunction(
             entryFunctionName,
@@ -130,6 +148,10 @@ internal static class LlvmCodegen
             liftedFunctions,
             flavor,
             usesProgramArgs,
+            i32,
+            i32Ptr,
+            windowsGetStdHandleImport,
+            windowsWriteFileImport,
             isEntry: true);
 
         foreach (IrFunction function in program.Functions)
@@ -142,6 +164,10 @@ internal static class LlvmCodegen
                 liftedFunctions,
                 flavor,
                 usesProgramArgs,
+                i32,
+                i32Ptr,
+                windowsGetStdHandleImport,
+                windowsWriteFileImport,
                 isEntry: false);
         }
     }
@@ -166,6 +192,10 @@ internal static class LlvmCodegen
         IReadOnlyDictionary<string, LLVMValueRef> liftedFunctions,
         LlvmCodegenFlavor flavor,
         bool usesProgramArgs,
+        LLVMTypeRef i32,
+        LLVMTypeRef i32Ptr,
+        LLVMValueRef windowsGetStdHandleImport,
+        LLVMValueRef windowsWriteFileImport,
         bool isEntry)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -245,11 +275,15 @@ internal static class LlvmCodegen
             labelBlocks,
             fallthroughBlocks,
             i64,
+            i32,
             i8,
             f64,
             i8Ptr,
+            i32Ptr,
             i64Ptr,
             entryStackPointer,
+            windowsGetStdHandleImport,
+            windowsWriteFileImport,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -336,10 +370,10 @@ internal static class LlvmCodegen
             IrInst.CmpFloatNe cmpFloatNe => StoreTemp(state, cmpFloatNe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealONE, LoadTempAsFloat(state, cmpFloatNe.Left), LoadTempAsFloat(state, cmpFloatNe.Right), $"fcmp_ne_{cmpFloatNe.Target}")),
             IrInst.CmpStrEq cmpStrEq => StoreTemp(state, cmpStrEq.Target, EmitStringComparison(state, LoadTemp(state, cmpStrEq.Left), LoadTemp(state, cmpStrEq.Right))),
             IrInst.CmpStrNe cmpStrNe => StoreTemp(state, cmpStrNe.Target, EmitInvertBool(state, EmitStringComparison(state, LoadTemp(state, cmpStrNe.Left), LoadTemp(state, cmpStrNe.Right)), $"cmp_str_ne_{cmpStrNe.Target}")),
-            IrInst.PrintInt printInt => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintInt(state, LoadTemp(state, printInt.Source)) : ThrowWindowsInstructionNotSupported(printInt),
-            IrInst.PrintStr printStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true) : ThrowWindowsInstructionNotSupported(printStr),
-            IrInst.WriteStr writeStr => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false) : ThrowWindowsInstructionNotSupported(writeStr),
-            IrInst.PrintBool printBool => state.Flavor == LlvmCodegenFlavor.Linux ? EmitPrintBool(state, LoadTemp(state, printBool.Source)) : ThrowWindowsInstructionNotSupported(printBool),
+            IrInst.PrintInt printInt => EmitPrintInt(state, LoadTemp(state, printInt.Source)),
+            IrInst.PrintStr printStr => EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true),
+            IrInst.WriteStr writeStr => EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false),
+            IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp))),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp))),
@@ -940,13 +974,53 @@ internal static class LlvmCodegen
 
     private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
     {
-        EmitSyscall(
-            state,
-            SyscallWrite,
-            LLVMValueRef.CreateConstInt(state.I64, 1, false),
-            state.Target.Builder.BuildPtrToInt(bytePtr, state.I64, "write_ptr_i64"),
-            len,
-            "sys_write");
+        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        {
+            EmitSyscall(
+                state,
+                SyscallWrite,
+                LLVMValueRef.CreateConstInt(state.I64, 1, false),
+                state.Target.Builder.BuildPtrToInt(bytePtr, state.I64, "write_ptr_i64"),
+                len,
+                "sys_write");
+            return;
+        }
+
+        EmitWindowsWriteBytes(state, bytePtr, len);
+    }
+
+    private static void EmitWindowsWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(state.I64, [state.I32]);
+        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LLVMValueRef getStdHandlePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(getStdHandleType, 0),
+            state.WindowsGetStdHandleImport,
+            "get_std_handle_ptr");
+        LLVMValueRef stdoutHandle = builder.BuildCall2(
+            getStdHandleType,
+            getStdHandlePtr,
+            new[] { LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)0xFFFFFFF5), true) },
+            "stdout_handle");
+        LLVMValueRef bytesWritten = builder.BuildAlloca(state.I32, "bytes_written");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWritten);
+        LLVMValueRef writeFilePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(writeFileType, 0),
+            state.WindowsWriteFileImport,
+            "write_file_ptr");
+        builder.BuildCall2(
+            writeFileType,
+            writeFilePtr,
+            new[]
+            {
+                stdoutHandle,
+                bytePtr,
+                builder.BuildTrunc(NormalizeToI64(state, len), state.I32, "write_len_i32"),
+                bytesWritten,
+                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, "null_overlapped")
+            },
+            "write_file");
     }
 
     private static LLVMValueRef EmitSyscall(LlvmCodegenState state, long nr, LLVMValueRef arg1, LLVMValueRef arg2, LLVMValueRef arg3, string name)
@@ -983,11 +1057,15 @@ internal static class LlvmCodegen
         Dictionary<string, LLVMBasicBlockRef> LabelBlocks,
         Dictionary<int, LLVMBasicBlockRef> FallthroughBlocks,
         LLVMTypeRef I64,
+        LLVMTypeRef I32,
         LLVMTypeRef I8,
         LLVMTypeRef F64,
         LLVMTypeRef I8Ptr,
+        LLVMTypeRef I32Ptr,
         LLVMTypeRef I64Ptr,
         LLVMValueRef EntryStackPointer,
+        LLVMValueRef WindowsGetStdHandleImport,
+        LLVMValueRef WindowsWriteFileImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -1045,6 +1123,10 @@ internal static class LlvmCodegen
             IrInst.CmpFloatNe => true,
             IrInst.CmpStrEq => true,
             IrInst.CmpStrNe => true,
+            IrInst.PrintInt => true,
+            IrInst.PrintStr => true,
+            IrInst.WriteStr => true,
+            IrInst.PrintBool => true,
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
             IrInst.ConcatStr => true,
