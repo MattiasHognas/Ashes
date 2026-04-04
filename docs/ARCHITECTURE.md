@@ -103,7 +103,7 @@ flowchart TD
     ObjWindows[".obj  (COFF relocatable)"]
     LinkerLinux["LlvmImageLinker\n.LinkLinuxExecutable()"]
     LinkerWindows["LlvmImageLinker\n.LinkWindowsExecutable()"]
-    ElfWriter["Elf64ImageWriter"]
+    ElfWriter["LibObjectFile\n(ElfFile)"]
     PeWriter["LibObjectFile\n(PEFile)"]
     ELF["ELF64 executable"]
     PE["PE32+ executable"]
@@ -132,7 +132,7 @@ the target ID.
 |---------|---------|---------|
 | LLVMSharp | 20.1.2 | .NET bindings to LLVM C API |
 | libLLVM.runtime.{linux,win}-x64 | 20.1.2 | Native LLVM libraries |
-| LibObjectFile | 2.1.0 | PE32+ executable construction |
+| LibObjectFile | 2.1.0 | ELF64 and PE32+ executable construction |
 
 ------------------------------------------------------------------------
 
@@ -219,8 +219,8 @@ executable images.
    are resolved against text and data section base addresses.
 5. A 20-byte **trampoline** is prepended: saves the stack pointer, calls
    the entry function, then invokes `syscall exit(0)`.
-6. `Elf64ImageWriter` builds the final two-segment (text + data) ELF64
-   executable with the ELF header and two `PT_LOAD` program headers.
+6. **LibObjectFile** (`ElfFile`) builds the final two-segment (text + data)
+   ELF64 executable with the ELF header and two `PT_LOAD` program headers.
 
 ### Windows (PE32+)
 
