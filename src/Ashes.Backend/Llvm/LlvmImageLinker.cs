@@ -105,6 +105,7 @@ internal static class LlvmImageLinker
             sectionBaseVas,
             new Dictionary<string, ulong>(StringComparer.Ordinal)
             {
+                ["__imp_ExitProcess"] = exitProcessIatVa,
                 ["__imp_GetStdHandle"] = getStdHandleIatVa,
                 ["__imp_WriteFile"] = writeFileIatVa,
                 ["__chkstk"] = chkstkStubVa

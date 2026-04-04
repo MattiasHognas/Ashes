@@ -91,8 +91,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var stdout = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
-        stdout.ShouldBe("42\n");
+        var result = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        result.Stdout.ShouldBe("42\n");
     }
 
     [Test]
@@ -103,10 +103,30 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var stdout = await CompileRunWithLinuxLlvmAsync(
+        var result = await CompileRunWithLinuxLlvmAsync(
             "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
             ["first", "second"]);
-        stdout.ShouldBe("first:second\n");
+        result.Stdout.ShouldBe("first:second\n");
+    }
+
+    [Test]
+    public void Linux_backend_llvm_support_check_should_accept_panic_programs()
+    {
+        var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_panic_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync("Ashes.IO.panic(\"boom\")", expectedExitCode: 1);
+        result.Stdout.ShouldBe("boom\n");
     }
 
     private static byte[] CompileForLinux(string source)
@@ -145,7 +165,7 @@ public sealed class LinuxBackendCoverageTests
         return (bool)method.Invoke(null, [ir])!;
     }
 
-    private static async Task<string> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
@@ -182,7 +202,9 @@ public sealed class LinuxBackendCoverageTests
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();
 
-        proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
-        return stdout;
+        proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
+        return new ExecutionResult(stdout, stderr, proc.ExitCode);
     }
+
+    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
 }

@@ -114,8 +114,11 @@ internal static class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
                 || ProgramUsesInstruction<IrInst.PrintBool>(program));
+        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.Windows
+            && ProgramUsesInstruction<IrInst.PanicStr>(program);
         LLVMValueRef windowsGetStdHandleImport = default;
         LLVMValueRef windowsWriteFileImport = default;
+        LLVMValueRef windowsExitProcessImport = default;
         if (usesWindowsStdout)
         {
             LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
@@ -124,6 +127,13 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
             windowsWriteFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(writeFileType, 0), "__imp_WriteFile");
             windowsWriteFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsExitProcess)
+        {
+            LLVMTypeRef exitProcessType = LLVMTypeRef.CreateFunction(voidType, [i32]);
+            windowsExitProcessImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(exitProcessType, 0), "__imp_ExitProcess");
+            windowsExitProcessImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
         LLVMValueRef entryFunction = target.Module.AddFunction(
@@ -153,6 +163,7 @@ internal static class LlvmCodegen
             i32Ptr,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
+            windowsExitProcessImport,
             isEntry: true);
 
         foreach (IrFunction function in program.Functions)
@@ -169,6 +180,7 @@ internal static class LlvmCodegen
                 i32Ptr,
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
+                windowsExitProcessImport,
                 isEntry: false);
         }
     }
@@ -197,6 +209,7 @@ internal static class LlvmCodegen
         LLVMTypeRef i32Ptr,
         LLVMValueRef windowsGetStdHandleImport,
         LLVMValueRef windowsWriteFileImport,
+        LLVMValueRef windowsExitProcessImport,
         bool isEntry)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -285,6 +298,7 @@ internal static class LlvmCodegen
             entryStackPointer,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
+            windowsExitProcessImport,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -375,6 +389,7 @@ internal static class LlvmCodegen
             IrInst.PrintStr printStr => EmitPrintStringFromTemp(state, LoadTemp(state, printStr.Source), appendNewline: true),
             IrInst.WriteStr writeStr => EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false),
             IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
+            IrInst.PanicStr panicStr => EmitPanic(state, LoadTemp(state, panicStr.Source)),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp))),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp))),
@@ -665,10 +680,42 @@ internal static class LlvmCodegen
         return true;
     }
 
+    private static bool EmitPanic(LlvmCodegenState state, LLVMValueRef stringRef)
+    {
+        EmitPrintStringFromTemp(state, stringRef, appendNewline: true);
+
+        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        {
+            EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 1, false));
+        }
+        else
+        {
+            EmitWindowsExitProcess(state, LLVMValueRef.CreateConstInt(state.I32, 1, false));
+        }
+
+        return true;
+    }
+
     private static void EmitExit(LlvmCodegenState state, LLVMValueRef exitCode)
     {
         EmitSyscall(state, SyscallExit, exitCode, LLVMValueRef.CreateConstInt(state.I64, 0, false), LLVMValueRef.CreateConstInt(state.I64, 0, false), "sys_exit");
         state.Target.Builder.BuildUnreachable();
+    }
+
+    private static void EmitWindowsExitProcess(LlvmCodegenState state, LLVMValueRef exitCode)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef exitProcessType = LLVMTypeRef.CreateFunction(state.Target.Context.VoidType, [state.I32]);
+        LLVMValueRef exitProcessPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(exitProcessType, 0),
+            state.WindowsExitProcessImport,
+            "exit_process_ptr");
+        builder.BuildCall2(
+            exitProcessType,
+            exitProcessPtr,
+            [exitCode],
+            "exit_process");
+        builder.BuildUnreachable();
     }
 
     private static bool EmitPrintStringFromTemp(LlvmCodegenState state, LLVMValueRef stringRef, bool appendNewline)
@@ -1070,6 +1117,7 @@ internal static class LlvmCodegen
         LLVMValueRef EntryStackPointer,
         LLVMValueRef WindowsGetStdHandleImport,
         LLVMValueRef WindowsWriteFileImport,
+        LLVMValueRef WindowsExitProcessImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -1131,6 +1179,7 @@ internal static class LlvmCodegen
             IrInst.PrintStr => true,
             IrInst.WriteStr => true,
             IrInst.PrintBool => true,
+            IrInst.PanicStr => true,
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
             IrInst.ConcatStr => true,
@@ -1183,6 +1232,7 @@ internal static class LlvmCodegen
             IrInst.PrintStr => true,
             IrInst.WriteStr => true,
             IrInst.PrintBool => true,
+            IrInst.PanicStr => true,
             IrInst.LoadMemOffset => true,
             IrInst.StoreMemOffset => true,
             IrInst.ConcatStr => true,

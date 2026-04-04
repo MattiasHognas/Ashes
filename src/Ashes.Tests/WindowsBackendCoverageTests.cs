@@ -110,6 +110,14 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_panic_programs()
+    {
+        var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);
