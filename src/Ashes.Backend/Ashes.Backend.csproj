@@ -20,4 +20,22 @@
     <PackageReference Include="LibObjectFile" Version="2.1.0" />
   </ItemGroup>
 
+  <!--
+    Native LLVM libraries downloaded by scripts/download-llvm-native.{sh,ps1}.
+    After the LLVMSharp migration is complete, remove the LLVMSharp and
+    libLLVM.runtime.* PackageReferences above and uncomment the block below.
+  -->
+  <!--
+  <ItemGroup>
+    <None Include="runtimes\win-x64\native\libLLVM.dll"
+          Condition="Exists('runtimes\win-x64\native\libLLVM.dll')"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="runtimes\win-x64\native\libLLVM.dll" />
+    <None Include="runtimes\linux-x64\native\libLLVM.so"
+          Condition="Exists('runtimes\linux-x64\native\libLLVM.so')"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="runtimes\linux-x64\native\libLLVM.so" />
+  </ItemGroup>
+  -->
+
 </Project>
