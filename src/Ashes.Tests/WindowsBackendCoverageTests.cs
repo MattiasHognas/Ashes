@@ -164,6 +164,18 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_run_float_arithmetic_and_comparisons()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_run_panic_programs()
     {
         if (!OperatingSystem.IsWindows())
