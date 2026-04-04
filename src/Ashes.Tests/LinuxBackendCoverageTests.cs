@@ -679,18 +679,21 @@ public sealed class LinuxBackendCoverageTests
     private static async Task<Process> StartProcessWithRetryAsync(ProcessStartInfo psi)
     {
         const int textFileBusyError = 26;
+        const int maxAttempts = 5;
 
-        for (int attempt = 0; ; attempt++)
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
             {
                 return Process.Start(psi)!;
             }
-            catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < 4)
+            catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < maxAttempts - 1)
             {
                 await Task.Delay(20 * (attempt + 1));
             }
         }
+
+        throw new InvalidOperationException("Failed to start process after retrying transient ETXTBSY errors.");
     }
 
     private static async Task<Exception?> RunLoopbackServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
@@ -761,7 +764,10 @@ public sealed class LinuxBackendCoverageTests
                 Directory.Delete(path, recursive: true);
             }
         }
-        catch
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
         {
         }
     }

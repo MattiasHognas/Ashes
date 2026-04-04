@@ -196,7 +196,10 @@ public sealed class ExampleSocketFixtureTests
                 File.Delete(path);
             }
         }
-        catch
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
         {
         }
     }

@@ -71,8 +71,8 @@ internal static class LlvmImageLinker
             CoffSectionHeader section = parsed.Sections[sectionIndex];
             int sectionNumber = sectionIndex + 1;
             uint totalSize = Math.Max(section.SizeOfRawData, section.VirtualSize);
-            bool isRuntimeDataSection = section.Name is ".rdata" or ".data" or ".bss";
-            if (sectionNumber == parsed.TextSectionNumber || totalSize == 0 || !isRuntimeDataSection)
+            bool isDataSection = section.Name is ".rdata" or ".data" or ".bss";
+            if (sectionNumber == parsed.TextSectionNumber || totalSize == 0 || !isDataSection)
             {
                 continue;
             }

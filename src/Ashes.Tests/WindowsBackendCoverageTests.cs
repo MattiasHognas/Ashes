@@ -509,7 +509,10 @@ public sealed class WindowsBackendCoverageTests
                 Directory.Delete(path, recursive: true);
             }
         }
-        catch
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
         {
         }
     }
