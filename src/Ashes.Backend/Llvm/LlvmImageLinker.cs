@@ -559,18 +559,20 @@ internal static class LlvmImageLinker
             int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
             ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
             CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
+            Span<byte> patch = textBytes.AsSpan(checked((int)relocationOffset), 4);
+            int addend = BinaryPrimitives.ReadInt32LittleEndian(patch);
 
             switch (relocationType)
             {
                 case CoffRelocAmd64Addr32:
                     BinaryPrimitives.WriteUInt32LittleEndian(
-                        textBytes.AsSpan(checked((int)relocationOffset), 4),
-                        checked((uint)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas)));
+                        patch,
+                        checked((uint)(checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas)) + addend)));
                     break;
                 case CoffRelocAmd64Rel32:
                     long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + relocationOffset + 4));
-                    long relativeTarget = checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas) - nextInstructionVa);
-                    BinaryPrimitives.WriteInt32LittleEndian(textBytes.AsSpan(checked((int)relocationOffset), 4), checked((int)relativeTarget));
+                    long relativeTarget = checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas) + addend - nextInstructionVa);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)relativeTarget));
                     break;
                 default:
                     throw new InvalidOperationException($"LLVM COFF emitted unsupported .text relocation type 0x{relocationType:X4}.");
