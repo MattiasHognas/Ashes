@@ -8,6 +8,7 @@ namespace Ashes.Backend.Llvm;
 internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 2048;
+    private const uint StdOutputHandle = 0xFFFFFFF5;
     private const long SyscallWrite = 1;
     private const long SyscallExit = 60;
 
@@ -776,7 +777,10 @@ internal static class LlvmCodegen
         state.Target.Builder.BuildCondBr(condition, trueBlock, falseBlock);
 
         state.Target.Builder.PositionAtEnd(trueBlock);
-        EmitWriteBytes(state, EmitStackByteArray(state, System.Text.Encoding.UTF8.GetBytes(whenTrue)), LLVMValueRef.CreateConstInt(state.I64, (ulong)whenTrue.Length, false));
+        EmitWriteBytes(
+            state,
+            EmitStackByteArray(state, System.Text.Encoding.UTF8.GetBytes(whenTrue)),
+            LLVMValueRef.CreateConstInt(state.I64, (ulong)whenTrue.Length, false));
         if (appendNewline)
         {
             EmitWriteBytes(state, EmitStackByteArray(state, [10]), LLVMValueRef.CreateConstInt(state.I64, 1, false));
@@ -1001,7 +1005,7 @@ internal static class LlvmCodegen
         LLVMValueRef stdoutHandle = builder.BuildCall2(
             getStdHandleType,
             getStdHandlePtr,
-            new[] { LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)0xFFFFFFF5), true) },
+            new[] { LLVMValueRef.CreateConstInt(state.I32, StdOutputHandle, true) },
             "stdout_handle");
         LLVMValueRef bytesWritten = builder.BuildAlloca(state.I32, "bytes_written");
         builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWritten);
@@ -1228,12 +1232,6 @@ internal static class LlvmCodegen
         }
 
         return true;
-    }
-
-    private static bool ThrowWindowsInstructionNotSupported(IrInst instruction)
-    {
-        throw new InvalidOperationException(
-            $"The minimal Windows LLVM path does not yet support instruction '{instruction.GetType().Name}'.");
     }
 
     private enum LlvmCodegenFlavor
