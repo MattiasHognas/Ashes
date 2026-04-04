@@ -20,7 +20,7 @@ internal static class LlvmImageLinker
     private const uint PeSectionAlignment = 0x00001000;
     private const uint BssDataAlignment = 16;
     private const int WindowsTrampolineLength = 24;
-    private const int WindowsChkstkStubLength = 1;
+    private const int WindowsChkstkStubLength = 35;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
     private const uint ElfRelocX86_64Pc32 = 2;
     private const uint ElfRelocX86_64_32 = 10;
@@ -732,7 +732,26 @@ internal static class LlvmImageLinker
 
     private static byte[] BuildWindowsChkstkStub()
     {
-        return [0xC3];
+        // Windows x64 __chkstk: probes each 4KB page between the caller's stack
+        // pointer and the new stack pointer to trigger guard-page expansion.
+        // Input:  rax = number of bytes to allocate.
+        // Output: rax unchanged; caller does 'sub rsp, rax' after return.
+        return [
+            0x51,                                       // push rcx
+            0x50,                                       // push rax
+            0x48, 0x8D, 0x4C, 0x24, 0x18,              // lea  rcx, [rsp + 24]   ; caller's original rsp
+            // .check:
+            0x48, 0x3D, 0x00, 0x10, 0x00, 0x00,        // cmp  rax, 0x1000
+            0x72, 0x11,                                 // jb   .done             (+17)
+            0x48, 0x81, 0xE9, 0x00, 0x10, 0x00, 0x00,  // sub  rcx, 0x1000
+            0x84, 0x09,                                 // test byte ptr [rcx], cl ; probe page
+            0x48, 0x2D, 0x00, 0x10, 0x00, 0x00,        // sub  rax, 0x1000
+            0xEB, 0xE7,                                 // jmp  .check            (-25)
+            // .done:
+            0x58,                                       // pop  rax
+            0x59,                                       // pop  rcx
+            0xC3                                        // ret
+        ];
     }
 
     private static byte[] BuildLinuxTrampoline(int entryOffsetInText)
