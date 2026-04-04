@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using LibObjectFile.Elf;
 
 namespace Ashes.Backend.Llvm;
 
@@ -39,15 +40,65 @@ internal static partial class LlvmImageLinker
             .Concat(parsed.TextBytes)
             .ToArray();
 
-        return Elf64ImageWriter.BuildTwoSegmentElf(
-            textBytes: codeBytes,
-            dataBytes: laidOutData.DataBytes,
-            bssSize: 0,
-            entryOffsetInText: 0,
-            textFileOff: textFileOffset,
-            dataFileOff: dataFileOffset,
-            textVA: textVa,
-            dataVA: dataVa);
+        var elf = new ElfFile(ElfArch.X86_64, addDefaultSections: true)
+        {
+            FileType = ElfFileType.Executable,
+            EntryPointAddress = textVa
+        };
+
+        var textSection = new ElfStreamSection(ElfSectionSpecialType.Text, new MemoryStream(codeBytes))
+        {
+            Flags = ElfSectionFlags.Alloc | ElfSectionFlags.Executable,
+            VirtualAddress = textVa,
+            VirtualAddressAlignment = (ulong)PageSize,
+            FileAlignment = (uint)PageSize,
+        };
+        elf.Add(textSection);
+
+        ElfStreamSection? dataSection = null;
+        if (laidOutData.DataBytes.Length > 0)
+        {
+            dataSection = new ElfStreamSection(ElfSectionSpecialType.Data, new MemoryStream(laidOutData.DataBytes))
+            {
+                Flags = ElfSectionFlags.Alloc | ElfSectionFlags.Write,
+                VirtualAddress = dataVa,
+                VirtualAddressAlignment = (ulong)PageSize,
+                FileAlignment = (uint)PageSize,
+            };
+            elf.Add(dataSection);
+        }
+
+        elf.Add(new ElfSectionHeaderStringTable());
+        elf.Add(new ElfSectionHeaderTable());
+
+        elf.Segments.Add(new ElfSegment
+        {
+            Type = ElfSegmentTypeCore.Load,
+            Flags = ElfSegmentFlagsCore.Readable | ElfSegmentFlagsCore.Executable,
+            Range = new ElfContentRange(textSection),
+            VirtualAddress = textVa,
+            PhysicalAddress = textVa,
+            VirtualAddressAlignment = (ulong)PageSize,
+            SizeInMemory = (ulong)codeBytes.Length,
+        });
+
+        if (dataSection is not null)
+        {
+            elf.Segments.Add(new ElfSegment
+            {
+                Type = ElfSegmentTypeCore.Load,
+                Flags = ElfSegmentFlagsCore.Readable | ElfSegmentFlagsCore.Writable,
+                Range = new ElfContentRange(dataSection),
+                VirtualAddress = dataVa,
+                PhysicalAddress = dataVa,
+                VirtualAddressAlignment = (ulong)PageSize,
+                SizeInMemory = (ulong)laidOutData.DataBytes.Length,
+            });
+        }
+
+        using var output = new MemoryStream();
+        elf.Write(output);
+        return output.ToArray();
     }
 
     private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)
