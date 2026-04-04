@@ -212,6 +212,23 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_run_adt_field_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(LowerProgram("""
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> Ashes.IO.print(a + b)
+            """));
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_run_panic_programs()
     {
         if (!OperatingSystem.IsWindows())
@@ -262,6 +279,11 @@ public sealed class WindowsBackendCoverageTests
     private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
+        return await CompileRunWithWindowsLlvmAsync(ir, args, expectedExitCode);
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    {
         var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");

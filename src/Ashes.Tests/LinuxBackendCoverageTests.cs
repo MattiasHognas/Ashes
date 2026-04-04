@@ -215,6 +215,23 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_run_adt_field_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> Ashes.IO.print(a + b)
+            """));
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
@@ -273,6 +290,11 @@ public sealed class LinuxBackendCoverageTests
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
+        return await CompileRunWithLinuxLlvmAsync(ir, args, expectedExitCode);
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    {
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
