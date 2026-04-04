@@ -239,14 +239,20 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-        await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello");
+        var tmpDir = CreateTempDirectory();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello");
 
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-            workingDirectory: tmpDir);
-        result.Stdout.ShouldBe("hello\n");
+            var result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                workingDirectory: tmpDir);
+            result.Stdout.ShouldBe("hello\n");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
     }
 
     [Test]
@@ -257,13 +263,18 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-            workingDirectory: tmpDir);
-        result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
+        var tmpDir = CreateTempDirectory();
+        try
+        {
+            var result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                workingDirectory: tmpDir);
+            result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
     }
 
     [Test]
@@ -274,14 +285,20 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-        await File.WriteAllBytesAsync(Path.Combine(tmpDir, "bad.bin"), [0xFF, 0xFE, 0xFD]);
+        var tmpDir = CreateTempDirectory();
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(tmpDir, "bad.bin"), [0xFF, 0xFE, 0xFD]);
 
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """match Ashes.File.readText("bad.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-            workingDirectory: tmpDir);
-        result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
+            var result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.File.readText("bad.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                workingDirectory: tmpDir);
+            result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
     }
 
     [Test]
@@ -292,13 +309,18 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-            workingDirectory: tmpDir);
-        result.Stdout.ShouldBe("hello\n");
+        var tmpDir = CreateTempDirectory();
+        try
+        {
+            var result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                workingDirectory: tmpDir);
+            result.Stdout.ShouldBe("hello\n");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
     }
 
     [Test]
@@ -309,14 +331,20 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmpDir);
-        await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x");
+        var tmpDir = CreateTempDirectory();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x");
 
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
-            workingDirectory: tmpDir);
-        result.Stdout.ShouldBe("true:false\n");
+            var result = await CompileRunWithLinuxLlvmAsync(
+                """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
+                workingDirectory: tmpDir);
+            result.Stdout.ShouldBe("true:false\n");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
     }
 
     [Test]
@@ -510,6 +538,27 @@ public sealed class LinuxBackendCoverageTests
             {
                 await Task.Delay(20 * (attempt + 1));
             }
+        }
+    }
+
+    private static string CreateTempDirectory()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        return tmpDir;
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
         }
     }
 

@@ -9,7 +9,7 @@ internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
-    private const int WindowsFileReadLimitBytes = 1024 * 1024;
+    private const int FileReadLimitBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
     private const uint StdInputHandle = 0xFFFFFFF6;
@@ -1030,6 +1030,11 @@ internal static class LlvmCodegen
         builder.BuildCondBr(seekStartFailed, maybeCloseErrorBlock, allocBlock);
 
         builder.PositionAtEnd(allocBlock);
+        LLVMValueRef exceedsLimit = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, fileLength, LLVMValueRef.CreateConstInt(state.I64, FileReadLimitBytes, false), "fs_read_exceeds_limit");
+        var withinLimitBlock = state.Function.AppendBasicBlock("fs_read_within_limit");
+        builder.BuildCondBr(exceedsLimit, maybeCloseErrorBlock, withinLimitBlock);
+
+        builder.PositionAtEnd(withinLimitBlock);
         LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(fileLength, LLVMValueRef.CreateConstInt(state.I64, 8, false), "fs_read_total_bytes"));
         StoreMemory(state, stringRef, 0, fileLength, "fs_read_len");
         builder.BuildStore(stringRef, stringSlot);
@@ -1286,13 +1291,13 @@ internal static class LlvmCodegen
         builder.BuildCondBr(openFailed, returnErrorBlock, readBlock);
 
         builder.PositionAtEnd(readBlock);
-        LLVMValueRef stringRef = EmitAllocDynamic(state, LLVMValueRef.CreateConstInt(state.I64, WindowsFileReadLimitBytes + 8, false));
+        LLVMValueRef stringRef = EmitAllocDynamic(state, LLVMValueRef.CreateConstInt(state.I64, FileReadLimitBytes + 8, false));
         StoreMemory(state, stringRef, 0, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_win_len_init");
         LLVMValueRef readSucceeded = EmitWindowsReadFile(
             state,
             builder.BuildLoad2(state.I64, handleSlot, "fs_read_handle_value"),
             GetStringBytesPointer(state, stringRef, "fs_read_win_bytes"),
-            LLVMValueRef.CreateConstInt(state.I32, WindowsFileReadLimitBytes, false),
+            LLVMValueRef.CreateConstInt(state.I32, FileReadLimitBytes, false),
             bytesReadSlot,
             "fs_read_win_read_call");
         builder.BuildStore(builder.BuildZExt(builder.BuildLoad2(state.I32, bytesReadSlot, "fs_read_bytes_read_value"), state.I64, "fs_read_bytes_i64"), GetMemoryPointer(state, stringRef, 0, "fs_read_win_len_ptr"));
