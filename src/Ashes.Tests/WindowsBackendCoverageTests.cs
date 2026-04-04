@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -136,6 +137,44 @@ public sealed class WindowsBackendCoverageTests
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task Windows_backend_llvm_should_run_first_order_closure_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_program_args_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(
+            "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
+            ["first", "second"]);
+        result.Stdout.ShouldBe("first:second\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_panic_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.panic(\"boom\")", expectedExitCode: 1);
+        result.Stdout.ShouldBe("boom\n");
+    }
+
     private static byte[] CompileForWindows(string source)
     {
         var ir = LowerExpression(source);
@@ -171,4 +210,40 @@ public sealed class WindowsBackendCoverageTests
             .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
         return (bool)method.Invoke(null, [ir])!;
     }
+
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    {
+        var ir = LowerExpression(source);
+        var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
+        Directory.CreateDirectory(tmpDir);
+
+        var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}.exe");
+        await File.WriteAllBytesAsync(exePath, exeBytes);
+
+        var psi = new ProcessStartInfo(exePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        if (args is not null)
+        {
+            foreach (var arg in args)
+            {
+                psi.ArgumentList.Add(arg);
+            }
+        }
+
+        using var proc = Process.Start(psi)!;
+        var stdout = await proc.StandardOutput.ReadToEndAsync();
+        var stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
+        return new ExecutionResult(stdout, stderr, proc.ExitCode);
+    }
+
+    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
 }

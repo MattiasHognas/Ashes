@@ -76,6 +76,14 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_support_check_should_accept_print_programs()
+    {
+        var ir = LowerExpression("Ashes.IO.write(\"hi\")");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_closure_programs()
     {
         var ir = LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)");
