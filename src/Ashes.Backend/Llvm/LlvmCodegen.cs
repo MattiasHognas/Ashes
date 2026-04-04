@@ -180,14 +180,14 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
-        if (usesWindowsStdout)
+        if (usesWindowsStdout || usesWindowsFileOps)
         {
             LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(writeFileType, 0), "__imp_WriteFile");
             windowsWriteFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
-        if (usesWindowsReadLine)
+        if (usesWindowsReadLine || usesWindowsFileOps)
         {
             LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsReadFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(readFileType, 0), "__imp_ReadFile");
