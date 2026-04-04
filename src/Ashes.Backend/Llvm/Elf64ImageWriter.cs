@@ -1,8 +1,8 @@
 using System.Buffers.Binary;
 
-namespace Ashes.Backend;
+namespace Ashes.Backend.Llvm;
 
-public static class Elf64ImageWriter
+internal static class Elf64ImageWriter
 {
     private const int EhdrSize = 64;
     private const int PhdrSize = 56;
