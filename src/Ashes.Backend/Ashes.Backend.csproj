@@ -14,20 +14,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="LLVMSharp" Version="20.1.2" />
-    <PackageReference Include="libLLVM.runtime.linux-x64" Version="20.1.2" />
-    <PackageReference Include="libLLVM.runtime.win-x64" Version="20.1.2" />
     <PackageReference Include="LibObjectFile" Version="2.1.0" />
   </ItemGroup>
 
-  <!--
-    Native LLVM libraries downloaded by scripts/download-llvm-native.{sh,ps1}
-    into lib/Ashes/{win,linux}-x64/.  The publish scripts already copy the
-    whole lib/ tree to the output.  After the LLVMSharp migration is complete,
-    remove the LLVMSharp and libLLVM.runtime.* PackageReferences above and
-    uncomment the block below so that dotnet build also copies them.
-  -->
-  <!--
   <ItemGroup>
     <None Include="..\..\lib\Ashes\win-x64\libLLVM.dll"
           Condition="Exists('..\..\lib\Ashes\win-x64\libLLVM.dll')"
@@ -38,6 +27,5 @@
           CopyToOutputDirectory="PreserveNewest"
           Link="runtimes\linux-x64\native\libLLVM.so" />
   </ItemGroup>
-  -->
 
 </Project>

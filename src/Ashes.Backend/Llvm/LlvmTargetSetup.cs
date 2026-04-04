@@ -1,6 +1,6 @@
 using Ashes.Backend.Backends;
 using System.Runtime.InteropServices;
-using LLVMSharp.Interop;
+using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
 
@@ -20,54 +20,56 @@ internal static class LlvmTargetSetup
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
 
-        if (!LLVMTargetRef.TryGetTargetFromTriple(targetTriple, out LLVMTargetRef target, out string errorMessage))
+        int targetErr = LlvmApi.GetTargetFromTriple(targetTriple, out LlvmTargetHandle target, out nint targetErrMsg);
+        if (targetErr != 0)
         {
+            string errorMessage = Marshal.PtrToStringAnsi(targetErrMsg) ?? "unknown error";
+            LlvmApi.DisposeMessage(targetErrMsg);
             throw new InvalidOperationException($"LLVM target lookup failed for '{targetTriple}': {errorMessage}");
         }
 
-        LLVMCodeGenOptLevel optLevel = optimizationLevel switch
+        LlvmCodeGenOptLevel optLevel = optimizationLevel switch
         {
-            BackendOptimizationLevel.O0 => LLVMCodeGenOptLevel.LLVMCodeGenLevelNone,
-            BackendOptimizationLevel.O1 => LLVMCodeGenOptLevel.LLVMCodeGenLevelLess,
-            BackendOptimizationLevel.O2 => LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
-            BackendOptimizationLevel.O3 => LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
+            BackendOptimizationLevel.O0 => LlvmCodeGenOptLevel.None,
+            BackendOptimizationLevel.O1 => LlvmCodeGenOptLevel.Less,
+            BackendOptimizationLevel.O2 => LlvmCodeGenOptLevel.Default,
+            BackendOptimizationLevel.O3 => LlvmCodeGenOptLevel.Aggressive,
             _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
         };
 
-        LLVMTargetMachineRef machine = target.CreateTargetMachine(
+        LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target, 
             targetTriple,
             "x86-64",
             string.Empty,
             optLevel,
-            LLVMRelocMode.LLVMRelocStatic,
-            LLVMCodeModel.LLVMCodeModelDefault);
+            LlvmRelocMode.Static,
+            LlvmCodeModel.Default);
 
-        LLVMContextRef context = LLVMContextRef.Create();
-        LLVMModuleRef module = context.CreateModuleWithName($"ashes.{targetId}.module");
-        module.Target = targetTriple;
-        unsafe
+        LlvmContextHandle context = LlvmApi.ContextCreate();
+        LlvmModuleHandle module = LlvmApi.ModuleCreateWithNameInContext($"ashes.{targetId}.module", context);
+        LlvmApi.SetTarget(module, targetTriple);
         {
-            LLVMTargetDataRef dataLayout = machine.CreateTargetDataLayout();
+            LlvmTargetDataHandle dataLayout = LlvmApi.CreateTargetDataLayout(machine);
             try
             {
-                sbyte* layoutText = LLVM.CopyStringRepOfTargetData(dataLayout);
+                nint layoutText = LlvmApi.CopyStringRepOfTargetData(dataLayout);
                 try
                 {
-                    module.DataLayout = Marshal.PtrToStringAnsi((nint)layoutText)
-                        ?? throw new InvalidOperationException("LLVM returned an empty target data layout.");
+                    LlvmApi.SetDataLayout(module, Marshal.PtrToStringAnsi(layoutText)
+                        ?? throw new InvalidOperationException("LLVM returned an empty target data layout."));
                 }
                 finally
                 {
-                    LLVM.DisposeMessage(layoutText);
+                    LlvmApi.DisposeMessage(layoutText);
                 }
             }
             finally
             {
-                LLVM.DisposeTargetData(dataLayout);
+                LlvmApi.DisposeTargetData(dataLayout);
             }
         }
 
-        LLVMBuilderRef builder = context.CreateBuilder();
+        LlvmBuilderHandle builder = LlvmApi.CreateBuilderInContext(context);
         return new LlvmTargetContext(context, module, builder, machine, targetTriple);
     }
 
@@ -80,31 +82,28 @@ internal static class LlvmTargetSetup
                 return;
             }
 
-            LLVM.InitializeX86TargetInfo();
-            LLVM.InitializeX86Target();
-            LLVM.InitializeX86TargetMC();
-            LLVM.InitializeX86AsmParser();
-            LLVM.InitializeX86AsmPrinter();
+            LlvmApi.InitializeX86TargetInfo();
+            LlvmApi.InitializeX86Target();
+            LlvmApi.InitializeX86TargetMC();
+            LlvmApi.InitializeX86AsmParser();
+            LlvmApi.InitializeX86AsmPrinter();
             _initialized = true;
         }
     }
 }
 
 internal sealed record LlvmTargetContext(
-    LLVMContextRef Context,
-    LLVMModuleRef Module,
-    LLVMBuilderRef Builder,
-    LLVMTargetMachineRef TargetMachine,
+    LlvmContextHandle Context,
+    LlvmModuleHandle Module,
+    LlvmBuilderHandle Builder,
+    LlvmTargetMachineHandle TargetMachine,
     string TargetTriple) : IDisposable
 {
     public void Dispose()
     {
-        Builder.Dispose();
-        Module.Dispose();
-        Context.Dispose();
-        unsafe
-        {
-            LLVM.DisposeTargetMachine(TargetMachine);
-        }
+        LlvmApi.DisposeBuilder(Builder);
+        LlvmApi.DisposeModule(Module);
+        LlvmApi.ContextDispose(Context);
+        LlvmApi.DisposeTargetMachine(TargetMachine);
     }
 }

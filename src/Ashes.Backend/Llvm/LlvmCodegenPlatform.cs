@@ -1,80 +1,80 @@
-using LLVMSharp.Interop;
+using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    private static LLVMValueRef EmitWindowsWsaStartup(LlvmCodegenState state, LLVMValueRef wsadataPtr, string name)
+    private static LlvmValueHandle EmitWindowsWsaStartup(LlvmCodegenState state, LlvmValueHandle wsadataPtr, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef i16 = state.Target.Context.Int16Type;
-        LLVMTypeRef wsaStartupType = LLVMTypeRef.CreateFunction(state.I32, [i16, state.I8Ptr]);
-        LLVMValueRef wsaStartupPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(wsaStartupType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+        LlvmTypeHandle wsaStartupType = LlvmApi.FunctionType(state.I32, [i16, state.I8Ptr]);
+        LlvmValueHandle wsaStartupPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWsaStartupImport,
             name + "_ptr");
-        LLVMValueRef result = builder.BuildCall2(
+        LlvmValueHandle result = LlvmApi.BuildCall2(builder, 
             wsaStartupType,
             wsaStartupPtr,
             new[]
             {
-                LLVMValueRef.CreateConstInt(i16, 0x0202, false),
+                LlvmApi.ConstInt(i16, 0x0202, 0),
                 wsadataPtr
             },
             name);
-        return builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, result, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
 
-    private static LLVMValueRef EmitWindowsSocket(LlvmCodegenState state, int af, int socketTypeValue, int protocol, string name)
+    private static LlvmValueHandle EmitWindowsSocket(LlvmCodegenState state, int af, int socketTypeValue, int protocol, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef socketType = LLVMTypeRef.CreateFunction(state.I64, [state.I32, state.I32, state.I32]);
-        LLVMValueRef socketPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(socketType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle socketType = LlvmApi.FunctionType(state.I64, [state.I32, state.I32, state.I32]);
+        LlvmValueHandle socketPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsSocketImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             socketType,
             socketPtr,
             new[]
             {
-                LLVMValueRef.CreateConstInt(state.I32, (uint)af, false),
-                LLVMValueRef.CreateConstInt(state.I32, (uint)socketTypeValue, false),
-                LLVMValueRef.CreateConstInt(state.I32, (uint)protocol, false)
+                LlvmApi.ConstInt(state.I32, (uint)af, 0),
+                LlvmApi.ConstInt(state.I32, (uint)socketTypeValue, 0),
+                LlvmApi.ConstInt(state.I32, (uint)protocol, 0)
             },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsConnect(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef sockaddrPtr, string name)
+    private static LlvmValueHandle EmitWindowsConnect(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle sockaddrPtr, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef connectType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32]);
-        LLVMValueRef connectPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(connectType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle connectType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32]);
+        LlvmValueHandle connectPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsConnectImport,
             name + "_ptr");
-        LLVMValueRef result = builder.BuildCall2(
+        LlvmValueHandle result = LlvmApi.BuildCall2(builder, 
             connectType,
             connectPtr,
             new[]
             {
                 socket,
                 sockaddrPtr,
-                LLVMValueRef.CreateConstInt(state.I32, 16, false)
+                LlvmApi.ConstInt(state.I32, 16, 0)
             },
             name);
-        return builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, result, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
 
-    private static LLVMValueRef EmitWindowsSend(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef buffer, LLVMValueRef len, string name)
+    private static LlvmValueHandle EmitWindowsSend(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle buffer, LlvmValueHandle len, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef sendType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
-        LLVMValueRef sendPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(sendType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle sendType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
+        LlvmValueHandle sendPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsSendImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             sendType,
             sendPtr,
             new[]
@@ -82,20 +82,20 @@ internal static partial class LlvmCodegen
                 socket,
                 buffer,
                 len,
-                LLVMValueRef.CreateConstInt(state.I32, 0, false)
+                LlvmApi.ConstInt(state.I32, 0, 0)
             },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsRecv(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef buffer, LLVMValueRef len, string name)
+    private static LlvmValueHandle EmitWindowsRecv(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle buffer, LlvmValueHandle len, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef recvType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
-        LLVMValueRef recvPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(recvType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle recvType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
+        LlvmValueHandle recvPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsRecvImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             recvType,
             recvPtr,
             new[]
@@ -103,90 +103,90 @@ internal static partial class LlvmCodegen
                 socket,
                 buffer,
                 len,
-                LLVMValueRef.CreateConstInt(state.I32, 0, false)
+                LlvmApi.ConstInt(state.I32, 0, 0)
             },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsCloseSocket(LlvmCodegenState state, LLVMValueRef socket, string name)
+    private static LlvmValueHandle EmitWindowsCloseSocket(LlvmCodegenState state, LlvmValueHandle socket, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef closeSocketType = LLVMTypeRef.CreateFunction(state.I32, [state.I64]);
-        LLVMValueRef closeSocketPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(closeSocketType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle closeSocketType = LlvmApi.FunctionType(state.I32, [state.I64]);
+        LlvmValueHandle closeSocketPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCloseSocketImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             closeSocketType,
             closeSocketPtr,
             new[] { socket },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsCreateFile(LlvmCodegenState state, LLVMValueRef pathCstr, int desiredAccess, int shareMode, int creationDisposition, string name)
+    private static LlvmValueHandle EmitWindowsCreateFile(LlvmCodegenState state, LlvmValueHandle pathCstr, int desiredAccess, int shareMode, int creationDisposition, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef createFileType = LLVMTypeRef.CreateFunction(state.I64, [state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I32, state.I32, state.I64]);
-        LLVMValueRef createFilePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(createFileType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle createFileType = LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I32, state.I32, state.I64]);
+        LlvmValueHandle createFilePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCreateFileImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             createFileType,
             createFilePtr,
             new[]
             {
                 pathCstr,
-                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)desiredAccess), true),
-                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)shareMode), false),
-                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_security"),
-                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)creationDisposition), false),
-                LLVMValueRef.CreateConstInt(state.I32, 0x80, false),
-                LLVMValueRef.CreateConstInt(state.I64, 0, false)
+                LlvmApi.ConstInt(state.I32, unchecked((uint)desiredAccess), 1),
+                LlvmApi.ConstInt(state.I32, unchecked((uint)shareMode), 0),
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_security"),
+                LlvmApi.ConstInt(state.I32, unchecked((uint)creationDisposition), 0),
+                LlvmApi.ConstInt(state.I32, 0x80, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0)
             },
             name);
     }
 
-    private static void EmitWindowsCloseHandle(LlvmCodegenState state, LLVMValueRef handle, string name)
+    private static void EmitWindowsCloseHandle(LlvmCodegenState state, LlvmValueHandle handle, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef closeHandleType = LLVMTypeRef.CreateFunction(state.I32, [state.I64]);
-        LLVMValueRef closeHandlePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(closeHandleType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(state.I32, [state.I64]);
+        LlvmValueHandle closeHandlePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCloseHandleImport,
             name + "_ptr");
-        builder.BuildCall2(
+        LlvmApi.BuildCall2(builder, 
             closeHandleType,
             closeHandlePtr,
             new[] { handle },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsGetFileAttributes(LlvmCodegenState state, LLVMValueRef pathCstr, string name)
+    private static LlvmValueHandle EmitWindowsGetFileAttributes(LlvmCodegenState state, LlvmValueHandle pathCstr, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef getFileAttributesType = LLVMTypeRef.CreateFunction(state.I32, [state.I8Ptr]);
-        LLVMValueRef getFileAttributesPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(getFileAttributesType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(state.I32, [state.I8Ptr]);
+        LlvmValueHandle getFileAttributesPtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsGetFileAttributesImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             getFileAttributesType,
             getFileAttributesPtr,
             new[] { pathCstr },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsReadFile(LlvmCodegenState state, LLVMValueRef handle, LLVMValueRef buffer, LLVMValueRef len, LLVMValueRef bytesReadSlot, string name)
+    private static LlvmValueHandle EmitWindowsReadFile(LlvmCodegenState state, LlvmValueHandle handle, LlvmValueHandle buffer, LlvmValueHandle len, LlvmValueHandle bytesReadSlot, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesReadSlot);
-        LLVMValueRef readFilePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(readFileType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle readFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReadSlot);
+        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsReadFileImport,
             name + "_ptr");
-        LLVMValueRef callResult = builder.BuildCall2(
+        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder, 
             readFileType,
             readFilePtr,
             new[]
@@ -195,22 +195,22 @@ internal static partial class LlvmCodegen
                 buffer,
                 len,
                 bytesReadSlot,
-                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_overlapped")
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_overlapped")
             },
             name);
-        return builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, callResult, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, callResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
 
-    private static LLVMValueRef EmitWindowsWriteFile(LlvmCodegenState state, LLVMValueRef handle, LLVMValueRef buffer, LLVMValueRef len, LLVMValueRef bytesWrittenSlot, string name)
+    private static LlvmValueHandle EmitWindowsWriteFile(LlvmCodegenState state, LlvmValueHandle handle, LlvmValueHandle buffer, LlvmValueHandle len, LlvmValueHandle bytesWrittenSlot, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWrittenSlot);
-        LLVMValueRef writeFilePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(writeFileType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle writeFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWrittenSlot);
+        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWriteFileImport,
             name + "_ptr");
-        LLVMValueRef callResult = builder.BuildCall2(
+        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder, 
             writeFileType,
             writeFilePtr,
             new[]
@@ -219,95 +219,95 @@ internal static partial class LlvmCodegen
                 buffer,
                 len,
                 bytesWrittenSlot,
-                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_overlapped")
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_overlapped")
             },
             name);
-        return builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, callResult, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, callResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
 
-    private static bool EmitPrintInt(LlvmCodegenState state, LLVMValueRef value)
+    private static bool EmitPrintInt(LlvmCodegenState state, LlvmValueHandle value)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, "print_idx");
-        LLVMValueRef workSlot = builder.BuildAlloca(state.I64, "print_work");
-        LLVMValueRef negativeSlot = builder.BuildAlloca(state.I64, "print_negative");
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_idx");
+        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_work");
+        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_negative");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
 
-        LLVMTypeRef bufferType = LLVMTypeRef.CreateArray(state.I8, 32);
-        LLVMValueRef buffer = builder.BuildAlloca(bufferType, "print_buf");
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, "print_buf");
 
-        LLVMValueRef zero = LLVMValueRef.CreateConstInt(state.I64, 0, false);
-        LLVMValueRef isNegative = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, value, zero, "is_negative");
-        LLVMValueRef negativeValue = builder.BuildZExt(isNegative, state.I64, "negative_i64");
-        builder.BuildStore(negativeValue, negativeSlot);
-        LLVMValueRef absValue = builder.BuildSelect(isNegative, builder.BuildSub(zero, value, "negated_value"), value, "abs_value");
-        builder.BuildStore(absValue, workSlot);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, "is_negative");
+        LlvmValueHandle negativeValue = LlvmApi.BuildZExt(builder, isNegative, state.I64, "negative_i64");
+        LlvmApi.BuildStore(builder, negativeValue, negativeSlot);
+        LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildSub(builder, zero, value, "negated_value"), value, "abs_value");
+        LlvmApi.BuildStore(builder, absValue, workSlot);
 
-        var zeroBlock = state.Function.AppendBasicBlock("print_int_zero");
-        var loopCheckBlock = state.Function.AppendBasicBlock("print_int_loop_check");
-        var loopBodyBlock = state.Function.AppendBasicBlock("print_int_loop_body");
-        var maybeSignBlock = state.Function.AppendBasicBlock("print_int_maybe_sign");
-        var signBlock = state.Function.AppendBasicBlock("print_int_sign");
-        var writeBlock = state.Function.AppendBasicBlock("print_int_write");
-        var continueBlock = state.Function.AppendBasicBlock("print_int_continue");
+        var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_zero");
+        var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_loop_check");
+        var loopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_loop_body");
+        var maybeSignBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_maybe_sign");
+        var signBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_sign");
+        var writeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_write");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_continue");
 
-        LLVMValueRef isZero = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, absValue, zero, "is_zero");
-        builder.BuildCondBr(isZero, zeroBlock, loopCheckBlock);
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, absValue, zero, "is_zero");
+        LlvmApi.BuildCondBr(builder, isZero, zeroBlock, loopCheckBlock);
 
-        builder.PositionAtEnd(zeroBlock);
-        StoreBufferByte(state, buffer, LLVMValueRef.CreateConstInt(state.I64, 31, false), (byte)'0');
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), indexSlot);
-        builder.BuildBr(writeBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        StoreBufferByte(state, buffer, LlvmApi.ConstInt(state.I64, 31, 0), (byte)'0');
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
+        LlvmApi.BuildBr(builder, writeBlock);
 
-        builder.PositionAtEnd(loopCheckBlock);
-        LLVMValueRef work = builder.BuildLoad2(state.I64, workSlot, "work_value");
-        LLVMValueRef loopDone = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, work, zero, "loop_done");
-        builder.BuildCondBr(loopDone, maybeSignBlock, loopBodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
+        LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, "work_value");
+        LlvmValueHandle loopDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, "loop_done");
+        LlvmApi.BuildCondBr(builder, loopDone, maybeSignBlock, loopBodyBlock);
 
-        builder.PositionAtEnd(loopBodyBlock);
-        LLVMValueRef digit = builder.BuildSRem(work, LLVMValueRef.CreateConstInt(state.I64, 10, false), "digit");
-        LLVMValueRef nextWork = builder.BuildSDiv(work, LLVMValueRef.CreateConstInt(state.I64, 10, false), "next_work");
-        builder.BuildStore(nextWork, workSlot);
-        LLVMValueRef idx = builder.BuildLoad2(state.I64, indexSlot, "digit_idx");
-        LLVMValueRef writeIndex = builder.BuildSub(LLVMValueRef.CreateConstInt(state.I64, 31, false), idx, "digit_write_index");
-        LLVMValueRef asciiDigit = builder.BuildAdd(digit, LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), "ascii_digit");
+        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
+        LlvmValueHandle digit = LlvmApi.BuildSRem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "digit");
+        LlvmValueHandle nextWork = LlvmApi.BuildSDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "next_work");
+        LlvmApi.BuildStore(builder, nextWork, workSlot);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "digit_idx");
+        LlvmValueHandle writeIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, "digit_write_index");
+        LlvmValueHandle asciiDigit = LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), "ascii_digit");
         StoreBufferByte(state, buffer, writeIndex, asciiDigit);
-        builder.BuildStore(builder.BuildAdd(idx, LLVMValueRef.CreateConstInt(state.I64, 1, false), "idx_inc"), indexSlot);
-        builder.BuildBr(loopCheckBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "idx_inc"), indexSlot);
+        LlvmApi.BuildBr(builder, loopCheckBlock);
 
-        builder.PositionAtEnd(maybeSignBlock);
-        LLVMValueRef negative = builder.BuildLoad2(state.I64, negativeSlot, "negative_value");
-        LLVMValueRef hasSign = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, negative, zero, "has_sign");
-        builder.BuildCondBr(hasSign, signBlock, writeBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, maybeSignBlock);
+        LlvmValueHandle negative = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "negative_value");
+        LlvmValueHandle hasSign = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, negative, zero, "has_sign");
+        LlvmApi.BuildCondBr(builder, hasSign, signBlock, writeBlock);
 
-        builder.PositionAtEnd(signBlock);
-        LLVMValueRef idxBeforeSign = builder.BuildLoad2(state.I64, indexSlot, "idx_before_sign");
-        LLVMValueRef signIndex = builder.BuildSub(LLVMValueRef.CreateConstInt(state.I64, 31, false), idxBeforeSign, "sign_index");
+        LlvmApi.PositionBuilderAtEnd(builder, signBlock);
+        LlvmValueHandle idxBeforeSign = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "idx_before_sign");
+        LlvmValueHandle signIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforeSign, "sign_index");
         StoreBufferByte(state, buffer, signIndex, (byte)'-');
-        builder.BuildStore(builder.BuildAdd(idxBeforeSign, LLVMValueRef.CreateConstInt(state.I64, 1, false), "idx_with_sign"), indexSlot);
-        builder.BuildBr(writeBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxBeforeSign, LlvmApi.ConstInt(state.I64, 1, 0), "idx_with_sign"), indexSlot);
+        LlvmApi.BuildBr(builder, writeBlock);
 
-        builder.PositionAtEnd(writeBlock);
-        LLVMValueRef count = builder.BuildLoad2(state.I64, indexSlot, "print_count");
-        LLVMValueRef startIndex = builder.BuildSub(LLVMValueRef.CreateConstInt(state.I64, 32, false), count, "start_index");
-        LLVMValueRef dataPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, "print_data_ptr");
+        LlvmApi.PositionBuilderAtEnd(builder, writeBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "print_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, "start_index");
+        LlvmValueHandle dataPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, "print_data_ptr");
         EmitWriteBytes(state, dataPtr, count);
-        EmitWriteBytes(state, EmitStackByteArray(state, [10]), LLVMValueRef.CreateConstInt(state.I64, 1, false));
-        builder.BuildBr(continueBlock);
+        EmitWriteBytes(state, EmitStackByteArray(state, [10]), LlvmApi.ConstInt(state.I64, 1, 0));
+        LlvmApi.BuildBr(builder, continueBlock);
 
-        builder.PositionAtEnd(continueBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return false;
     }
 
-    private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    private static void EmitWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
     {
         if (state.Flavor == LlvmCodegenFlavor.Linux)
         {
             EmitSyscall(
                 state,
                 SyscallWrite,
-                LLVMValueRef.CreateConstInt(state.I64, 1, false),
-                state.Target.Builder.BuildPtrToInt(bytePtr, state.I64, "write_ptr_i64"),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.BuildPtrToInt(state.Target.Builder, bytePtr, state.I64, "write_ptr_i64"),
                 len,
                 "sys_write");
             return;
@@ -316,85 +316,85 @@ internal static partial class LlvmCodegen
         EmitWindowsWriteBytes(state, bytePtr, len);
     }
 
-    private static LLVMValueRef EmitWindowsGetStdHandle(LlvmCodegenState state, uint handleKind, string name)
+    private static LlvmValueHandle EmitWindowsGetStdHandle(LlvmCodegenState state, uint handleKind, string name)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(state.I64, [state.I32]);
-        LLVMValueRef getStdHandlePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(getStdHandleType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(state.I64, [state.I32]);
+        LlvmValueHandle getStdHandlePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsGetStdHandleImport,
             name + "_ptr");
-        return builder.BuildCall2(
+        return LlvmApi.BuildCall2(builder, 
             getStdHandleType,
             getStdHandlePtr,
-            new[] { LLVMValueRef.CreateConstInt(state.I32, handleKind, true) },
+            new[] { LlvmApi.ConstInt(state.I32, handleKind, 1) },
             name);
     }
 
-    private static LLVMValueRef EmitWindowsReadByte(LlvmCodegenState state, LLVMValueRef stdinHandle, LLVMValueRef byteSlot, LLVMValueRef bytesReadSlot)
+    private static LlvmValueHandle EmitWindowsReadByte(LlvmCodegenState state, LlvmValueHandle stdinHandle, LlvmValueHandle byteSlot, LlvmValueHandle bytesReadSlot)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesReadSlot);
-        LLVMValueRef readFilePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(readFileType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle readFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReadSlot);
+        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsReadFileImport,
             "read_file_ptr");
-        builder.BuildCall2(
+        LlvmApi.BuildCall2(builder, 
             readFileType,
             readFilePtr,
             new[]
             {
                 stdinHandle,
                 byteSlot,
-                LLVMValueRef.CreateConstInt(state.I32, 1, false),
+                LlvmApi.ConstInt(state.I32, 1, 0),
                 bytesReadSlot,
-                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, "null_overlapped")
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
             },
             "read_file");
-        return builder.BuildZExt(builder.BuildLoad2(state.I32, bytesReadSlot, "read_line_bytes_read_value"), state.I64, "read_line_bytes_read_i64");
+        return LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "read_line_bytes_read_value"), state.I64, "read_line_bytes_read_i64");
     }
 
-    private static void EmitWindowsWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    private static void EmitWindowsWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
-        LLVMValueRef stdoutHandle = EmitWindowsGetStdHandle(state, StdOutputHandle, "stdout_handle");
-        LLVMValueRef bytesWritten = builder.BuildAlloca(state.I32, "bytes_written");
-        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWritten);
-        LLVMValueRef writeFilePtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(writeFileType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle writeFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LlvmValueHandle stdoutHandle = EmitWindowsGetStdHandle(state, StdOutputHandle, "stdout_handle");
+        LlvmValueHandle bytesWritten = LlvmApi.BuildAlloca(builder, state.I32, "bytes_written");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWritten);
+        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder, 
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWriteFileImport,
             "write_file_ptr");
-        builder.BuildCall2(
+        LlvmApi.BuildCall2(builder, 
             writeFileType,
             writeFilePtr,
             new[]
             {
                 stdoutHandle,
                 bytePtr,
-                builder.BuildTrunc(NormalizeToI64(state, len), state.I32, "write_len_i32"),
+                LlvmApi.BuildTrunc(builder, NormalizeToI64(state, len), state.I32, "write_len_i32"),
                 bytesWritten,
-                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, "null_overlapped")
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
             },
             "write_file");
     }
 
-    private static LLVMValueRef EmitSyscall(LlvmCodegenState state, long nr, LLVMValueRef arg1, LLVMValueRef arg2, LLVMValueRef arg3, string name)
+    private static LlvmValueHandle EmitSyscall(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
     {
-        LLVMTypeRef syscallType = LLVMTypeRef.CreateFunction(state.I64, [state.I64, state.I64, state.I64, state.I64]);
-        LLVMValueRef syscall = LLVMValueRef.CreateConstInlineAsm(
+        LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
             syscallType,
             "syscall",
             "={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}",
             true,
             false);
-        return state.Target.Builder.BuildCall2(
+        return LlvmApi.BuildCall2(state.Target.Builder, 
             syscallType,
             syscall,
             new[]
             {
-                LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)nr), true),
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
                 NormalizeToI64(state, arg3)

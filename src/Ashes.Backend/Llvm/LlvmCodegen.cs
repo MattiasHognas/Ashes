@@ -1,7 +1,8 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using Ashes.Backend.Backends;
 using Ashes.Semantics;
-using LLVMSharp.Interop;
+using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
 
@@ -52,28 +53,9 @@ internal static partial class LlvmCodegen
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows);
 
-        if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
-        {
-            throw new InvalidOperationException($"LLVM module verification failed: {verifyError}");
-        }
-
-        string objectPath = Path.Combine(Path.GetTempPath(), $"ashes-llvm-{Guid.NewGuid():N}.obj");
-        target.TargetMachine.EmitToFile(target.Module, objectPath, LLVMCodeGenFileType.LLVMObjectFile);
-        try
-        {
-            byte[] objectBytes = File.ReadAllBytes(objectPath);
-            return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(objectPath);
-            }
-            catch
-            {
-            }
-        }
+        VerifyModule(target);
+        byte[] objectBytes = EmitObjectCode(target);
+        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
@@ -82,27 +64,50 @@ internal static partial class LlvmCodegen
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux);
 
-        if (!target.Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out string verifyError))
+        VerifyModule(target);
+        byte[] objectBytes = EmitObjectCode(target);
+        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
+    }
+
+    private static void VerifyModule(LlvmTargetContext target)
+    {
+        int verifyErr = LlvmApi.VerifyModule(target.Module, 1, out nint verifyMsg);
+        if (verifyErr != 0)
         {
+            string verifyError = Marshal.PtrToStringAnsi(verifyMsg) ?? "unknown error";
+            LlvmApi.DisposeMessage(verifyMsg);
             throw new InvalidOperationException($"LLVM module verification failed: {verifyError}");
         }
 
-        string objectPath = Path.Combine(Path.GetTempPath(), $"ashes-llvm-{Guid.NewGuid():N}.o");
-        target.TargetMachine.EmitToFile(target.Module, objectPath, LLVMCodeGenFileType.LLVMObjectFile);
+        if (verifyMsg != 0)
+        {
+            LlvmApi.DisposeMessage(verifyMsg);
+        }
+    }
+
+    private static byte[] EmitObjectCode(LlvmTargetContext target)
+    {
+        int err = LlvmApi.TargetMachineEmitToMemoryBuffer(
+            target.TargetMachine, target.Module, LlvmCodeGenFileType.Object, out nint errMsg, out nint memBuf);
+
+        if (err != 0)
+        {
+            string msg = Marshal.PtrToStringAnsi(errMsg) ?? "unknown error";
+            LlvmApi.DisposeMessage(errMsg);
+            throw new InvalidOperationException($"LLVM emit failed: {msg}");
+        }
+
         try
         {
-            byte[] objectBytes = File.ReadAllBytes(objectPath);
-            return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
+            nint start = LlvmApi.GetBufferStart(memBuf);
+            nint size = LlvmApi.GetBufferSize(memBuf);
+            byte[] objectCode = new byte[(int)size];
+            Marshal.Copy(start, objectCode, 0, (int)size);
+            return objectCode;
         }
         finally
         {
-            try
-            {
-                File.Delete(objectPath);
-            }
-            catch
-            {
-            }
+            LlvmApi.DisposeMemoryBuffer(memBuf);
         }
     }
 
@@ -112,17 +117,17 @@ internal static partial class LlvmCodegen
         string entryFunctionName,
         LlvmCodegenFlavor flavor)
     {
-        LLVMTypeRef i64 = target.Context.Int64Type;
-        LLVMTypeRef i32 = target.Context.Int32Type;
-        LLVMTypeRef i8 = target.Context.Int8Type;
-        LLVMTypeRef f64 = target.Context.DoubleType;
-        LLVMTypeRef voidType = target.Context.VoidType;
-        LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
-        LLVMTypeRef i32Ptr = LLVMTypeRef.CreatePointer(i32, 0);
-        LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
-        LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+        LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
+        LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
+        LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(target.Context);
+        LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmTypeHandle heapType = LlvmApi.ArrayType2(i8, HeapSizeBytes);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
         bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
         bool usesWindowsStdout = flavor == LlvmCodegenFlavor.Windows
@@ -150,124 +155,124 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpClose>(program));
-        LLVMValueRef windowsGetStdHandleImport = default;
-        LLVMValueRef windowsWriteFileImport = default;
-        LLVMValueRef windowsReadFileImport = default;
-        LLVMValueRef windowsCreateFileImport = default;
-        LLVMValueRef windowsCloseHandleImport = default;
-        LLVMValueRef windowsGetFileAttributesImport = default;
-        LLVMValueRef windowsWsaStartupImport = default;
-        LLVMValueRef windowsSocketImport = default;
-        LLVMValueRef windowsConnectImport = default;
-        LLVMValueRef windowsSendImport = default;
-        LLVMValueRef windowsRecvImport = default;
-        LLVMValueRef windowsCloseSocketImport = default;
-        LLVMValueRef windowsExitProcessImport = default;
-        LLVMValueRef windowsGetCommandLineImport = default;
-        LLVMValueRef windowsWideCharToMultiByteImport = default;
-        LLVMValueRef windowsLocalFreeImport = default;
-        LLVMValueRef windowsCommandLineToArgvImport = default;
-        LLVMValueRef heapStorageGlobal = target.Module.AddGlobal(heapType, "__ashes_heap_storage");
-        heapStorageGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
-        heapStorageGlobal.Initializer = LLVMValueRef.CreateConstNull(heapType);
-        LLVMValueRef heapCursorGlobal = target.Module.AddGlobal(i64, "__ashes_heap_cursor");
-        heapCursorGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
-        heapCursorGlobal.Initializer = LLVMValueRef.CreateConstInt(i64, 0, false);
+        LlvmValueHandle windowsGetStdHandleImport = default;
+        LlvmValueHandle windowsWriteFileImport = default;
+        LlvmValueHandle windowsReadFileImport = default;
+        LlvmValueHandle windowsCreateFileImport = default;
+        LlvmValueHandle windowsCloseHandleImport = default;
+        LlvmValueHandle windowsGetFileAttributesImport = default;
+        LlvmValueHandle windowsWsaStartupImport = default;
+        LlvmValueHandle windowsSocketImport = default;
+        LlvmValueHandle windowsConnectImport = default;
+        LlvmValueHandle windowsSendImport = default;
+        LlvmValueHandle windowsRecvImport = default;
+        LlvmValueHandle windowsCloseSocketImport = default;
+        LlvmValueHandle windowsExitProcessImport = default;
+        LlvmValueHandle windowsGetCommandLineImport = default;
+        LlvmValueHandle windowsWideCharToMultiByteImport = default;
+        LlvmValueHandle windowsLocalFreeImport = default;
+        LlvmValueHandle windowsCommandLineToArgvImport = default;
+        LlvmValueHandle heapStorageGlobal = LlvmApi.AddGlobal(target.Module, heapType, "__ashes_heap_storage");
+        LlvmApi.SetLinkage(heapStorageGlobal, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(heapStorageGlobal, LlvmApi.ConstNull(heapType));
+        LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
+        LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
         if (usesWindowsStdout || usesWindowsReadLine)
         {
-            LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
-            windowsGetStdHandleImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getStdHandleType, 0), "__imp_GetStdHandle");
-            windowsGetStdHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
+            windowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
+            LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
         }
 
         if (usesWindowsStdout || usesWindowsFileOps)
         {
-            LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
-            windowsWriteFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(writeFileType, 0), "__imp_WriteFile");
-            windowsWriteFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
+            windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
+            LlvmApi.SetLinkage(windowsWriteFileImport, LlvmLinkage.External);
         }
 
         if (usesWindowsReadLine || usesWindowsFileOps)
         {
-            LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
-            windowsReadFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(readFileType, 0), "__imp_ReadFile");
-            windowsReadFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle readFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
+            windowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
+            LlvmApi.SetLinkage(windowsReadFileImport, LlvmLinkage.External);
         }
 
         if (usesWindowsFileOps)
         {
-            LLVMTypeRef createFileType = LLVMTypeRef.CreateFunction(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
-            LLVMTypeRef closeHandleType = LLVMTypeRef.CreateFunction(i32, [i64]);
-            LLVMTypeRef getFileAttributesType = LLVMTypeRef.CreateFunction(i32, [i8Ptr]);
-            windowsCreateFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(createFileType, 0), "__imp_CreateFileA");
-            windowsCreateFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsCloseHandleImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(closeHandleType, 0), "__imp_CloseHandle");
-            windowsCloseHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsGetFileAttributesImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getFileAttributesType, 0), "__imp_GetFileAttributesA");
-            windowsGetFileAttributesImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle createFileType = LlvmApi.FunctionType(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
+            LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(i32, [i64]);
+            LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(i32, [i8Ptr]);
+            windowsCreateFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateFileA");
+            LlvmApi.SetLinkage(windowsCreateFileImport, LlvmLinkage.External);
+            windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
+            LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
+            windowsGetFileAttributesImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetFileAttributesA");
+            LlvmApi.SetLinkage(windowsGetFileAttributesImport, LlvmLinkage.External);
         }
 
         if (usesWindowsSockets)
         {
-            LLVMTypeRef wsaStartupType = LLVMTypeRef.CreateFunction(i32, [target.Context.Int16Type, i8Ptr]);
-            LLVMTypeRef socketType = LLVMTypeRef.CreateFunction(i64, [i32, i32, i32]);
-            LLVMTypeRef connectType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32]);
-            LLVMTypeRef sendType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32]);
-            LLVMTypeRef recvType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32]);
-            LLVMTypeRef closeSocketType = LLVMTypeRef.CreateFunction(i32, [i64]);
-            windowsWsaStartupImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(wsaStartupType, 0), "__imp_WSAStartup");
-            windowsWsaStartupImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsSocketImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(socketType, 0), "__imp_socket");
-            windowsSocketImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsConnectImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(connectType, 0), "__imp_connect");
-            windowsConnectImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsSendImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(sendType, 0), "__imp_send");
-            windowsSendImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsRecvImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(recvType, 0), "__imp_recv");
-            windowsRecvImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsCloseSocketImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(closeSocketType, 0), "__imp_closesocket");
-            windowsCloseSocketImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle wsaStartupType = LlvmApi.FunctionType(i32, [LlvmApi.Int16TypeInContext(target.Context), i8Ptr]);
+            LlvmTypeHandle socketType = LlvmApi.FunctionType(i64, [i32, i32, i32]);
+            LlvmTypeHandle connectType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32]);
+            LlvmTypeHandle sendType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
+            LlvmTypeHandle recvType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
+            LlvmTypeHandle closeSocketType = LlvmApi.FunctionType(i32, [i64]);
+            windowsWsaStartupImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAStartup");
+            LlvmApi.SetLinkage(windowsWsaStartupImport, LlvmLinkage.External);
+            windowsSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_socket");
+            LlvmApi.SetLinkage(windowsSocketImport, LlvmLinkage.External);
+            windowsConnectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_connect");
+            LlvmApi.SetLinkage(windowsConnectImport, LlvmLinkage.External);
+            windowsSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_send");
+            LlvmApi.SetLinkage(windowsSendImport, LlvmLinkage.External);
+            windowsRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_recv");
+            LlvmApi.SetLinkage(windowsRecvImport, LlvmLinkage.External);
+            windowsCloseSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_closesocket");
+            LlvmApi.SetLinkage(windowsCloseSocketImport, LlvmLinkage.External);
         }
 
         if (usesWindowsExitProcess)
         {
-            LLVMTypeRef exitProcessType = LLVMTypeRef.CreateFunction(voidType, [i32]);
-            windowsExitProcessImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(exitProcessType, 0), "__imp_ExitProcess");
-            windowsExitProcessImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            LlvmTypeHandle exitProcessType = LlvmApi.FunctionType(voidType, [i32]);
+            windowsExitProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ExitProcess");
+            LlvmApi.SetLinkage(windowsExitProcessImport, LlvmLinkage.External);
         }
 
         if (usesWindowsProgramArgs)
         {
-            LLVMTypeRef i16 = target.Context.Int16Type;
-            LLVMTypeRef i16Ptr = LLVMTypeRef.CreatePointer(i16, 0);
-            LLVMTypeRef i16PtrPtr = LLVMTypeRef.CreatePointer(i16Ptr, 0);
-            LLVMTypeRef getCommandLineType = LLVMTypeRef.CreateFunction(i16Ptr, []);
-            LLVMTypeRef wideCharToMultiByteType = LLVMTypeRef.CreateFunction(i32, [i32, i32, i16Ptr, i32, i8Ptr, i32, i8Ptr, i8Ptr]);
-            LLVMTypeRef localFreeType = LLVMTypeRef.CreateFunction(i8Ptr, [i8Ptr]);
-            LLVMTypeRef commandLineToArgvType = LLVMTypeRef.CreateFunction(i16PtrPtr, [i16Ptr, i32Ptr]);
+            LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(target.Context);
+            LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+            LlvmTypeHandle i16PtrPtr = LlvmApi.PointerTypeInContext(target.Context, 0);
+            LlvmTypeHandle getCommandLineType = LlvmApi.FunctionType(i16Ptr, []);
+            LlvmTypeHandle wideCharToMultiByteType = LlvmApi.FunctionType(i32, [i32, i32, i16Ptr, i32, i8Ptr, i32, i8Ptr, i8Ptr]);
+            LlvmTypeHandle localFreeType = LlvmApi.FunctionType(i8Ptr, [i8Ptr]);
+            LlvmTypeHandle commandLineToArgvType = LlvmApi.FunctionType(i16PtrPtr, [i16Ptr, i32Ptr]);
 
-            windowsGetCommandLineImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getCommandLineType, 0), "__imp_GetCommandLineW");
-            windowsGetCommandLineImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsWideCharToMultiByteImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(wideCharToMultiByteType, 0), "__imp_WideCharToMultiByte");
-            windowsWideCharToMultiByteImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsLocalFreeImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(localFreeType, 0), "__imp_LocalFree");
-            windowsLocalFreeImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
-            windowsCommandLineToArgvImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(commandLineToArgvType, 0), "__imp_CommandLineToArgvW");
-            windowsCommandLineToArgvImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsGetCommandLineImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetCommandLineW");
+            LlvmApi.SetLinkage(windowsGetCommandLineImport, LlvmLinkage.External);
+            windowsWideCharToMultiByteImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WideCharToMultiByte");
+            LlvmApi.SetLinkage(windowsWideCharToMultiByteImport, LlvmLinkage.External);
+            windowsLocalFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LocalFree");
+            LlvmApi.SetLinkage(windowsLocalFreeImport, LlvmLinkage.External);
+            windowsCommandLineToArgvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CommandLineToArgvW");
+            LlvmApi.SetLinkage(windowsCommandLineToArgvImport, LlvmLinkage.External);
         }
 
-        LLVMValueRef entryFunction = target.Module.AddFunction(
+        LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module, 
             entryFunctionName,
             flavor == LlvmCodegenFlavor.Linux
-                ? LLVMTypeRef.CreateFunction(voidType, [i64])
-                : LLVMTypeRef.CreateFunction(voidType, []));
-        entryFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
+                ? LlvmApi.FunctionType(voidType, [i64])
+                : LlvmApi.FunctionType(voidType, []));
+        LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
 
-        var liftedFunctions = new Dictionary<string, LLVMValueRef>(StringComparer.Ordinal);
+        var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
         {
-            LLVMValueRef llvmFunction = target.Module.AddFunction(function.Label, closureFunctionType);
-            llvmFunction.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            LlvmValueHandle llvmFunction = LlvmApi.AddFunction(target.Module, function.Label, closureFunctionType);
+            LlvmApi.SetLinkage(llvmFunction, LlvmLinkage.Internal);
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 
@@ -351,92 +356,92 @@ internal static partial class LlvmCodegen
 
     private static void EmitFunctionBody(
         LlvmTargetContext target,
-        LLVMValueRef llvmFunction,
+        LlvmValueHandle llvmFunction,
         IrFunction function,
         IReadOnlyDictionary<string, string> stringLiterals,
-        IReadOnlyDictionary<string, LLVMValueRef> liftedFunctions,
+        IReadOnlyDictionary<string, LlvmValueHandle> liftedFunctions,
         LlvmCodegenFlavor flavor,
         bool usesProgramArgs,
-        LLVMTypeRef i32,
-        LLVMTypeRef i32Ptr,
-        LLVMValueRef heapStorageGlobal,
-        LLVMValueRef heapCursorGlobal,
-        LLVMValueRef windowsGetStdHandleImport,
-        LLVMValueRef windowsWriteFileImport,
-        LLVMValueRef windowsReadFileImport,
-        LLVMValueRef windowsCreateFileImport,
-        LLVMValueRef windowsCloseHandleImport,
-        LLVMValueRef windowsGetFileAttributesImport,
-        LLVMValueRef windowsWsaStartupImport,
-        LLVMValueRef windowsSocketImport,
-        LLVMValueRef windowsConnectImport,
-        LLVMValueRef windowsSendImport,
-        LLVMValueRef windowsRecvImport,
-        LLVMValueRef windowsCloseSocketImport,
-        LLVMValueRef windowsExitProcessImport,
-        LLVMValueRef windowsGetCommandLineImport,
-        LLVMValueRef windowsWideCharToMultiByteImport,
-        LLVMValueRef windowsLocalFreeImport,
-        LLVMValueRef windowsCommandLineToArgvImport,
+        LlvmTypeHandle i32,
+        LlvmTypeHandle i32Ptr,
+        LlvmValueHandle heapStorageGlobal,
+        LlvmValueHandle heapCursorGlobal,
+        LlvmValueHandle windowsGetStdHandleImport,
+        LlvmValueHandle windowsWriteFileImport,
+        LlvmValueHandle windowsReadFileImport,
+        LlvmValueHandle windowsCreateFileImport,
+        LlvmValueHandle windowsCloseHandleImport,
+        LlvmValueHandle windowsGetFileAttributesImport,
+        LlvmValueHandle windowsWsaStartupImport,
+        LlvmValueHandle windowsSocketImport,
+        LlvmValueHandle windowsConnectImport,
+        LlvmValueHandle windowsSendImport,
+        LlvmValueHandle windowsRecvImport,
+        LlvmValueHandle windowsCloseSocketImport,
+        LlvmValueHandle windowsExitProcessImport,
+        LlvmValueHandle windowsGetCommandLineImport,
+        LlvmValueHandle windowsWideCharToMultiByteImport,
+        LlvmValueHandle windowsLocalFreeImport,
+        LlvmValueHandle windowsCommandLineToArgvImport,
         bool isEntry)
     {
-        LLVMTypeRef i64 = target.Context.Int64Type;
-        LLVMTypeRef i8 = target.Context.Int8Type;
-        LLVMTypeRef f64 = target.Context.DoubleType;
-        LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
-        LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
+        LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
+        LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
 
-        LLVMBasicBlockRef entryBlock = llvmFunction.AppendBasicBlock("entry");
-        target.Builder.PositionAtEnd(entryBlock);
+        LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(target.Context, llvmFunction, "entry");
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entryBlock);
 
-        LLVMValueRef entryStackPointer = isEntry && flavor == LlvmCodegenFlavor.Linux
-            ? llvmFunction.GetParam(0)
+        LlvmValueHandle entryStackPointer = isEntry && flavor == LlvmCodegenFlavor.Linux
+            ? LlvmApi.GetParam(llvmFunction, 0)
             : default;
 
-        var tempSlots = new LLVMValueRef[function.TempCount];
+        var tempSlots = new LlvmValueHandle[function.TempCount];
         for (int i = 0; i < tempSlots.Length; i++)
         {
-            tempSlots[i] = target.Builder.BuildAlloca(i64, $"tmp_{i}");
-            target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), tempSlots[i]);
+            tempSlots[i] = LlvmApi.BuildAlloca(target.Builder, i64, $"tmp_{i}");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), tempSlots[i]);
         }
 
-        var localSlots = new LLVMValueRef[function.LocalCount];
+        var localSlots = new LlvmValueHandle[function.LocalCount];
         for (int i = 0; i < localSlots.Length; i++)
         {
-            localSlots[i] = target.Builder.BuildAlloca(i64, $"local_{i}");
-            target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), localSlots[i]);
+            localSlots[i] = LlvmApi.BuildAlloca(target.Builder, i64, $"local_{i}");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), localSlots[i]);
         }
 
-        LLVMValueRef programArgsSlot = target.Builder.BuildAlloca(i64, "program_args");
-        target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), programArgsSlot);
+        LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(target.Builder, i64, "program_args");
+        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), programArgsSlot);
 
         if (isEntry)
         {
-            LLVMValueRef heapBasePtr = target.Builder.BuildGEP2(
-                LLVMTypeRef.CreateArray(i8, HeapSizeBytes),
+            LlvmValueHandle heapBasePtr = LlvmApi.BuildGEP2(target.Builder, 
+                LlvmApi.ArrayType2(i8, HeapSizeBytes),
                 heapStorageGlobal,
                 new[]
                 {
-                    LLVMValueRef.CreateConstInt(i64, 0, false),
-                    LLVMValueRef.CreateConstInt(i64, 0, false)
+                    LlvmApi.ConstInt(i64, 0, 0),
+                    LlvmApi.ConstInt(i64, 0, 0)
                 },
                 "heap_base_ptr");
-            target.Builder.BuildStore(target.Builder.BuildPtrToInt(heapBasePtr, i64, "heap_base_i64"), heapCursorGlobal);
+            LlvmApi.BuildStore(target.Builder, LlvmApi.BuildPtrToInt(target.Builder, heapBasePtr, i64, "heap_base_i64"), heapCursorGlobal);
         }
 
         if (!isEntry && function.HasEnvAndArgParams)
         {
-            target.Builder.BuildStore(llvmFunction.GetParam(0), localSlots[0]);
-            target.Builder.BuildStore(llvmFunction.GetParam(1), localSlots[1]);
+            LlvmApi.BuildStore(target.Builder, LlvmApi.GetParam(llvmFunction, 0), localSlots[0]);
+            LlvmApi.BuildStore(target.Builder, LlvmApi.GetParam(llvmFunction, 1), localSlots[1]);
         }
 
-        var labelBlocks = new Dictionary<string, LLVMBasicBlockRef>(StringComparer.Ordinal);
+        var labelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal);
         foreach (IrInst.Label label in function.Instructions.OfType<IrInst.Label>())
         {
-            labelBlocks[label.Name] = llvmFunction.AppendBasicBlock(label.Name);
+            labelBlocks[label.Name] = LlvmApi.AppendBasicBlockInContext(target.Context, llvmFunction, label.Name);
         }
 
-        var fallthroughBlocks = new Dictionary<int, LLVMBasicBlockRef>();
+        var fallthroughBlocks = new Dictionary<int, LlvmBasicBlockHandle>();
         var state = new LlvmCodegenState(
             target,
             llvmFunction,
@@ -490,17 +495,17 @@ internal static partial class LlvmCodegen
             {
                 if (!terminated)
                 {
-                    target.Builder.BuildBr(state.GetLabelBlock(label.Name));
+                    LlvmApi.BuildBr(target.Builder, state.GetLabelBlock(label.Name));
                 }
 
-                target.Builder.PositionAtEnd(state.GetLabelBlock(label.Name));
+                LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetLabelBlock(label.Name));
                 terminated = false;
                 continue;
             }
 
             if (terminated)
             {
-                target.Builder.PositionAtEnd(state.GetOrCreateFallthroughBlock(index));
+                LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetOrCreateFallthroughBlock(index));
                 terminated = false;
             }
 
@@ -513,61 +518,61 @@ internal static partial class LlvmCodegen
             {
                 if (state.Flavor == LlvmCodegenFlavor.Linux)
                 {
-                    EmitExit(state, LLVMValueRef.CreateConstInt(i64, 0, false));
+                    EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));
                 }
                 else
                 {
-                    target.Builder.BuildRetVoid();
+                    LlvmApi.BuildRetVoid(target.Builder);
                 }
             }
             else
             {
-                target.Builder.BuildRet(LLVMValueRef.CreateConstInt(i64, 0, false));
+                LlvmApi.BuildRet(target.Builder, LlvmApi.ConstInt(i64, 0, 0));
             }
         }
     }
 
     private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
+        LlvmBuilderHandle builder = state.Target.Builder;
         return instruction switch
         {
-            IrInst.LoadConstInt loadConstInt => StoreTemp(state, loadConstInt.Target, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)loadConstInt.Value), true)),
-            IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LLVMValueRef.CreateConstReal(state.F64, loadConstFloat.Value)),
-            IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
+            IrInst.LoadConstInt loadConstInt => StoreTemp(state, loadConstInt.Target, LlvmApi.ConstInt(state.I64, unchecked((ulong)loadConstInt.Value), 1)),
+            IrInst.LoadConstFloat loadConstFloat => StoreTemp(state, loadConstFloat.Target, LlvmApi.ConstReal(state.F64, loadConstFloat.Value)),
+            IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LlvmApi.ConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, 0)),
             // Constant strings must remain valid when closures return them or wrap them in ADTs.
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitHeapStringLiteral(state, state.StringLiterals[loadConstStr.StrLabel])),
-            IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsSlot, "program_args")),
+            IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, LlvmApi.BuildLoad2(builder, state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
-            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpRequest(state, LoadTemp(state, httpGet.UrlTemp), LLVMValueRef.CreateConstInt(state.I64, 0, false), hasBody: false)),
+            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpRequest(state, LoadTemp(state, httpGet.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), hasBody: false)),
             IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpRequest(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp), hasBody: true)),
             IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnect(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
             IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
             IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
-            IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
+            IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
-            IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
+            IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
             IrInst.Alloc alloc => StoreTemp(state, alloc.Target, EmitAlloc(state, alloc.SizeBytes)),
-            IrInst.AddInt addInt => StoreTemp(state, addInt.Target, builder.BuildAdd(LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
-            IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, builder.BuildFAdd(LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
-            IrInst.SubInt subInt => StoreTemp(state, subInt.Target, builder.BuildSub(LoadTemp(state, subInt.Left), LoadTemp(state, subInt.Right), $"sub_{subInt.Target}")),
-            IrInst.SubFloat subFloat => StoreTemp(state, subFloat.Target, builder.BuildFSub(LoadTempAsFloat(state, subFloat.Left), LoadTempAsFloat(state, subFloat.Right), $"fsub_{subFloat.Target}")),
-            IrInst.MulInt mulInt => StoreTemp(state, mulInt.Target, builder.BuildMul(LoadTemp(state, mulInt.Left), LoadTemp(state, mulInt.Right), $"mul_{mulInt.Target}")),
-            IrInst.MulFloat mulFloat => StoreTemp(state, mulFloat.Target, builder.BuildFMul(LoadTempAsFloat(state, mulFloat.Left), LoadTempAsFloat(state, mulFloat.Right), $"fmul_{mulFloat.Target}")),
-            IrInst.DivInt divInt => StoreTemp(state, divInt.Target, builder.BuildSDiv(LoadTemp(state, divInt.Left), LoadTemp(state, divInt.Right), $"div_{divInt.Target}")),
-            IrInst.DivFloat divFloat => StoreTemp(state, divFloat.Target, builder.BuildFDiv(LoadTempAsFloat(state, divFloat.Left), LoadTempAsFloat(state, divFloat.Right), $"fdiv_{divFloat.Target}")),
-            IrInst.CmpIntGe cmpIntGe => StoreTemp(state, cmpIntGe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSGE, LoadTemp(state, cmpIntGe.Left), LoadTemp(state, cmpIntGe.Right), $"cmp_ge_{cmpIntGe.Target}")),
-            IrInst.CmpFloatGe cmpFloatGe => StoreTemp(state, cmpFloatGe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOGE, LoadTempAsFloat(state, cmpFloatGe.Left), LoadTempAsFloat(state, cmpFloatGe.Right), $"fcmp_ge_{cmpFloatGe.Target}")),
-            IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntSLE, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
-            IrInst.CmpFloatLe cmpFloatLe => StoreTemp(state, cmpFloatLe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOLE, LoadTempAsFloat(state, cmpFloatLe.Left), LoadTempAsFloat(state, cmpFloatLe.Right), $"fcmp_le_{cmpFloatLe.Target}")),
-            IrInst.CmpIntEq cmpIntEq => StoreTemp(state, cmpIntEq.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntEQ, LoadTemp(state, cmpIntEq.Left), LoadTemp(state, cmpIntEq.Right), $"cmp_eq_{cmpIntEq.Target}")),
-            IrInst.CmpFloatEq cmpFloatEq => StoreTemp(state, cmpFloatEq.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealOEQ, LoadTempAsFloat(state, cmpFloatEq.Left), LoadTempAsFloat(state, cmpFloatEq.Right), $"fcmp_eq_{cmpFloatEq.Target}")),
-            IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LLVMIntPredicate.LLVMIntNE, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
-            IrInst.CmpFloatNe cmpFloatNe => StoreTemp(state, cmpFloatNe.Target, EmitFloatComparison(state, LLVMRealPredicate.LLVMRealONE, LoadTempAsFloat(state, cmpFloatNe.Left), LoadTempAsFloat(state, cmpFloatNe.Right), $"fcmp_ne_{cmpFloatNe.Target}")),
+            IrInst.AddInt addInt => StoreTemp(state, addInt.Target, LlvmApi.BuildAdd(builder, LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
+            IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, LlvmApi.BuildFAdd(builder, LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
+            IrInst.SubInt subInt => StoreTemp(state, subInt.Target, LlvmApi.BuildSub(builder, LoadTemp(state, subInt.Left), LoadTemp(state, subInt.Right), $"sub_{subInt.Target}")),
+            IrInst.SubFloat subFloat => StoreTemp(state, subFloat.Target, LlvmApi.BuildFSub(builder, LoadTempAsFloat(state, subFloat.Left), LoadTempAsFloat(state, subFloat.Right), $"fsub_{subFloat.Target}")),
+            IrInst.MulInt mulInt => StoreTemp(state, mulInt.Target, LlvmApi.BuildMul(builder, LoadTemp(state, mulInt.Left), LoadTemp(state, mulInt.Right), $"mul_{mulInt.Target}")),
+            IrInst.MulFloat mulFloat => StoreTemp(state, mulFloat.Target, LlvmApi.BuildFMul(builder, LoadTempAsFloat(state, mulFloat.Left), LoadTempAsFloat(state, mulFloat.Right), $"fmul_{mulFloat.Target}")),
+            IrInst.DivInt divInt => StoreTemp(state, divInt.Target, LlvmApi.BuildSDiv(builder, LoadTemp(state, divInt.Left), LoadTemp(state, divInt.Right), $"div_{divInt.Target}")),
+            IrInst.DivFloat divFloat => StoreTemp(state, divFloat.Target, LlvmApi.BuildFDiv(builder, LoadTempAsFloat(state, divFloat.Left), LoadTempAsFloat(state, divFloat.Right), $"fdiv_{divFloat.Target}")),
+            IrInst.CmpIntGe cmpIntGe => StoreTemp(state, cmpIntGe.Target, EmitIntComparison(state, LlvmIntPredicate.Sge, LoadTemp(state, cmpIntGe.Left), LoadTemp(state, cmpIntGe.Right), $"cmp_ge_{cmpIntGe.Target}")),
+            IrInst.CmpFloatGe cmpFloatGe => StoreTemp(state, cmpFloatGe.Target, EmitFloatComparison(state, LlvmRealPredicate.Oge, LoadTempAsFloat(state, cmpFloatGe.Left), LoadTempAsFloat(state, cmpFloatGe.Right), $"fcmp_ge_{cmpFloatGe.Target}")),
+            IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LlvmIntPredicate.Sle, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
+            IrInst.CmpFloatLe cmpFloatLe => StoreTemp(state, cmpFloatLe.Target, EmitFloatComparison(state, LlvmRealPredicate.Ole, LoadTempAsFloat(state, cmpFloatLe.Left), LoadTempAsFloat(state, cmpFloatLe.Right), $"fcmp_le_{cmpFloatLe.Target}")),
+            IrInst.CmpIntEq cmpIntEq => StoreTemp(state, cmpIntEq.Target, EmitIntComparison(state, LlvmIntPredicate.Eq, LoadTemp(state, cmpIntEq.Left), LoadTemp(state, cmpIntEq.Right), $"cmp_eq_{cmpIntEq.Target}")),
+            IrInst.CmpFloatEq cmpFloatEq => StoreTemp(state, cmpFloatEq.Target, EmitFloatComparison(state, LlvmRealPredicate.Oeq, LoadTempAsFloat(state, cmpFloatEq.Left), LoadTempAsFloat(state, cmpFloatEq.Right), $"fcmp_eq_{cmpFloatEq.Target}")),
+            IrInst.CmpIntNe cmpIntNe => StoreTemp(state, cmpIntNe.Target, EmitIntComparison(state, LlvmIntPredicate.Ne, LoadTemp(state, cmpIntNe.Left), LoadTemp(state, cmpIntNe.Right), $"cmp_ne_{cmpIntNe.Target}")),
+            IrInst.CmpFloatNe cmpFloatNe => StoreTemp(state, cmpFloatNe.Target, EmitFloatComparison(state, LlvmRealPredicate.One, LoadTempAsFloat(state, cmpFloatNe.Left), LoadTempAsFloat(state, cmpFloatNe.Right), $"fcmp_ne_{cmpFloatNe.Target}")),
             IrInst.CmpStrEq cmpStrEq => StoreTemp(state, cmpStrEq.Target, EmitStringComparison(state, LoadTemp(state, cmpStrEq.Left), LoadTemp(state, cmpStrEq.Right))),
             IrInst.CmpStrNe cmpStrNe => StoreTemp(state, cmpStrNe.Target, EmitInvertBool(state, EmitStringComparison(state, LoadTemp(state, cmpStrNe.Left), LoadTemp(state, cmpStrNe.Right)), $"cmp_str_ne_{cmpStrNe.Target}")),
             IrInst.PrintInt printInt => EmitPrintInt(state, LoadTemp(state, printInt.Source)),
@@ -591,97 +596,97 @@ internal static partial class LlvmCodegen
         };
     }
 
-    private static bool StoreTemp(LlvmCodegenState state, int target, LLVMValueRef value)
+    private static bool StoreTemp(LlvmCodegenState state, int target, LlvmValueHandle value)
     {
-        state.Target.Builder.BuildStore(NormalizeToI64(state, value), state.TempSlots[target]);
+        LlvmApi.BuildStore(state.Target.Builder, NormalizeToI64(state, value), state.TempSlots[target]);
         return false;
     }
 
-    private static bool StoreLocal(LlvmCodegenState state, int slot, LLVMValueRef value)
+    private static bool StoreLocal(LlvmCodegenState state, int slot, LlvmValueHandle value)
     {
-        state.Target.Builder.BuildStore(NormalizeToI64(state, value), state.LocalSlots[slot]);
+        LlvmApi.BuildStore(state.Target.Builder, NormalizeToI64(state, value), state.LocalSlots[slot]);
         return false;
     }
 
-    private static LLVMValueRef LoadTemp(LlvmCodegenState state, int temp)
+    private static LlvmValueHandle LoadTemp(LlvmCodegenState state, int temp)
     {
-        return state.Target.Builder.BuildLoad2(state.I64, state.TempSlots[temp], $"tmpv_{temp}");
+        return LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.TempSlots[temp], $"tmpv_{temp}");
     }
 
-    private static LLVMValueRef LoadTempAsFloat(LlvmCodegenState state, int temp)
+    private static LlvmValueHandle LoadTempAsFloat(LlvmCodegenState state, int temp)
     {
-        return state.Target.Builder.BuildBitCast(LoadTemp(state, temp), state.F64, $"tmpf_{temp}");
+        return LlvmApi.BuildBitCast(state.Target.Builder, LoadTemp(state, temp), state.F64, $"tmpf_{temp}");
     }
 
-    private static LLVMValueRef NormalizeToI64(LlvmCodegenState state, LLVMValueRef value)
+    private static LlvmValueHandle NormalizeToI64(LlvmCodegenState state, LlvmValueHandle value)
     {
-        return value.TypeOf.Kind switch
+        return LlvmApi.GetTypeKind(LlvmApi.TypeOf(value)) switch
         {
-            LLVMTypeKind.LLVMIntegerTypeKind when value.TypeOf.IntWidth == 64 => value,
-            LLVMTypeKind.LLVMIntegerTypeKind => state.Target.Builder.BuildZExt(value, state.I64, "zext_i64"),
-            LLVMTypeKind.LLVMDoubleTypeKind => state.Target.Builder.BuildBitCast(value, state.I64, "f64_i64"),
-            LLVMTypeKind.LLVMPointerTypeKind => state.Target.Builder.BuildPtrToInt(value, state.I64, "ptr_i64"),
-            _ => throw new InvalidOperationException($"Cannot normalize LLVM value of type '{value.TypeOf.Kind}' to i64.")
+            LlvmTypeKind.Integer when LlvmApi.GetIntTypeWidth(LlvmApi.TypeOf(value)) == 64 => value,
+            LlvmTypeKind.Integer => LlvmApi.BuildZExt(state.Target.Builder, value, state.I64, "zext_i64"),
+            LlvmTypeKind.Double => LlvmApi.BuildBitCast(state.Target.Builder, value, state.I64, "f64_i64"),
+            LlvmTypeKind.Pointer => LlvmApi.BuildPtrToInt(state.Target.Builder, value, state.I64, "ptr_i64"),
+            _ => throw new InvalidOperationException($"Cannot normalize LLVM value of type '{LlvmApi.GetTypeKind(LlvmApi.TypeOf(value))}' to i64.")
         };
     }
 
     private sealed record LlvmCodegenState(
         LlvmTargetContext Target,
-        LLVMValueRef Function,
+        LlvmValueHandle Function,
         IReadOnlyDictionary<string, string> StringLiterals,
-        IReadOnlyDictionary<string, LLVMValueRef> LiftedFunctions,
-        LLVMValueRef ProgramArgsSlot,
-        LLVMValueRef[] TempSlots,
-        LLVMValueRef[] LocalSlots,
-        LLVMValueRef HeapCursorSlot,
-        Dictionary<string, LLVMBasicBlockRef> LabelBlocks,
-        Dictionary<int, LLVMBasicBlockRef> FallthroughBlocks,
-        LLVMTypeRef I64,
-        LLVMTypeRef I32,
-        LLVMTypeRef I8,
-        LLVMTypeRef F64,
-        LLVMTypeRef I8Ptr,
-        LLVMTypeRef I32Ptr,
-        LLVMTypeRef I64Ptr,
-        LLVMValueRef EntryStackPointer,
-        LLVMValueRef WindowsGetStdHandleImport,
-        LLVMValueRef WindowsWriteFileImport,
-        LLVMValueRef WindowsReadFileImport,
-        LLVMValueRef WindowsCreateFileImport,
-        LLVMValueRef WindowsCloseHandleImport,
-        LLVMValueRef WindowsGetFileAttributesImport,
-        LLVMValueRef WindowsWsaStartupImport,
-        LLVMValueRef WindowsSocketImport,
-        LLVMValueRef WindowsConnectImport,
-        LLVMValueRef WindowsSendImport,
-        LLVMValueRef WindowsRecvImport,
-        LLVMValueRef WindowsCloseSocketImport,
-        LLVMValueRef WindowsExitProcessImport,
-        LLVMValueRef WindowsGetCommandLineImport,
-        LLVMValueRef WindowsWideCharToMultiByteImport,
-        LLVMValueRef WindowsLocalFreeImport,
-        LLVMValueRef WindowsCommandLineToArgvImport,
+        IReadOnlyDictionary<string, LlvmValueHandle> LiftedFunctions,
+        LlvmValueHandle ProgramArgsSlot,
+        LlvmValueHandle[] TempSlots,
+        LlvmValueHandle[] LocalSlots,
+        LlvmValueHandle HeapCursorSlot,
+        Dictionary<string, LlvmBasicBlockHandle> LabelBlocks,
+        Dictionary<int, LlvmBasicBlockHandle> FallthroughBlocks,
+        LlvmTypeHandle I64,
+        LlvmTypeHandle I32,
+        LlvmTypeHandle I8,
+        LlvmTypeHandle F64,
+        LlvmTypeHandle I8Ptr,
+        LlvmTypeHandle I32Ptr,
+        LlvmTypeHandle I64Ptr,
+        LlvmValueHandle EntryStackPointer,
+        LlvmValueHandle WindowsGetStdHandleImport,
+        LlvmValueHandle WindowsWriteFileImport,
+        LlvmValueHandle WindowsReadFileImport,
+        LlvmValueHandle WindowsCreateFileImport,
+        LlvmValueHandle WindowsCloseHandleImport,
+        LlvmValueHandle WindowsGetFileAttributesImport,
+        LlvmValueHandle WindowsWsaStartupImport,
+        LlvmValueHandle WindowsSocketImport,
+        LlvmValueHandle WindowsConnectImport,
+        LlvmValueHandle WindowsSendImport,
+        LlvmValueHandle WindowsRecvImport,
+        LlvmValueHandle WindowsCloseSocketImport,
+        LlvmValueHandle WindowsExitProcessImport,
+        LlvmValueHandle WindowsGetCommandLineImport,
+        LlvmValueHandle WindowsWideCharToMultiByteImport,
+        LlvmValueHandle WindowsLocalFreeImport,
+        LlvmValueHandle WindowsCommandLineToArgvImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
     {
-        public LLVMBasicBlockRef GetLabelBlock(string name) => LabelBlocks[name];
+        public LlvmBasicBlockHandle GetLabelBlock(string name) => LabelBlocks[name];
 
-        public LLVMBasicBlockRef GetOrCreateFallthroughBlock(int instructionIndex)
+        public LlvmBasicBlockHandle GetOrCreateFallthroughBlock(int instructionIndex)
         {
-            if (!FallthroughBlocks.TryGetValue(instructionIndex, out LLVMBasicBlockRef block))
+            if (!FallthroughBlocks.TryGetValue(instructionIndex, out LlvmBasicBlockHandle block))
             {
-                block = Function.AppendBasicBlock($"bb_{instructionIndex}");
+                block = LlvmApi.AppendBasicBlockInContext(Target.Context, Function, $"bb_{instructionIndex}");
                 FallthroughBlocks[instructionIndex] = block;
             }
 
             return block;
         }
 
-        public LLVMBasicBlockRef GetNextReachableBlock(int instructionIndex)
+        public LlvmBasicBlockHandle GetNextReachableBlock(int instructionIndex)
         {
             int nextIndex = instructionIndex + 1;
-            return FallthroughBlocks.TryGetValue(nextIndex, out LLVMBasicBlockRef block)
+            return FallthroughBlocks.TryGetValue(nextIndex, out LlvmBasicBlockHandle block)
                 ? block
                 : GetOrCreateFallthroughBlock(nextIndex);
         }
