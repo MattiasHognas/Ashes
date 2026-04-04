@@ -349,7 +349,7 @@ public sealed class EndToEndNativeBackendTests
 
     private static async Task<string> RunElfAsync(IrProgram ir, string[]? programArgs, string? stdin)
     {
-        var elfBytes = new Ashes.Backend.Backends.LinuxX64ElfBackend().Compile(ir);
+        var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
         Directory.CreateDirectory(tmpDir);
