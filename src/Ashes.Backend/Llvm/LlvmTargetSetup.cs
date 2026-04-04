@@ -47,16 +47,23 @@ internal static class LlvmTargetSetup
         module.Target = targetTriple;
         unsafe
         {
-            var dataLayout = machine.CreateTargetDataLayout();
-            sbyte* layoutText = LLVM.CopyStringRepOfTargetData(dataLayout);
+            LLVMTargetDataRef dataLayout = machine.CreateTargetDataLayout();
             try
             {
-                module.DataLayout = Marshal.PtrToStringAnsi((nint)layoutText)
-                    ?? throw new InvalidOperationException("LLVM returned an empty target data layout.");
+                sbyte* layoutText = LLVM.CopyStringRepOfTargetData(dataLayout);
+                try
+                {
+                    module.DataLayout = Marshal.PtrToStringAnsi((nint)layoutText)
+                        ?? throw new InvalidOperationException("LLVM returned an empty target data layout.");
+                }
+                finally
+                {
+                    LLVM.DisposeMessage(layoutText);
+                }
             }
             finally
             {
-                LLVM.DisposeMessage(layoutText);
+                LLVM.DisposeTargetData(dataLayout);
             }
         }
 
