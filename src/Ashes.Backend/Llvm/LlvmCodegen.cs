@@ -8,6 +8,7 @@ namespace Ashes.Backend.Llvm;
 internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 2048;
+    private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
     private const long SyscallWrite = 1;
     private const long SyscallExit = 60;
@@ -116,9 +117,15 @@ internal static class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.PrintBool>(program));
         bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.Windows
             && ProgramUsesInstruction<IrInst.PanicStr>(program);
+        bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.Windows
+            && usesProgramArgs;
         LLVMValueRef windowsGetStdHandleImport = default;
         LLVMValueRef windowsWriteFileImport = default;
         LLVMValueRef windowsExitProcessImport = default;
+        LLVMValueRef windowsGetCommandLineImport = default;
+        LLVMValueRef windowsWideCharToMultiByteImport = default;
+        LLVMValueRef windowsLocalFreeImport = default;
+        LLVMValueRef windowsCommandLineToArgvImport = default;
         if (usesWindowsStdout)
         {
             LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
@@ -134,6 +141,26 @@ internal static class LlvmCodegen
             LLVMTypeRef exitProcessType = LLVMTypeRef.CreateFunction(voidType, [i32]);
             windowsExitProcessImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(exitProcessType, 0), "__imp_ExitProcess");
             windowsExitProcessImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsProgramArgs)
+        {
+            LLVMTypeRef i16 = target.Context.Int16Type;
+            LLVMTypeRef i16Ptr = LLVMTypeRef.CreatePointer(i16, 0);
+            LLVMTypeRef i16PtrPtr = LLVMTypeRef.CreatePointer(i16Ptr, 0);
+            LLVMTypeRef getCommandLineType = LLVMTypeRef.CreateFunction(i16Ptr, []);
+            LLVMTypeRef wideCharToMultiByteType = LLVMTypeRef.CreateFunction(i32, [i32, i32, i16Ptr, i32, i8Ptr, i32, i8Ptr, i8Ptr]);
+            LLVMTypeRef localFreeType = LLVMTypeRef.CreateFunction(i8Ptr, [i8Ptr]);
+            LLVMTypeRef commandLineToArgvType = LLVMTypeRef.CreateFunction(i16PtrPtr, [i16Ptr, i32Ptr]);
+
+            windowsGetCommandLineImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getCommandLineType, 0), "__imp_GetCommandLineW");
+            windowsGetCommandLineImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsWideCharToMultiByteImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(wideCharToMultiByteType, 0), "__imp_WideCharToMultiByte");
+            windowsWideCharToMultiByteImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsLocalFreeImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(localFreeType, 0), "__imp_LocalFree");
+            windowsLocalFreeImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsCommandLineToArgvImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(commandLineToArgvType, 0), "__imp_CommandLineToArgvW");
+            windowsCommandLineToArgvImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
         LLVMValueRef entryFunction = target.Module.AddFunction(
@@ -164,6 +191,10 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsExitProcessImport,
+            windowsGetCommandLineImport,
+            windowsWideCharToMultiByteImport,
+            windowsLocalFreeImport,
+            windowsCommandLineToArgvImport,
             isEntry: true);
 
         foreach (IrFunction function in program.Functions)
@@ -181,6 +212,10 @@ internal static class LlvmCodegen
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
                 windowsExitProcessImport,
+                windowsGetCommandLineImport,
+                windowsWideCharToMultiByteImport,
+                windowsLocalFreeImport,
+                windowsCommandLineToArgvImport,
                 isEntry: false);
         }
     }
@@ -210,6 +245,10 @@ internal static class LlvmCodegen
         LLVMValueRef windowsGetStdHandleImport,
         LLVMValueRef windowsWriteFileImport,
         LLVMValueRef windowsExitProcessImport,
+        LLVMValueRef windowsGetCommandLineImport,
+        LLVMValueRef windowsWideCharToMultiByteImport,
+        LLVMValueRef windowsLocalFreeImport,
+        LLVMValueRef windowsCommandLineToArgvImport,
         bool isEntry)
     {
         LLVMTypeRef i64 = target.Context.Int64Type;
@@ -299,6 +338,10 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsExitProcessImport,
+            windowsGetCommandLineImport,
+            windowsWideCharToMultiByteImport,
+            windowsLocalFreeImport,
+            windowsCommandLineToArgvImport,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -919,7 +962,7 @@ internal static class LlvmCodegen
             return;
         }
 
-        throw new InvalidOperationException("The minimal Windows LLVM path does not yet support program args initialization.");
+        EmitWindowsProgramArgsInitialization(state);
     }
 
     private static void EmitLinuxProgramArgsInitialization(LlvmCodegenState state)
@@ -1023,6 +1066,209 @@ internal static class LlvmCodegen
         builder.BuildStore(builder.BuildLoad2(state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
     }
 
+    private static void EmitWindowsProgramArgsInitialization(LlvmCodegenState state)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef i16 = state.Target.Context.Int16Type;
+        LLVMTypeRef i16Ptr = LLVMTypeRef.CreatePointer(i16, 0);
+        LLVMTypeRef i16PtrPtr = LLVMTypeRef.CreatePointer(i16Ptr, 0);
+        LLVMTypeRef getCommandLineType = LLVMTypeRef.CreateFunction(i16Ptr, []);
+        LLVMTypeRef wideCharToMultiByteType = LLVMTypeRef.CreateFunction(state.I32, [state.I32, state.I32, i16Ptr, state.I32, state.I8Ptr, state.I32, state.I8Ptr, state.I8Ptr]);
+        LLVMTypeRef localFreeType = LLVMTypeRef.CreateFunction(state.I8Ptr, [state.I8Ptr]);
+        LLVMTypeRef commandLineToArgvType = LLVMTypeRef.CreateFunction(i16PtrPtr, [i16Ptr, state.I32Ptr]);
+
+        LLVMValueRef listSlot = builder.BuildAlloca(state.I64, "program_args_list");
+        LLVMValueRef argcSlot = builder.BuildAlloca(state.I32, "program_args_argc");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I32, "program_args_index");
+        LLVMValueRef wideArgSlot = builder.BuildAlloca(i16Ptr, "program_args_wide_arg");
+        LLVMValueRef wideLenSlot = builder.BuildAlloca(state.I32, "program_args_wide_len");
+        LLVMValueRef stringRefSlot = builder.BuildAlloca(state.I64, "program_args_string_ref");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), listSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), argcSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), stringRefSlot);
+
+        LLVMValueRef getCommandLinePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(getCommandLineType, 0),
+            state.WindowsGetCommandLineImport,
+            "get_command_line_ptr");
+        LLVMValueRef commandLinePtr = builder.BuildCall2(
+            getCommandLineType,
+            getCommandLinePtr,
+            Array.Empty<LLVMValueRef>(),
+            "command_line");
+
+        LLVMValueRef commandLineToArgvPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(commandLineToArgvType, 0),
+            state.WindowsCommandLineToArgvImport,
+            "command_line_to_argv_ptr");
+        LLVMValueRef argvWide = builder.BuildCall2(
+            commandLineToArgvType,
+            commandLineToArgvPtr,
+            new[] { commandLinePtr, argcSlot },
+            "argv_wide");
+
+        var haveArgvBlock = state.Function.AppendBasicBlock("program_args_have_argv");
+        var maybeLoopBlock = state.Function.AppendBasicBlock("program_args_maybe_loop");
+        var loopCheckBlock = state.Function.AppendBasicBlock("program_args_loop_check");
+        var wideArgSetupBlock = state.Function.AppendBasicBlock("program_args_wide_arg_setup");
+        var wideLenBodyBlock = state.Function.AppendBasicBlock("program_args_wide_len_body");
+        var wideLenIncBlock = state.Function.AppendBasicBlock("program_args_wide_len_inc");
+        var convertArgBlock = state.Function.AppendBasicBlock("program_args_convert_arg");
+        var createUtf8StringBlock = state.Function.AppendBasicBlock("program_args_create_utf8_string");
+        var createEmptyStringBlock = state.Function.AppendBasicBlock("program_args_create_empty_string");
+        var linkArgBlock = state.Function.AppendBasicBlock("program_args_link_arg");
+        var freeArgvBlock = state.Function.AppendBasicBlock("program_args_free_argv");
+        var doneBlock = state.Function.AppendBasicBlock("program_args_done");
+
+        LLVMValueRef hasArgv = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntNE,
+            builder.BuildPtrToInt(argvWide, state.I64, "argv_wide_i64"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "program_args_has_argv");
+        builder.BuildCondBr(hasArgv, haveArgvBlock, doneBlock);
+
+        builder.PositionAtEnd(haveArgvBlock);
+        LLVMValueRef argc = builder.BuildLoad2(state.I32, argcSlot, "program_args_argc_value");
+        LLVMValueRef hasUserArgs = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntSGT,
+            argc,
+            LLVMValueRef.CreateConstInt(state.I32, 1, false),
+            "program_args_has_user_args");
+        builder.BuildCondBr(hasUserArgs, maybeLoopBlock, freeArgvBlock);
+
+        builder.PositionAtEnd(maybeLoopBlock);
+        builder.BuildStore(
+            builder.BuildSub(argc, LLVMValueRef.CreateConstInt(state.I32, 1, false), "program_args_start_index"),
+            indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I32, indexSlot, "program_args_index_value");
+        LLVMValueRef shouldContinue = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntSGT,
+            index,
+            LLVMValueRef.CreateConstInt(state.I32, 0, false),
+            "program_args_continue");
+        builder.BuildCondBr(shouldContinue, wideArgSetupBlock, freeArgvBlock);
+
+        builder.PositionAtEnd(wideArgSetupBlock);
+        LLVMValueRef wideArgPtrPtr = builder.BuildGEP2(
+            i16Ptr,
+            argvWide,
+            new[] { builder.BuildSExt(index, state.I64, "program_args_index_i64") },
+            "program_args_wide_arg_ptr");
+        LLVMValueRef wideArgPtr = builder.BuildLoad2(i16Ptr, wideArgPtrPtr, "program_args_wide_arg_value");
+        builder.BuildStore(wideArgPtr, wideArgSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), wideLenSlot);
+        builder.BuildBr(wideLenBodyBlock);
+
+        builder.PositionAtEnd(wideLenBodyBlock);
+        LLVMValueRef wideLen = builder.BuildLoad2(state.I32, wideLenSlot, "program_args_wide_len_value");
+        LLVMValueRef wideCharPtr = builder.BuildGEP2(
+            i16,
+            builder.BuildLoad2(i16Ptr, wideArgSlot, "program_args_wide_arg_current"),
+            new[] { builder.BuildSExt(wideLen, state.I64, "program_args_wide_len_i64") },
+            "program_args_wide_char_ptr");
+        LLVMValueRef wideChar = builder.BuildLoad2(i16, wideCharPtr, "program_args_wide_char");
+        LLVMValueRef atTerminator = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntEQ,
+            wideChar,
+            LLVMValueRef.CreateConstInt(i16, 0, false),
+            "program_args_at_wide_terminator");
+        builder.BuildCondBr(atTerminator, convertArgBlock, wideLenIncBlock);
+
+        builder.PositionAtEnd(wideLenIncBlock);
+        builder.BuildStore(
+            builder.BuildAdd(builder.BuildLoad2(state.I32, wideLenSlot, "program_args_wide_len_before_inc"), LLVMValueRef.CreateConstInt(state.I32, 1, false), "program_args_wide_len_inc"),
+            wideLenSlot);
+        builder.BuildBr(wideLenBodyBlock);
+
+        builder.PositionAtEnd(convertArgBlock);
+        LLVMValueRef wideArg = builder.BuildLoad2(i16Ptr, wideArgSlot, "program_args_wide_arg_for_convert");
+        LLVMValueRef wcharCount = builder.BuildLoad2(state.I32, wideLenSlot, "program_args_wchar_count");
+        LLVMValueRef wideCharToMultiBytePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(wideCharToMultiByteType, 0),
+            state.WindowsWideCharToMultiByteImport,
+            "wide_char_to_multi_byte_ptr");
+        LLVMValueRef nullI8Ptr = builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, "null_i8_ptr");
+        LLVMValueRef byteCount = builder.BuildCall2(
+            wideCharToMultiByteType,
+            wideCharToMultiBytePtr,
+            new[]
+            {
+                LLVMValueRef.CreateConstInt(state.I32, Utf8CodePage, false),
+                LLVMValueRef.CreateConstInt(state.I32, 0, false),
+                wideArg,
+                wcharCount,
+                nullI8Ptr,
+                LLVMValueRef.CreateConstInt(state.I32, 0, false),
+                nullI8Ptr,
+                nullI8Ptr
+            },
+            "program_args_byte_count");
+        LLVMValueRef hasBytes = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntSGT,
+            byteCount,
+            LLVMValueRef.CreateConstInt(state.I32, 0, false),
+            "program_args_has_bytes");
+        builder.BuildCondBr(hasBytes, createUtf8StringBlock, createEmptyStringBlock);
+
+        builder.PositionAtEnd(createUtf8StringBlock);
+        LLVMValueRef stringRef = EmitAllocDynamic(
+            state,
+            builder.BuildAdd(builder.BuildZExt(byteCount, state.I64, "program_args_byte_count_i64"), LLVMValueRef.CreateConstInt(state.I64, 8, false), "program_args_string_bytes"));
+        StoreMemory(state, stringRef, 0, builder.BuildZExt(byteCount, state.I64, "program_args_string_len"), "program_args_string_len");
+        LLVMValueRef stringDest = GetStringBytesPointer(state, stringRef, "program_args_string_dest");
+        builder.BuildCall2(
+            wideCharToMultiByteType,
+            wideCharToMultiBytePtr,
+            new[]
+            {
+                LLVMValueRef.CreateConstInt(state.I32, Utf8CodePage, false),
+                LLVMValueRef.CreateConstInt(state.I32, 0, false),
+                wideArg,
+                wcharCount,
+                stringDest,
+                byteCount,
+                nullI8Ptr,
+                nullI8Ptr
+            },
+            "program_args_copy_utf8");
+        builder.BuildStore(stringRef, stringRefSlot);
+        builder.BuildBr(linkArgBlock);
+
+        builder.PositionAtEnd(createEmptyStringBlock);
+        LLVMValueRef emptyStringRef = EmitAlloc(state, 8);
+        StoreMemory(state, emptyStringRef, 0, LLVMValueRef.CreateConstInt(state.I64, 0, false), "program_args_empty_string_len");
+        builder.BuildStore(emptyStringRef, stringRefSlot);
+        builder.BuildBr(linkArgBlock);
+
+        builder.PositionAtEnd(linkArgBlock);
+        LLVMValueRef consRef = EmitAlloc(state, 16);
+        StoreMemory(state, consRef, 0, builder.BuildLoad2(state.I64, stringRefSlot, "program_args_string_ref_value"), "program_args_cons_head");
+        StoreMemory(state, consRef, 8, builder.BuildLoad2(state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
+        builder.BuildStore(consRef, listSlot);
+        builder.BuildStore(
+            builder.BuildSub(builder.BuildLoad2(state.I32, indexSlot, "program_args_index_before_dec"), LLVMValueRef.CreateConstInt(state.I32, 1, false), "program_args_index_dec"),
+            indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(freeArgvBlock);
+        LLVMValueRef localFreePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(localFreeType, 0),
+            state.WindowsLocalFreeImport,
+            "local_free_ptr");
+        builder.BuildCall2(
+            localFreeType,
+            localFreePtr,
+            new[] { builder.BuildBitCast(argvWide, state.I8Ptr, "argv_wide_hlocal") },
+            "program_args_local_free");
+        builder.BuildBr(doneBlock);
+
+        builder.PositionAtEnd(doneBlock);
+        builder.BuildStore(builder.BuildLoad2(state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
+    }
+
     private static void EmitWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
     {
         if (state.Flavor == LlvmCodegenFlavor.Linux)
@@ -1118,6 +1364,10 @@ internal static class LlvmCodegen
         LLVMValueRef WindowsGetStdHandleImport,
         LLVMValueRef WindowsWriteFileImport,
         LLVMValueRef WindowsExitProcessImport,
+        LLVMValueRef WindowsGetCommandLineImport,
+        LLVMValueRef WindowsWideCharToMultiByteImport,
+        LLVMValueRef WindowsLocalFreeImport,
+        LLVMValueRef WindowsCommandLineToArgvImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)

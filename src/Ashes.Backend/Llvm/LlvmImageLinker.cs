@@ -70,20 +70,30 @@ internal static class LlvmImageLinker
         int kernelNameOffset = (int)rdata.Stream.Position;
         rdata.Stream.Write(Encoding.ASCII.GetBytes("KERNEL32.DLL\0"));
         var kernelName = new PEAsciiStringLink(rdata, new RVO((uint)kernelNameOffset));
+        int shellNameOffset = (int)rdata.Stream.Position;
+        rdata.Stream.Write(Encoding.ASCII.GetBytes("SHELL32.DLL\0"));
+        var shellName = new PEAsciiStringLink(rdata, new RVO((uint)shellNameOffset));
         var exitProcessHintName = WriteImportHintName(rdata, 0, "ExitProcess");
         var getStdHandleHintName = WriteImportHintName(rdata, 0, "GetStdHandle");
         var writeFileHintName = WriteImportHintName(rdata, 0, "WriteFile");
+        var getCommandLineHintName = WriteImportHintName(rdata, 0, "GetCommandLineW");
+        var wideCharToMultiByteHintName = WriteImportHintName(rdata, 0, "WideCharToMultiByte");
+        var localFreeHintName = WriteImportHintName(rdata, 0, "LocalFree");
+        var commandLineToArgvHintName = WriteImportHintName(rdata, 0, "CommandLineToArgvW");
         Align(rdata, 8);
         int iatSectionOffset = (int)rdata.Stream.Length;
 
-        var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName };
-        var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat };
-        var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName };
+        var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
+        var shell32Iat = new PEImportAddressTable64() { commandLineToArgvHintName };
+        var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat, shell32Iat };
+        var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
+        var shell32Ilt = new PEImportLookupTable64() { commandLineToArgvHintName };
         var importDirectory = new PEImportDirectory
         {
             Entries =
             {
-                new PEImportDirectoryEntry(kernelName, kernel32Iat, kernel32Ilt)
+                new PEImportDirectoryEntry(kernelName, kernel32Iat, kernel32Ilt),
+                new PEImportDirectoryEntry(shellName, shell32Iat, shell32Ilt)
             }
         };
 
@@ -91,6 +101,10 @@ internal static class LlvmImageLinker
         ulong exitProcessIatVa = PeImageBase + rdataRva + (ulong)iatSectionOffset;
         ulong getStdHandleIatVa = exitProcessIatVa + 8;
         ulong writeFileIatVa = exitProcessIatVa + 16;
+        ulong getCommandLineIatVa = exitProcessIatVa + 24;
+        ulong wideCharToMultiByteIatVa = exitProcessIatVa + 32;
+        ulong localFreeIatVa = exitProcessIatVa + 40;
+        ulong commandLineToArgvIatVa = exitProcessIatVa + 56;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -108,6 +122,10 @@ internal static class LlvmImageLinker
                 ["__imp_ExitProcess"] = exitProcessIatVa,
                 ["__imp_GetStdHandle"] = getStdHandleIatVa,
                 ["__imp_WriteFile"] = writeFileIatVa,
+                ["__imp_GetCommandLineW"] = getCommandLineIatVa,
+                ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
+                ["__imp_LocalFree"] = localFreeIatVa,
+                ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
                 ["__chkstk"] = chkstkStubVa
             });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
@@ -125,6 +143,7 @@ internal static class LlvmImageLinker
         rdataSection.Content.Add(rdata);
         rdataSection.Content.Add(iatDirectory);
         rdataSection.Content.Add(kernel32Ilt);
+        rdataSection.Content.Add(shell32Ilt);
         rdataSection.Content.Add(importDirectory);
 
         pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);

@@ -58,6 +58,16 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_compile_should_support_program_args_programs()
+    {
+        var bytes = CompileForWindows("match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")");
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)'M');
+        bytes[1].ShouldBe((byte)'Z');
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_float_arithmetic_and_comparisons()
     {
         var ir = LowerExpression("if (1.5 + 2.5) == 4.0 then 42 else 0");
@@ -106,6 +116,14 @@ public sealed class WindowsBackendCoverageTests
     public void Windows_backend_llvm_support_check_should_accept_print_programs()
     {
         var ir = LowerExpression("Ashes.IO.write(\"hi\")");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_program_args_programs()
+    {
+        var ir = LowerExpression("match Ashes.IO.args with | a :: b :: [] -> 1 | _ -> 0");
 
         SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
     }
