@@ -7,7 +7,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static class LlvmCodegen
 {
-    private const int HeapSizeBytes = 2048;
+    private const int HeapSizeBytes = 1024 * 1024 * 4;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
     private const long SyscallWrite = 1;
@@ -107,6 +107,7 @@ internal static class LlvmCodegen
         LLVMTypeRef i8Ptr = LLVMTypeRef.CreatePointer(i8, 0);
         LLVMTypeRef i32Ptr = LLVMTypeRef.CreatePointer(i32, 0);
         LLVMTypeRef i64Ptr = LLVMTypeRef.CreatePointer(i64, 0);
+        LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
@@ -126,6 +127,12 @@ internal static class LlvmCodegen
         LLVMValueRef windowsWideCharToMultiByteImport = default;
         LLVMValueRef windowsLocalFreeImport = default;
         LLVMValueRef windowsCommandLineToArgvImport = default;
+        LLVMValueRef heapStorageGlobal = target.Module.AddGlobal(heapType, "__ashes_heap_storage");
+        heapStorageGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        heapStorageGlobal.Initializer = LLVMValueRef.CreateConstNull(heapType);
+        LLVMValueRef heapCursorGlobal = target.Module.AddGlobal(i64, "__ashes_heap_cursor");
+        heapCursorGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        heapCursorGlobal.Initializer = LLVMValueRef.CreateConstInt(i64, 0, false);
         if (usesWindowsStdout)
         {
             LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
@@ -188,6 +195,8 @@ internal static class LlvmCodegen
             usesProgramArgs,
             i32,
             i32Ptr,
+            heapStorageGlobal,
+            heapCursorGlobal,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsExitProcessImport,
@@ -209,6 +218,8 @@ internal static class LlvmCodegen
                 usesProgramArgs,
                 i32,
                 i32Ptr,
+                heapStorageGlobal,
+                heapCursorGlobal,
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
                 windowsExitProcessImport,
@@ -242,6 +253,8 @@ internal static class LlvmCodegen
         bool usesProgramArgs,
         LLVMTypeRef i32,
         LLVMTypeRef i32Ptr,
+        LLVMValueRef heapStorageGlobal,
+        LLVMValueRef heapCursorGlobal,
         LLVMValueRef windowsGetStdHandleImport,
         LLVMValueRef windowsWriteFileImport,
         LLVMValueRef windowsExitProcessImport,
@@ -281,26 +294,18 @@ internal static class LlvmCodegen
         LLVMValueRef programArgsSlot = target.Builder.BuildAlloca(i64, "program_args");
         target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), programArgsSlot);
 
-        LLVMValueRef heapCursorSlot = target.Builder.BuildAlloca(i64, "heap_cursor");
-        bool needsHeap = function.Instructions.Any(RequiresEntryHeapStorage);
-        if (needsHeap)
+        if (isEntry)
         {
-            LLVMTypeRef heapType = LLVMTypeRef.CreateArray(i8, HeapSizeBytes);
-            LLVMValueRef heapStorage = target.Builder.BuildAlloca(heapType, "heap");
             LLVMValueRef heapBasePtr = target.Builder.BuildGEP2(
-                heapType,
-                heapStorage,
+                LLVMTypeRef.CreateArray(i8, HeapSizeBytes),
+                heapStorageGlobal,
                 new[]
                 {
                     LLVMValueRef.CreateConstInt(i64, 0, false),
                     LLVMValueRef.CreateConstInt(i64, 0, false)
                 },
                 "heap_base_ptr");
-            target.Builder.BuildStore(target.Builder.BuildPtrToInt(heapBasePtr, i64, "heap_base_i64"), heapCursorSlot);
-        }
-        else
-        {
-            target.Builder.BuildStore(LLVMValueRef.CreateConstInt(i64, 0, false), heapCursorSlot);
+            target.Builder.BuildStore(target.Builder.BuildPtrToInt(heapBasePtr, i64, "heap_base_i64"), heapCursorGlobal);
         }
 
         if (!isEntry && function.HasEnvAndArgParams)
@@ -324,7 +329,7 @@ internal static class LlvmCodegen
             programArgsSlot,
             tempSlots,
             localSlots,
-            heapCursorSlot,
+            heapCursorGlobal,
             labelBlocks,
             fallthroughBlocks,
             i64,
@@ -1513,11 +1518,6 @@ internal static class LlvmCodegen
         foreach (IrFunction function in program.Functions)
         {
             if (function.Instructions.Any(static instruction => instruction is IrInst.LoadProgramArgs))
-            {
-                return false;
-            }
-
-            if (function.Instructions.Any(RequiresEntryHeapStorage))
             {
                 return false;
             }

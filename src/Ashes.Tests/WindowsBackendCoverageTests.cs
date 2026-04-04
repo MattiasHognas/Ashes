@@ -114,6 +114,14 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_llvm_support_check_should_accept_nested_heap_backed_closure_programs()
+    {
+        var ir = LowerExpression("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)""");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_print_programs()
     {
         var ir = LowerExpression("Ashes.IO.write(\"hi\")");
@@ -146,6 +154,18 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_nested_heap_backed_closure_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
         result.Stdout.ShouldBe("42\n");
     }
 

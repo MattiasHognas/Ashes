@@ -141,6 +141,14 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_support_check_should_accept_nested_heap_backed_closure_programs()
+    {
+        var ir = LowerExpression("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)""");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_first_order_closure_programs()
     {
         if (!OperatingSystem.IsLinux())
@@ -149,6 +157,18 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_nested_heap_backed_closure_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
         result.Stdout.ShouldBe("42\n");
     }
 

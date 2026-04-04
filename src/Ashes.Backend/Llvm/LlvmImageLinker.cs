@@ -10,6 +10,7 @@ internal static class LlvmImageLinker
     private const ulong PeImageBase = 0x0000000000400000UL;
     private const ulong ElfSectionFlagAlloc = 0x2;
     private const uint SectionTypeRela = 4;
+    private const uint SectionTypeNoBits = 8;
     private const uint SectionTypeRel = 9;
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
@@ -69,14 +70,28 @@ internal static class LlvmImageLinker
         {
             CoffSectionHeader section = parsed.Sections[sectionIndex];
             int sectionNumber = sectionIndex + 1;
-            if (sectionNumber == parsed.TextSectionNumber || section.Name != ".rdata" || section.SizeOfRawData == 0)
+            uint totalSize = Math.Max(section.SizeOfRawData, section.VirtualSize);
+            bool isRuntimeDataSection = section.Name is ".rdata" or ".data" or ".bss";
+            if (sectionNumber == parsed.TextSectionNumber || totalSize == 0 || !isRuntimeDataSection)
             {
                 continue;
             }
 
             Align(rdata, 16);
             extraSectionOffsets[sectionNumber] = checked((uint)rdata.Stream.Position);
-            rdata.Stream.Write(objectBytes, checked((int)section.PointerToRawData), checked((int)section.SizeOfRawData));
+            if (section.SizeOfRawData != 0)
+            {
+                long rawEnd = (long)section.PointerToRawData + section.SizeOfRawData;
+                if (section.PointerToRawData != 0 && rawEnd <= objectBytes.Length)
+                {
+                    rdata.Stream.Write(objectBytes, checked((int)section.PointerToRawData), checked((int)section.SizeOfRawData));
+                }
+            }
+
+            for (uint i = section.SizeOfRawData; i < totalSize; i++)
+            {
+                rdata.Stream.WriteByte(0);
+            }
         }
 
         Align(rdata, 2);
@@ -263,7 +278,9 @@ internal static class LlvmImageLinker
 
             allocatedSections.Add(new ElfAllocatedSection(
                 SectionIndex: i,
-                Bytes: bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                Bytes: section.Type == SectionTypeNoBits
+                    ? new byte[checked((int)section.Size)]
+                    : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
                 Alignment: section.AddressAlign));
         }
 
@@ -458,6 +475,7 @@ internal static class LlvmImageLinker
             string name = ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount);
             sections[i] = new CoffSectionHeader(
                 Name: name,
+                VirtualSize: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4)),
                 SizeOfRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 16, 4)),
                 PointerToRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 20, 4)),
                 PointerToRelocations: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 24, 4)),
@@ -732,6 +750,7 @@ internal static class LlvmImageLinker
 
     private readonly record struct CoffSectionHeader(
         string Name,
+        uint VirtualSize,
         uint SizeOfRawData,
         uint PointerToRawData,
         uint PointerToRelocations,
