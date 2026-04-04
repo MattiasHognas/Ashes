@@ -1,43 +1,43 @@
-using LLVMSharp.Interop;
+using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    private static LLVMValueRef EmitIntComparison(LlvmCodegenState state, LLVMIntPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
+    private static LlvmValueHandle EmitIntComparison(LlvmCodegenState state, LlvmIntPredicate predicate, LlvmValueHandle left, LlvmValueHandle right, string name)
     {
-        LLVMValueRef cmp = state.Target.Builder.BuildICmp(predicate, left, right, name);
-        return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
+        LlvmValueHandle cmp = LlvmApi.BuildICmp(state.Target.Builder, predicate, left, right, name);
+        return LlvmApi.BuildZExt(state.Target.Builder, cmp, state.I64, name + "_zext");
     }
 
-    private static LLVMValueRef EmitFloatComparison(LlvmCodegenState state, LLVMRealPredicate predicate, LLVMValueRef left, LLVMValueRef right, string name)
+    private static LlvmValueHandle EmitFloatComparison(LlvmCodegenState state, LlvmRealPredicate predicate, LlvmValueHandle left, LlvmValueHandle right, string name)
     {
-        LLVMValueRef cmp = state.Target.Builder.BuildFCmp(predicate, left, right, name);
-        return state.Target.Builder.BuildZExt(cmp, state.I64, name + "_zext");
+        LlvmValueHandle cmp = LlvmApi.BuildFCmp(state.Target.Builder, predicate, left, right, name);
+        return LlvmApi.BuildZExt(state.Target.Builder, cmp, state.I64, name + "_zext");
     }
 
-    private static LLVMValueRef EmitInvertBool(LlvmCodegenState state, LLVMValueRef value, string name)
+    private static LlvmValueHandle EmitInvertBool(LlvmCodegenState state, LlvmValueHandle value, string name)
     {
-        return state.Target.Builder.BuildXor(value, LLVMValueRef.CreateConstInt(state.I64, 1, false), name);
+        return LlvmApi.BuildXor(state.Target.Builder, value, LlvmApi.ConstInt(state.I64, 1, 0), name);
     }
 
-    private static LLVMValueRef EmitMakeClosure(LlvmCodegenState state, string funcLabel, LLVMValueRef envPtr)
+    private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr)
     {
-        LLVMValueRef closurePtr = EmitAlloc(state, 16);
-        LLVMValueRef codePtr = state.Target.Builder.BuildPtrToInt(state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
+        LlvmValueHandle closurePtr = EmitAlloc(state, 16);
+        LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
         return closurePtr;
     }
 
-    private static LLVMValueRef EmitCallClosure(LlvmCodegenState state, LLVMValueRef closurePtr, LLVMValueRef argValue)
+    private static LlvmValueHandle EmitCallClosure(LlvmCodegenState state, LlvmValueHandle closurePtr, LlvmValueHandle argValue)
     {
-        LLVMValueRef codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
-        LLVMValueRef envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
-        LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(state.I64, [state.I64, state.I64]);
-        LLVMTypeRef closureFunctionPtrType = LLVMTypeRef.CreatePointer(closureFunctionType, 0);
-        LLVMValueRef typedCodePtr = state.Target.Builder.BuildIntToPtr(codePtr, closureFunctionPtrType, "closure_code_ptr");
-        return state.Target.Builder.BuildCall2(
+        LlvmValueHandle codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
+        LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle closureFunctionPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmValueHandle typedCodePtr = LlvmApi.BuildIntToPtr(state.Target.Builder, codePtr, closureFunctionPtrType, "closure_code_ptr");
+        return LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             typedCodePtr,
             new[] { envPtr, argValue },
@@ -46,18 +46,18 @@ internal static partial class LlvmCodegen
 
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
     {
-        state.Target.Builder.BuildBr(state.GetLabelBlock(targetLabel));
+        LlvmApi.BuildBr(state.Target.Builder, state.GetLabelBlock(targetLabel));
         return true;
     }
 
-    private static bool EmitJumpIfFalse(LlvmCodegenState state, LLVMValueRef condValue, string targetLabel, int instructionIndex)
+    private static bool EmitJumpIfFalse(LlvmCodegenState state, LlvmValueHandle condValue, string targetLabel, int instructionIndex)
     {
-        LLVMValueRef zero = LLVMValueRef.CreateConstInt(state.I64, 0, false);
-        LLVMValueRef cond = state.Target.Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, condValue, zero, $"cond_{instructionIndex}");
-        LLVMBasicBlockRef target = state.GetLabelBlock(targetLabel);
-        LLVMBasicBlockRef fallthrough = state.GetNextReachableBlock(instructionIndex);
-        state.Target.Builder.BuildCondBr(cond, fallthrough, target);
-        state.Target.Builder.PositionAtEnd(fallthrough);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle cond = LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Ne, condValue, zero, $"cond_{instructionIndex}");
+        LlvmBasicBlockHandle target = state.GetLabelBlock(targetLabel);
+        LlvmBasicBlockHandle fallthrough = state.GetNextReachableBlock(instructionIndex);
+        LlvmApi.BuildCondBr(state.Target.Builder, cond, fallthrough, target);
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, fallthrough);
         return false;
     }
 
@@ -67,79 +67,79 @@ internal static partial class LlvmCodegen
         {
             if (state.Flavor == LlvmCodegenFlavor.Linux)
             {
-                EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 0, false));
+                EmitExit(state, LlvmApi.ConstInt(state.I64, 0, 0));
             }
             else
             {
-                state.Target.Builder.BuildRetVoid();
+                LlvmApi.BuildRetVoid(state.Target.Builder);
             }
         }
         else
         {
-            state.Target.Builder.BuildRet(LoadTemp(state, source));
+            LlvmApi.BuildRet(state.Target.Builder, LoadTemp(state, source));
         }
 
         return true;
     }
 
-    private static bool EmitPanic(LlvmCodegenState state, LLVMValueRef stringRef)
+    private static bool EmitPanic(LlvmCodegenState state, LlvmValueHandle stringRef)
     {
         EmitPrintStringFromTemp(state, stringRef, appendNewline: true);
 
         if (state.Flavor == LlvmCodegenFlavor.Linux)
         {
-            EmitExit(state, LLVMValueRef.CreateConstInt(state.I64, 1, false));
+            EmitExit(state, LlvmApi.ConstInt(state.I64, 1, 0));
         }
         else
         {
-            EmitWindowsExitProcess(state, LLVMValueRef.CreateConstInt(state.I32, 1, false));
+            EmitWindowsExitProcess(state, LlvmApi.ConstInt(state.I32, 1, 0));
         }
 
         return true;
     }
 
-    private static void EmitExit(LlvmCodegenState state, LLVMValueRef exitCode)
+    private static void EmitExit(LlvmCodegenState state, LlvmValueHandle exitCode)
     {
-        EmitSyscall(state, SyscallExit, exitCode, LLVMValueRef.CreateConstInt(state.I64, 0, false), LLVMValueRef.CreateConstInt(state.I64, 0, false), "sys_exit");
-        state.Target.Builder.BuildUnreachable();
+        EmitSyscall(state, SyscallExit, exitCode, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sys_exit");
+        LlvmApi.BuildUnreachable(state.Target.Builder);
     }
 
-    private static void EmitWindowsExitProcess(LlvmCodegenState state, LLVMValueRef exitCode)
+    private static void EmitWindowsExitProcess(LlvmCodegenState state, LlvmValueHandle exitCode)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMTypeRef exitProcessType = LLVMTypeRef.CreateFunction(state.Target.Context.VoidType, [state.I32]);
-        LLVMValueRef exitProcessPtr = builder.BuildLoad2(
-            LLVMTypeRef.CreatePointer(exitProcessType, 0),
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle exitProcessType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32]);
+        LlvmValueHandle exitProcessPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsExitProcessImport,
             "exit_process_ptr");
-        builder.BuildCall2(
+        LlvmApi.BuildCall2(builder,
             exitProcessType,
             exitProcessPtr,
             new[] { exitCode },
             string.Empty);
-        builder.BuildUnreachable();
+        LlvmApi.BuildUnreachable(builder);
     }
 
-    private static bool EmitPrintStringFromTemp(LlvmCodegenState state, LLVMValueRef stringRef, bool appendNewline)
+    private static bool EmitPrintStringFromTemp(LlvmCodegenState state, LlvmValueHandle stringRef, bool appendNewline)
     {
-        LLVMBuilderRef builder = state.Target.Builder;
-        LLVMValueRef basePtr = builder.BuildIntToPtr(stringRef, state.I64Ptr, "str_len_ptr");
-        LLVMValueRef len = builder.BuildLoad2(state.I64, basePtr, "str_len");
-        LLVMValueRef byteAddress = builder.BuildAdd(stringRef, LLVMValueRef.CreateConstInt(state.I64, 8, false), "str_bytes_addr");
-        LLVMValueRef bytePtr = builder.BuildIntToPtr(byteAddress, state.I8Ptr, "str_bytes_ptr");
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle basePtr = LlvmApi.BuildIntToPtr(builder, stringRef, state.I64Ptr, "str_len_ptr");
+        LlvmValueHandle len = LlvmApi.BuildLoad2(builder, state.I64, basePtr, "str_len");
+        LlvmValueHandle byteAddress = LlvmApi.BuildAdd(builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), "str_bytes_addr");
+        LlvmValueHandle bytePtr = LlvmApi.BuildIntToPtr(builder, byteAddress, state.I8Ptr, "str_bytes_ptr");
         EmitWriteBytes(state, bytePtr, len);
         if (appendNewline)
         {
-            EmitWriteBytes(state, EmitStackByteArray(state, [10]), LLVMValueRef.CreateConstInt(state.I64, 1, false));
+            EmitWriteBytes(state, EmitStackByteArray(state, [10]), LlvmApi.ConstInt(state.I64, 1, 0));
         }
 
         return false;
     }
 
-    private static bool EmitPrintBool(LlvmCodegenState state, LLVMValueRef boolValue)
+    private static bool EmitPrintBool(LlvmCodegenState state, LlvmValueHandle boolValue)
     {
-        LLVMValueRef zero = LLVMValueRef.CreateConstInt(state.I64, 0, false);
-        LLVMValueRef isTrue = state.Target.Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, boolValue, zero, "bool_is_true");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isTrue = LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Ne, boolValue, zero, "bool_is_true");
         EmitConditionalWrite(state, isTrue, "true", "false", appendNewline: true);
         return false;
     }

@@ -7,7 +7,7 @@
 #   - WSL on Windows (for Windows devs who need the Linux .so)
 #
 # When running under WSL the script detects the Windows-side repo path and
-# copies (not symlinks) libLLVM-<major>.so into lib/Ashes/linux-x64/libLLVM.so
+# copies (not symlinks) libLLVM-<major>.so into runtimes/linux-x64/libLLVM.so
 # so that dotnet on Windows can include it in cross-builds.
 #
 # Usage:
@@ -22,7 +22,7 @@ LLVM_MAJOR="${1:-22}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LIB_DIR="$REPO_ROOT/lib/Ashes"
+LIB_DIR="$REPO_ROOT/runtimes"
 
 # ── Install libLLVM via apt ──────────────────────────────────────────────────
 echo ""
@@ -68,7 +68,7 @@ echo "  -> Copied to $LINUX_OUT/libLLVM.so"
 if grep -qi microsoft /proc/version 2>/dev/null; then
     echo ""
     echo "  (WSL detected — file was copied, not symlinked, so it is"
-    echo "   accessible from the Windows side via the repo's lib/ directory.)"
+    echo "   accessible from the Windows side via the repo's runtimes/ directory.)"
 fi
 
 echo ""

@@ -7,7 +7,7 @@
 #
 # Linux libLLVM.so (via -Linux switch):
 #   Invokes the bash script inside WSL, which runs `apt install libllvm<major>`
-#   and copies the .so into lib/Ashes/linux-x64/libLLVM.so so that dotnet on
+#   and copies the .so into runtimes/linux-x64/libLLVM.so so that dotnet on
 #   Windows can include it in cross-platform builds.
 #
 # Usage:
@@ -34,7 +34,7 @@ if (-not $LlvmMajor) {
 
 $ScriptDir = $PSScriptRoot
 $RepoRoot  = (Resolve-Path "$ScriptDir/..").Path
-$LibDir    = Join-Path $RepoRoot 'lib/Ashes'
+$LibDir    = Join-Path $RepoRoot 'runtimes'
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "ashes-llvm-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
 
 New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null

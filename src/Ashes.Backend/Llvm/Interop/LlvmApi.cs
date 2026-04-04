@@ -1,123 +1,8 @@
-# LLVM Native Library Migration Guide
+using System.Runtime.InteropServices;
 
-This document describes how to replace the **LLVMSharp** and **libLLVM.runtime.\***
-NuGet packages with direct P/Invoke calls against the official LLVM C API
-libraries downloaded from LLVM releases.
-
----
-
-## Overview
-
-Currently `Ashes.Backend` depends on three NuGet packages for LLVM:
-
-| Package | Purpose |
-|---------|---------|
-| `LLVMSharp` 20.1.2 | C# wrappers around the LLVM C API |
-| `libLLVM.runtime.linux-x64` 20.1.2 | Ships `libLLVM.so` (native, Linux) |
-| `libLLVM.runtime.win-x64` 20.1.2 | Ships `libLLVM.dll` (native, Windows) |
-
-After the migration:
-
-- **LLVMSharp** is removed entirely; replaced by a thin P/Invoke interop layer.
-- **libLLVM.runtime.\*** packages are removed; replaced by native libraries
-  downloaded from official LLVM GitHub releases via the provided scripts.
-
----
-
-## Step 0 – Provision native libraries
-
-### Linux – apt install
-
-The official LLVM 22+ Linux release only ships static `.a` archives — **no shared
-`libLLVM.so`**. Use `apt` to install the shared library:
-
-```bash
-./scripts/download-llvm-native.sh        # default major = 22
-./scripts/download-llvm-native.sh 23     # or specify a different major
-```
-
-This runs `sudo apt-get install libllvm22` (adding the LLVM apt repo if needed),
-then copies the installed `libLLVM-22.so` into `lib/Ashes/linux-x64/libLLVM.so`.
-
-### Windows – download DLL + optional Linux .so via WSL
-
-The official Windows release (`clang+llvm-*-x86_64-pc-windows-msvc.tar.xz`)
-ships `LLVM-C.dll`, the shared C API library.
-
-```powershell
-# Windows DLL only (sufficient for Windows-only development)
-.\scripts\download-llvm-native.ps1
-
-# Windows DLL + Linux .so via WSL (for cross-platform builds)
-.\scripts\download-llvm-native.ps1 -Linux
-
-# Specify a different LLVM version
-.\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3 -Linux
-```
-
-The `-Linux` switch invokes the bash script inside WSL, which runs
-`apt install libllvm22` and copies the `.so` into the repo's
-`lib/Ashes/linux-x64/` directory — accessible from the Windows side.
-
-> **Prerequisites for `-Linux`:** WSL with Ubuntu installed.
-> Install with: `wsl --install -d Ubuntu`
-
-### Result
-
-```
-lib/Ashes/
-  linux-x64/libLLVM.so   ← libLLVM-22.so from apt (native Linux or WSL)
-  win-x64/libLLVM.dll     ← LLVM-C.dll from LLVM release, renamed
-```
-
-> The files are named `libLLVM.{so,dll}` to match the existing DllImport name
-> used by LLVMSharp (`"libLLVM"`), making the transition seamless.
-> The publish scripts (`scripts/publish.{sh,ps1}`) already copy the whole
-> `lib/` tree to the output, so these files are automatically included in
-> published builds.
-
----
-
-## Step 1 – Update Ashes.Backend.csproj
-
-Remove the three LLVMSharp-related PackageReferences and uncomment the native
-library items that are already prepared in the csproj:
-
-```xml
-<!-- REMOVE these three lines -->
-<PackageReference Include="LLVMSharp" Version="20.1.2" />
-<PackageReference Include="libLLVM.runtime.linux-x64" Version="20.1.2" />
-<PackageReference Include="libLLVM.runtime.win-x64" Version="20.1.2" />
-
-<!-- UNCOMMENT this block (already in the csproj) -->
-<ItemGroup>
-  <None Include="..\..\lib\Ashes\win-x64\libLLVM.dll"
-        Condition="Exists('..\..\lib\Ashes\win-x64\libLLVM.dll')"
-        CopyToOutputDirectory="PreserveNewest"
-        Link="runtimes\win-x64\native\libLLVM.dll" />
-  <None Include="..\..\lib\Ashes\linux-x64\libLLVM.so"
-        Condition="Exists('..\..\lib\Ashes\linux-x64\libLLVM.so')"
-        CopyToOutputDirectory="PreserveNewest"
-        Link="runtimes\linux-x64\native\libLLVM.so" />
-</ItemGroup>
-```
-
----
-
-## Step 2 – Create the P/Invoke interop layer
-
-Create a new file `src/Ashes.Backend/Llvm/Interop/LlvmApi.cs` containing
-`LibraryImport` declarations for every LLVM C API function used by the
-compiler. Use `"libLLVM"` as the library name (matches the native file names).
-
-### 2a – Opaque handle types
-
-Define lightweight struct wrappers for the LLVM opaque pointer types:
-
-```csharp
 namespace Ashes.Backend.Llvm.Interop;
 
-// Each wraps a raw IntPtr; provides type safety without allocations.
+// ── Opaque handle types ─────────────────────────────────────────────────
 public readonly record struct LlvmContextHandle(nint Ptr);
 public readonly record struct LlvmModuleHandle(nint Ptr);
 public readonly record struct LlvmBuilderHandle(nint Ptr);
@@ -127,41 +12,38 @@ public readonly record struct LlvmBasicBlockHandle(nint Ptr);
 public readonly record struct LlvmTargetHandle(nint Ptr);
 public readonly record struct LlvmTargetMachineHandle(nint Ptr);
 public readonly record struct LlvmTargetDataHandle(nint Ptr);
-```
 
-### 2b – Enums
-
-Map each LLVMSharp enum to a plain C# enum:
-
-```csharp
+// ── Enums ───────────────────────────────────────────────────────────────
 public enum LlvmIntPredicate
 {
-    Eq  = 32, Ne  = 33,
+    Eq = 32, Ne = 33,
     Ugt = 34, Uge = 35, Ult = 36, Ule = 37,
     Sgt = 38, Sge = 39, Slt = 40, Sle = 41,
 }
 
 public enum LlvmRealPredicate
 {
-    Oeq = 1, Ogt = 2, Oge = 3, Olt = 4, Ole = 5, One = 6,
-    // ... add as needed
+    False = 0,
+    Oeq = 1, Ogt = 2, Oge = 3, Olt = 4, Ole = 5, One = 6, Ord = 7,
+    Uno = 8, Ueq = 9, Ugt = 10, Uge = 11, Ult = 12, Ule = 13, Une = 14,
+    True = 15,
 }
 
 public enum LlvmCodeGenOptLevel { None = 0, Less = 1, Default = 2, Aggressive = 3 }
-public enum LlvmRelocMode      { Default = 0, Static = 1, PIC = 2, DynamicNoPic = 3 }
-public enum LlvmCodeModel       { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Kernel = 4, Medium = 5, Large = 6 }
-public enum LlvmLinkage         { External = 0, Internal = 8 }
+public enum LlvmRelocMode { Default = 0, Static = 1, PIC = 2, DynamicNoPic = 3 }
+public enum LlvmCodeModel { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Kernel = 4, Medium = 5, Large = 6 }
+public enum LlvmLinkage { External = 0, Internal = 8 }
 public enum LlvmCodeGenFileType { Assembly = 0, Object = 1 }
-```
+public enum LlvmVerifierFailureAction { AbortProcess = 0, PrintMessage = 1, ReturnStatus = 2 }
 
-### 2c – LibraryImport declarations
-
-Group by category. Every function maps 1:1 to the LLVM C API:
-
-```csharp
-using System.Runtime.InteropServices;
-
-namespace Ashes.Backend.Llvm.Interop;
+public enum LlvmTypeKind
+{
+    Void = 0, Half = 1, Float = 2, Double = 3, X86Fp80 = 4,
+    Fp128 = 5, PpcFp128 = 6, Label = 7, Integer = 8,
+    Function = 9, Struct = 10, Array = 11, Pointer = 12,
+    Vector = 13, Metadata = 14, Token = 16, ScalableVector = 17,
+    BFloat = 18, X86Amx = 19, TargetExt = 20,
+}
 
 internal static partial class LlvmApi
 {
@@ -256,7 +138,7 @@ internal static partial class LlvmApi
     public static partial LlvmTypeHandle VoidTypeInContext(LlvmContextHandle context);
 
     [LibraryImport(Lib, EntryPoint = "LLVMFunctionType")]
-    public static unsafe partial LlvmTypeHandle FunctionType(
+    private static unsafe partial LlvmTypeHandle FunctionTypeRaw(
         LlvmTypeHandle returnType, LlvmTypeHandle* paramTypes, uint paramCount, int isVarArg);
 
     [LibraryImport(Lib, EntryPoint = "LLVMPointerTypeInContext")]
@@ -264,6 +146,16 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMArrayType2")]
     public static partial LlvmTypeHandle ArrayType2(LlvmTypeHandle elementType, ulong elementCount);
+
+    // ── Type inspection ─────────────────────────────────────────────────
+    [LibraryImport(Lib, EntryPoint = "LLVMTypeOf")]
+    public static partial LlvmTypeHandle TypeOf(LlvmValueHandle value);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetTypeKind")]
+    public static partial LlvmTypeKind GetTypeKind(LlvmTypeHandle type);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetIntTypeWidth")]
+    public static partial uint GetIntTypeWidth(LlvmTypeHandle type);
 
     // ── Constants ───────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMConstInt")]
@@ -276,7 +168,7 @@ internal static partial class LlvmApi
     public static partial LlvmValueHandle ConstReal(LlvmTypeHandle type, double value);
 
     [LibraryImport(Lib, EntryPoint = "LLVMGetInlineAsm", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial LlvmValueHandle GetInlineAsm(
+    private static partial LlvmValueHandle GetInlineAsmRaw(
         LlvmTypeHandle functionType, string asmString, nint asmLen,
         string constraints, nint constraintsLen,
         int hasSideEffects, int isAlignStack, int dialect, int canThrow);
@@ -389,13 +281,13 @@ internal static partial class LlvmApi
     public static partial LlvmValueHandle BuildStore(LlvmBuilderHandle b, LlvmValueHandle val, LlvmValueHandle ptr);
 
     [LibraryImport(Lib, EntryPoint = "LLVMBuildGEP2", StringMarshalling = StringMarshalling.Utf8)]
-    public static unsafe partial LlvmValueHandle BuildGEP2(
+    private static unsafe partial LlvmValueHandle BuildGEP2Raw(
         LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr,
         LlvmValueHandle* indices, uint numIndices, string name);
 
     // ── Call & select ───────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMBuildCall2", StringMarshalling = StringMarshalling.Utf8)]
-    public static unsafe partial LlvmValueHandle BuildCall2(
+    private static unsafe partial LlvmValueHandle BuildCall2Raw(
         LlvmBuilderHandle b, LlvmTypeHandle fnType, LlvmValueHandle fn,
         LlvmValueHandle* args, uint numArgs, string name);
 
@@ -422,7 +314,7 @@ internal static partial class LlvmApi
 
     // ── Verification ────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMVerifyModule")]
-    public static partial int VerifyModule(LlvmModuleHandle module, int action, out nint outMessage);
+    public static partial int VerifyModule(LlvmModuleHandle module, LlvmVerifierFailureAction action, out nint outMessage);
 
     // ── Code emission ───────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMTargetMachineEmitToMemoryBuffer")]
@@ -438,156 +330,53 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMemoryBuffer")]
     public static partial void DisposeMemoryBuffer(nint memBuf);
+
+    // ── Safe convenience wrappers ───────────────────────────────────────
+
+    public static LlvmTypeHandle FunctionType(LlvmTypeHandle returnType, ReadOnlySpan<LlvmTypeHandle> paramTypes, int isVarArg = 0)
+    {
+        unsafe
+        {
+            fixed (LlvmTypeHandle* ptr = paramTypes)
+            {
+                return FunctionTypeRaw(returnType, ptr, (uint)paramTypes.Length, isVarArg);
+            }
+        }
+    }
+
+    public static LlvmValueHandle BuildCall2(
+        LlvmBuilderHandle b, LlvmTypeHandle fnType, LlvmValueHandle fn,
+        ReadOnlySpan<LlvmValueHandle> args, string name)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* ptr = args)
+            {
+                return BuildCall2Raw(b, fnType, fn, ptr, (uint)args.Length, name);
+            }
+        }
+    }
+
+    public static LlvmValueHandle BuildGEP2(
+        LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr,
+        ReadOnlySpan<LlvmValueHandle> indices, string name)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* p = indices)
+            {
+                return BuildGEP2Raw(b, type, ptr, p, (uint)indices.Length, name);
+            }
+        }
+    }
+
+    public static LlvmValueHandle GetInlineAsm(
+        LlvmTypeHandle functionType, string asmString, string constraints,
+        bool hasSideEffects, bool isAlignStack)
+    {
+        return GetInlineAsmRaw(
+            functionType, asmString, (nint)asmString.Length,
+            constraints, (nint)constraints.Length,
+            hasSideEffects ? 1 : 0, isAlignStack ? 1 : 0, 0, 0);
+    }
 }
-```
-
-> **Note:** The exact signatures above cover all ~60 distinct LLVM C API
-> functions used by the compiler. Some may need `unsafe` contexts for pointer
-> parameters — use `LlvmValueHandle*` or `Span<LlvmValueHandle>` as needed.
-
----
-
-## Step 3 – Migrate each codegen file
-
-Replace `using LLVMSharp.Interop;` with `using Ashes.Backend.Llvm.Interop;`
-in each file, then update the call sites.
-
-### Files to migrate (in suggested order)
-
-| File | Lines | Complexity |
-|------|-------|-----------|
-| `LlvmTargetSetup.cs` | ~110 | Low — target init, context/module creation |
-| `LlvmCodegenExpressions.cs` | ~146 | Low — comparisons, closures, control flow |
-| `LlvmCodegenPlatform.cs` | ~404 | Medium — syscalls, Windows API stubs |
-| `LlvmCodegenMemory.cs` | ~537 | Medium — heap, strings, UTF-8 |
-| `LlvmCodegen.cs` | ~695 | Medium — core dispatch, module setup |
-| `LlvmCodegenBuiltins.cs` | ~1957 | High — IO, File, HTTP, TCP, args |
-
-### Mapping cheat sheet
-
-The main change pattern is from LLVMSharp's method syntax to static function calls:
-
-```csharp
-// BEFORE (LLVMSharp)
-var result = builder.BuildAdd(lhs, rhs, "sum");
-var fn = module.AddFunction(fnType, "main");
-var block = fn.AppendBasicBlock("entry");
-builder.PositionAtEnd(block);
-
-// AFTER (P/Invoke)
-var result = LlvmApi.BuildAdd(builder, lhs, rhs, "sum");
-var fn = LlvmApi.AddFunction(module, "main", fnType);
-var block = LlvmApi.AppendBasicBlockInContext(context, fn, "entry");
-LlvmApi.PositionBuilderAtEnd(builder, block);
-```
-
-### Type mapping
-
-| LLVMSharp type | P/Invoke type |
-|---------------|--------------|
-| `LLVMContextRef` | `LlvmContextHandle` |
-| `LLVMModuleRef` | `LlvmModuleHandle` |
-| `LLVMBuilderRef` | `LlvmBuilderHandle` |
-| `LLVMTypeRef` | `LlvmTypeHandle` |
-| `LLVMValueRef` | `LlvmValueHandle` |
-| `LLVMBasicBlockRef` | `LlvmBasicBlockHandle` |
-| `LLVMTargetRef` | `LlvmTargetHandle` |
-| `LLVMTargetMachineRef` | `LlvmTargetMachineHandle` |
-| `LLVMTargetDataRef` | `LlvmTargetDataHandle` |
-
-### Enum mapping
-
-| LLVMSharp enum | P/Invoke enum |
-|---------------|--------------|
-| `LLVMIntPredicate.LLVMIntEQ` | `LlvmIntPredicate.Eq` |
-| `LLVMIntPredicate.LLVMIntNE` | `LlvmIntPredicate.Ne` |
-| `LLVMIntPredicate.LLVMIntSLT` | `LlvmIntPredicate.Slt` |
-| `LLVMIntPredicate.LLVMIntSGT` | `LlvmIntPredicate.Sgt` |
-| `LLVMCodeGenOptLevel.LLVMCodeGenLevelNone` | `LlvmCodeGenOptLevel.None` |
-| `LLVMLinkage.LLVMExternalLinkage` | `LlvmLinkage.External` |
-| `LLVMLinkage.LLVMInternalLinkage` | `LlvmLinkage.Internal` |
-| ... | (same pattern for all) |
-
----
-
-## Step 4 – Emit to memory buffer (replacing EmitToFile)
-
-The current code uses `LLVMTargetMachineRef.EmitToFile()` to write a `.o`/`.obj`.
-Replace with `TargetMachineEmitToMemoryBuffer` → copy bytes → dispose buffer:
-
-```csharp
-int err = LlvmApi.TargetMachineEmitToMemoryBuffer(
-    machine, module, LlvmCodeGenFileType.Object, out nint errMsg, out nint memBuf);
-
-if (err != 0)
-{
-    string msg = Marshal.PtrToStringAnsi(errMsg) ?? "unknown error";
-    LlvmApi.DisposeMessage(errMsg);
-    throw new InvalidOperationException($"LLVM emit failed: {msg}");
-}
-
-try
-{
-    nint start = LlvmApi.GetBufferStart(memBuf);
-    nint size = LlvmApi.GetBufferSize(memBuf);
-    byte[] objectCode = new byte[(int)size];
-    Marshal.Copy(start, objectCode, 0, (int)size);
-    return objectCode;
-}
-finally
-{
-    LlvmApi.DisposeMemoryBuffer(memBuf);
-}
-```
-
----
-
-## Step 5 – Verify & test
-
-1. Run `dotnet build Ashes.slnx` — should compile without warnings.
-2. Run the test suites:
-   ```bash
-   src/Ashes.Tests/bin/Debug/net10.0/Ashes.Tests
-   src/Ashes.Lsp.Tests/bin/Debug/net10.0/Ashes.Lsp.Tests
-   ```
-3. Run the examples:
-   ```bash
-   dotnet run --project src/Ashes.Cli -- run examples/hello.ash
-   dotnet run --project src/Ashes.Cli -- run examples/fibonacci.ash
-   ```
-4. Cross-compile check: build on Linux, verify Windows target still emits valid PE.
-
----
-
-## Step 6 – CI update
-
-Update `.github/workflows/pull-request.yaml` to run the download script
-before the build step:
-
-```yaml
-- name: Download LLVM native libraries
-  run: ./scripts/download-llvm-native.sh
-  shell: bash
-```
-
-Or on Windows runners:
-```yaml
-- name: Download LLVM native libraries
-  run: .\scripts\download-llvm-native.ps1
-  shell: pwsh
-```
-
-> **Tip:** Cache the downloaded archives using `actions/cache` keyed on the
-> LLVM version to avoid re-downloading on every CI run.
-
----
-
-## Version bumping
-
-To update the LLVM version later, just pass the new version to the download script:
-
-```bash
-./scripts/download-llvm-native.sh 23.1.0
-```
-
-No code changes needed — the C API is stable across LLVM versions.
