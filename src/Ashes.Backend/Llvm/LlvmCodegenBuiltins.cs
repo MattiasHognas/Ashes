@@ -529,7 +529,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, done, closeOkBlock, loopBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder, 
+        LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, remaining, LlvmApi.ConstInt(state.I64, uint.MaxValue, 0), "fs_write_win_chunk_gt"),
             LlvmApi.ConstInt(state.I64, uint.MaxValue, 0),
             remaining,
@@ -691,7 +691,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, httpsCheckBlock);
         LlvmValueHandle httpsPrefix = EmitHeapStringLiteral(state, "https://");
-        LlvmValueHandle isHttps = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle isHttps = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             EmitStartsWith(state, urlRef, httpsPrefix, "http_is_https"),
             LlvmApi.ConstInt(state.I64, 0, 0),
@@ -700,7 +700,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, httpCheckBlock);
         LlvmValueHandle httpPrefix = EmitHeapStringLiteral(state, "http://");
-        LlvmValueHandle isHttp = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle isHttp = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             EmitStartsWith(state, urlRef, httpPrefix, "http_is_http"),
             LlvmApi.ConstInt(state.I64, 0, 0),
@@ -806,7 +806,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, noHost, malformedUrlBlock, buildHostBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildHostBlock);
-        LlvmValueHandle actualHostEnd = LlvmApi.BuildSelect(builder, 
+        LlvmValueHandle actualHostEnd = LlvmApi.BuildSelect(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildLoad2(builder, state.I64, hostEndSlot, "http_host_end_existing"), LlvmApi.ConstInt(state.I64, 0, 0), "http_host_end_is_zero"),
             LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "http_host_end_from_index"),
             LlvmApi.BuildLoad2(builder, state.I64, hostEndSlot, "http_host_end_final"),
@@ -948,8 +948,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle hundredsByte = LoadByteAt(state, responseBytes, LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 1, 0), "http_hundreds_idx"), "http_hundreds_byte");
         LlvmValueHandle tensByte = LoadByteAt(state, responseBytes, LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 2, 0), "http_tens_idx"), "http_tens_byte");
         LlvmValueHandle onesByte = LoadByteAt(state, responseBytes, LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 3, 0), "http_ones_idx"), "http_ones_byte");
-        LlvmValueHandle digitsValid = LlvmApi.BuildAnd(builder, 
-            LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle digitsValid = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildAnd(builder,
                 BuildByteRangeCheck(state, LlvmApi.BuildZExt(builder, hundredsByte, state.I64, "http_hundreds_i64"), (byte)'0', (byte)'9', "http_hundreds_range"),
                 BuildByteRangeCheck(state, LlvmApi.BuildZExt(builder, tensByte, state.I64, "http_tens_i64"), (byte)'0', (byte)'9', "http_tens_range"),
                 "http_digits_first"),
@@ -965,8 +965,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasChunkedHeader, chunkedErrorBlock, buildBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildBodyBlock);
-        LlvmValueHandle statusCode = LlvmApi.BuildAdd(builder, 
-            LlvmApi.BuildAdd(builder, 
+        LlvmValueHandle statusCode = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder,
                 LlvmApi.BuildMul(builder, LlvmApi.BuildSub(builder, LlvmApi.BuildZExt(builder, hundredsByte, state.I64, "http_hundreds_code"), LlvmApi.ConstInt(state.I64, (byte)'0', 0), "http_hundreds_digit"), LlvmApi.ConstInt(state.I64, 100, 0), "http_hundreds_mul"),
                 LlvmApi.BuildMul(builder, LlvmApi.BuildSub(builder, LlvmApi.BuildZExt(builder, tensByte, state.I64, "http_tens_code"), LlvmApi.ConstInt(state.I64, (byte)'0', 0), "http_tens_digit"), LlvmApi.ConstInt(state.I64, 10, 0), "http_tens_mul"),
                 "http_status_prefix_sum"),
@@ -976,7 +976,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle bodyLength = LlvmApi.BuildSub(builder, responseLen, bodyStart, "http_body_len");
         LlvmValueHandle bodyBytes = LlvmApi.BuildGEP2(builder, state.I8, responseBytes, new[] { bodyStart }, "http_body_ptr");
         LlvmValueHandle bodyString = EmitHeapStringSliceFromBytesPointer(state, bodyBytes, bodyLength, "http_body");
-        LlvmValueHandle statusOk = LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle statusOk = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, statusCode, LlvmApi.ConstInt(state.I64, 200, 0), "http_status_ge_200"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, statusCode, LlvmApi.ConstInt(state.I64, 299, 0), "http_status_le_299"),
             "http_status_ok");
@@ -1036,7 +1036,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, validatePortBlock);
-        LlvmValueHandle validPort = LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle validPort = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, port, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_port_gt_zero"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, port, LlvmApi.ConstInt(state.I64, 65535, 0), "tcp_connect_port_le_max"),
             "tcp_connect_port_valid");
@@ -1121,7 +1121,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, validatePortBlock);
-        LlvmValueHandle validPort = LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle validPort = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, port, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_win_port_gt_zero"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, port, LlvmApi.ConstInt(state.I64, 65535, 0), "tcp_connect_win_port_le_max"),
             "tcp_connect_win_port_valid");
@@ -1242,7 +1242,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, done, doneBlock, loopBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle chunk = LlvmApi.BuildSelect(builder, 
+        LlvmValueHandle chunk = LlvmApi.BuildSelect(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, remaining, LlvmApi.ConstInt(state.I64, int.MaxValue, 0), "tcp_send_win_chunk_gt"),
             LlvmApi.ConstInt(state.I64, int.MaxValue, 0),
             remaining,
@@ -1420,7 +1420,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, dotBlock);
         LlvmValueHandle seenDigit = LlvmApi.BuildLoad2(builder, state.I64, seenDigitSlot, prefix + "_seen_digit_value");
         LlvmValueHandle part = LlvmApi.BuildLoad2(builder, state.I64, partSlot, prefix + "_part_value");
-        LlvmValueHandle dotValid = LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle dotValid = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, seenDigit, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_dot_seen_digit"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, part, LlvmApi.ConstInt(state.I64, 3, 0), prefix + "_dot_part_lt_three"),
             prefix + "_dot_valid");
@@ -1440,7 +1440,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, finalizeBlock);
         LlvmValueHandle finalSeenDigit = LlvmApi.BuildLoad2(builder, state.I64, seenDigitSlot, prefix + "_final_seen_digit");
         LlvmValueHandle finalPart = LlvmApi.BuildLoad2(builder, state.I64, partSlot, prefix + "_final_part");
-        LlvmValueHandle finalValid = LlvmApi.BuildAnd(builder, 
+        LlvmValueHandle finalValid = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, finalSeenDigit, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_final_seen_digit_ok"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, finalPart, LlvmApi.ConstInt(state.I64, 3, 0), prefix + "_final_part_eq_three"),
             prefix + "_final_valid");
@@ -1448,7 +1448,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, finalValid, storeFinalBlock, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, storeFinalBlock);
-        LlvmValueHandle finalAddress = LlvmApi.BuildOr(builder, 
+        LlvmValueHandle finalAddress = LlvmApi.BuildOr(builder,
             LlvmApi.BuildLoad2(builder, state.I64, addressSlot, prefix + "_address_before_final"),
             LlvmApi.BuildShl(builder, LlvmApi.BuildLoad2(builder, state.I64, currentSlot, prefix + "_current_before_final"), LlvmApi.ConstInt(state.I64, 24, 0), prefix + "_final_shifted_octet"),
             prefix + "_final_address");
@@ -1670,7 +1670,7 @@ internal static partial class LlvmCodegen
         var buildNodeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_build_node");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_done");
 
-        LlvmValueHandle hasArgs = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle hasArgs = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
             argc,
             LlvmApi.ConstInt(state.I64, 1, 0),
@@ -1678,14 +1678,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasArgs, initBlock, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, initBlock);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, argc, LlvmApi.ConstInt(state.I64, 1, 0), "program_args_start_index"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "program_args_index_value");
-        LlvmValueHandle shouldContinue = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle shouldContinue = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
             index,
             LlvmApi.ConstInt(state.I64, 0, 0),
@@ -1694,7 +1694,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, lenCheckBlock);
         LlvmValueHandle argvEntryOffset = LlvmApi.BuildMul(builder, index, LlvmApi.ConstInt(state.I64, 8, 0), "program_args_argv_entry_offset");
-        LlvmValueHandle argvEntryAddress = LlvmApi.BuildAdd(builder, 
+        LlvmValueHandle argvEntryAddress = LlvmApi.BuildAdd(builder,
             stackPtr,
             LlvmApi.BuildAdd(builder, LlvmApi.ConstInt(state.I64, 8, 0), argvEntryOffset, "program_args_argv_offset"),
             "program_args_argv_entry_addr");
@@ -1708,13 +1708,13 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, lenLoopCheckBlock);
         LlvmValueHandle currentLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "program_args_current_len");
         LlvmValueHandle currentArgPtr = LlvmApi.BuildLoad2(builder, state.I64, argPtrSlot, "program_args_current_arg_ptr");
-        LlvmValueHandle currentBytePtr = LlvmApi.BuildGEP2(builder, 
+        LlvmValueHandle currentBytePtr = LlvmApi.BuildGEP2(builder,
             state.I8,
             LlvmApi.BuildIntToPtr(builder, currentArgPtr, state.I8Ptr, "program_args_arg_bytes"),
             new[] { currentLen },
             "program_args_current_byte_ptr");
         LlvmValueHandle currentByte = LlvmApi.BuildLoad2(builder, state.I8, currentBytePtr, "program_args_current_byte");
-        LlvmValueHandle reachedTerminator = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle reachedTerminator = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Eq,
             currentByte,
             LlvmApi.ConstInt(state.I8, 0, 0),
@@ -1722,7 +1722,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, reachedTerminator, buildNodeBlock, lenBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, lenBodyBlock);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), "program_args_next_len"),
             lenSlot);
         LlvmApi.BuildBr(builder, lenLoopCheckBlock);
@@ -1743,7 +1743,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, consRef, 0, stringRef, "program_args_cons_head");
         StoreMemory(state, consRef, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
         LlvmApi.BuildStore(builder, consRef, listSlot);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "program_args_index_before_dec"), LlvmApi.ConstInt(state.I64, 1, 0), "program_args_index_dec"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
@@ -1773,21 +1773,21 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), argcSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), stringRefSlot);
 
-        LlvmValueHandle getCommandLinePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle getCommandLinePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsGetCommandLineImport,
             "get_command_line_ptr");
-        LlvmValueHandle commandLinePtr = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle commandLinePtr = LlvmApi.BuildCall2(builder,
             getCommandLineType,
             getCommandLinePtr,
             Array.Empty<LlvmValueHandle>(),
             "command_line");
 
-        LlvmValueHandle commandLineToArgvPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle commandLineToArgvPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCommandLineToArgvImport,
             "command_line_to_argv_ptr");
-        LlvmValueHandle argvWide = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle argvWide = LlvmApi.BuildCall2(builder,
             commandLineToArgvType,
             commandLineToArgvPtr,
             new[] { commandLinePtr, argcSlot },
@@ -1806,7 +1806,7 @@ internal static partial class LlvmCodegen
         var freeArgvBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_free_argv");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_done");
 
-        LlvmValueHandle hasArgv = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle hasArgv = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             LlvmApi.BuildPtrToInt(builder, argvWide, state.I64, "argv_wide_i64"),
             LlvmApi.ConstInt(state.I64, 0, 0),
@@ -1815,7 +1815,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, haveArgvBlock);
         LlvmValueHandle argc = LlvmApi.BuildLoad2(builder, state.I32, argcSlot, "program_args_argc_value");
-        LlvmValueHandle hasUserArgs = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle hasUserArgs = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
             argc,
             LlvmApi.ConstInt(state.I32, 1, 0),
@@ -1823,14 +1823,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasUserArgs, maybeLoopBlock, freeArgvBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, maybeLoopBlock);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, argc, LlvmApi.ConstInt(state.I32, 1, 0), "program_args_start_index"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I32, indexSlot, "program_args_index_value");
-        LlvmValueHandle shouldContinue = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle shouldContinue = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
             index,
             LlvmApi.ConstInt(state.I32, 0, 0),
@@ -1838,7 +1838,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldContinue, wideArgSetupBlock, freeArgvBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, wideArgSetupBlock);
-        LlvmValueHandle wideArgPtrPtr = LlvmApi.BuildGEP2(builder, 
+        LlvmValueHandle wideArgPtrPtr = LlvmApi.BuildGEP2(builder,
             i16Ptr,
             argvWide,
             new[] { LlvmApi.BuildSExt(builder, index, state.I64, "program_args_index_i64") },
@@ -1850,13 +1850,13 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, wideLenBodyBlock);
         LlvmValueHandle wideLen = LlvmApi.BuildLoad2(builder, state.I32, wideLenSlot, "program_args_wide_len_value");
-        LlvmValueHandle wideCharPtr = LlvmApi.BuildGEP2(builder, 
+        LlvmValueHandle wideCharPtr = LlvmApi.BuildGEP2(builder,
             i16,
             LlvmApi.BuildLoad2(builder, i16Ptr, wideArgSlot, "program_args_wide_arg_current"),
             new[] { LlvmApi.BuildSExt(builder, wideLen, state.I64, "program_args_wide_len_i64") },
             "program_args_wide_char_ptr");
         LlvmValueHandle wideChar = LlvmApi.BuildLoad2(builder, i16, wideCharPtr, "program_args_wide_char");
-        LlvmValueHandle atTerminator = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle atTerminator = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Eq,
             wideChar,
             LlvmApi.ConstInt(i16, 0, 0),
@@ -1864,7 +1864,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, atTerminator, convertArgBlock, wideLenIncBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, wideLenIncBlock);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I32, wideLenSlot, "program_args_wide_len_before_inc"), LlvmApi.ConstInt(state.I32, 1, 0), "program_args_wide_len_inc"),
             wideLenSlot);
         LlvmApi.BuildBr(builder, wideLenBodyBlock);
@@ -1872,12 +1872,12 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, convertArgBlock);
         LlvmValueHandle wideArg = LlvmApi.BuildLoad2(builder, i16Ptr, wideArgSlot, "program_args_wide_arg_for_convert");
         LlvmValueHandle wcharCount = LlvmApi.BuildLoad2(builder, state.I32, wideLenSlot, "program_args_wchar_count");
-        LlvmValueHandle wideCharToMultiBytePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle wideCharToMultiBytePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWideCharToMultiByteImport,
             "wide_char_to_multi_byte_ptr");
         LlvmValueHandle nullI8Ptr = LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_i8_ptr");
-        LlvmValueHandle byteCount = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle byteCount = LlvmApi.BuildCall2(builder,
             wideCharToMultiByteType,
             wideCharToMultiBytePtr,
             new[]
@@ -1892,7 +1892,7 @@ internal static partial class LlvmCodegen
                 nullI8Ptr
             },
             "program_args_byte_count");
-        LlvmValueHandle hasBytes = LlvmApi.BuildICmp(builder, 
+        LlvmValueHandle hasBytes = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
             byteCount,
             LlvmApi.ConstInt(state.I32, 0, 0),
@@ -1905,7 +1905,7 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildAdd(builder, LlvmApi.BuildZExt(builder, byteCount, state.I64, "program_args_byte_count_i64"), LlvmApi.ConstInt(state.I64, 8, 0), "program_args_string_bytes"));
         StoreMemory(state, stringRef, 0, LlvmApi.BuildZExt(builder, byteCount, state.I64, "program_args_string_len"), "program_args_string_len");
         LlvmValueHandle stringDest = GetStringBytesPointer(state, stringRef, "program_args_string_dest");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             wideCharToMultiByteType,
             wideCharToMultiBytePtr,
             new[]
@@ -1934,17 +1934,17 @@ internal static partial class LlvmCodegen
         StoreMemory(state, consRef, 0, LlvmApi.BuildLoad2(builder, state.I64, stringRefSlot, "program_args_string_ref_value"), "program_args_cons_head");
         StoreMemory(state, consRef, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
         LlvmApi.BuildStore(builder, consRef, listSlot);
-        LlvmApi.BuildStore(builder, 
+        LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, LlvmApi.BuildLoad2(builder, state.I32, indexSlot, "program_args_index_before_dec"), LlvmApi.ConstInt(state.I32, 1, 0), "program_args_index_dec"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freeArgvBlock);
-        LlvmValueHandle localFreePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle localFreePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsLocalFreeImport,
             "local_free_ptr");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             localFreeType,
             localFreePtr,
             new[] { LlvmApi.BuildBitCast(builder, argvWide, state.I8Ptr, "argv_wide_hlocal") },

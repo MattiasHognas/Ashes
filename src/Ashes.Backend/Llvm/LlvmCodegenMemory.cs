@@ -35,7 +35,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle GetMemoryPointer(LlvmCodegenState state, LlvmValueHandle baseAddress, int offsetBytes, string name)
     {
         LlvmValueHandle basePtr = LlvmApi.BuildIntToPtr(state.Target.Builder, baseAddress, state.I8Ptr, name + "_base");
-        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(state.Target.Builder, 
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(state.Target.Builder,
             state.I8,
             basePtr,
             new[]
@@ -211,7 +211,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, prefix + "_bytes");
         for (int i = 0; i < bytes.Count; i++)
         {
-            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(builder, 
+            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(builder,
                 state.I8,
                 destPtr,
                 new[] { LlvmApi.ConstInt(state.I64, (ulong)i, 0) },
@@ -481,7 +481,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle bytesPtr = GetArrayElementPointer(state, objectType, storage, LlvmApi.ConstInt(state.I64, 8, 0), "str_obj_bytes");
         for (int i = 0; i < utf8.Length; i++)
         {
-            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(state.Target.Builder, 
+            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(state.Target.Builder,
                 state.I8,
                 bytesPtr,
                 new[]
@@ -524,7 +524,7 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle GetArrayElementPointer(LlvmCodegenState state, LlvmTypeHandle arrayType, LlvmValueHandle storage, LlvmValueHandle index, string name)
     {
-        return LlvmApi.BuildGEP2(state.Target.Builder, 
+        return LlvmApi.BuildGEP2(state.Target.Builder,
             arrayType,
             storage,
             new[]

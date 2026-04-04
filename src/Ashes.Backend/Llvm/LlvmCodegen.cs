@@ -261,7 +261,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsCommandLineToArgvImport, LlvmLinkage.External);
         }
 
-        LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module, 
+        LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             flavor == LlvmCodegenFlavor.Linux
                 ? LlvmApi.FunctionType(voidType, [i64])
@@ -417,7 +417,7 @@ internal static partial class LlvmCodegen
 
         if (isEntry)
         {
-            LlvmValueHandle heapBasePtr = LlvmApi.BuildGEP2(target.Builder, 
+            LlvmValueHandle heapBasePtr = LlvmApi.BuildGEP2(target.Builder,
                 LlvmApi.ArrayType2(i8, HeapSizeBytes),
                 heapStorageGlobal,
                 new[]

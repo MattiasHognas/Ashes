@@ -37,7 +37,7 @@ internal static class LlvmTargetSetup
             _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
         };
 
-        LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target, 
+        LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target,
             targetTriple,
             "x86-64",
             string.Empty,

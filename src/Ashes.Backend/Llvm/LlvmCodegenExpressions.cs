@@ -37,7 +37,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
         LlvmTypeHandle closureFunctionPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedCodePtr = LlvmApi.BuildIntToPtr(state.Target.Builder, codePtr, closureFunctionPtrType, "closure_code_ptr");
-        return LlvmApi.BuildCall2(state.Target.Builder, 
+        return LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             typedCodePtr,
             new[] { envPtr, argValue },
@@ -108,11 +108,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle exitProcessType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32]);
-        LlvmValueHandle exitProcessPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle exitProcessPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsExitProcessImport,
             "exit_process_ptr");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             exitProcessType,
             exitProcessPtr,
             new[] { exitCode },

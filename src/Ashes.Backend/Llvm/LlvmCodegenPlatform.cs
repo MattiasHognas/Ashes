@@ -9,11 +9,11 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
         LlvmTypeHandle wsaStartupType = LlvmApi.FunctionType(state.I32, [i16, state.I8Ptr]);
-        LlvmValueHandle wsaStartupPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle wsaStartupPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWsaStartupImport,
             name + "_ptr");
-        LlvmValueHandle result = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle result = LlvmApi.BuildCall2(builder,
             wsaStartupType,
             wsaStartupPtr,
             new[]
@@ -29,11 +29,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle socketType = LlvmApi.FunctionType(state.I64, [state.I32, state.I32, state.I32]);
-        LlvmValueHandle socketPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle socketPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsSocketImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             socketType,
             socketPtr,
             new[]
@@ -49,11 +49,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle connectType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32]);
-        LlvmValueHandle connectPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle connectPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsConnectImport,
             name + "_ptr");
-        LlvmValueHandle result = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle result = LlvmApi.BuildCall2(builder,
             connectType,
             connectPtr,
             new[]
@@ -70,11 +70,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle sendType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
-        LlvmValueHandle sendPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle sendPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsSendImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             sendType,
             sendPtr,
             new[]
@@ -91,11 +91,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle recvType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
-        LlvmValueHandle recvPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle recvPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsRecvImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             recvType,
             recvPtr,
             new[]
@@ -112,11 +112,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle closeSocketType = LlvmApi.FunctionType(state.I32, [state.I64]);
-        LlvmValueHandle closeSocketPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle closeSocketPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCloseSocketImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             closeSocketType,
             closeSocketPtr,
             new[] { socket },
@@ -127,11 +127,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle createFileType = LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I32, state.I32, state.I64]);
-        LlvmValueHandle createFilePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle createFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCreateFileImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             createFileType,
             createFilePtr,
             new[]
@@ -151,11 +151,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(state.I32, [state.I64]);
-        LlvmValueHandle closeHandlePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle closeHandlePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsCloseHandleImport,
             name + "_ptr");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             closeHandleType,
             closeHandlePtr,
             new[] { handle },
@@ -166,11 +166,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(state.I32, [state.I8Ptr]);
-        LlvmValueHandle getFileAttributesPtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle getFileAttributesPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsGetFileAttributesImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             getFileAttributesType,
             getFileAttributesPtr,
             new[] { pathCstr },
@@ -182,11 +182,11 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle readFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReadSlot);
-        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsReadFileImport,
             name + "_ptr");
-        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder,
             readFileType,
             readFilePtr,
             new[]
@@ -206,11 +206,11 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle writeFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWrittenSlot);
-        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWriteFileImport,
             name + "_ptr");
-        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder, 
+        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder,
             writeFileType,
             writeFilePtr,
             new[]
@@ -320,11 +320,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(state.I64, [state.I32]);
-        LlvmValueHandle getStdHandlePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle getStdHandlePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsGetStdHandleImport,
             name + "_ptr");
-        return LlvmApi.BuildCall2(builder, 
+        return LlvmApi.BuildCall2(builder,
             getStdHandleType,
             getStdHandlePtr,
             new[] { LlvmApi.ConstInt(state.I32, handleKind, 1) },
@@ -336,11 +336,11 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle readFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReadSlot);
-        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle readFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsReadFileImport,
             "read_file_ptr");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             readFileType,
             readFilePtr,
             new[]
@@ -362,11 +362,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle stdoutHandle = EmitWindowsGetStdHandle(state, StdOutputHandle, "stdout_handle");
         LlvmValueHandle bytesWritten = LlvmApi.BuildAlloca(builder, state.I32, "bytes_written");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWritten);
-        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder, 
+        LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
             state.WindowsWriteFileImport,
             "write_file_ptr");
-        LlvmApi.BuildCall2(builder, 
+        LlvmApi.BuildCall2(builder,
             writeFileType,
             writeFilePtr,
             new[]
@@ -389,7 +389,7 @@ internal static partial class LlvmCodegen
             "={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}",
             true,
             false);
-        return LlvmApi.BuildCall2(state.Target.Builder, 
+        return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
             new[]
