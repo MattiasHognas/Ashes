@@ -43,11 +43,21 @@ The following help flags are accepted at the top level and for each command:
 |--------|-----------|---------|------------|-------------|
 | `--help` / `-h` | — | — | No | Print CLI help text and exit successfully. |
 
-The following option is accepted by **compile**, **run**, **repl**, and **test**:
+The following options are accepted by **compile**, **run**, **repl**, and **test**:
 
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
+
+**Optimization level values:**
+
+| Flag | Meaning |
+|------|---------|
+| `-O0` | No optimization |
+| `-O1` | Basic optimizations |
+| `-O2` | Standard optimizations (default) |
+| `-O3` | Aggressive optimizations |
 
 `--project` is accepted by **compile**, **run**, and **test** only (not by `ashes repl`):
 
@@ -75,10 +85,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```
-ashes compile [--target <id>] [-o <output>] <input.ash>
-ashes compile [--target <id>] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] <input.ash>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -97,6 +107,7 @@ ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upwa
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
 | `--target` | | enum | OS default | No | Target back end (`linux-x64` or `windows-x64`). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
 
 **Default output path rules (when `-o` is not given):**
 
@@ -110,6 +121,7 @@ ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upwa
 |----------|---------------|
 | `--target` | `linux-x64` on Linux/macOS, `windows-x64` on Windows |
 | `-o` / `--out` | Derived from input (see above) |
+| `-O0`..`-O3` | `-O2` (standard optimizations) |
 
 #### Exit Codes
 
@@ -167,10 +179,10 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```
-ashes run [--target <id>] <input.ash> [-- <args...>]
-ashes run [--target <id>] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] --project <ashes.json> [-- <args...>]
-ashes run [--target <id>] [-- <args...>]   # auto-discovers ashes.json
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] <input.ash> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [-- <args...>]   # auto-discovers ashes.json
 ```
 
 #### Arguments
@@ -189,6 +201,7 @@ ashes run [--target <id>] [-- <args...>]   # auto-discovers ashes.json
 | `--expr` | string | — | No | Inline Ashes source to compile and run. |
 | `--target` | enum | OS default | No | Target back end. |
 | `--project` | file path | — | No | Path to an `ashes.json` project file. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 
 #### Exit Codes
 
@@ -233,7 +246,7 @@ Start an interactive read-eval-print loop. Each expression is compiled to a temp
 #### Synopsis
 
 ```
-ashes repl [--target <id>]
+ashes repl [--target <id>] [-O0|-O1|-O2|-O3]
 ```
 
 #### Options
@@ -241,6 +254,7 @@ ashes repl [--target <id>]
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end used for all REPL evaluations. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level used for all REPL evaluations. |
 
 #### REPL Commands (typed at the prompt)
 
@@ -285,7 +299,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 #### Synopsis
 
 ```
-ashes test [--target <id>] [--project <ashes.json>] [paths...]
+ashes test [--target <id>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
 ```
 
 #### Arguments
@@ -300,6 +314,7 @@ ashes test [--target <id>] [--project <ashes.json>] [paths...]
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end for test compilation. |
 | `--project` | file path | — | No | Load a project manifest. When no explicit `[paths...]` are given, test discovery uses `<projectDir>/tests` if that directory exists; otherwise it falls back to the project directory itself. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level for test compilation. |
 
 #### Test File Conventions
 
