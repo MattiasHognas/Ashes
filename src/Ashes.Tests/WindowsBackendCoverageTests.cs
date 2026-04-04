@@ -138,6 +138,14 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_llvm_support_check_should_accept_read_line_programs()
+    {
+        var ir = LowerExpression("""match Ashes.IO.readLine(Unit) with | None -> 0 | Some(text) -> 1""");
+
+        SupportsMinimalLlvm("SupportsMinimalWindowsLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_panic_programs()
     {
         var ir = LowerExpression("Ashes.IO.panic(\"boom\")");
@@ -181,6 +189,34 @@ public sealed class WindowsBackendCoverageTests
             "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
             ["first", "second"]);
         result.Stdout.ShouldBe("first:second\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_read_line_programs()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(
+            """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
+            stdin: "hello\r\n");
+        result.Stdout.ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_return_none_at_read_line_eof()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(
+            """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
+            stdin: "");
+        result.Stdout.ShouldBe("none\n");
     }
 
     [Test]
@@ -296,13 +332,13 @@ public sealed class WindowsBackendCoverageTests
         return (bool)method.Invoke(null, [ir])!;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithWindowsLlvmAsync(ir, args, expectedExitCode);
+        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, expectedExitCode);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
     {
         var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
 
@@ -314,6 +350,7 @@ public sealed class WindowsBackendCoverageTests
 
         var psi = new ProcessStartInfo(exePath)
         {
+            RedirectStandardInput = stdin is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
@@ -327,6 +364,11 @@ public sealed class WindowsBackendCoverageTests
         }
 
         using var proc = Process.Start(psi)!;
+        if (stdin is not null)
+        {
+            await proc.StandardInput.WriteAsync(stdin);
+            proc.StandardInput.Close();
+        }
         var stdout = await proc.StandardOutput.ReadToEndAsync();
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();

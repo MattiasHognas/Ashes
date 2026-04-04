@@ -125,6 +125,14 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_support_check_should_accept_read_line_programs()
+    {
+        var ir = LowerExpression("""match Ashes.IO.readLine(Unit) with | None -> 0 | Some(text) -> 1""");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_print_programs()
     {
         var ir = LowerExpression("Ashes.IO.write(\"hi\")");
@@ -184,6 +192,34 @@ public sealed class LinuxBackendCoverageTests
             "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
             ["first", "second"]);
         result.Stdout.ShouldBe("first:second\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_read_line_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
+            stdin: "hello\n");
+        result.Stdout.ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_return_none_at_read_line_eof()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
+            stdin: "");
+        result.Stdout.ShouldBe("none\n");
     }
 
     [Test]
@@ -307,13 +343,13 @@ public sealed class LinuxBackendCoverageTests
         return (bool)method.Invoke(null, [ir])!;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithLinuxLlvmAsync(ir, args, expectedExitCode);
+        return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, expectedExitCode);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
     {
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
 
@@ -332,6 +368,7 @@ public sealed class LinuxBackendCoverageTests
 
         var psi = new ProcessStartInfo(exePath)
         {
+            RedirectStandardInput = stdin is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
@@ -345,6 +382,11 @@ public sealed class LinuxBackendCoverageTests
         }
 
         using var proc = await StartProcessWithRetryAsync(psi);
+        if (stdin is not null)
+        {
+            await proc.StandardInput.WriteAsync(stdin);
+            proc.StandardInput.Close();
+        }
         var stdout = await proc.StandardOutput.ReadToEndAsync();
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();

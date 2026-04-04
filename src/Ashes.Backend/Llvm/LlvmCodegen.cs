@@ -8,8 +8,11 @@ namespace Ashes.Backend.Llvm;
 internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 1024 * 1024 * 4;
+    private const int InputBufSize = 64 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
+    private const uint StdInputHandle = 0xFFFFFFF6;
+    private const long SyscallRead = 0;
     private const long SyscallWrite = 1;
     private const long SyscallExit = 60;
 
@@ -111,6 +114,7 @@ internal static class LlvmCodegen
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LLVMTypeRef closureFunctionType = LLVMTypeRef.CreateFunction(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
+        bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
         bool usesWindowsStdout = flavor == LlvmCodegenFlavor.Windows
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
@@ -120,8 +124,11 @@ internal static class LlvmCodegen
             && ProgramUsesInstruction<IrInst.PanicStr>(program);
         bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.Windows
             && usesProgramArgs;
+        bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.Windows
+            && usesReadLine;
         LLVMValueRef windowsGetStdHandleImport = default;
         LLVMValueRef windowsWriteFileImport = default;
+        LLVMValueRef windowsReadFileImport = default;
         LLVMValueRef windowsExitProcessImport = default;
         LLVMValueRef windowsGetCommandLineImport = default;
         LLVMValueRef windowsWideCharToMultiByteImport = default;
@@ -133,14 +140,25 @@ internal static class LlvmCodegen
         LLVMValueRef heapCursorGlobal = target.Module.AddGlobal(i64, "__ashes_heap_cursor");
         heapCursorGlobal.Linkage = LLVMLinkage.LLVMInternalLinkage;
         heapCursorGlobal.Initializer = LLVMValueRef.CreateConstInt(i64, 0, false);
-        if (usesWindowsStdout)
+        if (usesWindowsStdout || usesWindowsReadLine)
         {
             LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(i64, [i32]);
-            LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsGetStdHandleImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getStdHandleType, 0), "__imp_GetStdHandle");
             windowsGetStdHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsStdout)
+        {
+            LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(writeFileType, 0), "__imp_WriteFile");
             windowsWriteFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsReadLine)
+        {
+            LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
+            windowsReadFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(readFileType, 0), "__imp_ReadFile");
+            windowsReadFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
         if (usesWindowsExitProcess)
@@ -199,6 +217,7 @@ internal static class LlvmCodegen
             heapCursorGlobal,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
+            windowsReadFileImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -222,6 +241,7 @@ internal static class LlvmCodegen
                 heapCursorGlobal,
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
+                windowsReadFileImport,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -257,6 +277,7 @@ internal static class LlvmCodegen
         LLVMValueRef heapCursorGlobal,
         LLVMValueRef windowsGetStdHandleImport,
         LLVMValueRef windowsWriteFileImport,
+        LLVMValueRef windowsReadFileImport,
         LLVMValueRef windowsExitProcessImport,
         LLVMValueRef windowsGetCommandLineImport,
         LLVMValueRef windowsWideCharToMultiByteImport,
@@ -342,6 +363,7 @@ internal static class LlvmCodegen
             entryStackPointer,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
+            windowsReadFileImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -411,6 +433,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstBool loadConstBool => StoreTemp(state, loadConstBool.Target, LLVMValueRef.CreateConstInt(state.I64, loadConstBool.Value ? 1UL : 0UL, false)),
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsSlot, "program_args")),
+            IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -788,6 +811,98 @@ internal static class LlvmCodegen
         LLVMValueRef isTrue = state.Target.Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, boolValue, zero, "bool_is_true");
         EmitConditionalWrite(state, isTrue, "true", "false", appendNewline: true);
         return false;
+    }
+
+    private static LLVMValueRef EmitReadLine(LlvmCodegenState state)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef inputBufType = LLVMTypeRef.CreateArray(state.I8, InputBufSize);
+        LLVMValueRef inputBuf = builder.BuildAlloca(inputBufType, "read_line_buf");
+        LLVMValueRef inputBufPtr = GetArrayElementPointer(state, inputBufType, inputBuf, LLVMValueRef.CreateConstInt(state.I64, 0, false), "read_line_buf_ptr");
+        LLVMValueRef byteSlot = builder.BuildAlloca(state.I8, "read_line_byte");
+        LLVMValueRef lenSlot = builder.BuildAlloca(state.I64, "read_line_len");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "read_line_result");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), lenSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        LLVMValueRef stdinHandle = default;
+        LLVMValueRef bytesReadSlot = default;
+        if (state.Flavor == LlvmCodegenFlavor.Windows)
+        {
+            stdinHandle = EmitWindowsGetStdHandle(state, StdInputHandle, "stdin_handle");
+            bytesReadSlot = builder.BuildAlloca(state.I32, "read_line_bytes_read");
+        }
+
+        var loopBlock = state.Function.AppendBasicBlock("read_line_loop");
+        var inspectBlock = state.Function.AppendBasicBlock("read_line_inspect");
+        var skipCrBlock = state.Function.AppendBasicBlock("read_line_skip_cr");
+        var storeByteBlock = state.Function.AppendBasicBlock("read_line_store_byte");
+        var appendByteBlock = state.Function.AppendBasicBlock("read_line_append_byte");
+        var eofBlock = state.Function.AppendBasicBlock("read_line_eof");
+        var finishSomeBlock = state.Function.AppendBasicBlock("read_line_finish_some");
+        var returnNoneBlock = state.Function.AppendBasicBlock("read_line_return_none");
+        var overflowBlock = state.Function.AppendBasicBlock("read_line_overflow");
+        var continueBlock = state.Function.AppendBasicBlock("read_line_continue");
+
+        builder.BuildBr(loopBlock);
+
+        builder.PositionAtEnd(loopBlock);
+        LLVMValueRef bytesRead = state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitSyscall(
+                state,
+                SyscallRead,
+                LLVMValueRef.CreateConstInt(state.I64, 0, false),
+                builder.BuildPtrToInt(byteSlot, state.I64, "read_line_byte_ptr"),
+                LLVMValueRef.CreateConstInt(state.I64, 1, false),
+                "sys_read_line")
+            : EmitWindowsReadByte(state, stdinHandle, byteSlot, bytesReadSlot);
+        LLVMValueRef hasByte = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, bytesRead, LLVMValueRef.CreateConstInt(state.I64, 0, false), "read_line_has_byte");
+        builder.BuildCondBr(hasByte, inspectBlock, eofBlock);
+
+        builder.PositionAtEnd(inspectBlock);
+        LLVMValueRef currentByte = builder.BuildLoad2(state.I8, byteSlot, "read_line_current_byte");
+        LLVMValueRef isLf = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, currentByte, LLVMValueRef.CreateConstInt(state.I8, 10, false), "read_line_is_lf");
+        builder.BuildCondBr(isLf, finishSomeBlock, skipCrBlock);
+
+        builder.PositionAtEnd(skipCrBlock);
+        LLVMValueRef isCr = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, currentByte, LLVMValueRef.CreateConstInt(state.I8, 13, false), "read_line_is_cr");
+        builder.BuildCondBr(isCr, loopBlock, storeByteBlock);
+
+        builder.PositionAtEnd(storeByteBlock);
+        LLVMValueRef currentLen = builder.BuildLoad2(state.I64, lenSlot, "read_line_len_value");
+        LLVMValueRef atCapacity = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, currentLen, LLVMValueRef.CreateConstInt(state.I64, InputBufSize, false), "read_line_at_capacity");
+        builder.BuildCondBr(atCapacity, overflowBlock, appendByteBlock);
+
+        builder.PositionAtEnd(appendByteBlock);
+        LLVMValueRef destPtr = builder.BuildGEP2(state.I8, inputBufPtr, new[] { currentLen }, "read_line_dest_ptr");
+        builder.BuildStore(currentByte, destPtr);
+        builder.BuildStore(builder.BuildAdd(currentLen, LLVMValueRef.CreateConstInt(state.I64, 1, false), "read_line_len_next"), lenSlot);
+        builder.BuildBr(loopBlock);
+
+        builder.PositionAtEnd(eofBlock);
+        LLVMValueRef lenAtEof = builder.BuildLoad2(state.I64, lenSlot, "read_line_len_at_eof");
+        LLVMValueRef isEmpty = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, lenAtEof, LLVMValueRef.CreateConstInt(state.I64, 0, false), "read_line_is_empty");
+        builder.BuildCondBr(isEmpty, returnNoneBlock, finishSomeBlock);
+
+        builder.PositionAtEnd(finishSomeBlock);
+        LLVMValueRef finalLen = builder.BuildLoad2(state.I64, lenSlot, "read_line_final_len");
+        LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(finalLen, LLVMValueRef.CreateConstInt(state.I64, 8, false), "read_line_string_bytes"));
+        StoreMemory(state, stringRef, 0, finalLen, "read_line_string_len");
+        EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, "read_line_string_dest"), inputBufPtr, finalLen, "read_line_copy_bytes");
+        LLVMValueRef someRef = EmitAllocAdt(state, 1, 1);
+        StoreMemory(state, someRef, 8, stringRef, "read_line_some_value");
+        builder.BuildStore(someRef, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(returnNoneBlock);
+        builder.BuildStore(EmitAllocAdt(state, 0, 0), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(overflowBlock);
+        EmitPanic(state, EmitStackStringObject(state, "readLine input too long"));
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "read_line_result_value");
     }
 
     private static bool EmitPrintInt(LlvmCodegenState state, LLVMValueRef value)
@@ -1291,20 +1406,50 @@ internal static class LlvmCodegen
         EmitWindowsWriteBytes(state, bytePtr, len);
     }
 
-    private static void EmitWindowsWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    private static LLVMValueRef EmitWindowsGetStdHandle(LlvmCodegenState state, uint handleKind, string name)
     {
         LLVMBuilderRef builder = state.Target.Builder;
         LLVMTypeRef getStdHandleType = LLVMTypeRef.CreateFunction(state.I64, [state.I32]);
-        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
         LLVMValueRef getStdHandlePtr = builder.BuildLoad2(
             LLVMTypeRef.CreatePointer(getStdHandleType, 0),
             state.WindowsGetStdHandleImport,
-            "get_std_handle_ptr");
-        LLVMValueRef stdoutHandle = builder.BuildCall2(
+            name + "_ptr");
+        return builder.BuildCall2(
             getStdHandleType,
             getStdHandlePtr,
-            new[] { LLVMValueRef.CreateConstInt(state.I32, StdOutputHandle, true) },
-            "stdout_handle");
+            new[] { LLVMValueRef.CreateConstInt(state.I32, handleKind, true) },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsReadByte(LlvmCodegenState state, LLVMValueRef stdinHandle, LLVMValueRef byteSlot, LLVMValueRef bytesReadSlot)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesReadSlot);
+        LLVMValueRef readFilePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(readFileType, 0),
+            state.WindowsReadFileImport,
+            "read_file_ptr");
+        builder.BuildCall2(
+            readFileType,
+            readFilePtr,
+            new[]
+            {
+                stdinHandle,
+                byteSlot,
+                LLVMValueRef.CreateConstInt(state.I32, 1, false),
+                bytesReadSlot,
+                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, "null_overlapped")
+            },
+            "read_file");
+        return builder.BuildZExt(builder.BuildLoad2(state.I32, bytesReadSlot, "read_line_bytes_read_value"), state.I64, "read_line_bytes_read_i64");
+    }
+
+    private static void EmitWindowsWriteBytes(LlvmCodegenState state, LLVMValueRef bytePtr, LLVMValueRef len)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LLVMValueRef stdoutHandle = EmitWindowsGetStdHandle(state, StdOutputHandle, "stdout_handle");
         LLVMValueRef bytesWritten = builder.BuildAlloca(state.I32, "bytes_written");
         builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWritten);
         LLVMValueRef writeFilePtr = builder.BuildLoad2(
@@ -1368,6 +1513,7 @@ internal static class LlvmCodegen
         LLVMValueRef EntryStackPointer,
         LLVMValueRef WindowsGetStdHandleImport,
         LLVMValueRef WindowsWriteFileImport,
+        LLVMValueRef WindowsReadFileImport,
         LLVMValueRef WindowsExitProcessImport,
         LLVMValueRef WindowsGetCommandLineImport,
         LLVMValueRef WindowsWideCharToMultiByteImport,
@@ -1408,6 +1554,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
             IrInst.LoadProgramArgs => true,
+            IrInst.ReadLine => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
@@ -1461,6 +1608,7 @@ internal static class LlvmCodegen
             IrInst.LoadConstBool => true,
             IrInst.LoadConstStr => true,
             IrInst.LoadProgramArgs => true,
+            IrInst.ReadLine => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
