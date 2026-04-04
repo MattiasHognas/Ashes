@@ -17,14 +17,11 @@
     <PackageReference Include="LibObjectFile" Version="2.1.0" />
   </ItemGroup>
 
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+  <ItemGroup>
     <None Include="..\..\runtimes\win-x64\libLLVM.dll"
           Condition="Exists('..\..\runtimes\win-x64\libLLVM.dll')"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.dll" />
-  </ItemGroup>
-
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <None Include="..\..\runtimes\linux-x64\libLLVM.so"
           Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so')"
           CopyToOutputDirectory="PreserveNewest"
