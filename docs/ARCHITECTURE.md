@@ -32,7 +32,7 @@ flowchart LR
 |-------|---------|-----------|--------|
 | Tokenization | Ashes.Frontend | `Lexer` | Token stream |
 | Parsing | Ashes.Frontend | `Parser` | `Ast` nodes |
-| Binding & inference | Ashes.Semantics | `Lowering` | Typed AST + `IrProgram` |
+| Binding, inference & lowering | Ashes.Semantics | `Lowering` | `IrProgram` |
 | Code generation | Ashes.Backend | `LlvmCodegen` | LLVM IR → object file |
 | Linking | Ashes.Backend | `LlvmImageLinker` | Native executable bytes |
 
