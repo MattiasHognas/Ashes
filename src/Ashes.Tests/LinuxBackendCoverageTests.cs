@@ -10,6 +10,18 @@ namespace Ashes.Tests;
 public sealed class LinuxBackendCoverageTests
 {
     [Test]
+    public void Linux_backend_compile_should_emit_elf_header_for_int_program()
+    {
+        var bytes = CompileForLinux("Ashes.IO.print(40 + 2)");
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
     public void Linux_backend_compile_should_support_compiler_features_used_by_ashes_programs()
     {
         var bytes = CompileForLinux("let z = 20 in let f = fun (x) -> if x <= z then x + z else x + 1 in Ashes.IO.print(f(22))");
@@ -28,6 +40,42 @@ public sealed class LinuxBackendCoverageTests
         var second = CompileForLinux("40 + 3");
 
         first.ShouldNotBe(second);
+    }
+
+    [Test]
+    public void Linux_backend_compile_should_support_string_concat_programs()
+    {
+        var bytes = CompileForLinux("Ashes.IO.print(\"hello \" + \"world\")");
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
+    public void Linux_backend_compile_should_support_large_rdata_programs()
+    {
+        var bytes = CompileForLinux($"Ashes.IO.print(\"{new string('a', 20000)}\")");
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
+    public void Linux_backend_compile_should_support_program_args_programs()
+    {
+        var bytes = CompileForLinux("match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")");
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
     }
 
     [Test]
