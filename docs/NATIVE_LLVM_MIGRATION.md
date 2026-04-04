@@ -553,7 +553,7 @@ finally
 3. Run the examples:
    ```bash
    dotnet run --project src/Ashes.Cli -- run examples/hello.ash
-   dotnet run --project src/Ashes.Cli -- run examples/fibonacci.ash
+   dotnet run --project src/Ashes.Cli -- run examples/closures.ash
    ```
 4. Cross-compile check: build on Linux, verify Windows target still emits valid PE.
 

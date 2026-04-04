@@ -17,15 +17,18 @@
     <PackageReference Include="LibObjectFile" Version="2.1.0" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <None Include="..\..\lib\Ashes\win-x64\libLLVM.dll"
           Condition="Exists('..\..\lib\Ashes\win-x64\libLLVM.dll')"
           CopyToOutputDirectory="PreserveNewest"
-          Link="runtimes\win-x64\native\libLLVM.dll" />
+          Link="libLLVM.dll" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <None Include="..\..\lib\Ashes\linux-x64\libLLVM.so"
           Condition="Exists('..\..\lib\Ashes\linux-x64\libLLVM.so')"
           CopyToOutputDirectory="PreserveNewest"
-          Link="runtimes\linux-x64\native\libLLVM.so" />
+          Link="libLLVM.so" />
   </ItemGroup>
 
 </Project>
