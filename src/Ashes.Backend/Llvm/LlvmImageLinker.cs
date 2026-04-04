@@ -8,6 +8,7 @@ namespace Ashes.Backend.Llvm;
 internal static class LlvmImageLinker
 {
     private const ulong PeImageBase = 0x0000000000400000UL;
+    private const ulong ElfSectionFlagAlloc = 0x2;
     private const uint SectionTypeRela = 4;
     private const uint SectionTypeRel = 9;
     private const int PageSize = 0x1000;
@@ -27,17 +28,28 @@ internal static class LlvmImageLinker
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + LinuxTrampolineLength;
-        var parsed = ParseElfObject(objectBytes, entrySymbolName, objectTextVa);
+        var parsed = ParseElfObject(objectBytes, entrySymbolName);
         int textFileOffset = PageSize;
+        int codeLength = LinuxTrampolineLength + parsed.TextBytes.Length;
+        int dataFileOffset = Align(textFileOffset + codeLength, PageSize);
+        ulong dataVa = ElfBaseVa + (ulong)dataFileOffset;
+        var laidOutData = LayoutElfAllocatedSections(parsed.AllocatedSections, dataVa);
+        ApplyElfTextRelocations(
+            objectBytes,
+            parsed.TextBytes,
+            parsed.RelocationSections,
+            parsed.SymbolTable,
+            parsed.TextSectionIndex,
+            objectTextVa,
+            laidOutData.SectionBaseVas);
+
         byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
             .ToArray();
-        int dataFileOffset = Align(textFileOffset + codeBytes.Length, PageSize);
-        ulong dataVa = ElfBaseVa + (ulong)dataFileOffset;
 
         return Elf64ImageWriter.BuildTwoSegmentElf(
             textBytes: codeBytes,
-            dataBytes: [],
+            dataBytes: laidOutData.DataBytes,
             bssSize: 0,
             entryOffsetInText: 0,
             textFileOff: textFileOffset,
@@ -157,7 +169,7 @@ internal static class LlvmImageLinker
         return output.ToArray();
     }
 
-    private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName, ulong loadedTextVa)
+    private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)
     {
         ReadOnlySpan<byte> bytes = objectBytes;
         if (bytes.Length < 64
@@ -191,10 +203,12 @@ internal static class LlvmImageLinker
             sections[i] = new ElfSectionHeader(
                 NameOffset: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)),
                 Type: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)),
+                Flags: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8)),
                 Offset: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 24, 8)),
                 Size: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 32, 8)),
                 Link: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 40, 4)),
                 Info: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 44, 4)),
+                AddressAlign: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 48, 8)),
                 EntrySize: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 56, 8)));
         }
 
@@ -232,9 +246,34 @@ internal static class LlvmImageLinker
             .ToList();
 
         var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
+        var allocatedSections = new List<ElfAllocatedSection>();
+        for (int i = 0; i < sections.Length; i++)
+        {
+            if (i == textSectionIndex)
+            {
+                continue;
+            }
+
+            ElfSectionHeader section = sections[i];
+            if (section.Size == 0 || (section.Flags & ElfSectionFlagAlloc) == 0)
+            {
+                continue;
+            }
+
+            allocatedSections.Add(new ElfAllocatedSection(
+                SectionIndex: i,
+                Bytes: bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                Alignment: section.AddressAlign));
+        }
+
         int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex, entrySymbolName);
-        ApplyElfTextRelocations(bytes, textBytes, textRelocationSections, symtab.Value, textSectionIndex, loadedTextVa);
-        return new ParsedElfObject(textBytes, entryOffset);
+        return new ParsedElfObject(
+            TextBytes: textBytes,
+            EntryOffsetInText: entryOffset,
+            RelocationSections: textRelocationSections,
+            SymbolTable: symtab.Value,
+            TextSectionIndex: textSectionIndex,
+            AllocatedSections: allocatedSections);
     }
 
     private static void ApplyElfTextRelocations(
@@ -243,7 +282,8 @@ internal static class LlvmImageLinker
         List<ElfSectionHeader> relocationSections,
         ElfSectionHeader symtab,
         int textSectionIndex,
-        ulong loadedTextVa)
+        ulong loadedTextVa,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas)
     {
         foreach (ElfSectionHeader relocationSection in relocationSections)
         {
@@ -265,12 +305,7 @@ internal static class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-                if (symbol.SectionIndex != textSectionIndex)
-                {
-                    throw new InvalidOperationException("LLVM ELF text relocation targeted an unsupported non-text symbol.");
-                }
-
-                long targetVa = checked((long)(loadedTextVa + symbol.Value) + addend);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas) + addend);
                 Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                 switch (relocationType)
                 {
@@ -285,6 +320,25 @@ internal static class LlvmImageLinker
                 }
             }
         }
+    }
+
+    private static ulong ResolveElfTargetVa(
+        ElfSymbol symbol,
+        int textSectionIndex,
+        ulong loadedTextVa,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+    {
+        if (symbol.SectionIndex == textSectionIndex)
+        {
+            return loadedTextVa + symbol.Value;
+        }
+
+        if (sectionBaseVas.TryGetValue(symbol.SectionIndex, out ulong sectionBaseVa))
+        {
+            return sectionBaseVa + symbol.Value;
+        }
+
+        throw new InvalidOperationException($"LLVM ELF text relocation targeted unsupported section {symbol.SectionIndex}.");
     }
 
     private static ElfSymbol ReadElfSymbol(ReadOnlySpan<byte> bytes, ElfSectionHeader symtab, int symbolIndex)
@@ -350,6 +404,33 @@ internal static class LlvmImageLinker
     {
         int mask = align - 1;
         return (value + mask) & ~mask;
+    }
+
+    private static LaidOutElfSections LayoutElfAllocatedSections(
+        IReadOnlyList<ElfAllocatedSection> sections,
+        ulong dataVa)
+    {
+        if (sections.Count == 0)
+        {
+            return new LaidOutElfSections([], new Dictionary<int, ulong>());
+        }
+
+        using var stream = new MemoryStream();
+        var sectionBaseVas = new Dictionary<int, ulong>();
+        foreach (ElfAllocatedSection section in sections)
+        {
+            int alignment = checked((int)Math.Max(1, Math.Min(section.Alignment, (ulong)int.MaxValue)));
+            int alignedOffset = Align(checked((int)stream.Position), alignment);
+            while (stream.Position < alignedOffset)
+            {
+                stream.WriteByte(0);
+            }
+
+            sectionBaseVas[section.SectionIndex] = dataVa + (ulong)stream.Position;
+            stream.Write(section.Bytes);
+        }
+
+        return new LaidOutElfSections(stream.ToArray(), sectionBaseVas);
     }
 
     private static ParsedCoffObject ParseCoffObject(byte[] objectBytes, string entrySymbolName)
@@ -604,7 +685,13 @@ internal static class LlvmImageLinker
         return remainder == 0 ? value : checked(value + alignment - remainder);
     }
 
-    private readonly record struct ParsedElfObject(byte[] TextBytes, int EntryOffsetInText);
+    private readonly record struct ParsedElfObject(
+        byte[] TextBytes,
+        int EntryOffsetInText,
+        List<ElfSectionHeader> RelocationSections,
+        ElfSectionHeader SymbolTable,
+        int TextSectionIndex,
+        List<ElfAllocatedSection> AllocatedSections);
     private readonly record struct ParsedCoffObject(
         byte[] TextBytes,
         int EntryOffsetInText,
@@ -617,15 +704,26 @@ internal static class LlvmImageLinker
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
         uint Type,
+        ulong Flags,
         ulong Offset,
         ulong Size,
         uint Link,
         uint Info,
+        ulong AddressAlign,
         ulong EntrySize);
 
     private readonly record struct ElfSymbol(
         ushort SectionIndex,
         ulong Value);
+
+    private readonly record struct ElfAllocatedSection(
+        int SectionIndex,
+        byte[] Bytes,
+        ulong Alignment);
+
+    private readonly record struct LaidOutElfSections(
+        byte[] DataBytes,
+        Dictionary<int, ulong> SectionBaseVas);
 
     private readonly record struct CoffSectionHeader(
         string Name,

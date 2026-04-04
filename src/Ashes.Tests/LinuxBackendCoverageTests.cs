@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using Ashes.Backend.Backends;
@@ -253,13 +254,30 @@ public sealed class LinuxBackendCoverageTests
             }
         }
 
-        using var proc = Process.Start(psi)!;
+        using var proc = await StartProcessWithRetryAsync(psi);
         var stdout = await proc.StandardOutput.ReadToEndAsync();
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();
 
         proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
         return new ExecutionResult(stdout, stderr, proc.ExitCode);
+    }
+
+    private static async Task<Process> StartProcessWithRetryAsync(ProcessStartInfo psi)
+    {
+        const int textFileBusyError = 26;
+
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return Process.Start(psi)!;
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < 4)
+            {
+                await Task.Delay(20 * (attempt + 1));
+            }
+        }
     }
 
     private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
