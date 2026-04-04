@@ -454,43 +454,48 @@ public sealed class WindowsBackendCoverageTests
     {
         var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
-        Directory.CreateDirectory(tmpDir);
-
+        var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}.exe");
-        await File.WriteAllBytesAsync(exePath, exeBytes);
+        try
+        {
+            await File.WriteAllBytesAsync(exePath, exeBytes);
 
-        var psi = new ProcessStartInfo(exePath)
-        {
-            RedirectStandardInput = stdin is not null,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        if (workingDirectory is not null)
-        {
-            psi.WorkingDirectory = workingDirectory;
-        }
-        if (args is not null)
-        {
-            foreach (var arg in args)
+            var psi = new ProcessStartInfo(exePath)
             {
-                psi.ArgumentList.Add(arg);
+                RedirectStandardInput = stdin is not null,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            if (workingDirectory is not null)
+            {
+                psi.WorkingDirectory = workingDirectory;
             }
-        }
+            if (args is not null)
+            {
+                foreach (var arg in args)
+                {
+                    psi.ArgumentList.Add(arg);
+                }
+            }
 
-        using var proc = Process.Start(psi)!;
-        if (stdin is not null)
+            using var proc = Process.Start(psi)!;
+            if (stdin is not null)
+            {
+                await proc.StandardInput.WriteAsync(stdin);
+                proc.StandardInput.Close();
+            }
+            var stdout = await proc.StandardOutput.ReadToEndAsync();
+            var stderr = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
+            return new ExecutionResult(stdout, stderr, proc.ExitCode);
+        }
+        finally
         {
-            await proc.StandardInput.WriteAsync(stdin);
-            proc.StandardInput.Close();
+            DeleteDirectoryIfExists(tmpDir);
         }
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-
-        proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
-        return new ExecutionResult(stdout, stderr, proc.ExitCode);
     }
 
     private static string CreateTempDirectory()

@@ -102,5 +102,9 @@ internal sealed record LlvmTargetContext(
         Builder.Dispose();
         Module.Dispose();
         Context.Dispose();
+        unsafe
+        {
+            LLVM.DisposeTargetMachine(TargetMachine);
+        }
     }
 }

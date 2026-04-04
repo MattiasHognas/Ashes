@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Reflection;
 using System.Reflection.PortableExecutable;
 using System.Text;
 using LibObjectFile.PE;
@@ -25,6 +26,11 @@ internal static class LlvmImageLinker
     private const uint ElfRelocX86_64_32S = 11;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
     private const ushort CoffRelocAmd64Rel32 = 0x0004;
+    private static readonly MethodInfo SetPeImageBaseMethod =
+        typeof(PEOptionalHeader)
+            .GetProperty(nameof(PEOptionalHeader.ImageBase), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
+            .GetSetMethod(nonPublic: true)
+        ?? throw new InvalidOperationException("LibObjectFile.PEOptionalHeader.ImageBase setter was not found.");
 
     public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
     {
@@ -213,6 +219,7 @@ internal static class LlvmImageLinker
 
         pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);
         pe.OptionalHeader.BaseOfCode = textSection;
+        SetPeImageBase(pe.OptionalHeader, PeImageBase);
         pe.OptionalHeader.DllCharacteristics =
             DllCharacteristics.NxCompatible |
             DllCharacteristics.TerminalServerAware;
@@ -593,6 +600,11 @@ internal static class LlvmImageLinker
         }
 
         throw new InvalidOperationException($"LLVM COFF text relocation targeted unsupported symbol '{symbol.Name}' in section {symbol.SectionNumber}.");
+    }
+
+    private static void SetPeImageBase(PEOptionalHeader optionalHeader, ulong imageBase)
+    {
+        SetPeImageBaseMethod.Invoke(optionalHeader, [imageBase]);
     }
 
     private static int FindCoffSymbolOffset(

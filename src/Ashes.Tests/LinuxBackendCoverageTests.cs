@@ -617,50 +617,55 @@ public sealed class LinuxBackendCoverageTests
     {
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
 
-        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
-        Directory.CreateDirectory(tmpDir);
-
+        var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}");
-        await File.WriteAllBytesAsync(exePath, elfBytes);
+        try
+        {
+            await File.WriteAllBytesAsync(exePath, elfBytes);
 
 #pragma warning disable CA1416
-        File.SetUnixFileMode(exePath,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            File.SetUnixFileMode(exePath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 #pragma warning restore CA1416
 
-        var psi = new ProcessStartInfo(exePath)
-        {
-            RedirectStandardInput = stdin is not null,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        if (workingDirectory is not null)
-        {
-            psi.WorkingDirectory = workingDirectory;
-        }
-        if (args is not null)
-        {
-            foreach (var arg in args)
+            var psi = new ProcessStartInfo(exePath)
             {
-                psi.ArgumentList.Add(arg);
+                RedirectStandardInput = stdin is not null,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            if (workingDirectory is not null)
+            {
+                psi.WorkingDirectory = workingDirectory;
             }
-        }
+            if (args is not null)
+            {
+                foreach (var arg in args)
+                {
+                    psi.ArgumentList.Add(arg);
+                }
+            }
 
-        using var proc = await StartProcessWithRetryAsync(psi);
-        if (stdin is not null)
+            using var proc = await StartProcessWithRetryAsync(psi);
+            if (stdin is not null)
+            {
+                await proc.StandardInput.WriteAsync(stdin);
+                proc.StandardInput.Close();
+            }
+            var stdout = await proc.StandardOutput.ReadToEndAsync();
+            var stderr = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
+            return new ExecutionResult(stdout, stderr, proc.ExitCode);
+        }
+        finally
         {
-            await proc.StandardInput.WriteAsync(stdin);
-            proc.StandardInput.Close();
+            DeleteDirectoryIfExists(tmpDir);
         }
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-
-        proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
-        return new ExecutionResult(stdout, stderr, proc.ExitCode);
     }
 
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
