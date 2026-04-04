@@ -333,7 +333,6 @@ internal static partial class LlvmImageLinker
         string entrySymbolName,
         int expectedSectionNumber)
     {
-        int stringTableOffset = checked((int)(symbolTableOffset + symbolCount * 18));
         for (int symbolIndex = 0; symbolIndex < symbolCount; symbolIndex++)
         {
             int offset = checked((int)symbolTableOffset + (symbolIndex * 18));
