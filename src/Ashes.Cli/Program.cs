@@ -12,10 +12,10 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] <input.ash | --expr \"...\" > [[-- <args...>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|windows-x64]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
@@ -27,6 +27,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--project[/]", "Use a specific ashes.json project file.");
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
+    table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
     AnsiConsole.Write(table);
@@ -108,7 +109,7 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
     return await File.ReadAllTextAsync(inputFile);
 }
 
-static byte[] CompileToImage(string source, string targetId, IReadOnlySet<string>? importedStdModules = null)
+static byte[] CompileToImage(string source, string targetId, BackendCompileOptions? backendOptions = null, IReadOnlySet<string>? importedStdModules = null)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
@@ -117,8 +118,9 @@ static byte[] CompileToImage(string source, string targetId, IReadOnlySet<string
     var ir = new Lowering(diag, importedStdModules).Lower(program);
     diag.ThrowIfAny();
 
+    var effectiveOptions = backendOptions ?? BackendCompileOptions.Default;
     var backend = BackendFactory.Create(targetId);
-    return backend.Compile(ir);
+    return backend.Compile(ir, effectiveOptions);
 }
 
 static (string Source, IReadOnlySet<string>? ImportedStdModules) PrepareStandaloneCompilationSource(string source, string displayPath)
@@ -132,12 +134,34 @@ static (string Source, IReadOnlySet<string>? ImportedStdModules) PrepareStandalo
     return (layout.Source, importedStdModules.Count == 0 ? null : importedStdModules);
 }
 
-static byte[] CompileProjectToImage(AshesProject project, string targetId)
+static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null)
 {
     var plan = ProjectSupport.BuildCompilationPlan(project);
 
     var projectSource = ProjectSupport.BuildCompilationSource(plan);
-    return CompileToImage(projectSource, targetId, plan.ImportedStdModules);
+    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules);
+}
+
+static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
+{
+    switch (arg)
+    {
+        case "-O0":
+            level = BackendOptimizationLevel.O0;
+            return true;
+        case "-O1":
+            level = BackendOptimizationLevel.O1;
+            return true;
+        case "-O2":
+            level = BackendOptimizationLevel.O2;
+            return true;
+        case "-O3":
+            level = BackendOptimizationLevel.O3;
+            return true;
+        default:
+            level = BackendCompileOptions.Default.OptimizationLevel;
+            return false;
+    }
 }
 
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
@@ -318,12 +342,12 @@ static bool TryAnalyzeReplSubmission(IReadOnlyList<ReplBinding> bindings, string
     }
 }
 
-static bool TryCompileReplSubmission(IReadOnlyList<ReplBinding> bindings, string source, bool autoPrint, string targetId, out byte[]? image, out CompileDiagnosticException? diagnostics, out string? error)
+static bool TryCompileReplSubmission(IReadOnlyList<ReplBinding> bindings, string source, bool autoPrint, string targetId, BackendCompileOptions backendOptions, out byte[]? image, out CompileDiagnosticException? diagnostics, out string? error)
 {
     try
     {
         var exprSource = autoPrint ? $"Ashes.IO.print({source.Trim()})" : source.Trim();
-        image = CompileToImage(BuildReplSessionSource(bindings, exprSource), targetId);
+        image = CompileToImage(BuildReplSessionSource(bindings, exprSource), targetId, backendOptions);
         diagnostics = null;
         error = null;
         return true;
@@ -455,6 +479,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     string? target = null;
+    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? outPath = null;
     string? expr = null;
     string? inputFile = null;
@@ -468,6 +493,7 @@ async Task<int> RunCompileAsync(string[] a)
         if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
 
@@ -481,6 +507,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(optimizationLevel);
 
     var sw = Stopwatch.StartNew();
     byte[] image;
@@ -491,7 +518,7 @@ async Task<int> RunCompileAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, prepared.ImportedStdModules);
+            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -508,7 +535,7 @@ async Task<int> RunCompileAsync(string[] a)
     {
         try
         {
-            image = CompileProjectToImage(project, target);
+            image = CompileProjectToImage(project, target, backendOptions);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -554,6 +581,7 @@ async Task<int> RunRunAsync(string[] a)
     var progArgs = idx >= 0 ? a[(idx + 1)..] : Array.Empty<string>();
 
     string? target = null;
+    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? expr = null;
     string? inputFile = null;
     string? projectPath = null;
@@ -564,6 +592,7 @@ async Task<int> RunRunAsync(string[] a)
         if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
         if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
 
@@ -577,6 +606,7 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(optimizationLevel);
 
     byte[] image;
     if (project is null)
@@ -586,7 +616,7 @@ async Task<int> RunRunAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, prepared.ImportedStdModules);
+            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -603,7 +633,7 @@ async Task<int> RunRunAsync(string[] a)
     {
         try
         {
-            image = CompileProjectToImage(project, target);
+            image = CompileProjectToImage(project, target, backendOptions);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -628,15 +658,18 @@ async Task<int> RunReplAsync(string[] a)
     }
 
     string? target = null;
+    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         throw new CliUsageException("Unknown argument.");
     }
 
     target ??= BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(optimizationLevel);
     var sessionBindings = new List<ReplBinding>();
 
     AnsiConsole.Write(new Rule("[bold]Ashes REPL[/]").RuleStyle("grey").LeftJustified());
@@ -716,7 +749,7 @@ async Task<int> RunReplAsync(string[] a)
             if (TryAnalyzeReplSubmission(sessionBindings, candidate, out var analysis, out var compileDiagnostics, out var compileError))
             {
                 var isBindingSubmission = TryExtractPersistentBinding(candidate, out var persistedBinding);
-                if (!TryCompileReplSubmission(sessionBindings, candidate, autoPrint: analysis!.IsPrintable && !isBindingSubmission, target, out var image, out compileDiagnostics, out compileError))
+                if (!TryCompileReplSubmission(sessionBindings, candidate, autoPrint: analysis!.IsPrintable && !isBindingSubmission, target, backendOptions, out var image, out compileDiagnostics, out compileError))
                 {
                     if (compileDiagnostics is not null)
                     {
@@ -795,6 +828,7 @@ int RunTest(string[] a)
 
     // ashes test [--project ...] [--target ...] [paths...]
     string? target = null;
+    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? projectPath = null;
     var paths = new List<string>();
 
@@ -803,6 +837,7 @@ int RunTest(string[] a)
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
         {
             throw new CliUsageException("Unknown argument.");
@@ -813,8 +848,9 @@ int RunTest(string[] a)
 
     var project = ResolveProject(projectPath, null, null);
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(optimizationLevel);
 
-    return Runner.RunTests(paths, target, AnsiConsole.Console, project);
+    return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions);
 }
 
 async Task<int> RunFmtAsync(string[] a)

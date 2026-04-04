@@ -9,7 +9,6 @@ using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class ExampleSocketFixtureTests
 {
     [Test]
@@ -88,19 +87,27 @@ public sealed class ExampleSocketFixtureTests
     {
         var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
         File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), examplePath);
-
-        using var listener = new TcpListener(IPAddress.Loopback, 8080);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var tempExamplePath = await CreatePortSpecificExampleAsync(examplePath, port);
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempExamplePath);
 
-        var serverTask = RunServerAsync(listener, handleClientAsync);
-        var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
-        var serverException = await serverTask;
+        try
+        {
+            var serverTask = RunServerAsync(listener, handleClientAsync);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+            var serverException = await serverTask;
 
-        serverException.ShouldBeNull(serverException?.ToString());
-        exitCode.ShouldBe(0, stderr);
-        stdout.ShouldBe(expectedStdout, customMessage: stderr);
-        stderr.ShouldBeEmpty();
+            serverException.ShouldBeNull(serverException?.ToString());
+            exitCode.ShouldBe(0, stderr);
+            stdout.ShouldBe(expectedStdout, customMessage: stderr);
+            stderr.ShouldBeEmpty();
+        }
+        finally
+        {
+            TryDeleteFile(tempExamplePath);
+        }
     }
 
     private static async Task<Exception?> RunServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
@@ -169,5 +176,31 @@ public sealed class ExampleSocketFixtureTests
     {
         var sourceDir = Path.GetDirectoryName(callerFile)!;
         return Path.GetFullPath(Path.Combine(sourceDir, "..", "..", "examples"));
+    }
+
+    private static async Task<string> CreatePortSpecificExampleAsync(string examplePath, int port)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N") + ".ash");
+        Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
+        var source = await File.ReadAllTextAsync(examplePath);
+        await File.WriteAllTextAsync(tempPath, source.Replace("8080", port.ToString(), StringComparison.Ordinal));
+        return tempPath;
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 }

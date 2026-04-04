@@ -6,8 +6,8 @@ public static class BackendFactory
     {
         return targetId switch
         {
-            TargetIds.LinuxX64 => new LinuxX64ElfBackend(),
-            TargetIds.WindowsX64 => new WindowsX64PeBackend(),
+            TargetIds.LinuxX64 => new LinuxX64LlvmBackend(),
+            TargetIds.WindowsX64 => new WindowsX64LlvmBackend(),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'.")
         };
     }

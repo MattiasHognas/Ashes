@@ -33,9 +33,10 @@ public static class Runner
 
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
-    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null)
+    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null)
     {
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
+        backendOptions ??= BackendCompileOptions.Default;
 
         var files = DiscoverAshFiles(paths, project)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -78,7 +79,7 @@ public static class Runner
                     sourceOverride = rawSource.Replace(TcpPortPlaceholder, tcpServer.Port.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
                 }
 
-                var image = CompileFileToImage(file, targetId, effectiveProject, sourceOverride);
+                var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
                 var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures);
                 exit = runExit;
                 actual = (stdout ?? "").TrimEnd();
@@ -512,7 +513,7 @@ public static class Runner
         return false;
     }
 
-    private static byte[] CompileFileToImage(string filePath, string targetId, AshesProject? project = null, string? sourceOverride = null)
+    private static byte[] CompileFileToImage(string filePath, string targetId, BackendCompileOptions backendOptions, AshesProject? project = null, string? sourceOverride = null)
     {
         var source = sourceOverride ?? File.ReadAllText(filePath);
 
@@ -533,7 +534,7 @@ public static class Runner
             if (sourceOverride is null)
             {
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, plan.ImportedStdModules);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -541,7 +542,7 @@ public static class Runner
             var importedStdModules = plan.ImportedStdModules
                 .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
                 .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, importedStdModules.Count == 0 ? null : importedStdModules);
+            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules);
         }
 
         if (HasImports(source))
@@ -563,7 +564,7 @@ public static class Runner
                 );
                 var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, plan.ImportedStdModules);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -571,13 +572,13 @@ public static class Runner
             var importedStdModules = parsed.ImportNames
                 .Where(ProjectSupport.IsStdModule)
                 .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, importedStdModules);
+            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules);
         }
 
-        return CompileToImage(source, targetId);
+        return CompileToImage(source, targetId, backendOptions);
     }
 
-    private static byte[] CompileToImage(string source, string targetId, IReadOnlySet<string>? importedStdModules = null)
+    private static byte[] CompileToImage(string source, string targetId, BackendCompileOptions backendOptions, IReadOnlySet<string>? importedStdModules = null)
     {
         var diag = new Diagnostics();
         var program = new Parser(StripLeadingCommentLines(source), diag).ParseProgram();
@@ -587,7 +588,7 @@ public static class Runner
         diag.ThrowIfAny();
 
         var backend = BackendFactory.Create(targetId);
-        return backend.Compile(ir);
+        return backend.Compile(ir, backendOptions);
     }
 
     private static string StripLeadingCommentLines(string source)
