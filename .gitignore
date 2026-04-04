@@ -72,6 +72,7 @@ llvm-material
 
 
 # Native LLVM libraries (downloaded via scripts/download-llvm-native.*)
+# Too large for Git; provisioned locally via download scripts.
 runtimes/
 
 # Personal files
