@@ -18,6 +18,7 @@ internal static class LlvmImageLinker
     private const int LinuxTrampolineLength = 20;
     private const uint PeTextRva = 0x00001000;
     private const uint PeSectionAlignment = 0x00001000;
+    private const uint BssDataAlignment = 16;
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 1;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
@@ -85,10 +86,12 @@ internal static class LlvmImageLinker
                 continue;
             }
 
+            // COFF BSS sections have PointerToRawData=0 (no file-backed data); they are
+            // emitted as a separate PE section whose VirtualSize the loader zero-fills.
             bool isBss = section.Name == ".bss" || (section.PointerToRawData == 0 && totalSize > 0);
             if (isBss)
             {
-                uint bssAlign = (16 - (bssTotalSize % 16)) % 16;
+                uint bssAlign = (BssDataAlignment - (bssTotalSize % BssDataAlignment)) % BssDataAlignment;
                 bssTotalSize += bssAlign;
                 bssSectionOffsets[sectionNumber] = bssTotalSize;
                 bssTotalSize += totalSize;
@@ -184,7 +187,7 @@ internal static class LlvmImageLinker
         uint bssRva = 0;
         if (bssTotalSize > 0)
         {
-            bssRva = AlignUp(checked(rdataRva + (uint)rdata.Stream.Length + PeSectionAlignment), PeSectionAlignment);
+            bssRva = AlignUp(checked(rdataRva + (uint)rdata.Stream.Length), PeSectionAlignment);
             foreach (var pair in bssSectionOffsets)
             {
                 sectionBaseVas[pair.Key] = PeImageBase + bssRva + pair.Value;
