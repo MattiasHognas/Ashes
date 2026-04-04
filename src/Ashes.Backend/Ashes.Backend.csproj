@@ -14,7 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Iced" Version="1.21.0" />
     <PackageReference Include="LLVMSharp" Version="20.1.2" />
     <PackageReference Include="libLLVM.runtime.linux-x64" Version="20.1.2" />
     <PackageReference Include="libLLVM.runtime.win-x64" Version="20.1.2" />
