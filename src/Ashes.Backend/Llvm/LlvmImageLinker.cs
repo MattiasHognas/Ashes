@@ -99,7 +99,7 @@ internal static class LlvmImageLinker
         textSection.Content.Add(code);
         rdataSection.Content.Add(rdata);
         rdataSection.Content.Add(iatDirectory);
-        rdataSection.Content.Add(exitProcessIlt);
+        rdataSection.Content.Add(kernel32Ilt);
         rdataSection.Content.Add(importDirectory);
 
         pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);
