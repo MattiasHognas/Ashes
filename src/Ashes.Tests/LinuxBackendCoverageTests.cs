@@ -8,7 +8,6 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class LinuxBackendCoverageTests
 {
     [Test]

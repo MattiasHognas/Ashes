@@ -18,10 +18,23 @@ internal static class LlvmCodegen
     private const long SyscallOpen = 2;
     private const long SyscallClose = 3;
     private const long SyscallLseek = 8;
+    private const long SyscallSocket = 41;
+    private const long SyscallConnect = 42;
     private const long SyscallExit = 60;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
+    private const string TcpConnectFailedMessage = "Ashes.Net.Tcp.connect() failed";
+    private const string TcpSendFailedMessage = "Ashes.Net.Tcp.send() failed";
+    private const string TcpReceiveFailedMessage = "Ashes.Net.Tcp.receive() failed";
+    private const string TcpCloseFailedMessage = "Ashes.Net.Tcp.close() failed";
+    private const string TcpInvalidUtf8Message = "Ashes.Net.Tcp.receive() encountered invalid UTF-8";
+    private const string TcpInvalidMaxBytesMessage = "Ashes.Net.Tcp.receive() maxBytes must be positive";
+    private const string TcpResolveFailedMessage = "Ashes.Net.Tcp.connect() could not resolve host";
+    private const string HttpHttpsNotSupportedMessage = "https not supported";
+    private const string HttpMalformedUrlMessage = "malformed URL";
+    private const string HttpMalformedResponseMessage = "malformed HTTP response";
+    private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
     {
@@ -137,12 +150,25 @@ internal static class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program));
+        bool usesWindowsSockets = flavor == LlvmCodegenFlavor.Windows
+            && (ProgramUsesInstruction<IrInst.HttpGet>(program)
+                || ProgramUsesInstruction<IrInst.HttpPost>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpClose>(program));
         LLVMValueRef windowsGetStdHandleImport = default;
         LLVMValueRef windowsWriteFileImport = default;
         LLVMValueRef windowsReadFileImport = default;
         LLVMValueRef windowsCreateFileImport = default;
         LLVMValueRef windowsCloseHandleImport = default;
         LLVMValueRef windowsGetFileAttributesImport = default;
+        LLVMValueRef windowsWsaStartupImport = default;
+        LLVMValueRef windowsSocketImport = default;
+        LLVMValueRef windowsConnectImport = default;
+        LLVMValueRef windowsSendImport = default;
+        LLVMValueRef windowsRecvImport = default;
+        LLVMValueRef windowsCloseSocketImport = default;
         LLVMValueRef windowsExitProcessImport = default;
         LLVMValueRef windowsGetCommandLineImport = default;
         LLVMValueRef windowsWideCharToMultiByteImport = default;
@@ -186,6 +212,28 @@ internal static class LlvmCodegen
             windowsCloseHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
             windowsGetFileAttributesImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getFileAttributesType, 0), "__imp_GetFileAttributesA");
             windowsGetFileAttributesImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsSockets)
+        {
+            LLVMTypeRef wsaStartupType = LLVMTypeRef.CreateFunction(i32, [target.Context.Int16Type, i8Ptr]);
+            LLVMTypeRef socketType = LLVMTypeRef.CreateFunction(i64, [i32, i32, i32]);
+            LLVMTypeRef connectType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32]);
+            LLVMTypeRef sendType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32]);
+            LLVMTypeRef recvType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32]);
+            LLVMTypeRef closeSocketType = LLVMTypeRef.CreateFunction(i32, [i64]);
+            windowsWsaStartupImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(wsaStartupType, 0), "__imp_WSAStartup");
+            windowsWsaStartupImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsSocketImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(socketType, 0), "__imp_socket");
+            windowsSocketImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsConnectImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(connectType, 0), "__imp_connect");
+            windowsConnectImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsSendImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(sendType, 0), "__imp_send");
+            windowsSendImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsRecvImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(recvType, 0), "__imp_recv");
+            windowsRecvImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsCloseSocketImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(closeSocketType, 0), "__imp_closesocket");
+            windowsCloseSocketImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
         if (usesWindowsExitProcess)
@@ -248,6 +296,12 @@ internal static class LlvmCodegen
             windowsCreateFileImport,
             windowsCloseHandleImport,
             windowsGetFileAttributesImport,
+            windowsWsaStartupImport,
+            windowsSocketImport,
+            windowsConnectImport,
+            windowsSendImport,
+            windowsRecvImport,
+            windowsCloseSocketImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -275,6 +329,12 @@ internal static class LlvmCodegen
                 windowsCreateFileImport,
                 windowsCloseHandleImport,
                 windowsGetFileAttributesImport,
+                windowsWsaStartupImport,
+                windowsSocketImport,
+                windowsConnectImport,
+                windowsSendImport,
+                windowsRecvImport,
+                windowsCloseSocketImport,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -314,6 +374,12 @@ internal static class LlvmCodegen
         LLVMValueRef windowsCreateFileImport,
         LLVMValueRef windowsCloseHandleImport,
         LLVMValueRef windowsGetFileAttributesImport,
+        LLVMValueRef windowsWsaStartupImport,
+        LLVMValueRef windowsSocketImport,
+        LLVMValueRef windowsConnectImport,
+        LLVMValueRef windowsSendImport,
+        LLVMValueRef windowsRecvImport,
+        LLVMValueRef windowsCloseSocketImport,
         LLVMValueRef windowsExitProcessImport,
         LLVMValueRef windowsGetCommandLineImport,
         LLVMValueRef windowsWideCharToMultiByteImport,
@@ -403,6 +469,12 @@ internal static class LlvmCodegen
             windowsCreateFileImport,
             windowsCloseHandleImport,
             windowsGetFileAttributesImport,
+            windowsWsaStartupImport,
+            windowsSocketImport,
+            windowsConnectImport,
+            windowsSendImport,
+            windowsRecvImport,
+            windowsCloseSocketImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -476,6 +548,12 @@ internal static class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
+            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpRequest(state, LoadTemp(state, httpGet.UrlTemp), LLVMValueRef.CreateConstInt(state.I64, 0, false), hasBody: false)),
+            IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpRequest(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp), hasBody: true)),
+            IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnect(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
+            IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
+            IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
+            IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -1681,6 +1759,1209 @@ internal static class LlvmCodegen
         return state.Target.Builder.BuildLoad2(state.I8, bytePtr, name);
     }
 
+    private static LLVMValueRef EmitTcpConnect(LlvmCodegenState state, LLVMValueRef hostRef, LLVMValueRef port)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxTcpConnect(state, hostRef, port)
+            : EmitWindowsTcpConnect(state, hostRef, port);
+    }
+
+    private static LLVMValueRef EmitTcpSend(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef textRef)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxTcpSend(state, socket, textRef)
+            : EmitWindowsTcpSend(state, socket, textRef);
+    }
+
+    private static LLVMValueRef EmitTcpReceive(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef maxBytes)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxTcpReceive(state, socket, maxBytes)
+            : EmitWindowsTcpReceive(state, socket, maxBytes);
+    }
+
+    private static LLVMValueRef EmitTcpClose(LlvmCodegenState state, LLVMValueRef socket)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxTcpClose(state, socket)
+            : EmitWindowsTcpClose(state, socket);
+    }
+
+    private static LLVMValueRef EmitHttpRequest(LlvmCodegenState state, LLVMValueRef urlRef, LLVMValueRef bodyRef, bool hasBody)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "http_result");
+        LLVMValueRef hostSlot = builder.BuildAlloca(state.I64, "http_host");
+        LLVMValueRef pathSlot = builder.BuildAlloca(state.I64, "http_path");
+        LLVMValueRef portSlot = builder.BuildAlloca(state.I64, "http_port");
+        LLVMValueRef responseSlot = builder.BuildAlloca(state.I64, "http_response");
+        LLVMValueRef socketSlot = builder.BuildAlloca(state.I64, "http_socket");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, "http_index");
+        LLVMValueRef hostStartSlot = builder.BuildAlloca(state.I64, "http_host_start");
+        LLVMValueRef hostEndSlot = builder.BuildAlloca(state.I64, "http_host_end");
+        LLVMValueRef pathStartSlot = builder.BuildAlloca(state.I64, "http_path_start");
+        LLVMValueRef pathLenSlot = builder.BuildAlloca(state.I64, "http_path_len");
+        LLVMValueRef portValueSlot = builder.BuildAlloca(state.I64, "http_port_value");
+        LLVMValueRef portDigitsSlot = builder.BuildAlloca(state.I64, "http_port_digits");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), hostSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), pathSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 80, false), portSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), responseSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), socketSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 7, false), hostStartSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), hostEndSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), pathStartSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), pathLenSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 80, false), portValueSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), portDigitsSlot);
+
+        LLVMValueRef urlLen = LoadStringLength(state, urlRef, "http_url_len");
+        LLVMValueRef urlBytes = GetStringBytesPointer(state, urlRef, "http_url_bytes");
+
+        var httpsCheckBlock = state.Function.AppendBasicBlock("http_https_check");
+        var httpCheckBlock = state.Function.AppendBasicBlock("http_http_check");
+        var scanHostSetupBlock = state.Function.AppendBasicBlock("http_scan_host_setup");
+        var scanHostBlock = state.Function.AppendBasicBlock("http_scan_host");
+        var parsePortBlock = state.Function.AppendBasicBlock("http_parse_port");
+        var parsePortLoopBlock = state.Function.AppendBasicBlock("http_parse_port_loop");
+        var parsePortInspectBlock = state.Function.AppendBasicBlock("http_parse_port_inspect");
+        var havePathBlock = state.Function.AppendBasicBlock("http_have_path");
+        var defaultPathBlock = state.Function.AppendBasicBlock("http_default_path");
+        var connectBlock = state.Function.AppendBasicBlock("http_connect");
+        var sendBlock = state.Function.AppendBasicBlock("http_send");
+        var recvLoopBlock = state.Function.AppendBasicBlock("http_recv_loop");
+        var recvInspectBlock = state.Function.AppendBasicBlock("http_recv_inspect");
+        var recvDoneBlock = state.Function.AppendBasicBlock("http_recv_done");
+        var parseResponseBlock = state.Function.AppendBasicBlock("http_parse_response");
+        var httpsErrorBlock = state.Function.AppendBasicBlock("http_https_error");
+        var closeErrorBlock = state.Function.AppendBasicBlock("http_close_error");
+        var malformedResponseBlock = state.Function.AppendBasicBlock("http_malformed_response");
+        var chunkedErrorBlock = state.Function.AppendBasicBlock("http_chunked_error");
+        var continueBlock = state.Function.AppendBasicBlock("http_continue");
+
+        builder.BuildBr(httpsCheckBlock);
+
+        builder.PositionAtEnd(httpsCheckBlock);
+        LLVMValueRef httpsPrefix = EmitHeapStringLiteral(state, "https://");
+        LLVMValueRef isHttps = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntNE,
+            EmitStartsWith(state, urlRef, httpsPrefix, "http_is_https"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "http_is_https_bool");
+        builder.BuildCondBr(isHttps, httpsErrorBlock, httpCheckBlock);
+
+        builder.PositionAtEnd(httpCheckBlock);
+        LLVMValueRef httpPrefix = EmitHeapStringLiteral(state, "http://");
+        LLVMValueRef isHttp = builder.BuildICmp(
+            LLVMIntPredicate.LLVMIntNE,
+            EmitStartsWith(state, urlRef, httpPrefix, "http_is_http"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "http_is_http_bool");
+        var malformedUrlBlock = state.Function.AppendBasicBlock("http_malformed_url");
+        builder.BuildCondBr(isHttp, scanHostSetupBlock, malformedUrlBlock);
+
+        builder.PositionAtEnd(malformedUrlBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedUrlMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(scanHostSetupBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 7, false), indexSlot);
+        builder.BuildBr(scanHostBlock);
+
+        builder.PositionAtEnd(scanHostBlock);
+        LLVMValueRef hostLoopIndex = builder.BuildLoad2(state.I64, indexSlot, "http_host_loop_index");
+        LLVMValueRef hostLoopDone = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, hostLoopIndex, urlLen, "http_host_loop_done");
+        var hostInspectBlock = state.Function.AppendBasicBlock("http_host_inspect");
+        builder.BuildCondBr(hostLoopDone, defaultPathBlock, hostInspectBlock);
+
+        builder.PositionAtEnd(hostInspectBlock);
+        LLVMValueRef hostByte = LoadByteAt(state, urlBytes, hostLoopIndex, "http_host_byte");
+        LLVMValueRef isColon = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostByte, LLVMValueRef.CreateConstInt(state.I8, (byte)':', false), "http_host_is_colon");
+        var hostCheckSlashBlock = state.Function.AppendBasicBlock("http_host_check_slash");
+        builder.BuildCondBr(isColon, parsePortBlock, hostCheckSlashBlock);
+
+        builder.PositionAtEnd(hostCheckSlashBlock);
+        LLVMValueRef isSlash = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostByte, LLVMValueRef.CreateConstInt(state.I8, (byte)'/', false), "http_host_is_slash");
+        var hostRejectBlock = state.Function.AppendBasicBlock("http_host_reject");
+        var hostAdvanceBlock = state.Function.AppendBasicBlock("http_host_advance");
+        builder.BuildCondBr(isSlash, defaultPathBlock, hostRejectBlock);
+
+        builder.PositionAtEnd(hostRejectBlock);
+        LLVMValueRef isQuestion = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostByte, LLVMValueRef.CreateConstInt(state.I8, (byte)'?', false), "http_host_is_question");
+        var hostHashCheckBlock = state.Function.AppendBasicBlock("http_host_hash_check");
+        builder.BuildCondBr(isQuestion, malformedUrlBlock, hostHashCheckBlock);
+
+        builder.PositionAtEnd(hostHashCheckBlock);
+        LLVMValueRef isHash = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostByte, LLVMValueRef.CreateConstInt(state.I8, (byte)'#', false), "http_host_is_hash");
+        builder.BuildCondBr(isHash, malformedUrlBlock, hostAdvanceBlock);
+
+        builder.PositionAtEnd(hostAdvanceBlock);
+        builder.BuildStore(builder.BuildAdd(hostLoopIndex, LLVMValueRef.CreateConstInt(state.I64, 1, false), "http_host_index_next"), indexSlot);
+        builder.BuildBr(scanHostBlock);
+
+        builder.PositionAtEnd(parsePortBlock);
+        LLVMValueRef hostEnd = builder.BuildLoad2(state.I64, indexSlot, "http_host_end");
+        LLVMValueRef hostLenValue = builder.BuildSub(hostEnd, LLVMValueRef.CreateConstInt(state.I64, 7, false), "http_host_len_before_port");
+        LLVMValueRef missingHost = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostLenValue, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_missing_host");
+        var parsePortSetupBlock = state.Function.AppendBasicBlock("http_parse_port_setup");
+        builder.BuildCondBr(missingHost, malformedUrlBlock, parsePortSetupBlock);
+
+        builder.PositionAtEnd(parsePortSetupBlock);
+        builder.BuildStore(hostEnd, hostEndSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), portValueSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), portDigitsSlot);
+        builder.BuildStore(builder.BuildAdd(hostEnd, LLVMValueRef.CreateConstInt(state.I64, 1, false), "http_port_index_start"), indexSlot);
+        builder.BuildBr(parsePortLoopBlock);
+
+        builder.PositionAtEnd(parsePortLoopBlock);
+        LLVMValueRef portIndex = builder.BuildLoad2(state.I64, indexSlot, "http_port_index");
+        LLVMValueRef portDone = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, portIndex, urlLen, "http_port_done");
+        builder.BuildCondBr(portDone, defaultPathBlock, parsePortInspectBlock);
+
+        builder.PositionAtEnd(parsePortInspectBlock);
+        LLVMValueRef portByte = LoadByteAt(state, urlBytes, portIndex, "http_port_byte");
+        LLVMValueRef portIsSlash = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, portByte, LLVMValueRef.CreateConstInt(state.I8, (byte)'/', false), "http_port_is_slash");
+        var portDigitCheckBlock = state.Function.AppendBasicBlock("http_port_digit_check");
+        builder.BuildCondBr(portIsSlash, defaultPathBlock, portDigitCheckBlock);
+
+        builder.PositionAtEnd(portDigitCheckBlock);
+        LLVMValueRef portDigitValue = builder.BuildZExt(portByte, state.I64, "http_port_digit_value");
+        LLVMValueRef portIsDigit = BuildByteRangeCheck(state, portDigitValue, (byte)'0', (byte)'9', "http_port_digit_range");
+        var portAdvanceBlock = state.Function.AppendBasicBlock("http_port_advance");
+        builder.BuildCondBr(portIsDigit, portAdvanceBlock, malformedUrlBlock);
+
+        builder.PositionAtEnd(portAdvanceBlock);
+        LLVMValueRef currentPort = builder.BuildLoad2(state.I64, portValueSlot, "http_port_current");
+        LLVMValueRef parsedDigit = builder.BuildSub(portDigitValue, LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), "http_parsed_digit");
+        LLVMValueRef nextPort = builder.BuildAdd(builder.BuildMul(currentPort, LLVMValueRef.CreateConstInt(state.I64, 10, false), "http_port_mul"), parsedDigit, "http_port_next");
+        LLVMValueRef tooLargePort = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, nextPort, LLVMValueRef.CreateConstInt(state.I64, 65535, false), "http_port_too_large");
+        var storePortBlock = state.Function.AppendBasicBlock("http_store_port");
+        builder.BuildCondBr(tooLargePort, malformedUrlBlock, storePortBlock);
+
+        builder.PositionAtEnd(storePortBlock);
+        builder.BuildStore(nextPort, portValueSlot);
+        builder.BuildStore(builder.BuildAdd(builder.BuildLoad2(state.I64, portDigitsSlot, "http_port_digits_value"), LLVMValueRef.CreateConstInt(state.I64, 1, false), "http_port_digits_next"), portDigitsSlot);
+        builder.BuildStore(builder.BuildAdd(portIndex, LLVMValueRef.CreateConstInt(state.I64, 1, false), "http_port_index_next"), indexSlot);
+        builder.BuildBr(parsePortLoopBlock);
+
+        builder.PositionAtEnd(defaultPathBlock);
+        LLVMValueRef finalHostEnd = builder.BuildLoad2(state.I64, hostEndSlot, "http_final_host_end");
+        LLVMValueRef hostEndUnset = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, finalHostEnd, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_host_end_unset");
+        var setHostEndBlock = state.Function.AppendBasicBlock("http_set_host_end");
+        var buildHostBlock = state.Function.AppendBasicBlock("http_build_host");
+        builder.BuildCondBr(hostEndUnset, setHostEndBlock, buildHostBlock);
+
+        builder.PositionAtEnd(setHostEndBlock);
+        LLVMValueRef currentIndex = builder.BuildLoad2(state.I64, indexSlot, "http_current_index");
+        LLVMValueRef hostLenAtEnd = builder.BuildSub(currentIndex, LLVMValueRef.CreateConstInt(state.I64, 7, false), "http_host_len_at_end");
+        LLVMValueRef noHost = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, hostLenAtEnd, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_no_host");
+        builder.BuildCondBr(noHost, malformedUrlBlock, buildHostBlock);
+
+        builder.PositionAtEnd(buildHostBlock);
+        LLVMValueRef actualHostEnd = builder.BuildSelect(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, builder.BuildLoad2(state.I64, hostEndSlot, "http_host_end_existing"), LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_host_end_is_zero"),
+            builder.BuildLoad2(state.I64, indexSlot, "http_host_end_from_index"),
+            builder.BuildLoad2(state.I64, hostEndSlot, "http_host_end_final"),
+            "http_actual_host_end");
+        LLVMValueRef actualHostLen = builder.BuildSub(actualHostEnd, LLVMValueRef.CreateConstInt(state.I64, 7, false), "http_actual_host_len");
+        LLVMValueRef hostPtr = builder.BuildGEP2(state.I8, urlBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 7, false) }, "http_host_ptr");
+        builder.BuildStore(EmitHeapStringSliceFromBytesPointer(state, hostPtr, actualHostLen, "http_host"), hostSlot);
+        LLVMValueRef digitsCount = builder.BuildLoad2(state.I64, portDigitsSlot, "http_digits_count");
+        LLVMValueRef hasPortDigits = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, digitsCount, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_has_port_digits");
+        var storeParsedPortBlock = state.Function.AppendBasicBlock("http_store_parsed_port");
+        builder.BuildCondBr(hasPortDigits, storeParsedPortBlock, havePathBlock);
+
+        builder.PositionAtEnd(storeParsedPortBlock);
+        builder.BuildStore(builder.BuildLoad2(state.I64, portValueSlot, "http_port_value_final"), portSlot);
+        builder.BuildBr(havePathBlock);
+
+        builder.PositionAtEnd(havePathBlock);
+        LLVMValueRef pathIndex = builder.BuildLoad2(state.I64, indexSlot, "http_path_index");
+        LLVMValueRef hasExplicitPath = builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, pathIndex, urlLen, "http_has_explicit_path");
+        var explicitPathBlock = state.Function.AppendBasicBlock("http_explicit_path");
+        var defaultPathStoreBlock = state.Function.AppendBasicBlock("http_default_path_store");
+        builder.BuildCondBr(hasExplicitPath, explicitPathBlock, defaultPathStoreBlock);
+
+        builder.PositionAtEnd(explicitPathBlock);
+        LLVMValueRef explicitPathPtr = builder.BuildGEP2(state.I8, urlBytes, new[] { pathIndex }, "http_explicit_path_ptr");
+        LLVMValueRef explicitPathLen = builder.BuildSub(urlLen, pathIndex, "http_explicit_path_len");
+        builder.BuildStore(EmitHeapStringSliceFromBytesPointer(state, explicitPathPtr, explicitPathLen, "http_path"), pathSlot);
+        builder.BuildBr(connectBlock);
+
+        builder.PositionAtEnd(defaultPathStoreBlock);
+        builder.BuildStore(EmitHeapStringLiteral(state, "/"), pathSlot);
+        builder.BuildBr(connectBlock);
+
+        builder.PositionAtEnd(connectBlock);
+        LLVMValueRef connectResult = EmitTcpConnect(state, builder.BuildLoad2(state.I64, hostSlot, "http_host_value"), builder.BuildLoad2(state.I64, portSlot, "http_port_value"));
+        LLVMValueRef connectTag = LoadMemory(state, connectResult, 0, "http_connect_tag");
+        LLVMValueRef connectFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, connectTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_connect_failed");
+        var connectStoreBlock = state.Function.AppendBasicBlock("http_connect_store");
+        builder.BuildCondBr(connectFailed, connectStoreBlock, sendBlock);
+
+        builder.PositionAtEnd(connectStoreBlock);
+        builder.BuildStore(connectResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(sendBlock);
+        LLVMValueRef socketValue = LoadMemory(state, connectResult, 8, "http_socket_value");
+        builder.BuildStore(socketValue, socketSlot);
+        LLVMValueRef requestRef = EmitHttpRequestString(state, builder.BuildLoad2(state.I64, pathSlot, "http_path_value"), builder.BuildLoad2(state.I64, hostSlot, "http_host_header_value"), bodyRef, hasBody);
+        LLVMValueRef sendResult = EmitTcpSend(state, socketValue, requestRef);
+        LLVMValueRef sendTag = LoadMemory(state, sendResult, 0, "http_send_tag");
+        LLVMValueRef sendFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, sendTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_send_failed");
+        var sendErrorBlock = state.Function.AppendBasicBlock("http_send_error");
+        builder.BuildCondBr(sendFailed, sendErrorBlock, recvLoopBlock);
+
+        builder.PositionAtEnd(sendErrorBlock);
+        EmitTcpClose(state, builder.BuildLoad2(state.I64, socketSlot, "http_send_error_socket"));
+        builder.BuildStore(sendResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(recvLoopBlock);
+        LLVMValueRef recvResult = EmitTcpReceive(state, builder.BuildLoad2(state.I64, socketSlot, "http_recv_socket"), LLVMValueRef.CreateConstInt(state.I64, 65536, false));
+        LLVMValueRef recvTag = LoadMemory(state, recvResult, 0, "http_recv_tag");
+        LLVMValueRef recvFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, recvTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_recv_failed");
+        var recvErrorBlock = state.Function.AppendBasicBlock("http_recv_error");
+        builder.BuildCondBr(recvFailed, recvErrorBlock, recvInspectBlock);
+
+        builder.PositionAtEnd(recvErrorBlock);
+        EmitTcpClose(state, builder.BuildLoad2(state.I64, socketSlot, "http_recv_error_socket"));
+        builder.BuildStore(recvResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(recvInspectBlock);
+        LLVMValueRef chunkRef = LoadMemory(state, recvResult, 8, "http_chunk_ref");
+        LLVMValueRef chunkLen = LoadStringLength(state, chunkRef, "http_chunk_len");
+        LLVMValueRef chunkEmpty = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, chunkLen, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_chunk_empty");
+        var recvAppendBlock = state.Function.AppendBasicBlock("http_recv_append");
+        builder.BuildCondBr(chunkEmpty, recvDoneBlock, recvAppendBlock);
+
+        builder.PositionAtEnd(recvAppendBlock);
+        LLVMValueRef currentResponse = builder.BuildLoad2(state.I64, responseSlot, "http_current_response");
+        LLVMValueRef hasResponse = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, currentResponse, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_has_response");
+        var concatResponseBlock = state.Function.AppendBasicBlock("http_concat_response");
+        var storeFirstChunkBlock = state.Function.AppendBasicBlock("http_store_first_chunk");
+        builder.BuildCondBr(hasResponse, concatResponseBlock, storeFirstChunkBlock);
+
+        builder.PositionAtEnd(storeFirstChunkBlock);
+        builder.BuildStore(chunkRef, responseSlot);
+        builder.BuildBr(recvLoopBlock);
+
+        builder.PositionAtEnd(concatResponseBlock);
+        builder.BuildStore(EmitStringConcat(state, currentResponse, chunkRef), responseSlot);
+        builder.BuildBr(recvLoopBlock);
+
+        builder.PositionAtEnd(recvDoneBlock);
+        LLVMValueRef closeResult = EmitTcpClose(state, builder.BuildLoad2(state.I64, socketSlot, "http_close_socket"));
+        LLVMValueRef closeTag = LoadMemory(state, closeResult, 0, "http_close_tag");
+        LLVMValueRef closeFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, closeTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_close_failed");
+        builder.BuildCondBr(closeFailed, closeErrorBlock, parseResponseBlock);
+
+        builder.PositionAtEnd(parseResponseBlock);
+        LLVMValueRef responseRef = builder.BuildLoad2(state.I64, responseSlot, "http_response_value");
+        LLVMValueRef emptyResponse = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, responseRef, LLVMValueRef.CreateConstInt(state.I64, 0, false), "http_empty_response");
+        var ensureEmptyResponseBlock = state.Function.AppendBasicBlock("http_ensure_empty_response");
+        var parseResponseContinueBlock = state.Function.AppendBasicBlock("http_parse_response_continue");
+        builder.BuildCondBr(emptyResponse, ensureEmptyResponseBlock, parseResponseContinueBlock);
+
+        builder.PositionAtEnd(ensureEmptyResponseBlock);
+        builder.BuildStore(EmitHeapStringLiteral(state, string.Empty), responseSlot);
+        builder.BuildBr(parseResponseContinueBlock);
+
+        builder.PositionAtEnd(parseResponseContinueBlock);
+        LLVMValueRef finalResponse = builder.BuildLoad2(state.I64, responseSlot, "http_final_response");
+        LLVMValueRef responseLen = LoadStringLength(state, finalResponse, "http_response_len");
+        LLVMValueRef responseTooShort = builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, responseLen, LLVMValueRef.CreateConstInt(state.I64, 12, false), "http_response_too_short");
+        var parseHeadersBlock = state.Function.AppendBasicBlock("http_parse_headers");
+        builder.BuildCondBr(responseTooShort, malformedResponseBlock, parseHeadersBlock);
+
+        builder.PositionAtEnd(parseHeadersBlock);
+        LLVMValueRef responseBytes = GetStringBytesPointer(state, finalResponse, "http_response_bytes");
+        LLVMValueRef separatorIndex = EmitFindByteSequence(state, responseBytes, responseLen, "\r\n\r\n"u8.ToArray(), "http_separator");
+        LLVMValueRef hasSeparator = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, separatorIndex, LLVMValueRef.CreateConstInt(state.I64, 0, true), "http_has_separator");
+        var parseStatusBlock = state.Function.AppendBasicBlock("http_parse_status");
+        builder.BuildCondBr(hasSeparator, parseStatusBlock, malformedResponseBlock);
+
+        builder.PositionAtEnd(parseStatusBlock);
+        LLVMValueRef headerLength = separatorIndex;
+        LLVMValueRef statusSpaceIndex = EmitFindByte(state, responseBytes, headerLength, 0, (byte)' ', "http_status_space");
+        LLVMValueRef hasStatusSpace = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, statusSpaceIndex, LLVMValueRef.CreateConstInt(state.I64, 0, true), "http_has_status_space");
+        var parseDigitsBlock = state.Function.AppendBasicBlock("http_parse_digits");
+        builder.BuildCondBr(hasStatusSpace, parseDigitsBlock, malformedResponseBlock);
+
+        builder.PositionAtEnd(parseDigitsBlock);
+        LLVMValueRef statusEnd = builder.BuildAdd(statusSpaceIndex, LLVMValueRef.CreateConstInt(state.I64, 3, false), "http_status_end");
+        LLVMValueRef digitsInRange = builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, statusEnd, headerLength, "http_status_digits_in_range");
+        var parseDigitsContinueBlock = state.Function.AppendBasicBlock("http_parse_digits_continue");
+        builder.BuildCondBr(digitsInRange, parseDigitsContinueBlock, malformedResponseBlock);
+
+        builder.PositionAtEnd(parseDigitsContinueBlock);
+        LLVMValueRef hundredsByte = LoadByteAt(state, responseBytes, builder.BuildAdd(statusSpaceIndex, LLVMValueRef.CreateConstInt(state.I64, 1, false), "http_hundreds_idx"), "http_hundreds_byte");
+        LLVMValueRef tensByte = LoadByteAt(state, responseBytes, builder.BuildAdd(statusSpaceIndex, LLVMValueRef.CreateConstInt(state.I64, 2, false), "http_tens_idx"), "http_tens_byte");
+        LLVMValueRef onesByte = LoadByteAt(state, responseBytes, builder.BuildAdd(statusSpaceIndex, LLVMValueRef.CreateConstInt(state.I64, 3, false), "http_ones_idx"), "http_ones_byte");
+        LLVMValueRef digitsValid = builder.BuildAnd(
+            builder.BuildAnd(
+                BuildByteRangeCheck(state, builder.BuildZExt(hundredsByte, state.I64, "http_hundreds_i64"), (byte)'0', (byte)'9', "http_hundreds_range"),
+                BuildByteRangeCheck(state, builder.BuildZExt(tensByte, state.I64, "http_tens_i64"), (byte)'0', (byte)'9', "http_tens_range"),
+                "http_digits_first"),
+            BuildByteRangeCheck(state, builder.BuildZExt(onesByte, state.I64, "http_ones_i64"), (byte)'0', (byte)'9', "http_ones_range"),
+            "http_digits_valid");
+        var detectChunkedBlock = state.Function.AppendBasicBlock("http_detect_chunked");
+        builder.BuildCondBr(digitsValid, detectChunkedBlock, malformedResponseBlock);
+
+        builder.PositionAtEnd(detectChunkedBlock);
+        LLVMValueRef chunkedHeaderIndex = EmitFindByteSequence(state, responseBytes, headerLength, "Transfer-Encoding: chunked"u8.ToArray(), "http_chunked_header");
+        LLVMValueRef hasChunkedHeader = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, chunkedHeaderIndex, LLVMValueRef.CreateConstInt(state.I64, 0, true), "http_has_chunked_header");
+        var buildBodyBlock = state.Function.AppendBasicBlock("http_build_body");
+        builder.BuildCondBr(hasChunkedHeader, chunkedErrorBlock, buildBodyBlock);
+
+        builder.PositionAtEnd(buildBodyBlock);
+        LLVMValueRef statusCode = builder.BuildAdd(
+            builder.BuildAdd(
+                builder.BuildMul(builder.BuildSub(builder.BuildZExt(hundredsByte, state.I64, "http_hundreds_code"), LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), "http_hundreds_digit"), LLVMValueRef.CreateConstInt(state.I64, 100, false), "http_hundreds_mul"),
+                builder.BuildMul(builder.BuildSub(builder.BuildZExt(tensByte, state.I64, "http_tens_code"), LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), "http_tens_digit"), LLVMValueRef.CreateConstInt(state.I64, 10, false), "http_tens_mul"),
+                "http_status_prefix_sum"),
+            builder.BuildSub(builder.BuildZExt(onesByte, state.I64, "http_ones_code"), LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), "http_ones_digit"),
+            "http_status_code");
+        LLVMValueRef bodyStart = builder.BuildAdd(separatorIndex, LLVMValueRef.CreateConstInt(state.I64, 4, false), "http_body_start");
+        LLVMValueRef bodyLength = builder.BuildSub(responseLen, bodyStart, "http_body_len");
+        LLVMValueRef bodyBytes = builder.BuildGEP2(state.I8, responseBytes, new[] { bodyStart }, "http_body_ptr");
+        LLVMValueRef bodyString = EmitHeapStringSliceFromBytesPointer(state, bodyBytes, bodyLength, "http_body");
+        LLVMValueRef statusOk = builder.BuildAnd(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, statusCode, LLVMValueRef.CreateConstInt(state.I64, 200, false), "http_status_ge_200"),
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, statusCode, LLVMValueRef.CreateConstInt(state.I64, 299, false), "http_status_le_299"),
+            "http_status_ok");
+        var statusOkBlock = state.Function.AppendBasicBlock("http_status_ok_block");
+        var statusErrorBlock = state.Function.AppendBasicBlock("http_status_error_block");
+        builder.BuildCondBr(statusOk, statusOkBlock, statusErrorBlock);
+
+        builder.PositionAtEnd(statusOkBlock);
+        builder.BuildStore(EmitResultOk(state, bodyString), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(statusErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHttpStatusErrorString(state, statusCode, "http_status_error")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(httpsErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, HttpHttpsNotSupportedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeErrorBlock);
+        builder.BuildStore(closeResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(malformedResponseBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedResponseMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(chunkedErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, HttpUnsupportedTransferEncodingMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "http_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxTcpConnect(LlvmCodegenState state, LLVMValueRef hostRef, LLVMValueRef port)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "tcp_connect_result");
+        LLVMValueRef socketSlot = builder.BuildAlloca(state.I64, "tcp_connect_socket");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), socketSlot);
+        LLVMValueRef resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "tcp_connect_resolve");
+        LLVMValueRef resolveTag = LoadMemory(state, resolveResult, 0, "tcp_connect_resolve_tag");
+        LLVMValueRef resolveFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, resolveTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_resolve_failed");
+        var resolveErrorBlock = state.Function.AppendBasicBlock("tcp_connect_resolve_error");
+        var validatePortBlock = state.Function.AppendBasicBlock("tcp_connect_validate_port");
+        var openSocketBlock = state.Function.AppendBasicBlock("tcp_connect_open_socket");
+        var connectBlock = state.Function.AppendBasicBlock("tcp_connect_connect");
+        var connectFailBlock = state.Function.AppendBasicBlock("tcp_connect_fail");
+        var connectCloseBlock = state.Function.AppendBasicBlock("tcp_connect_close_socket");
+        var continueBlock = state.Function.AppendBasicBlock("tcp_connect_continue");
+        builder.BuildCondBr(resolveFailed, resolveErrorBlock, validatePortBlock);
+
+        builder.PositionAtEnd(resolveErrorBlock);
+        builder.BuildStore(resolveResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(validatePortBlock);
+        LLVMValueRef validPort = builder.BuildAnd(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntSGT, port, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_port_gt_zero"),
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, port, LLVMValueRef.CreateConstInt(state.I64, 65535, false), "tcp_connect_port_le_max"),
+            "tcp_connect_port_valid");
+        builder.BuildCondBr(validPort, openSocketBlock, connectFailBlock);
+
+        builder.PositionAtEnd(openSocketBlock);
+        LLVMValueRef socketValue = EmitSyscall(
+            state,
+            SyscallSocket,
+            LLVMValueRef.CreateConstInt(state.I64, 2, false),
+            LLVMValueRef.CreateConstInt(state.I64, 1, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "tcp_connect_socket_call");
+        builder.BuildStore(socketValue, socketSlot);
+        LLVMValueRef socketFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, socketValue, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_socket_failed");
+        builder.BuildCondBr(socketFailed, connectFailBlock, connectBlock);
+
+        builder.PositionAtEnd(connectBlock);
+        LLVMTypeRef sockaddrType = LLVMTypeRef.CreateArray(state.I8, 16);
+        LLVMValueRef sockaddrStorage = builder.BuildAlloca(sockaddrType, "tcp_connect_sockaddr");
+        LLVMValueRef sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_sockaddr_bytes");
+        LLVMTypeRef i16 = state.Target.Context.Int16Type;
+        LLVMTypeRef i16Ptr = LLVMTypeRef.CreatePointer(i16, 0);
+        LLVMValueRef sockaddrI64Ptr = builder.BuildBitCast(sockaddrBytes, state.I64Ptr, "tcp_connect_sockaddr_i64");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), sockaddrI64Ptr);
+        LLVMValueRef sockaddrTailPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 8, false) }, "tcp_connect_sockaddr_tail");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), builder.BuildBitCast(sockaddrTailPtr, state.I64Ptr, "tcp_connect_sockaddr_tail_i64"));
+        builder.BuildStore(LLVMValueRef.CreateConstInt(i16, 2, false), builder.BuildBitCast(sockaddrBytes, i16Ptr, "tcp_connect_family_ptr"));
+        LLVMValueRef portPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 2, false) }, "tcp_connect_port_ptr_byte");
+        builder.BuildStore(builder.BuildTrunc(EmitByteSwap16(state, port, "tcp_connect_port_network"), i16, "tcp_connect_port_i16"), builder.BuildBitCast(portPtr, i16Ptr, "tcp_connect_port_ptr"));
+        LLVMValueRef addrPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 4, false) }, "tcp_connect_addr_ptr_byte");
+        builder.BuildStore(builder.BuildTrunc(LoadMemory(state, resolveResult, 8, "tcp_connect_addr_value"), state.I32, "tcp_connect_addr_i32"), builder.BuildBitCast(addrPtr, state.I32Ptr, "tcp_connect_addr_ptr"));
+        LLVMValueRef connectResult = EmitSyscall(
+            state,
+            SyscallConnect,
+            builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_socket_value"),
+            builder.BuildPtrToInt(sockaddrBytes, state.I64, "tcp_connect_sockaddr_ptr"),
+            LLVMValueRef.CreateConstInt(state.I64, 16, false),
+            "tcp_connect_call");
+        LLVMValueRef connectFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, connectResult, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_failed_bool");
+        var connectSuccessBlock = state.Function.AppendBasicBlock("tcp_connect_success");
+        builder.BuildCondBr(connectFailed, connectCloseBlock, connectSuccessBlock);
+
+        builder.PositionAtEnd(connectCloseBlock);
+        EmitSyscall(state, SyscallClose, builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_close_socket_value"), LLVMValueRef.CreateConstInt(state.I64, 0, false), LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_close_call");
+        builder.BuildBr(connectFailBlock);
+
+        builder.PositionAtEnd(connectFailBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpConnectFailedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(connectSuccessBlock);
+        builder.BuildStore(EmitResultOk(state, builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_success_socket")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "tcp_connect_result_value");
+    }
+
+    private static LLVMValueRef EmitWindowsTcpConnect(LlvmCodegenState state, LLVMValueRef hostRef, LLVMValueRef port)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "tcp_connect_win_result");
+        LLVMValueRef socketSlot = builder.BuildAlloca(state.I64, "tcp_connect_win_socket");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), socketSlot);
+        LLVMValueRef resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "tcp_connect_win_resolve");
+        LLVMValueRef resolveTag = LoadMemory(state, resolveResult, 0, "tcp_connect_win_resolve_tag");
+        LLVMValueRef resolveFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, resolveTag, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_win_resolve_failed");
+        var resolveErrorBlock = state.Function.AppendBasicBlock("tcp_connect_win_resolve_error");
+        var validatePortBlock = state.Function.AppendBasicBlock("tcp_connect_win_validate_port");
+        var initWinsockBlock = state.Function.AppendBasicBlock("tcp_connect_win_init_winsock");
+        var openSocketBlock = state.Function.AppendBasicBlock("tcp_connect_win_open_socket");
+        var connectBlock = state.Function.AppendBasicBlock("tcp_connect_win_connect");
+        var connectCloseBlock = state.Function.AppendBasicBlock("tcp_connect_win_close_socket");
+        var connectFailBlock = state.Function.AppendBasicBlock("tcp_connect_win_fail");
+        var continueBlock = state.Function.AppendBasicBlock("tcp_connect_win_continue");
+        builder.BuildCondBr(resolveFailed, resolveErrorBlock, validatePortBlock);
+
+        builder.PositionAtEnd(resolveErrorBlock);
+        builder.BuildStore(resolveResult, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(validatePortBlock);
+        LLVMValueRef validPort = builder.BuildAnd(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntSGT, port, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_win_port_gt_zero"),
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, port, LLVMValueRef.CreateConstInt(state.I64, 65535, false), "tcp_connect_win_port_le_max"),
+            "tcp_connect_win_port_valid");
+        builder.BuildCondBr(validPort, initWinsockBlock, connectFailBlock);
+
+        builder.PositionAtEnd(initWinsockBlock);
+        LLVMTypeRef wsadataType = LLVMTypeRef.CreateArray(state.I8, 512);
+        LLVMValueRef wsadata = builder.BuildAlloca(wsadataType, "tcp_connect_win_wsadata");
+        LLVMValueRef winsockStarted = EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_win_wsadata_ptr"), "tcp_connect_win_wsastartup");
+        builder.BuildCondBr(winsockStarted, openSocketBlock, connectFailBlock);
+
+        builder.PositionAtEnd(openSocketBlock);
+        LLVMValueRef socketValue = EmitWindowsSocket(state, 2, 1, 6, "tcp_connect_win_socket_call");
+        builder.BuildStore(socketValue, socketSlot);
+        LLVMValueRef socketFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, socketValue, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), "tcp_connect_win_socket_failed");
+        builder.BuildCondBr(socketFailed, connectFailBlock, connectBlock);
+
+        builder.PositionAtEnd(connectBlock);
+        LLVMTypeRef sockaddrType = LLVMTypeRef.CreateArray(state.I8, 16);
+        LLVMValueRef sockaddrStorage = builder.BuildAlloca(sockaddrType, "tcp_connect_win_sockaddr");
+        LLVMValueRef sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_connect_win_sockaddr_bytes");
+        LLVMTypeRef i16 = state.Target.Context.Int16Type;
+        LLVMTypeRef i16Ptr = LLVMTypeRef.CreatePointer(i16, 0);
+        LLVMValueRef sockaddrI64Ptr = builder.BuildBitCast(sockaddrBytes, state.I64Ptr, "tcp_connect_win_sockaddr_i64");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), sockaddrI64Ptr);
+        LLVMValueRef sockaddrTailPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 8, false) }, "tcp_connect_win_sockaddr_tail");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), builder.BuildBitCast(sockaddrTailPtr, state.I64Ptr, "tcp_connect_win_sockaddr_tail_i64"));
+        builder.BuildStore(LLVMValueRef.CreateConstInt(i16, 2, false), builder.BuildBitCast(sockaddrBytes, i16Ptr, "tcp_connect_win_family_ptr"));
+        LLVMValueRef portPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 2, false) }, "tcp_connect_win_port_ptr_byte");
+        builder.BuildStore(builder.BuildTrunc(EmitByteSwap16(state, port, "tcp_connect_win_port_network"), i16, "tcp_connect_win_port_i16"), builder.BuildBitCast(portPtr, i16Ptr, "tcp_connect_win_port_ptr"));
+        LLVMValueRef addrPtr = builder.BuildGEP2(state.I8, sockaddrBytes, new[] { LLVMValueRef.CreateConstInt(state.I64, 4, false) }, "tcp_connect_win_addr_ptr_byte");
+        builder.BuildStore(builder.BuildTrunc(LoadMemory(state, resolveResult, 8, "tcp_connect_win_addr_value"), state.I32, "tcp_connect_win_addr_i32"), builder.BuildBitCast(addrPtr, state.I32Ptr, "tcp_connect_win_addr_ptr"));
+        LLVMValueRef connectResult = EmitWindowsConnect(state, builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_win_socket_value"), sockaddrBytes, "tcp_connect_win_connect_call");
+        var connectSuccessBlock = state.Function.AppendBasicBlock("tcp_connect_win_success");
+        builder.BuildCondBr(connectResult, connectSuccessBlock, connectCloseBlock);
+
+        builder.PositionAtEnd(connectCloseBlock);
+        EmitWindowsCloseSocket(state, builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_win_close_socket_value"), "tcp_connect_win_close_socket_call");
+        builder.BuildBr(connectFailBlock);
+
+        builder.PositionAtEnd(connectFailBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpConnectFailedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(connectSuccessBlock);
+        builder.BuildStore(EmitResultOk(state, builder.BuildLoad2(state.I64, socketSlot, "tcp_connect_win_success_socket")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "tcp_connect_win_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxTcpSend(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef textRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "tcp_send_result");
+        LLVMValueRef remainingSlot = builder.BuildAlloca(state.I64, "tcp_send_remaining");
+        LLVMValueRef cursorSlot = builder.BuildAlloca(state.I64, "tcp_send_cursor");
+        LLVMValueRef totalLen = LoadStringLength(state, textRef, "tcp_send_total_len");
+        builder.BuildStore(totalLen, remainingSlot);
+        builder.BuildStore(GetStringBytesAddress(state, textRef, "tcp_send_cursor_start"), cursorSlot);
+        var loopCheckBlock = state.Function.AppendBasicBlock("tcp_send_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock("tcp_send_loop_body");
+        var updateBlock = state.Function.AppendBasicBlock("tcp_send_update");
+        var failBlock = state.Function.AppendBasicBlock("tcp_send_fail");
+        var continueBlock = state.Function.AppendBasicBlock("tcp_send_continue");
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef remaining = builder.BuildLoad2(state.I64, remainingSlot, "tcp_send_remaining_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, remaining, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_send_done");
+        var doneBlock = state.Function.AppendBasicBlock("tcp_send_done_block");
+        builder.BuildCondBr(done, doneBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef sent = EmitSyscall(state, SyscallWrite, socket, builder.BuildLoad2(state.I64, cursorSlot, "tcp_send_cursor_value"), remaining, "tcp_send_syscall");
+        LLVMValueRef sendFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, sent, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_send_failed");
+        builder.BuildCondBr(sendFailed, failBlock, updateBlock);
+
+        builder.PositionAtEnd(updateBlock);
+        LLVMValueRef cursor = builder.BuildLoad2(state.I64, cursorSlot, "tcp_send_cursor_current");
+        builder.BuildStore(builder.BuildSub(remaining, sent, "tcp_send_remaining_next"), remainingSlot);
+        builder.BuildStore(builder.BuildAdd(cursor, sent, "tcp_send_cursor_next"), cursorSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(doneBlock);
+        builder.BuildStore(EmitResultOk(state, totalLen), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(failBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpSendFailedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "tcp_send_result_value");
+    }
+
+    private static LLVMValueRef EmitWindowsTcpSend(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef textRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "tcp_send_win_result");
+        LLVMValueRef remainingSlot = builder.BuildAlloca(state.I64, "tcp_send_win_remaining");
+        LLVMValueRef cursorSlot = builder.BuildAlloca(state.I64, "tcp_send_win_cursor");
+        LLVMValueRef totalLen = LoadStringLength(state, textRef, "tcp_send_win_total_len");
+        builder.BuildStore(totalLen, remainingSlot);
+        builder.BuildStore(GetStringBytesAddress(state, textRef, "tcp_send_win_cursor_start"), cursorSlot);
+        var loopCheckBlock = state.Function.AppendBasicBlock("tcp_send_win_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock("tcp_send_win_loop_body");
+        var updateBlock = state.Function.AppendBasicBlock("tcp_send_win_update");
+        var failBlock = state.Function.AppendBasicBlock("tcp_send_win_fail");
+        var continueBlock = state.Function.AppendBasicBlock("tcp_send_win_continue");
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef remaining = builder.BuildLoad2(state.I64, remainingSlot, "tcp_send_win_remaining_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, remaining, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_send_win_done");
+        var doneBlock = state.Function.AppendBasicBlock("tcp_send_win_done_block");
+        builder.BuildCondBr(done, doneBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef chunk = builder.BuildSelect(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, remaining, LLVMValueRef.CreateConstInt(state.I64, int.MaxValue, false), "tcp_send_win_chunk_gt"),
+            LLVMValueRef.CreateConstInt(state.I64, int.MaxValue, false),
+            remaining,
+            "tcp_send_win_chunk");
+        LLVMValueRef sentRaw = EmitWindowsSend(state, socket, builder.BuildIntToPtr(builder.BuildLoad2(state.I64, cursorSlot, "tcp_send_win_cursor_value"), state.I8Ptr, "tcp_send_win_cursor_ptr"), builder.BuildTrunc(chunk, state.I32, "tcp_send_win_chunk_i32"), "tcp_send_win_call");
+        LLVMValueRef sendFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, sentRaw, LLVMValueRef.CreateConstInt(state.I32, 0, true), "tcp_send_win_failed");
+        builder.BuildCondBr(sendFailed, failBlock, updateBlock);
+
+        builder.PositionAtEnd(updateBlock);
+        LLVMValueRef sent = builder.BuildSExt(sentRaw, state.I64, "tcp_send_win_sent");
+        LLVMValueRef cursor = builder.BuildLoad2(state.I64, cursorSlot, "tcp_send_win_cursor_current");
+        builder.BuildStore(builder.BuildSub(remaining, sent, "tcp_send_win_remaining_next"), remainingSlot);
+        builder.BuildStore(builder.BuildAdd(cursor, sent, "tcp_send_win_cursor_next"), cursorSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(doneBlock);
+        builder.BuildStore(EmitResultOk(state, totalLen), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(failBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpSendFailedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "tcp_send_win_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxTcpReceive(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef maxBytes)
+    {
+        return EmitTcpReceiveCommon(state, socket, maxBytes, "tcp_receive", static (s, sock, bytesPtr, max, name) => EmitSyscall(s, SyscallRead, sock, s.Target.Builder.BuildPtrToInt(bytesPtr, s.I64, name + "_ptr"), s.Target.Builder.BuildSExt(max, s.I64, name + "_len"), name));
+    }
+
+    private static LLVMValueRef EmitWindowsTcpReceive(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef maxBytes)
+    {
+        return EmitTcpReceiveCommon(state, socket, maxBytes, "tcp_receive_win", static (s, sock, bytesPtr, max, name) => s.Target.Builder.BuildSExt(EmitWindowsRecv(s, sock, bytesPtr, max, name), s.I64, name + "_sext"));
+    }
+
+    private static LLVMValueRef EmitTcpReceiveCommon(
+        LlvmCodegenState state,
+        LLVMValueRef socket,
+        LLVMValueRef maxBytes,
+        string prefix,
+        Func<LlvmCodegenState, LLVMValueRef, LLVMValueRef, LLVMValueRef, string, LLVMValueRef> emitRead)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        var invalidMaxBlock = state.Function.AppendBasicBlock(prefix + "_invalid_max");
+        var readBlock = state.Function.AppendBasicBlock(prefix + "_read");
+        var handleReadBlock = state.Function.AppendBasicBlock(prefix + "_handle_read");
+        var invalidUtf8Block = state.Function.AppendBasicBlock(prefix + "_invalid_utf8");
+        var failBlock = state.Function.AppendBasicBlock(prefix + "_fail");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        LLVMValueRef positiveMax = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGT, maxBytes, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_positive_max");
+        builder.BuildCondBr(positiveMax, readBlock, invalidMaxBlock);
+
+        builder.PositionAtEnd(invalidMaxBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidMaxBytesMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(readBlock);
+        LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(maxBytes, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_size"));
+        StoreMemory(state, stringRef, 0, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_len_init");
+        LLVMValueRef readCount = emitRead(state, socket, GetStringBytesPointer(state, stringRef, prefix + "_bytes"), builder.BuildTrunc(maxBytes, state.I32, prefix + "_max_i32"), prefix + "_read_call");
+        LLVMValueRef readFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, readCount, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_read_failed");
+        builder.BuildCondBr(readFailed, failBlock, handleReadBlock);
+
+        builder.PositionAtEnd(handleReadBlock);
+        StoreMemory(state, stringRef, 0, readCount, prefix + "_len_store");
+        LLVMValueRef isEmpty = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, readCount, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_is_empty");
+        var successBlock = state.Function.AppendBasicBlock(prefix + "_success");
+        var validateBlock = state.Function.AppendBasicBlock(prefix + "_validate");
+        builder.BuildCondBr(isEmpty, successBlock, validateBlock);
+
+        builder.PositionAtEnd(validateBlock);
+        LLVMValueRef utf8Valid = EmitValidateUtf8(state, GetStringBytesPointer(state, stringRef, prefix + "_validate_bytes"), readCount, prefix + "_utf8");
+        LLVMValueRef valid = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, utf8Valid, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_utf8_valid");
+        builder.BuildCondBr(valid, successBlock, invalidUtf8Block);
+
+        builder.PositionAtEnd(invalidUtf8Block);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidUtf8Message)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(successBlock);
+        builder.BuildStore(EmitResultOk(state, stringRef), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(failBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpReceiveFailedMessage)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxTcpClose(LlvmCodegenState state, LLVMValueRef socket)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef result = EmitSyscall(state, SyscallClose, socket, LLVMValueRef.CreateConstInt(state.I64, 0, false), LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_close_call");
+        LLVMValueRef success = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, result, LLVMValueRef.CreateConstInt(state.I64, 0, false), "tcp_close_success");
+        return builder.BuildSelect(success, EmitResultOk(state, EmitUnitValue(state)), EmitResultError(state, EmitHeapStringLiteral(state, TcpCloseFailedMessage)), "tcp_close_result");
+    }
+
+    private static LLVMValueRef EmitWindowsTcpClose(LlvmCodegenState state, LLVMValueRef socket)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef closeResult = EmitWindowsCloseSocket(state, socket, "tcp_close_win_call");
+        LLVMValueRef success = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, closeResult, LLVMValueRef.CreateConstInt(state.I32, 0, false), "tcp_close_win_success");
+        return builder.BuildSelect(success, EmitResultOk(state, EmitUnitValue(state)), EmitResultError(state, EmitHeapStringLiteral(state, TcpCloseFailedMessage)), "tcp_close_win_result");
+    }
+
+    private static LLVMValueRef EmitResolveHostIpv4OrLocalhost(LlvmCodegenState state, LLVMValueRef hostRef, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        LLVMValueRef partSlot = builder.BuildAlloca(state.I64, prefix + "_part");
+        LLVMValueRef currentSlot = builder.BuildAlloca(state.I64, prefix + "_current");
+        LLVMValueRef seenDigitSlot = builder.BuildAlloca(state.I64, prefix + "_seen_digit");
+        LLVMValueRef addressSlot = builder.BuildAlloca(state.I64, prefix + "_address");
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, TcpResolveFailedMessage)), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), partSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), currentSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), seenDigitSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), addressSlot);
+
+        LLVMValueRef localhostEquals = EmitStringComparison(state, hostRef, EmitStackStringObject(state, "localhost"));
+        LLVMValueRef isLocalhost = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, localhostEquals, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_is_localhost");
+        LLVMValueRef hostLen = LoadStringLength(state, hostRef, prefix + "_host_len");
+        LLVMValueRef hostBytes = GetStringBytesPointer(state, hostRef, prefix + "_host_bytes");
+        var localhostBlock = state.Function.AppendBasicBlock(prefix + "_localhost");
+        var parseLoopBlock = state.Function.AppendBasicBlock(prefix + "_parse_loop");
+        var parseInspectBlock = state.Function.AppendBasicBlock(prefix + "_parse_inspect");
+        var digitBlock = state.Function.AppendBasicBlock(prefix + "_digit");
+        var dotBlock = state.Function.AppendBasicBlock(prefix + "_dot");
+        var failBlock = state.Function.AppendBasicBlock(prefix + "_fail");
+        var finalizeBlock = state.Function.AppendBasicBlock(prefix + "_finalize");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        builder.BuildCondBr(isLocalhost, localhostBlock, parseLoopBlock);
+
+        builder.PositionAtEnd(localhostBlock);
+        builder.BuildStore(EmitResultOk(state, LLVMValueRef.CreateConstInt(state.I64, 0x0100007FUL, false)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(parseLoopBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, index, hostLen, prefix + "_done");
+        builder.BuildCondBr(done, finalizeBlock, parseInspectBlock);
+
+        builder.PositionAtEnd(parseInspectBlock);
+        LLVMValueRef currentByte = LoadByteAt(state, hostBytes, index, prefix + "_current_byte");
+        LLVMValueRef currentByte64 = builder.BuildZExt(currentByte, state.I64, prefix + "_current_byte_i64");
+        LLVMValueRef isDigit = BuildByteRangeCheck(state, currentByte64, (byte)'0', (byte)'9', prefix + "_digit_range");
+        var dotCheckBlock = state.Function.AppendBasicBlock(prefix + "_dot_check");
+        builder.BuildCondBr(isDigit, digitBlock, dotCheckBlock);
+
+        builder.PositionAtEnd(dotCheckBlock);
+        LLVMValueRef isDot = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, currentByte, LLVMValueRef.CreateConstInt(state.I8, (byte)'.', false), prefix + "_is_dot");
+        builder.BuildCondBr(isDot, dotBlock, failBlock);
+
+        builder.PositionAtEnd(digitBlock);
+        LLVMValueRef currentValue = builder.BuildLoad2(state.I64, currentSlot, prefix + "_current_value");
+        LLVMValueRef parsedDigit = builder.BuildSub(currentByte64, LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), prefix + "_parsed_digit");
+        LLVMValueRef nextValue = builder.BuildAdd(builder.BuildMul(currentValue, LLVMValueRef.CreateConstInt(state.I64, 10, false), prefix + "_mul"), parsedDigit, prefix + "_next_value");
+        LLVMValueRef valueTooLarge = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, nextValue, LLVMValueRef.CreateConstInt(state.I64, 255, false), prefix + "_value_too_large");
+        var storeDigitBlock = state.Function.AppendBasicBlock(prefix + "_store_digit");
+        builder.BuildCondBr(valueTooLarge, failBlock, storeDigitBlock);
+
+        builder.PositionAtEnd(storeDigitBlock);
+        builder.BuildStore(nextValue, currentSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), seenDigitSlot);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_index_next"), indexSlot);
+        builder.BuildBr(parseLoopBlock);
+
+        builder.PositionAtEnd(dotBlock);
+        LLVMValueRef seenDigit = builder.BuildLoad2(state.I64, seenDigitSlot, prefix + "_seen_digit_value");
+        LLVMValueRef part = builder.BuildLoad2(state.I64, partSlot, prefix + "_part_value");
+        LLVMValueRef dotValid = builder.BuildAnd(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, seenDigit, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_dot_seen_digit"),
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, part, LLVMValueRef.CreateConstInt(state.I64, 3, false), prefix + "_dot_part_lt_three"),
+            prefix + "_dot_valid");
+        var storeDotBlock = state.Function.AppendBasicBlock(prefix + "_store_dot");
+        builder.BuildCondBr(dotValid, storeDotBlock, failBlock);
+
+        builder.PositionAtEnd(storeDotBlock);
+        LLVMValueRef addressValue = builder.BuildLoad2(state.I64, addressSlot, prefix + "_address_value");
+        LLVMValueRef shiftedOctet = builder.BuildShl(builder.BuildLoad2(state.I64, currentSlot, prefix + "_octet_value"), builder.BuildMul(part, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_octet_shift"), prefix + "_shifted_octet");
+        builder.BuildStore(builder.BuildOr(addressValue, shiftedOctet, prefix + "_address_next"), addressSlot);
+        builder.BuildStore(builder.BuildAdd(part, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_part_next"), partSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), currentSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), seenDigitSlot);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_index_after_dot"), indexSlot);
+        builder.BuildBr(parseLoopBlock);
+
+        builder.PositionAtEnd(finalizeBlock);
+        LLVMValueRef finalSeenDigit = builder.BuildLoad2(state.I64, seenDigitSlot, prefix + "_final_seen_digit");
+        LLVMValueRef finalPart = builder.BuildLoad2(state.I64, partSlot, prefix + "_final_part");
+        LLVMValueRef finalValid = builder.BuildAnd(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, finalSeenDigit, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_final_seen_digit_ok"),
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, finalPart, LLVMValueRef.CreateConstInt(state.I64, 3, false), prefix + "_final_part_eq_three"),
+            prefix + "_final_valid");
+        var storeFinalBlock = state.Function.AppendBasicBlock(prefix + "_store_final");
+        builder.BuildCondBr(finalValid, storeFinalBlock, failBlock);
+
+        builder.PositionAtEnd(storeFinalBlock);
+        LLVMValueRef finalAddress = builder.BuildOr(
+            builder.BuildLoad2(state.I64, addressSlot, prefix + "_address_before_final"),
+            builder.BuildShl(builder.BuildLoad2(state.I64, currentSlot, prefix + "_current_before_final"), LLVMValueRef.CreateConstInt(state.I64, 24, false), prefix + "_final_shifted_octet"),
+            prefix + "_final_address");
+        builder.BuildStore(EmitResultOk(state, finalAddress), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(failBlock);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LLVMValueRef EmitHttpRequestString(LlvmCodegenState state, LLVMValueRef pathRef, LLVMValueRef hostRef, LLVMValueRef bodyRef, bool hasBody)
+    {
+        LLVMValueRef request = EmitHeapStringLiteral(state, hasBody ? "POST " : "GET ");
+        request = EmitStringConcat(state, request, pathRef);
+        request = EmitStringConcat(state, request, EmitHeapStringLiteral(state, " HTTP/1.1\r\nHost: "));
+        request = EmitStringConcat(state, request, hostRef);
+        if (hasBody)
+        {
+            request = EmitStringConcat(state, request, EmitHeapStringLiteral(state, "\r\nContent-Length: "));
+            request = EmitStringConcat(state, request, EmitNonNegativeIntToString(state, LoadStringLength(state, bodyRef, "http_body_length"), "http_body_length_string"));
+        }
+
+        request = EmitStringConcat(state, request, EmitHeapStringLiteral(state, "\r\nConnection: close\r\n\r\n"));
+        if (hasBody)
+        {
+            request = EmitStringConcat(state, request, bodyRef);
+        }
+
+        return request;
+    }
+
+    private static LLVMValueRef EmitHttpStatusErrorString(LlvmCodegenState state, LLVMValueRef statusCode, string prefix)
+    {
+        return EmitStringConcat(state, EmitHeapStringLiteral(state, "HTTP "), EmitNonNegativeIntToString(state, statusCode, prefix + "_code"));
+    }
+
+    private static LLVMValueRef EmitNonNegativeIntToString(LlvmCodegenState state, LLVMValueRef value, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef bufferType = LLVMTypeRef.CreateArray(state.I8, 32);
+        LLVMValueRef buffer = builder.BuildAlloca(bufferType, prefix + "_buffer");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        LLVMValueRef workSlot = builder.BuildAlloca(state.I64, prefix + "_work");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        builder.BuildStore(value, workSlot);
+
+        var zeroBlock = state.Function.AppendBasicBlock(prefix + "_zero");
+        var loopCheckBlock = state.Function.AppendBasicBlock(prefix + "_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock(prefix + "_loop_body");
+        var finishBlock = state.Function.AppendBasicBlock(prefix + "_finish");
+        LLVMValueRef isZero = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, value, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_is_zero");
+        builder.BuildCondBr(isZero, zeroBlock, loopCheckBlock);
+
+        builder.PositionAtEnd(zeroBlock);
+        StoreBufferByte(state, buffer, LLVMValueRef.CreateConstInt(state.I64, 31, false), (byte)'0');
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), indexSlot);
+        builder.BuildBr(finishBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef work = builder.BuildLoad2(state.I64, workSlot, prefix + "_work_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, work, LLVMValueRef.CreateConstInt(state.I64, 0, false), prefix + "_done");
+        builder.BuildCondBr(done, finishBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef digit = builder.BuildURem(work, LLVMValueRef.CreateConstInt(state.I64, 10, false), prefix + "_digit");
+        builder.BuildStore(builder.BuildUDiv(work, LLVMValueRef.CreateConstInt(state.I64, 10, false), prefix + "_next_work"), workSlot);
+        LLVMValueRef idx = builder.BuildLoad2(state.I64, indexSlot, prefix + "_idx_value");
+        StoreBufferByte(state, buffer, builder.BuildSub(LLVMValueRef.CreateConstInt(state.I64, 31, false), idx, prefix + "_write_idx"), builder.BuildAdd(digit, LLVMValueRef.CreateConstInt(state.I64, (byte)'0', false), prefix + "_ascii"));
+        builder.BuildStore(builder.BuildAdd(idx, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_idx_next"), indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(finishBlock);
+        LLVMValueRef count = builder.BuildLoad2(state.I64, indexSlot, prefix + "_count");
+        LLVMValueRef startIndex = builder.BuildSub(LLVMValueRef.CreateConstInt(state.I64, 32, false), count, prefix + "_start_index");
+        LLVMValueRef startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    private static LLVMValueRef EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LLVMValueRef bytesPtr, LLVMValueRef len, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(len, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_size"));
+        StoreMemory(state, stringRef, 0, len, prefix + "_len");
+        EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, prefix + "_dest"), bytesPtr, len, prefix + "_copy");
+        return stringRef;
+    }
+
+    private static LLVMValueRef EmitStartsWith(LlvmCodegenState state, LLVMValueRef sourceRef, LLVMValueRef prefixRef, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef sourceLen = LoadStringLength(state, sourceRef, prefix + "_source_len");
+        LLVMValueRef prefixLen = LoadStringLength(state, prefixRef, prefix + "_prefix_len");
+        LLVMValueRef enough = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, sourceLen, prefixLen, prefix + "_enough");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        var compareBlock = state.Function.AppendBasicBlock(prefix + "_compare");
+        var falseBlock = state.Function.AppendBasicBlock(prefix + "_false");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        builder.BuildCondBr(enough, compareBlock, falseBlock);
+
+        builder.PositionAtEnd(falseBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(compareBlock);
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        LLVMValueRef sourceBytes = GetStringBytesPointer(state, sourceRef, prefix + "_source_bytes");
+        LLVMValueRef prefixBytes = GetStringBytesPointer(state, prefixRef, prefix + "_prefix_bytes");
+        var loopCheckBlock = state.Function.AppendBasicBlock(prefix + "_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock(prefix + "_loop_body");
+        var successBlock = state.Function.AppendBasicBlock(prefix + "_success");
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, index, prefixLen, prefix + "_done");
+        builder.BuildCondBr(done, successBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef sourceByte = LoadByteAt(state, sourceBytes, index, prefix + "_source_byte");
+        LLVMValueRef prefixByte = LoadByteAt(state, prefixBytes, index, prefix + "_prefix_byte");
+        LLVMValueRef matches = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, sourceByte, prefixByte, prefix + "_matches");
+        var advanceBlock = state.Function.AppendBasicBlock(prefix + "_advance");
+        builder.BuildCondBr(matches, advanceBlock, falseBlock);
+
+        builder.PositionAtEnd(advanceBlock);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_index_next"), indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(successBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LLVMValueRef EmitFindByte(LlvmCodegenState state, LLVMValueRef bytesPtr, LLVMValueRef len, int startOffset, byte targetByte, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, (ulong)startOffset, false), indexSlot);
+        var loopCheckBlock = state.Function.AppendBasicBlock(prefix + "_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock(prefix + "_loop_body");
+        var foundBlock = state.Function.AppendBasicBlock(prefix + "_found");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, index, len, prefix + "_done");
+        builder.BuildCondBr(done, continueBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef currentByte = LoadByteAt(state, bytesPtr, index, prefix + "_byte");
+        LLVMValueRef matches = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, currentByte, LLVMValueRef.CreateConstInt(state.I8, targetByte, false), prefix + "_matches");
+        var advanceBlock = state.Function.AppendBasicBlock(prefix + "_advance");
+        builder.BuildCondBr(matches, foundBlock, advanceBlock);
+
+        builder.PositionAtEnd(foundBlock);
+        builder.BuildStore(index, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(advanceBlock);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_index_next"), indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LLVMValueRef EmitFindByteSequence(LlvmCodegenState state, LLVMValueRef bytesPtr, LLVMValueRef len, IReadOnlyList<byte> patternBytes, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        LLVMValueRef patternLen = LLVMValueRef.CreateConstInt(state.I64, (ulong)patternBytes.Count, false);
+        LLVMValueRef patternPtr = EmitStackByteArray(state, patternBytes);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), resultSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        var loopCheckBlock = state.Function.AppendBasicBlock(prefix + "_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock(prefix + "_loop_body");
+        var compareLoopBlock = state.Function.AppendBasicBlock(prefix + "_compare_loop");
+        var foundBlock = state.Function.AppendBasicBlock(prefix + "_found");
+        var advanceBlock = state.Function.AppendBasicBlock(prefix + "_advance");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+        LLVMValueRef compareIndexSlot = builder.BuildAlloca(state.I64, prefix + "_compare_index");
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef canMatch = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, builder.BuildAdd(index, patternLen, prefix + "_candidate_end"), len, prefix + "_can_match");
+        builder.BuildCondBr(canMatch, loopBodyBlock, continueBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), compareIndexSlot);
+        builder.BuildBr(compareLoopBlock);
+
+        builder.PositionAtEnd(compareLoopBlock);
+        LLVMValueRef compareIndex = builder.BuildLoad2(state.I64, compareIndexSlot, prefix + "_compare_index_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, compareIndex, patternLen, prefix + "_compare_done");
+        var compareBodyBlock = state.Function.AppendBasicBlock(prefix + "_compare_body");
+        builder.BuildCondBr(done, foundBlock, compareBodyBlock);
+
+        builder.PositionAtEnd(compareBodyBlock);
+        LLVMValueRef actualByte = LoadByteAt(state, bytesPtr, builder.BuildAdd(index, compareIndex, prefix + "_actual_index"), prefix + "_actual_byte");
+        LLVMValueRef expectedByte = LoadByteAt(state, patternPtr, compareIndex, prefix + "_expected_byte");
+        LLVMValueRef matches = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, actualByte, expectedByte, prefix + "_compare_matches");
+        var compareAdvanceBlock = state.Function.AppendBasicBlock(prefix + "_compare_advance");
+        builder.BuildCondBr(matches, compareAdvanceBlock, advanceBlock);
+
+        builder.PositionAtEnd(compareAdvanceBlock);
+        builder.BuildStore(builder.BuildAdd(compareIndex, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_compare_index_next"), compareIndexSlot);
+        builder.BuildBr(compareLoopBlock);
+
+        builder.PositionAtEnd(foundBlock);
+        builder.BuildStore(index, resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(advanceBlock);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_index_next"), indexSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LLVMValueRef EmitByteSwap16(LlvmCodegenState state, LLVMValueRef value, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef maskedLow = builder.BuildAnd(value, LLVMValueRef.CreateConstInt(state.I64, 0xFF, false), prefix + "_low");
+        LLVMValueRef maskedHigh = builder.BuildAnd(builder.BuildLShr(value, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_shr"), LLVMValueRef.CreateConstInt(state.I64, 0xFF, false), prefix + "_high");
+        return builder.BuildOr(builder.BuildShl(maskedLow, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_low_shifted"), maskedHigh, prefix + "_result");
+    }
+
+    private static LLVMValueRef EmitWindowsWsaStartup(LlvmCodegenState state, LLVMValueRef wsadataPtr, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef i16 = state.Target.Context.Int16Type;
+        LLVMTypeRef wsaStartupType = LLVMTypeRef.CreateFunction(state.I32, [i16, state.I8Ptr]);
+        LLVMValueRef wsaStartupPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(wsaStartupType, 0),
+            state.WindowsWsaStartupImport,
+            name + "_ptr");
+        LLVMValueRef result = builder.BuildCall2(
+            wsaStartupType,
+            wsaStartupPtr,
+            new[]
+            {
+                LLVMValueRef.CreateConstInt(i16, 0x0202, false),
+                wsadataPtr
+            },
+            name);
+        return builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, result, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+    }
+
+    private static LLVMValueRef EmitWindowsSocket(LlvmCodegenState state, int af, int socketTypeValue, int protocol, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef socketType = LLVMTypeRef.CreateFunction(state.I64, [state.I32, state.I32, state.I32]);
+        LLVMValueRef socketPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(socketType, 0),
+            state.WindowsSocketImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            socketType,
+            socketPtr,
+            new[]
+            {
+                LLVMValueRef.CreateConstInt(state.I32, (uint)af, false),
+                LLVMValueRef.CreateConstInt(state.I32, (uint)socketTypeValue, false),
+                LLVMValueRef.CreateConstInt(state.I32, (uint)protocol, false)
+            },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsConnect(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef sockaddrPtr, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef connectType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32]);
+        LLVMValueRef connectPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(connectType, 0),
+            state.WindowsConnectImport,
+            name + "_ptr");
+        LLVMValueRef result = builder.BuildCall2(
+            connectType,
+            connectPtr,
+            new[]
+            {
+                socket,
+                sockaddrPtr,
+                LLVMValueRef.CreateConstInt(state.I32, 16, false)
+            },
+            name);
+        return builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, result, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+    }
+
+    private static LLVMValueRef EmitWindowsSend(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef buffer, LLVMValueRef len, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef sendType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
+        LLVMValueRef sendPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(sendType, 0),
+            state.WindowsSendImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            sendType,
+            sendPtr,
+            new[]
+            {
+                socket,
+                buffer,
+                len,
+                LLVMValueRef.CreateConstInt(state.I32, 0, false)
+            },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsRecv(LlvmCodegenState state, LLVMValueRef socket, LLVMValueRef buffer, LLVMValueRef len, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef recvType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32]);
+        LLVMValueRef recvPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(recvType, 0),
+            state.WindowsRecvImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            recvType,
+            recvPtr,
+            new[]
+            {
+                socket,
+                buffer,
+                len,
+                LLVMValueRef.CreateConstInt(state.I32, 0, false)
+            },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsCloseSocket(LlvmCodegenState state, LLVMValueRef socket, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef closeSocketType = LLVMTypeRef.CreateFunction(state.I32, [state.I64]);
+        LLVMValueRef closeSocketPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(closeSocketType, 0),
+            state.WindowsCloseSocketImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            closeSocketType,
+            closeSocketPtr,
+            new[] { socket },
+            name);
+    }
+
     private static LLVMValueRef EmitWindowsCreateFile(LlvmCodegenState state, LLVMValueRef pathCstr, int desiredAccess, int shareMode, int creationDisposition, string name)
     {
         LLVMBuilderRef builder = state.Target.Builder;
@@ -2395,6 +3676,12 @@ internal static class LlvmCodegen
         LLVMValueRef WindowsCreateFileImport,
         LLVMValueRef WindowsCloseHandleImport,
         LLVMValueRef WindowsGetFileAttributesImport,
+        LLVMValueRef WindowsWsaStartupImport,
+        LLVMValueRef WindowsSocketImport,
+        LLVMValueRef WindowsConnectImport,
+        LLVMValueRef WindowsSendImport,
+        LLVMValueRef WindowsRecvImport,
+        LLVMValueRef WindowsCloseSocketImport,
         LLVMValueRef WindowsExitProcessImport,
         LLVMValueRef WindowsGetCommandLineImport,
         LLVMValueRef WindowsWideCharToMultiByteImport,
@@ -2439,6 +3726,12 @@ internal static class LlvmCodegen
             IrInst.FileReadText => true,
             IrInst.FileWriteText => true,
             IrInst.FileExists => true,
+            IrInst.HttpGet => true,
+            IrInst.HttpPost => true,
+            IrInst.NetTcpConnect => true,
+            IrInst.NetTcpSend => true,
+            IrInst.NetTcpReceive => true,
+            IrInst.NetTcpClose => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
@@ -2496,6 +3789,12 @@ internal static class LlvmCodegen
             IrInst.FileReadText => true,
             IrInst.FileWriteText => true,
             IrInst.FileExists => true,
+            IrInst.HttpGet => true,
+            IrInst.HttpPost => true,
+            IrInst.NetTcpConnect => true,
+            IrInst.NetTcpSend => true,
+            IrInst.NetTcpReceive => true,
+            IrInst.NetTcpClose => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,

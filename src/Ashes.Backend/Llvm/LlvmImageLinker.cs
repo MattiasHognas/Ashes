@@ -101,6 +101,9 @@ internal static class LlvmImageLinker
         int shellNameOffset = (int)rdata.Stream.Position;
         rdata.Stream.Write(Encoding.ASCII.GetBytes("SHELL32.DLL\0"));
         var shellName = new PEAsciiStringLink(rdata, new RVO((uint)shellNameOffset));
+        int ws2NameOffset = (int)rdata.Stream.Position;
+        rdata.Stream.Write(Encoding.ASCII.GetBytes("WS2_32.DLL\0"));
+        var ws2Name = new PEAsciiStringLink(rdata, new RVO((uint)ws2NameOffset));
         var exitProcessHintName = WriteImportHintName(rdata, 0, "ExitProcess");
         var getStdHandleHintName = WriteImportHintName(rdata, 0, "GetStdHandle");
         var writeFileHintName = WriteImportHintName(rdata, 0, "WriteFile");
@@ -112,20 +115,29 @@ internal static class LlvmImageLinker
         var wideCharToMultiByteHintName = WriteImportHintName(rdata, 0, "WideCharToMultiByte");
         var localFreeHintName = WriteImportHintName(rdata, 0, "LocalFree");
         var commandLineToArgvHintName = WriteImportHintName(rdata, 0, "CommandLineToArgvW");
+        var wsaStartupHintName = WriteImportHintName(rdata, 0, "WSAStartup");
+        var socketHintName = WriteImportHintName(rdata, 0, "socket");
+        var connectHintName = WriteImportHintName(rdata, 0, "connect");
+        var sendHintName = WriteImportHintName(rdata, 0, "send");
+        var recvHintName = WriteImportHintName(rdata, 0, "recv");
+        var closeSocketHintName = WriteImportHintName(rdata, 0, "closesocket");
         Align(rdata, 8);
         int iatSectionOffset = (int)rdata.Stream.Length;
 
         var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, createFileHintName, closeHandleHintName, getFileAttributesHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
         var shell32Iat = new PEImportAddressTable64() { commandLineToArgvHintName };
-        var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat, shell32Iat };
+        var ws2Iat = new PEImportAddressTable64() { wsaStartupHintName, socketHintName, connectHintName, sendHintName, recvHintName, closeSocketHintName };
+        var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat, shell32Iat, ws2Iat };
         var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, createFileHintName, closeHandleHintName, getFileAttributesHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
         var shell32Ilt = new PEImportLookupTable64() { commandLineToArgvHintName };
+        var ws2Ilt = new PEImportLookupTable64() { wsaStartupHintName, socketHintName, connectHintName, sendHintName, recvHintName, closeSocketHintName };
         var importDirectory = new PEImportDirectory
         {
             Entries =
             {
                 new PEImportDirectoryEntry(kernelName, kernel32Iat, kernel32Ilt),
-                new PEImportDirectoryEntry(shellName, shell32Iat, shell32Ilt)
+                new PEImportDirectoryEntry(shellName, shell32Iat, shell32Ilt),
+                new PEImportDirectoryEntry(ws2Name, ws2Iat, ws2Ilt)
             }
         };
 
@@ -141,6 +153,12 @@ internal static class LlvmImageLinker
         ulong wideCharToMultiByteIatVa = exitProcessIatVa + 64;
         ulong localFreeIatVa = exitProcessIatVa + 72;
         ulong commandLineToArgvIatVa = exitProcessIatVa + 88;
+        ulong wsaStartupIatVa = exitProcessIatVa + 104;
+        ulong socketIatVa = exitProcessIatVa + 112;
+        ulong connectIatVa = exitProcessIatVa + 120;
+        ulong sendIatVa = exitProcessIatVa + 128;
+        ulong recvIatVa = exitProcessIatVa + 136;
+        ulong closeSocketIatVa = exitProcessIatVa + 144;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -166,6 +184,12 @@ internal static class LlvmImageLinker
                 ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
                 ["__imp_LocalFree"] = localFreeIatVa,
                 ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
+                ["__imp_WSAStartup"] = wsaStartupIatVa,
+                ["__imp_socket"] = socketIatVa,
+                ["__imp_connect"] = connectIatVa,
+                ["__imp_send"] = sendIatVa,
+                ["__imp_recv"] = recvIatVa,
+                ["__imp_closesocket"] = closeSocketIatVa,
                 ["__chkstk"] = chkstkStubVa
             });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
@@ -184,6 +208,7 @@ internal static class LlvmImageLinker
         rdataSection.Content.Add(iatDirectory);
         rdataSection.Content.Add(kernel32Ilt);
         rdataSection.Content.Add(shell32Ilt);
+        rdataSection.Content.Add(ws2Ilt);
         rdataSection.Content.Add(importDirectory);
 
         pe.OptionalHeader.AddressOfEntryPoint = new(code, 0);

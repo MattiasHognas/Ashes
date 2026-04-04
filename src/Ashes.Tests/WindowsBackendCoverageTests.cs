@@ -7,7 +7,6 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class WindowsBackendCoverageTests
 {
     [Test]
