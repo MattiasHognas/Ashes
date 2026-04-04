@@ -593,7 +593,7 @@ internal static class LlvmImageLinker
 
         if (sectionBaseVas.TryGetValue(symbol.SectionNumber, out ulong sectionBaseVa))
         {
-            return sectionBaseVa + symbol.Value;
+            return sectionBaseVa + NormalizeCoffSectionValue(symbol.Value);
         }
 
         if (symbol.SectionNumber == 0 && importSymbolVas.TryGetValue(symbol.Name, out ulong importVa))
@@ -602,6 +602,13 @@ internal static class LlvmImageLinker
         }
 
         throw new InvalidOperationException($"LLVM COFF text relocation targeted unsupported symbol '{symbol.Name}' in section {symbol.SectionNumber}.");
+    }
+
+    private static ulong NormalizeCoffSectionValue(uint value)
+    {
+        return value >= PeImageBase
+            ? value - PeImageBase
+            : value;
     }
 
     private static void SetPeImageBase(PEOptionalHeader optionalHeader, ulong imageBase)
