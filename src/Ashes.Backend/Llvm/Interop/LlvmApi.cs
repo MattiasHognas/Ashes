@@ -34,6 +34,7 @@ public enum LlvmRelocMode { Default = 0, Static = 1, PIC = 2, DynamicNoPic = 3 }
 public enum LlvmCodeModel { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Kernel = 4, Medium = 5, Large = 6 }
 public enum LlvmLinkage { External = 0, Internal = 8 }
 public enum LlvmCodeGenFileType { Assembly = 0, Object = 1 }
+public enum LlvmVerifierFailureAction { AbortProcess = 0, PrintMessage = 1, ReturnStatus = 2 }
 
 public enum LlvmTypeKind
 {
@@ -313,7 +314,7 @@ internal static partial class LlvmApi
 
     // ── Verification ────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMVerifyModule")]
-    public static partial int VerifyModule(LlvmModuleHandle module, int action, out nint outMessage);
+    public static partial int VerifyModule(LlvmModuleHandle module, LlvmVerifierFailureAction action, out nint outMessage);
 
     // ── Code emission ───────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMTargetMachineEmitToMemoryBuffer")]

@@ -71,7 +71,7 @@ internal static partial class LlvmCodegen
 
     private static void VerifyModule(LlvmTargetContext target)
     {
-        int verifyErr = LlvmApi.VerifyModule(target.Module, 1, out nint verifyMsg);
+        int verifyErr = LlvmApi.VerifyModule(target.Module, LlvmVerifierFailureAction.ReturnStatus, out nint verifyMsg);
         if (verifyErr != 0)
         {
             string verifyError = Marshal.PtrToStringAnsi(verifyMsg) ?? "unknown error";
