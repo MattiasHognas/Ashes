@@ -112,7 +112,7 @@ public sealed class EndToEndWindowsBackendTests
         var ir = new Lowering(diag).Lower(ast);
         diag.ThrowIfAny();
 
-        var exeBytes = new Ashes.Backend.Backends.WindowsX64PeBackend().Compile(ir);
+        var exeBytes = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
         Directory.CreateDirectory(tmpDir);

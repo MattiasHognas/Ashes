@@ -290,6 +290,8 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 |---|---|
 | [Language Specification](docs/LANGUAGE_SPEC.md) | Authoritative syntax and semantics |
 | [Project Specification](docs/PROJECT_SPEC.md) | Multi-file project format |
+| [Compiler Architecture](docs/ARCHITECTURE.md) | Pipeline, backend, memory model, linking |
+| [IR Reference](docs/IR_REFERENCE.md) | Intermediate representation instruction set |
 | [CLI Specification](docs/COMPILER_CLI_SPEC.md) | All CLI commands and flags |
 | [Formatter Specification](docs/FORMATTER_SPEC.md) | Canonical formatting rules |
 | [Diagnostics Reference](docs/DIAGNOSTICS.md) | Error codes and messages |

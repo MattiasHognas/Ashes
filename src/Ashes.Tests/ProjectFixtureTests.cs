@@ -122,13 +122,13 @@ public sealed class ProjectFixtureTests
         string exePath;
         if (OperatingSystem.IsWindows())
         {
-            var exeBytes = new Ashes.Backend.Backends.WindowsX64PeBackend().Compile(ir);
+            var exeBytes = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"project_{Guid.NewGuid():N}.exe");
             await File.WriteAllBytesAsync(exePath, exeBytes);
         }
         else
         {
-            var elfBytes = new Ashes.Backend.Backends.LinuxX64ElfBackend().Compile(ir);
+            var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"project_{Guid.NewGuid():N}");
             await File.WriteAllBytesAsync(exePath, elfBytes);
 #pragma warning disable CA1416

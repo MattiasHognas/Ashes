@@ -646,103 +646,103 @@ public sealed class Lowering
     private (int, TypeRef) LowerAdd(Expr.Add add)
     {
         using var diagnosticSpan = PushDiagnosticSpan(add);
-        var (lt, lty) = LowerExpr(add.Left);
-        var (rt, rty) = LowerExpr(add.Right);
+        var (leftTemp, leftType) = LowerExpr(add.Left);
+        var (rightTemp, rightType) = LowerExpr(add.Right);
 
-        var l = Prune(lty);
-        var r = Prune(rty);
+        var leftPruned = Prune(leftType);
+        var rightPruned = Prune(rightType);
 
         // Resolve type variables: unify with the other side's concrete type, defaulting to Int
-        if (l is TypeRef.TVar)
+        if (leftPruned is TypeRef.TVar)
         {
-            var resolved = r is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
-            Unify(l, resolved);
-            l = resolved;
+            var resolved = rightPruned is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
+            Unify(leftPruned, resolved);
+            leftPruned = resolved;
         }
-        if (r is TypeRef.TVar)
+        if (rightPruned is TypeRef.TVar)
         {
-            var resolved = l switch
+            var resolved = leftPruned switch
             {
                 TypeRef.TStr => (TypeRef)new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
                 _ => new TypeRef.TInt()
             };
-            Unify(r, resolved);
-            r = resolved;
+            Unify(rightPruned, resolved);
+            rightPruned = resolved;
         }
 
-        if (l is TypeRef.TInt && r is TypeRef.TInt)
+        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(new IrInst.AddInt(target, lt, rt));
+            _inst.Add(new IrInst.AddInt(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
 
-        if (l is TypeRef.TFloat && r is TypeRef.TFloat)
+        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(new IrInst.AddFloat(target, lt, rt));
+            _inst.Add(new IrInst.AddFloat(target, leftTemp, rightTemp));
             return (target, new TypeRef.TFloat());
         }
 
-        if (l is TypeRef.TStr && r is TypeRef.TStr)
+        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
             _usesConcatStr = true;
             int target = NewTemp();
-            _inst.Add(new IrInst.ConcatStr(target, lt, rt));
+            _inst.Add(new IrInst.ConcatStr(target, leftTemp, rightTemp));
             return (target, new TypeRef.TStr());
         }
 
-        var addTypes = PrettyPair(l, r);
+        var addTypes = PrettyPair(leftPruned, rightPruned);
         ReportDiagnostic(GetSpan(add), $"'+' requires Int+Int, Float+Float, or Str+Str, got {addTypes.Left} and {addTypes.Right}.", DiagnosticCodes.TypeMismatch);
-        int t0 = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(t0, 0));
-        return (t0, new TypeRef.TInt());
+        int errorTemp = NewTemp();
+        _inst.Add(new IrInst.LoadConstInt(errorTemp, 0));
+        return (errorTemp, new TypeRef.TInt());
     }
 
     private (int, TypeRef) LowerSubtract(Expr.Subtract sub)
     {
         using var diagnosticSpan = PushDiagnosticSpan(sub);
-        var (lt, lty) = LowerExpr(sub.Left);
-        var (rt, rty) = LowerExpr(sub.Right);
+        var (leftTemp, leftType) = LowerExpr(sub.Left);
+        var (rightTemp, rightType) = LowerExpr(sub.Right);
 
-        return LowerNumericBinaryOp(sub, lt, lty, rt, rty, (target, left, right) => new IrInst.SubInt(target, left, right), (target, left, right) => new IrInst.SubFloat(target, left, right), "'-'");
+        return LowerNumericBinaryOp(sub, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.SubInt(target, left, right), (target, left, right) => new IrInst.SubFloat(target, left, right), "'-'");
     }
 
     private (int, TypeRef) LowerMultiply(Expr.Multiply mul)
     {
         using var diagnosticSpan = PushDiagnosticSpan(mul);
-        var (lt, lty) = LowerExpr(mul.Left);
-        var (rt, rty) = LowerExpr(mul.Right);
+        var (leftTemp, leftType) = LowerExpr(mul.Left);
+        var (rightTemp, rightType) = LowerExpr(mul.Right);
 
-        return LowerNumericBinaryOp(mul, lt, lty, rt, rty, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'");
+        return LowerNumericBinaryOp(mul, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'");
     }
 
     private (int, TypeRef) LowerDivide(Expr.Divide div)
     {
         using var diagnosticSpan = PushDiagnosticSpan(div);
-        var (lt, lty) = LowerExpr(div.Left);
-        var (rt, rty) = LowerExpr(div.Right);
+        var (leftTemp, leftType) = LowerExpr(div.Left);
+        var (rightTemp, rightType) = LowerExpr(div.Right);
 
-        return LowerNumericBinaryOp(div, lt, lty, rt, rty, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'");
+        return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'");
     }
 
     private (int, TypeRef) LowerGreaterOrEqual(Expr.GreaterOrEqual ge)
     {
         using var diagnosticSpan = PushDiagnosticSpan(ge);
-        var (lt, lty) = LowerExpr(ge.Left);
-        var (rt, rty) = LowerExpr(ge.Right);
+        var (leftTemp, leftType) = LowerExpr(ge.Left);
+        var (rightTemp, rightType) = LowerExpr(ge.Right);
 
-        return LowerNumericComparisonOp(ge, lt, lty, rt, rty, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), "'>='");
+        return LowerNumericComparisonOp(ge, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), "'>='");
     }
 
     private (int, TypeRef) LowerLessOrEqual(Expr.LessOrEqual le)
     {
         using var diagnosticSpan = PushDiagnosticSpan(le);
-        var (lt, lty) = LowerExpr(le.Left);
-        var (rt, rty) = LowerExpr(le.Right);
+        var (leftTemp, leftType) = LowerExpr(le.Left);
+        var (rightTemp, rightType) = LowerExpr(le.Right);
 
-        return LowerNumericComparisonOp(le, lt, lty, rt, rty, (target, left, right) => new IrInst.CmpIntLe(target, left, right), (target, left, right) => new IrInst.CmpFloatLe(target, left, right), "'<='");
+        return LowerNumericComparisonOp(le, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLe(target, left, right), (target, left, right) => new IrInst.CmpFloatLe(target, left, right), "'<='");
     }
 
     private (int, TypeRef) LowerEqual(Expr.Equal eq)
@@ -893,58 +893,58 @@ public sealed class Lowering
     private (int, TypeRef) LowerEqualityOp(Expr left, Expr right, bool negate)
     {
         using var diagnosticSpan = PushDiagnosticSpan(CombineSpans(left, right));
-        var (lt, lty) = LowerExpr(left);
-        var (rt, rty) = LowerExpr(right);
+        var (leftTemp, leftType) = LowerExpr(left);
+        var (rightTemp, rightType) = LowerExpr(right);
 
-        var l = Prune(lty);
-        var r = Prune(rty);
+        var leftPruned = Prune(leftType);
+        var rightPruned = Prune(rightType);
 
         // Resolve type variables: unify with the other side's concrete type, defaulting to Int
-        if (l is TypeRef.TVar)
+        if (leftPruned is TypeRef.TVar)
         {
-            var resolved = r is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
-            Unify(l, resolved);
-            l = resolved;
+            var resolved = rightPruned is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
+            Unify(leftPruned, resolved);
+            leftPruned = resolved;
         }
-        if (r is TypeRef.TVar)
+        if (rightPruned is TypeRef.TVar)
         {
-            var resolved = l switch
+            var resolved = leftPruned switch
             {
                 TypeRef.TStr => (TypeRef)new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
                 _ => new TypeRef.TInt()
             };
-            Unify(r, resolved);
-            r = resolved;
+            Unify(rightPruned, resolved);
+            rightPruned = resolved;
         }
 
-        if (l is TypeRef.TInt && r is TypeRef.TInt)
+        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpIntNe(target, lt, rt) : new IrInst.CmpIntEq(target, lt, rt));
+            _inst.Add(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
-        if (l is TypeRef.TFloat && r is TypeRef.TFloat)
+        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpFloatNe(target, lt, rt) : new IrInst.CmpFloatEq(target, lt, rt));
+            _inst.Add(negate ? new IrInst.CmpFloatNe(target, leftTemp, rightTemp) : new IrInst.CmpFloatEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
-        if (l is TypeRef.TStr && r is TypeRef.TStr)
+        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpStrNe(target, lt, rt) : new IrInst.CmpStrEq(target, lt, rt));
+            _inst.Add(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
         var op = negate ? "!=" : "==";
-        var equalityTypes = PrettyPair(l, r);
+        var equalityTypes = PrettyPair(leftPruned, rightPruned);
         ReportDiagnostic(0, $"'{op}' requires Int{op}Int, Float{op}Float, or Str{op}Str, got {equalityTypes.Left} and {equalityTypes.Right}.", DiagnosticCodes.TypeMismatch);
-        int t0 = NewTemp();
-        _inst.Add(new IrInst.LoadConstBool(t0, false));
-        return (t0, new TypeRef.TBool());
+        int errorTemp = NewTemp();
+        _inst.Add(new IrInst.LoadConstBool(errorTemp, false));
+        return (errorTemp, new TypeRef.TBool());
     }
 
     private (int, TypeRef) LowerNumericBinaryOp(
@@ -3426,22 +3426,22 @@ public sealed class Lowering
                     return;
                 case Expr.Let l:
                     Visit(l.Value, bnd);
-                    var b2 = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Body, b2);
+                    var boundWithLetVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                    Visit(l.Body, boundWithLetVar);
                     return;
                 case Expr.LetResult l:
                     Visit(l.Value, bnd);
-                    var b2r = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Body, b2r);
+                    var boundWithResultVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                    Visit(l.Body, boundWithResultVar);
                     return;
                 case Expr.LetRec l:
-                    var b2rec = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Value, b2rec);
-                    Visit(l.Body, b2rec);
+                    var boundWithRecVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                    Visit(l.Value, boundWithRecVar);
+                    Visit(l.Body, boundWithRecVar);
                     return;
                 case Expr.Lambda lam:
-                    var b3 = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
-                    Visit(lam.Body, b3);
+                    var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
+                    Visit(lam.Body, boundWithParam);
                     return;
                 default:
                     throw new NotSupportedException(ex.GetType().Name);
