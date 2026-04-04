@@ -664,6 +664,7 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
+            DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
         }
     }
@@ -774,6 +775,39 @@ public sealed class LinuxBackendCoverageTests
         }
         catch (UnauthorizedAccessException)
         {
+        }
+    }
+
+    private static void DeleteFileIfExists(string path)
+    {
+        const int maxAttempts = 5;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+            catch (IOException)
+            {
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return;
+            }
         }
     }
 
