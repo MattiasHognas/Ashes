@@ -9,11 +9,15 @@ internal static class LlvmCodegen
 {
     private const int HeapSizeBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
+    private const int WindowsFileReadLimitBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
     private const uint StdInputHandle = 0xFFFFFFF6;
     private const long SyscallRead = 0;
     private const long SyscallWrite = 1;
+    private const long SyscallOpen = 2;
+    private const long SyscallClose = 3;
+    private const long SyscallLseek = 8;
     private const long SyscallExit = 60;
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
@@ -126,9 +130,16 @@ internal static class LlvmCodegen
             && usesProgramArgs;
         bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.Windows
             && usesReadLine;
+        bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.Windows
+            && (ProgramUsesInstruction<IrInst.FileReadText>(program)
+                || ProgramUsesInstruction<IrInst.FileWriteText>(program)
+                || ProgramUsesInstruction<IrInst.FileExists>(program));
         LLVMValueRef windowsGetStdHandleImport = default;
         LLVMValueRef windowsWriteFileImport = default;
         LLVMValueRef windowsReadFileImport = default;
+        LLVMValueRef windowsCreateFileImport = default;
+        LLVMValueRef windowsCloseHandleImport = default;
+        LLVMValueRef windowsGetFileAttributesImport = default;
         LLVMValueRef windowsExitProcessImport = default;
         LLVMValueRef windowsGetCommandLineImport = default;
         LLVMValueRef windowsWideCharToMultiByteImport = default;
@@ -159,6 +170,19 @@ internal static class LlvmCodegen
             LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsReadFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(readFileType, 0), "__imp_ReadFile");
             windowsReadFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+        }
+
+        if (usesWindowsFileOps)
+        {
+            LLVMTypeRef createFileType = LLVMTypeRef.CreateFunction(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
+            LLVMTypeRef closeHandleType = LLVMTypeRef.CreateFunction(i32, [i64]);
+            LLVMTypeRef getFileAttributesType = LLVMTypeRef.CreateFunction(i32, [i8Ptr]);
+            windowsCreateFileImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(createFileType, 0), "__imp_CreateFileA");
+            windowsCreateFileImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsCloseHandleImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(closeHandleType, 0), "__imp_CloseHandle");
+            windowsCloseHandleImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
+            windowsGetFileAttributesImport = target.Module.AddGlobal(LLVMTypeRef.CreatePointer(getFileAttributesType, 0), "__imp_GetFileAttributesA");
+            windowsGetFileAttributesImport.Linkage = LLVMLinkage.LLVMExternalLinkage;
         }
 
         if (usesWindowsExitProcess)
@@ -218,6 +242,9 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsReadFileImport,
+            windowsCreateFileImport,
+            windowsCloseHandleImport,
+            windowsGetFileAttributesImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -242,6 +269,9 @@ internal static class LlvmCodegen
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
                 windowsReadFileImport,
+                windowsCreateFileImport,
+                windowsCloseHandleImport,
+                windowsGetFileAttributesImport,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -278,6 +308,9 @@ internal static class LlvmCodegen
         LLVMValueRef windowsGetStdHandleImport,
         LLVMValueRef windowsWriteFileImport,
         LLVMValueRef windowsReadFileImport,
+        LLVMValueRef windowsCreateFileImport,
+        LLVMValueRef windowsCloseHandleImport,
+        LLVMValueRef windowsGetFileAttributesImport,
         LLVMValueRef windowsExitProcessImport,
         LLVMValueRef windowsGetCommandLineImport,
         LLVMValueRef windowsWideCharToMultiByteImport,
@@ -364,6 +397,9 @@ internal static class LlvmCodegen
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsReadFileImport,
+            windowsCreateFileImport,
+            windowsCloseHandleImport,
+            windowsGetFileAttributesImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -434,6 +470,9 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitStackStringObject(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, builder.BuildLoad2(state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
+            IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
+            IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
+            IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, builder.BuildLoad2(state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, builder.BuildLoad2(state.I64, GetMemoryPointer(state, builder.BuildLoad2(state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -903,6 +942,837 @@ internal static class LlvmCodegen
 
         builder.PositionAtEnd(continueBlock);
         return builder.BuildLoad2(state.I64, resultSlot, "read_line_result_value");
+    }
+
+    private static LLVMValueRef EmitFileReadText(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxFileReadText(state, pathRef)
+            : EmitWindowsFileReadText(state, pathRef);
+    }
+
+    private static LLVMValueRef EmitFileWriteText(LlvmCodegenState state, LLVMValueRef pathRef, LLVMValueRef textRef)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxFileWriteText(state, pathRef, textRef)
+            : EmitWindowsFileWriteText(state, pathRef, textRef);
+    }
+
+    private static LLVMValueRef EmitFileExists(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        return state.Flavor == LlvmCodegenFlavor.Linux
+            ? EmitLinuxFileExists(state, pathRef)
+            : EmitWindowsFileExists(state, pathRef);
+    }
+
+    private static LLVMValueRef EmitLinuxFileReadText(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_read_path");
+        LLVMValueRef fdSlot = builder.BuildAlloca(state.I64, "fs_read_fd");
+        LLVMValueRef stringSlot = builder.BuildAlloca(state.I64, "fs_read_string");
+        LLVMValueRef remainingSlot = builder.BuildAlloca(state.I64, "fs_read_remaining");
+        LLVMValueRef cursorSlot = builder.BuildAlloca(state.I64, "fs_read_cursor");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_read_result");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), fdSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        var openBlock = state.Function.AppendBasicBlock("fs_read_open");
+        var seekEndBlock = state.Function.AppendBasicBlock("fs_read_seek_end");
+        var seekStartBlock = state.Function.AppendBasicBlock("fs_read_seek_start");
+        var allocBlock = state.Function.AppendBasicBlock("fs_read_alloc");
+        var readCheckBlock = state.Function.AppendBasicBlock("fs_read_loop_check");
+        var readBodyBlock = state.Function.AppendBasicBlock("fs_read_loop_body");
+        var readDoneBlock = state.Function.AppendBasicBlock("fs_read_done");
+        var utf8CheckBlock = state.Function.AppendBasicBlock("fs_read_utf8_check");
+        var closeOkBlock = state.Function.AppendBasicBlock("fs_read_close_ok");
+        var closeInvalidBlock = state.Function.AppendBasicBlock("fs_read_close_invalid");
+        var closeErrorBlock = state.Function.AppendBasicBlock("fs_read_close_error");
+        var maybeCloseErrorBlock = state.Function.AppendBasicBlock("fs_read_maybe_close_error");
+        var closeHandleBlock = state.Function.AppendBasicBlock("fs_read_close_handle");
+        var returnErrorBlock = state.Function.AppendBasicBlock("fs_read_return_error");
+        var continueBlock = state.Function.AppendBasicBlock("fs_read_continue");
+
+        builder.BuildBr(openBlock);
+
+        builder.PositionAtEnd(openBlock);
+        LLVMValueRef fd = EmitSyscall(
+            state,
+            SyscallOpen,
+            builder.BuildPtrToInt(pathCstr, state.I64, "fs_read_path_ptr"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_read_open_call");
+        builder.BuildStore(fd, fdSlot);
+        LLVMValueRef openFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, fd, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_open_failed");
+        builder.BuildCondBr(openFailed, returnErrorBlock, seekEndBlock);
+
+        builder.PositionAtEnd(seekEndBlock);
+        LLVMValueRef fileLength = EmitSyscall(
+            state,
+            SyscallLseek,
+            fd,
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 2, false),
+            "fs_read_seek_end_call");
+        LLVMValueRef seekEndFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, fileLength, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_seek_end_failed");
+        builder.BuildCondBr(seekEndFailed, maybeCloseErrorBlock, seekStartBlock);
+
+        builder.PositionAtEnd(seekStartBlock);
+        LLVMValueRef seekStart = EmitSyscall(
+            state,
+            SyscallLseek,
+            fd,
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_read_seek_start_call");
+        LLVMValueRef seekStartFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, seekStart, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_seek_start_failed");
+        builder.BuildCondBr(seekStartFailed, maybeCloseErrorBlock, allocBlock);
+
+        builder.PositionAtEnd(allocBlock);
+        LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(fileLength, LLVMValueRef.CreateConstInt(state.I64, 8, false), "fs_read_total_bytes"));
+        StoreMemory(state, stringRef, 0, fileLength, "fs_read_len");
+        builder.BuildStore(stringRef, stringSlot);
+        builder.BuildStore(fileLength, remainingSlot);
+        builder.BuildStore(GetStringBytesAddress(state, stringRef, "fs_read_cursor_start"), cursorSlot);
+        LLVMValueRef isEmpty = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, fileLength, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_empty");
+        builder.BuildCondBr(isEmpty, utf8CheckBlock, readCheckBlock);
+
+        builder.PositionAtEnd(readCheckBlock);
+        LLVMValueRef remaining = builder.BuildLoad2(state.I64, remainingSlot, "fs_read_remaining_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, remaining, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_done");
+        builder.BuildCondBr(done, utf8CheckBlock, readBodyBlock);
+
+        builder.PositionAtEnd(readBodyBlock);
+        LLVMValueRef cursorAddress = builder.BuildLoad2(state.I64, cursorSlot, "fs_read_cursor_value");
+        LLVMValueRef readBytes = EmitSyscall(
+            state,
+            SyscallRead,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_read_fd_value"),
+            cursorAddress,
+            remaining,
+            "fs_read_read_call");
+        LLVMValueRef readFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, readBytes, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_failed");
+        builder.BuildCondBr(readFailed, maybeCloseErrorBlock, readDoneBlock);
+
+        builder.PositionAtEnd(readDoneBlock);
+        builder.BuildStore(builder.BuildSub(remaining, readBytes, "fs_read_remaining_next"), remainingSlot);
+        builder.BuildStore(builder.BuildAdd(cursorAddress, readBytes, "fs_read_cursor_next"), cursorSlot);
+        builder.BuildBr(readCheckBlock);
+
+        builder.PositionAtEnd(utf8CheckBlock);
+        LLVMValueRef utf8Valid = EmitValidateUtf8(
+            state,
+            GetStringBytesPointer(state, builder.BuildLoad2(state.I64, stringSlot, "fs_read_string_value"), "fs_read_utf8_ptr"),
+            LoadStringLength(state, builder.BuildLoad2(state.I64, stringSlot, "fs_read_string_len_value"), "fs_read_utf8_len"),
+            "fs_read_utf8");
+        LLVMValueRef isUtf8Valid = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, utf8Valid, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_is_utf8_valid");
+        builder.BuildCondBr(isUtf8Valid, closeOkBlock, closeInvalidBlock);
+
+        builder.PositionAtEnd(closeOkBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_read_close_fd"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_read_close_ok_call");
+        builder.BuildStore(EmitResultOk(state, builder.BuildLoad2(state.I64, stringSlot, "fs_read_ok_value")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeInvalidBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_read_invalid_fd"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_read_close_invalid_call");
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() encountered invalid UTF-8")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(maybeCloseErrorBlock);
+        LLVMValueRef fdValue = builder.BuildLoad2(state.I64, fdSlot, "fs_read_error_fd");
+        LLVMValueRef shouldClose = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, fdValue, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_should_close");
+        builder.BuildCondBr(shouldClose, closeHandleBlock, returnErrorBlock);
+
+        builder.PositionAtEnd(closeHandleBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_read_close_error_fd"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_read_close_error_call");
+        builder.BuildBr(returnErrorBlock);
+
+        builder.PositionAtEnd(returnErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() failed")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeErrorBlock);
+        builder.BuildBr(returnErrorBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_read_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxFileWriteText(LlvmCodegenState state, LLVMValueRef pathRef, LLVMValueRef textRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_write_path");
+        LLVMValueRef fdSlot = builder.BuildAlloca(state.I64, "fs_write_fd");
+        LLVMValueRef remainingSlot = builder.BuildAlloca(state.I64, "fs_write_remaining");
+        LLVMValueRef cursorSlot = builder.BuildAlloca(state.I64, "fs_write_cursor");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_write_result");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), fdSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        var openBlock = state.Function.AppendBasicBlock("fs_write_open");
+        var loopCheckBlock = state.Function.AppendBasicBlock("fs_write_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock("fs_write_loop_body");
+        var advanceBlock = state.Function.AppendBasicBlock("fs_write_advance");
+        var closeOkBlock = state.Function.AppendBasicBlock("fs_write_close_ok");
+        var maybeCloseErrorBlock = state.Function.AppendBasicBlock("fs_write_maybe_close_error");
+        var closeErrorBlock = state.Function.AppendBasicBlock("fs_write_close_error");
+        var returnErrorBlock = state.Function.AppendBasicBlock("fs_write_return_error");
+        var continueBlock = state.Function.AppendBasicBlock("fs_write_continue");
+
+        builder.BuildBr(openBlock);
+
+        builder.PositionAtEnd(openBlock);
+        LLVMValueRef fd = EmitSyscall(
+            state,
+            SyscallOpen,
+            builder.BuildPtrToInt(pathCstr, state.I64, "fs_write_path_ptr"),
+            LLVMValueRef.CreateConstInt(state.I64, 0x241, false),
+            LLVMValueRef.CreateConstInt(state.I64, 420, false),
+            "fs_write_open_call");
+        builder.BuildStore(fd, fdSlot);
+        LLVMValueRef openFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, fd, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_open_failed");
+        builder.BuildStore(LoadStringLength(state, textRef, "fs_write_text_len"), remainingSlot);
+        builder.BuildStore(GetStringBytesAddress(state, textRef, "fs_write_text_ptr"), cursorSlot);
+        builder.BuildCondBr(openFailed, returnErrorBlock, loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef remaining = builder.BuildLoad2(state.I64, remainingSlot, "fs_write_remaining_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, remaining, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_done");
+        builder.BuildCondBr(done, closeOkBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef cursorAddress = builder.BuildLoad2(state.I64, cursorSlot, "fs_write_cursor_value");
+        LLVMValueRef bytesWritten = EmitSyscall(
+            state,
+            SyscallWrite,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_write_fd_value"),
+            cursorAddress,
+            remaining,
+            "fs_write_write_call");
+        LLVMValueRef writeFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, bytesWritten, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_failed");
+        builder.BuildCondBr(writeFailed, maybeCloseErrorBlock, advanceBlock);
+
+        builder.PositionAtEnd(advanceBlock);
+        builder.BuildStore(builder.BuildSub(remaining, bytesWritten, "fs_write_remaining_next"), remainingSlot);
+        builder.BuildStore(builder.BuildAdd(cursorAddress, bytesWritten, "fs_write_cursor_next"), cursorSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(closeOkBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_write_close_fd"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_write_close_ok_call");
+        builder.BuildStore(EmitResultOk(state, EmitUnitValue(state)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(maybeCloseErrorBlock);
+        LLVMValueRef fdValue = builder.BuildLoad2(state.I64, fdSlot, "fs_write_error_fd");
+        LLVMValueRef shouldClose = builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, fdValue, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_should_close");
+        builder.BuildCondBr(shouldClose, closeErrorBlock, returnErrorBlock);
+
+        builder.PositionAtEnd(closeErrorBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            builder.BuildLoad2(state.I64, fdSlot, "fs_write_close_error_fd"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_write_close_error_call");
+        builder.BuildBr(returnErrorBlock);
+
+        builder.PositionAtEnd(returnErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.writeText() failed")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_write_result_value");
+    }
+
+    private static LLVMValueRef EmitLinuxFileExists(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_exists_path");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_exists_result");
+        var openBlock = state.Function.AppendBasicBlock("fs_exists_open");
+        var foundBlock = state.Function.AppendBasicBlock("fs_exists_found");
+        var missingBlock = state.Function.AppendBasicBlock("fs_exists_missing");
+        var continueBlock = state.Function.AppendBasicBlock("fs_exists_continue");
+
+        builder.BuildBr(openBlock);
+
+        builder.PositionAtEnd(openBlock);
+        LLVMValueRef fd = EmitSyscall(
+            state,
+            SyscallOpen,
+            builder.BuildPtrToInt(pathCstr, state.I64, "fs_exists_path_ptr"),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_exists_open_call");
+        LLVMValueRef openFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, fd, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_exists_open_failed");
+        builder.BuildCondBr(openFailed, missingBlock, foundBlock);
+
+        builder.PositionAtEnd(foundBlock);
+        EmitSyscall(
+            state,
+            SyscallClose,
+            fd,
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            LLVMValueRef.CreateConstInt(state.I64, 0, false),
+            "fs_exists_close_call");
+        builder.BuildStore(EmitResultOk(state, LLVMValueRef.CreateConstInt(state.I64, 1, false)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(missingBlock);
+        builder.BuildStore(EmitResultOk(state, LLVMValueRef.CreateConstInt(state.I64, 0, false)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_exists_result_value");
+    }
+
+    private static LLVMValueRef EmitWindowsFileReadText(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_read_path");
+        LLVMValueRef handleSlot = builder.BuildAlloca(state.I64, "fs_read_handle");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_read_result");
+        LLVMValueRef bytesReadSlot = builder.BuildAlloca(state.I32, "fs_read_bytes_read");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), handleSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        var openBlock = state.Function.AppendBasicBlock("fs_read_win_open");
+        var readBlock = state.Function.AppendBasicBlock("fs_read_win_read");
+        var utf8Block = state.Function.AppendBasicBlock("fs_read_win_utf8");
+        var closeOkBlock = state.Function.AppendBasicBlock("fs_read_win_close_ok");
+        var closeInvalidBlock = state.Function.AppendBasicBlock("fs_read_win_close_invalid");
+        var closeErrorBlock = state.Function.AppendBasicBlock("fs_read_win_close_error");
+        var returnErrorBlock = state.Function.AppendBasicBlock("fs_read_win_return_error");
+        var continueBlock = state.Function.AppendBasicBlock("fs_read_win_continue");
+
+        builder.BuildBr(openBlock);
+
+        builder.PositionAtEnd(openBlock);
+        LLVMValueRef handle = EmitWindowsCreateFile(
+            state,
+            pathCstr,
+            unchecked((int)0x80000000),
+            1,
+            3,
+            "fs_read_create_file");
+        builder.BuildStore(handle, handleSlot);
+        LLVMValueRef openFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, handle, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), "fs_read_handle_invalid");
+        builder.BuildCondBr(openFailed, returnErrorBlock, readBlock);
+
+        builder.PositionAtEnd(readBlock);
+        LLVMValueRef stringRef = EmitAllocDynamic(state, LLVMValueRef.CreateConstInt(state.I64, WindowsFileReadLimitBytes + 8, false));
+        StoreMemory(state, stringRef, 0, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_win_len_init");
+        LLVMValueRef readSucceeded = EmitWindowsReadFile(
+            state,
+            builder.BuildLoad2(state.I64, handleSlot, "fs_read_handle_value"),
+            GetStringBytesPointer(state, stringRef, "fs_read_win_bytes"),
+            LLVMValueRef.CreateConstInt(state.I32, WindowsFileReadLimitBytes, false),
+            bytesReadSlot,
+            "fs_read_win_read_call");
+        builder.BuildStore(builder.BuildZExt(builder.BuildLoad2(state.I32, bytesReadSlot, "fs_read_bytes_read_value"), state.I64, "fs_read_bytes_i64"), GetMemoryPointer(state, stringRef, 0, "fs_read_win_len_ptr"));
+        builder.BuildCondBr(readSucceeded, utf8Block, closeErrorBlock);
+
+        builder.PositionAtEnd(utf8Block);
+        LLVMValueRef utf8Valid = EmitValidateUtf8(
+            state,
+            GetStringBytesPointer(state, stringRef, "fs_read_win_utf8_ptr"),
+            LoadStringLength(state, stringRef, "fs_read_win_utf8_len"),
+            "fs_read_win_utf8");
+        LLVMValueRef isUtf8Valid = builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, utf8Valid, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_read_win_is_utf8_valid");
+        builder.BuildCondBr(isUtf8Valid, closeOkBlock, closeInvalidBlock);
+
+        builder.PositionAtEnd(closeOkBlock);
+        EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_read_close_handle"), "fs_read_close_ok");
+        builder.BuildStore(EmitResultOk(state, stringRef), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeInvalidBlock);
+        EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_read_invalid_handle"), "fs_read_close_invalid");
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() encountered invalid UTF-8")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeErrorBlock);
+        EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_read_error_handle"), "fs_read_close_error");
+        builder.BuildBr(returnErrorBlock);
+
+        builder.PositionAtEnd(returnErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readText() failed")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_read_win_result_value");
+    }
+
+    private static LLVMValueRef EmitWindowsFileWriteText(LlvmCodegenState state, LLVMValueRef pathRef, LLVMValueRef textRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_write_path");
+        LLVMValueRef handleSlot = builder.BuildAlloca(state.I64, "fs_write_handle");
+        LLVMValueRef remainingSlot = builder.BuildAlloca(state.I64, "fs_write_remaining");
+        LLVMValueRef cursorSlot = builder.BuildAlloca(state.I64, "fs_write_cursor");
+        LLVMValueRef bytesWrittenSlot = builder.BuildAlloca(state.I32, "fs_write_bytes_written");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_write_result");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), handleSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        var openBlock = state.Function.AppendBasicBlock("fs_write_win_open");
+        var loopCheckBlock = state.Function.AppendBasicBlock("fs_write_win_loop_check");
+        var loopBodyBlock = state.Function.AppendBasicBlock("fs_write_win_loop_body");
+        var advanceBlock = state.Function.AppendBasicBlock("fs_write_win_advance");
+        var closeOkBlock = state.Function.AppendBasicBlock("fs_write_win_close_ok");
+        var closeErrorBlock = state.Function.AppendBasicBlock("fs_write_win_close_error");
+        var returnErrorBlock = state.Function.AppendBasicBlock("fs_write_win_return_error");
+        var continueBlock = state.Function.AppendBasicBlock("fs_write_win_continue");
+
+        builder.BuildBr(openBlock);
+
+        builder.PositionAtEnd(openBlock);
+        LLVMValueRef handle = EmitWindowsCreateFile(
+            state,
+            pathCstr,
+            0x40000000,
+            0,
+            2,
+            "fs_write_create_file");
+        builder.BuildStore(handle, handleSlot);
+        builder.BuildStore(LoadStringLength(state, textRef, "fs_write_win_text_len"), remainingSlot);
+        builder.BuildStore(GetStringBytesAddress(state, textRef, "fs_write_win_text_ptr"), cursorSlot);
+        LLVMValueRef openFailed = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, handle, LLVMValueRef.CreateConstInt(state.I64, unchecked((ulong)(-1L)), true), "fs_write_handle_invalid");
+        builder.BuildCondBr(openFailed, returnErrorBlock, loopCheckBlock);
+
+        builder.PositionAtEnd(loopCheckBlock);
+        LLVMValueRef remaining = builder.BuildLoad2(state.I64, remainingSlot, "fs_write_win_remaining_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, remaining, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_win_done");
+        builder.BuildCondBr(done, closeOkBlock, loopBodyBlock);
+
+        builder.PositionAtEnd(loopBodyBlock);
+        LLVMValueRef chunkSize = builder.BuildSelect(
+            builder.BuildICmp(LLVMIntPredicate.LLVMIntUGT, remaining, LLVMValueRef.CreateConstInt(state.I64, uint.MaxValue, false), "fs_write_win_chunk_gt"),
+            LLVMValueRef.CreateConstInt(state.I64, uint.MaxValue, false),
+            remaining,
+            "fs_write_win_chunk_size");
+        LLVMValueRef wrote = EmitWindowsWriteFile(
+            state,
+            builder.BuildLoad2(state.I64, handleSlot, "fs_write_handle_value"),
+            builder.BuildIntToPtr(builder.BuildLoad2(state.I64, cursorSlot, "fs_write_cursor_value"), state.I8Ptr, "fs_write_cursor_ptr"),
+            builder.BuildTrunc(chunkSize, state.I32, "fs_write_chunk_i32"),
+            bytesWrittenSlot,
+            "fs_write_win_write_call");
+        builder.BuildCondBr(wrote, advanceBlock, closeErrorBlock);
+
+        builder.PositionAtEnd(advanceBlock);
+        LLVMValueRef bytesWritten = builder.BuildZExt(builder.BuildLoad2(state.I32, bytesWrittenSlot, "fs_write_bytes_written_value"), state.I64, "fs_write_bytes_written_i64");
+        LLVMValueRef wroteZero = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, bytesWritten, LLVMValueRef.CreateConstInt(state.I64, 0, false), "fs_write_wrote_zero");
+        var zeroWriteBlock = state.Function.AppendBasicBlock("fs_write_win_zero");
+        var updateBlock = state.Function.AppendBasicBlock("fs_write_win_update");
+        builder.BuildCondBr(wroteZero, zeroWriteBlock, updateBlock);
+
+        builder.PositionAtEnd(zeroWriteBlock);
+        builder.BuildBr(closeErrorBlock);
+
+        builder.PositionAtEnd(updateBlock);
+        LLVMValueRef cursorValue = builder.BuildLoad2(state.I64, cursorSlot, "fs_write_cursor_current");
+        builder.BuildStore(builder.BuildSub(remaining, bytesWritten, "fs_write_remaining_next"), remainingSlot);
+        builder.BuildStore(builder.BuildAdd(cursorValue, bytesWritten, "fs_write_cursor_next"), cursorSlot);
+        builder.BuildBr(loopCheckBlock);
+
+        builder.PositionAtEnd(closeOkBlock);
+        EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_write_close_handle"), "fs_write_close_ok");
+        builder.BuildStore(EmitResultOk(state, EmitUnitValue(state)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(closeErrorBlock);
+        EmitWindowsCloseHandle(state, builder.BuildLoad2(state.I64, handleSlot, "fs_write_error_handle"), "fs_write_close_error");
+        builder.BuildBr(returnErrorBlock);
+
+        builder.PositionAtEnd(returnErrorBlock);
+        builder.BuildStore(EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.writeText() failed")), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_write_win_result_value");
+    }
+
+    private static LLVMValueRef EmitWindowsFileExists(LlvmCodegenState state, LLVMValueRef pathRef)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef pathCstr = EmitStringToCString(state, pathRef, "fs_exists_path");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, "fs_exists_win_result");
+        var checkBlock = state.Function.AppendBasicBlock("fs_exists_win_check");
+        var missingBlock = state.Function.AppendBasicBlock("fs_exists_win_missing");
+        var foundBlock = state.Function.AppendBasicBlock("fs_exists_win_found");
+        var continueBlock = state.Function.AppendBasicBlock("fs_exists_win_continue");
+
+        builder.BuildBr(checkBlock);
+
+        builder.PositionAtEnd(checkBlock);
+        LLVMValueRef attrs = EmitWindowsGetFileAttributes(state, pathCstr, "fs_exists_get_attrs");
+        LLVMValueRef missing = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, attrs, LLVMValueRef.CreateConstInt(state.I32, uint.MaxValue, false), "fs_exists_missing");
+        builder.BuildCondBr(missing, missingBlock, foundBlock);
+
+        builder.PositionAtEnd(foundBlock);
+        builder.BuildStore(EmitResultOk(state, LLVMValueRef.CreateConstInt(state.I64, 1, false)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(missingBlock);
+        builder.BuildStore(EmitResultOk(state, LLVMValueRef.CreateConstInt(state.I64, 0, false)), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, "fs_exists_win_result_value");
+    }
+
+    private static LLVMValueRef EmitStringToCString(LlvmCodegenState state, LLVMValueRef stringRef, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef len = LoadStringLength(state, stringRef, prefix + "_len");
+        LLVMValueRef cstrRef = EmitAllocDynamic(state, builder.BuildAdd(len, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_size"));
+        LLVMValueRef destPtr = builder.BuildIntToPtr(cstrRef, state.I8Ptr, prefix + "_dest");
+        EmitCopyBytes(state, destPtr, GetStringBytesPointer(state, stringRef, prefix + "_src"), len, prefix + "_copy");
+        LLVMValueRef terminatorPtr = builder.BuildGEP2(state.I8, destPtr, new[] { len }, prefix + "_nul_ptr");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I8, 0, false), terminatorPtr);
+        return destPtr;
+    }
+
+    private static LLVMValueRef EmitUnitValue(LlvmCodegenState state)
+    {
+        return EmitAllocAdt(state, 0, 0);
+    }
+
+    private static LLVMValueRef EmitResultOk(LlvmCodegenState state, LLVMValueRef value)
+    {
+        LLVMValueRef result = EmitAllocAdt(state, 0, 1);
+        StoreMemory(state, result, 8, value, "result_ok_value");
+        return result;
+    }
+
+    private static LLVMValueRef EmitResultError(LlvmCodegenState state, LLVMValueRef errorStringRef)
+    {
+        LLVMValueRef result = EmitAllocAdt(state, 1, 1);
+        StoreMemory(state, result, 8, errorStringRef, "result_error_value");
+        return result;
+    }
+
+    private static LLVMValueRef EmitHeapStringLiteral(LlvmCodegenState state, string value)
+    {
+        return EmitHeapStringFromBytes(state, System.Text.Encoding.UTF8.GetBytes(value), "heap_string_literal");
+    }
+
+    private static LLVMValueRef EmitHeapStringFromBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef len = LLVMValueRef.CreateConstInt(state.I64, (ulong)bytes.Count, false);
+        LLVMValueRef stringRef = EmitAllocDynamic(state, builder.BuildAdd(len, LLVMValueRef.CreateConstInt(state.I64, 8, false), prefix + "_size"));
+        StoreMemory(state, stringRef, 0, len, prefix + "_len");
+        LLVMValueRef destPtr = GetStringBytesPointer(state, stringRef, prefix + "_bytes");
+        for (int i = 0; i < bytes.Count; i++)
+        {
+            LLVMValueRef cellPtr = builder.BuildGEP2(
+                state.I8,
+                destPtr,
+                new[] { LLVMValueRef.CreateConstInt(state.I64, (ulong)i, false) },
+                $"{prefix}_byte_ptr_{i}");
+            builder.BuildStore(LLVMValueRef.CreateConstInt(state.I8, bytes[i], false), cellPtr);
+        }
+
+        return stringRef;
+    }
+
+    private static LLVMValueRef GetStringBytesAddress(LlvmCodegenState state, LLVMValueRef stringRef, string name)
+    {
+        return state.Target.Builder.BuildAdd(stringRef, LLVMValueRef.CreateConstInt(state.I64, 8, false), name);
+    }
+
+    private static LLVMValueRef EmitValidateUtf8(LlvmCodegenState state, LLVMValueRef bytesPtr, LLVMValueRef len, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef indexSlot = builder.BuildAlloca(state.I64, prefix + "_index");
+        LLVMValueRef resultSlot = builder.BuildAlloca(state.I64, prefix + "_result");
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), indexSlot);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+
+        var loopBlock = state.Function.AppendBasicBlock(prefix + "_loop");
+        var asciiBlock = state.Function.AppendBasicBlock(prefix + "_ascii");
+        var twoBlock = state.Function.AppendBasicBlock(prefix + "_two");
+        var threeBlock = state.Function.AppendBasicBlock(prefix + "_three");
+        var e0Block = state.Function.AppendBasicBlock(prefix + "_e0");
+        var edBlock = state.Function.AppendBasicBlock(prefix + "_ed");
+        var f0Block = state.Function.AppendBasicBlock(prefix + "_f0");
+        var fourBlock = state.Function.AppendBasicBlock(prefix + "_four");
+        var f4Block = state.Function.AppendBasicBlock(prefix + "_f4");
+        var validBlock = state.Function.AppendBasicBlock(prefix + "_valid");
+        var invalidBlock = state.Function.AppendBasicBlock(prefix + "_invalid");
+        var continueBlock = state.Function.AppendBasicBlock(prefix + "_continue");
+
+        builder.BuildBr(loopBlock);
+
+        builder.PositionAtEnd(loopBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef done = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, index, len, prefix + "_done");
+        var inspectBlock = state.Function.AppendBasicBlock(prefix + "_inspect");
+        builder.BuildCondBr(done, validBlock, inspectBlock);
+
+        builder.PositionAtEnd(inspectBlock);
+        LLVMValueRef firstByte = LoadByteAt(state, bytesPtr, index, prefix + "_byte0");
+        LLVMValueRef firstByte64 = builder.BuildZExt(firstByte, state.I64, prefix + "_byte0_i64");
+        LLVMValueRef isAscii = builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0x80, false), prefix + "_is_ascii");
+        var nonAsciiBlock = state.Function.AppendBasicBlock(prefix + "_non_ascii");
+        builder.BuildCondBr(isAscii, asciiBlock, nonAsciiBlock);
+
+        builder.PositionAtEnd(nonAsciiBlock);
+        LLVMValueRef ltC2 = builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xC2, false), prefix + "_lt_c2");
+        var geC2Block = state.Function.AppendBasicBlock(prefix + "_ge_c2");
+        builder.BuildCondBr(ltC2, invalidBlock, geC2Block);
+
+        builder.PositionAtEnd(geC2Block);
+        LLVMValueRef leDf = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xDF, false), prefix + "_le_df");
+        var gtDfBlock = state.Function.AppendBasicBlock(prefix + "_gt_df");
+        builder.BuildCondBr(leDf, twoBlock, gtDfBlock);
+
+        builder.PositionAtEnd(gtDfBlock);
+        LLVMValueRef isE0 = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xE0, false), prefix + "_is_e0");
+        var afterE0Block = state.Function.AppendBasicBlock(prefix + "_after_e0");
+        builder.BuildCondBr(isE0, e0Block, afterE0Block);
+
+        builder.PositionAtEnd(afterE0Block);
+        LLVMValueRef leEc = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xEC, false), prefix + "_le_ec");
+        var afterEcBlock = state.Function.AppendBasicBlock(prefix + "_after_ec");
+        builder.BuildCondBr(leEc, threeBlock, afterEcBlock);
+
+        builder.PositionAtEnd(afterEcBlock);
+        LLVMValueRef isEd = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xED, false), prefix + "_is_ed");
+        var afterEdBlock = state.Function.AppendBasicBlock(prefix + "_after_ed");
+        builder.BuildCondBr(isEd, edBlock, afterEdBlock);
+
+        builder.PositionAtEnd(afterEdBlock);
+        LLVMValueRef leEf = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xEF, false), prefix + "_le_ef");
+        var afterEfBlock = state.Function.AppendBasicBlock(prefix + "_after_ef");
+        builder.BuildCondBr(leEf, threeBlock, afterEfBlock);
+
+        builder.PositionAtEnd(afterEfBlock);
+        LLVMValueRef isF0 = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xF0, false), prefix + "_is_f0");
+        var afterF0Block = state.Function.AppendBasicBlock(prefix + "_after_f0");
+        builder.BuildCondBr(isF0, f0Block, afterF0Block);
+
+        builder.PositionAtEnd(afterF0Block);
+        LLVMValueRef leF3 = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xF3, false), prefix + "_le_f3");
+        var afterF3Block = state.Function.AppendBasicBlock(prefix + "_after_f3");
+        builder.BuildCondBr(leF3, fourBlock, afterF3Block);
+
+        builder.PositionAtEnd(afterF3Block);
+        LLVMValueRef isF4 = builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, firstByte64, LLVMValueRef.CreateConstInt(state.I64, 0xF4, false), prefix + "_is_f4");
+        builder.BuildCondBr(isF4, f4Block, invalidBlock);
+
+        builder.PositionAtEnd(asciiBlock);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_ascii_next"), indexSlot);
+        builder.BuildBr(loopBlock);
+
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 2, 0x80, 0xBF, prefix + "_two", twoBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0xBF, prefix + "_three", threeBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0xA0, 0xBF, prefix + "_e0", e0Block, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0x9F, prefix + "_ed", edBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x90, 0xBF, prefix + "_f0", f0Block, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0xBF, prefix + "_four", fourBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0x8F, prefix + "_f4", f4Block, loopBlock, invalidBlock);
+
+        builder.PositionAtEnd(validBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 1, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(invalidBlock);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I64, 0, false), resultSlot);
+        builder.BuildBr(continueBlock);
+
+        builder.PositionAtEnd(continueBlock);
+        return builder.BuildLoad2(state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static void EmitUtf8SequenceValidation(
+        LlvmCodegenState state,
+        LLVMValueRef bytesPtr,
+        LLVMValueRef len,
+        LLVMValueRef indexSlot,
+        int sequenceLength,
+        int secondByteMin,
+        int secondByteMax,
+        string prefix,
+        LLVMBasicBlockRef entryBlock,
+        LLVMBasicBlockRef successBlock,
+        LLVMBasicBlockRef invalidBlock)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        builder.PositionAtEnd(entryBlock);
+        LLVMValueRef index = builder.BuildLoad2(state.I64, indexSlot, prefix + "_index_value");
+        LLVMValueRef remaining = builder.BuildSub(len, index, prefix + "_remaining");
+        LLVMValueRef enoughBytes = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, remaining, LLVMValueRef.CreateConstInt(state.I64, (ulong)sequenceLength, false), prefix + "_enough");
+        var bodyBlock = state.Function.AppendBasicBlock(prefix + "_body");
+        builder.BuildCondBr(enoughBytes, bodyBlock, invalidBlock);
+
+        builder.PositionAtEnd(bodyBlock);
+        LLVMValueRef secondByte = LoadByteAt(state, bytesPtr, builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, 1, false), prefix + "_second_index"), prefix + "_second_byte");
+        LLVMValueRef secondByte64 = builder.BuildZExt(secondByte, state.I64, prefix + "_second_i64");
+        LLVMValueRef secondInRange = BuildByteRangeCheck(state, secondByte64, secondByteMin, secondByteMax, prefix + "_second_range");
+        LLVMBasicBlockRef nextBlock = bodyBlock;
+        for (int offset = 2; offset < sequenceLength; offset++)
+        {
+            var checkBlock = state.Function.AppendBasicBlock(prefix + "_cont_" + offset);
+            builder.BuildCondBr(secondInRange, checkBlock, invalidBlock);
+            builder.PositionAtEnd(checkBlock);
+            nextBlock = checkBlock;
+            LLVMValueRef extraByte = LoadByteAt(state, bytesPtr, builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, (ulong)offset, false), prefix + "_idx_" + offset), prefix + "_byte_" + offset);
+            LLVMValueRef extraByte64 = builder.BuildZExt(extraByte, state.I64, prefix + "_byte_i64_" + offset);
+            LLVMValueRef extraInRange = BuildByteRangeCheck(state, extraByte64, 0x80, 0xBF, prefix + "_range_" + offset);
+            secondInRange = extraInRange;
+        }
+
+        builder.PositionAtEnd(nextBlock);
+        LLVMBasicBlockRef advanceBlock = state.Function.AppendBasicBlock(prefix + "_advance");
+        builder.BuildCondBr(secondInRange, advanceBlock, invalidBlock);
+        builder.PositionAtEnd(advanceBlock);
+        builder.BuildStore(builder.BuildAdd(index, LLVMValueRef.CreateConstInt(state.I64, (ulong)sequenceLength, false), prefix + "_next"), indexSlot);
+        builder.BuildBr(successBlock);
+    }
+
+    private static LLVMValueRef BuildByteRangeCheck(LlvmCodegenState state, LLVMValueRef byteValue, int minInclusive, int maxInclusive, string prefix)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMValueRef geMin = builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, byteValue, LLVMValueRef.CreateConstInt(state.I64, (ulong)minInclusive, false), prefix + "_ge_min");
+        LLVMValueRef leMax = builder.BuildICmp(LLVMIntPredicate.LLVMIntULE, byteValue, LLVMValueRef.CreateConstInt(state.I64, (ulong)maxInclusive, false), prefix + "_le_max");
+        return builder.BuildAnd(geMin, leMax, prefix + "_in_range");
+    }
+
+    private static LLVMValueRef LoadByteAt(LlvmCodegenState state, LLVMValueRef bytesPtr, LLVMValueRef index, string name)
+    {
+        LLVMValueRef bytePtr = state.Target.Builder.BuildGEP2(state.I8, bytesPtr, new[] { index }, name + "_ptr");
+        return state.Target.Builder.BuildLoad2(state.I8, bytePtr, name);
+    }
+
+    private static LLVMValueRef EmitWindowsCreateFile(LlvmCodegenState state, LLVMValueRef pathCstr, int desiredAccess, int shareMode, int creationDisposition, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef createFileType = LLVMTypeRef.CreateFunction(state.I64, [state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I32, state.I32, state.I64]);
+        LLVMValueRef createFilePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(createFileType, 0),
+            state.WindowsCreateFileImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            createFileType,
+            createFilePtr,
+            new[]
+            {
+                pathCstr,
+                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)desiredAccess), true),
+                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)shareMode), false),
+                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_security"),
+                LLVMValueRef.CreateConstInt(state.I32, unchecked((uint)creationDisposition), false),
+                LLVMValueRef.CreateConstInt(state.I32, 0x80, false),
+                LLVMValueRef.CreateConstInt(state.I64, 0, false)
+            },
+            name);
+    }
+
+    private static void EmitWindowsCloseHandle(LlvmCodegenState state, LLVMValueRef handle, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef closeHandleType = LLVMTypeRef.CreateFunction(state.I32, [state.I64]);
+        LLVMValueRef closeHandlePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(closeHandleType, 0),
+            state.WindowsCloseHandleImport,
+            name + "_ptr");
+        builder.BuildCall2(
+            closeHandleType,
+            closeHandlePtr,
+            new[] { handle },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsGetFileAttributes(LlvmCodegenState state, LLVMValueRef pathCstr, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef getFileAttributesType = LLVMTypeRef.CreateFunction(state.I32, [state.I8Ptr]);
+        LLVMValueRef getFileAttributesPtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(getFileAttributesType, 0),
+            state.WindowsGetFileAttributesImport,
+            name + "_ptr");
+        return builder.BuildCall2(
+            getFileAttributesType,
+            getFileAttributesPtr,
+            new[] { pathCstr },
+            name);
+    }
+
+    private static LLVMValueRef EmitWindowsReadFile(LlvmCodegenState state, LLVMValueRef handle, LLVMValueRef buffer, LLVMValueRef len, LLVMValueRef bytesReadSlot, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef readFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesReadSlot);
+        LLVMValueRef readFilePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(readFileType, 0),
+            state.WindowsReadFileImport,
+            name + "_ptr");
+        LLVMValueRef callResult = builder.BuildCall2(
+            readFileType,
+            readFilePtr,
+            new[]
+            {
+                handle,
+                buffer,
+                len,
+                bytesReadSlot,
+                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_overlapped")
+            },
+            name);
+        return builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, callResult, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
+    }
+
+    private static LLVMValueRef EmitWindowsWriteFile(LlvmCodegenState state, LLVMValueRef handle, LLVMValueRef buffer, LLVMValueRef len, LLVMValueRef bytesWrittenSlot, string name)
+    {
+        LLVMBuilderRef builder = state.Target.Builder;
+        LLVMTypeRef writeFileType = LLVMTypeRef.CreateFunction(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        builder.BuildStore(LLVMValueRef.CreateConstInt(state.I32, 0, false), bytesWrittenSlot);
+        LLVMValueRef writeFilePtr = builder.BuildLoad2(
+            LLVMTypeRef.CreatePointer(writeFileType, 0),
+            state.WindowsWriteFileImport,
+            name + "_ptr");
+        LLVMValueRef callResult = builder.BuildCall2(
+            writeFileType,
+            writeFilePtr,
+            new[]
+            {
+                handle,
+                buffer,
+                len,
+                bytesWrittenSlot,
+                builder.BuildIntToPtr(LLVMValueRef.CreateConstInt(state.I64, 0, false), state.I8Ptr, name + "_overlapped")
+            },
+            name);
+        return builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, callResult, LLVMValueRef.CreateConstInt(state.I32, 0, false), name + "_success");
     }
 
     private static bool EmitPrintInt(LlvmCodegenState state, LLVMValueRef value)
@@ -1514,6 +2384,9 @@ internal static class LlvmCodegen
         LLVMValueRef WindowsGetStdHandleImport,
         LLVMValueRef WindowsWriteFileImport,
         LLVMValueRef WindowsReadFileImport,
+        LLVMValueRef WindowsCreateFileImport,
+        LLVMValueRef WindowsCloseHandleImport,
+        LLVMValueRef WindowsGetFileAttributesImport,
         LLVMValueRef WindowsExitProcessImport,
         LLVMValueRef WindowsGetCommandLineImport,
         LLVMValueRef WindowsWideCharToMultiByteImport,
@@ -1555,6 +2428,9 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr => true,
             IrInst.LoadProgramArgs => true,
             IrInst.ReadLine => true,
+            IrInst.FileReadText => true,
+            IrInst.FileWriteText => true,
+            IrInst.FileExists => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,
@@ -1609,6 +2485,9 @@ internal static class LlvmCodegen
             IrInst.LoadConstStr => true,
             IrInst.LoadProgramArgs => true,
             IrInst.ReadLine => true,
+            IrInst.FileReadText => true,
+            IrInst.FileWriteText => true,
+            IrInst.FileExists => true,
             IrInst.LoadLocal => true,
             IrInst.StoreLocal => true,
             IrInst.LoadEnv => true,

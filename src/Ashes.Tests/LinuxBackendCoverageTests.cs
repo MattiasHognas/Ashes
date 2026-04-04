@@ -8,6 +8,7 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
+[NotInParallel]
 public sealed class LinuxBackendCoverageTests
 {
     [Test]
@@ -133,6 +134,14 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_support_check_should_accept_file_programs()
+    {
+        var ir = LowerExpression("""match Ashes.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0""");
+
+        SupportsMinimalLlvm("SupportsMinimalLinuxLlvm", ir).ShouldBeTrue();
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_print_programs()
     {
         var ir = LowerExpression("Ashes.IO.write(\"hi\")");
@@ -220,6 +229,94 @@ public sealed class LinuxBackendCoverageTests
             """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
             stdin: "");
         result.Stdout.ShouldBe("none\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_file_read_text_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello");
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            workingDirectory: tmpDir);
+        result.Stdout.ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_report_missing_file_read_errors()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            workingDirectory: tmpDir);
+        result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_report_invalid_utf8_file_read_errors()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        await File.WriteAllBytesAsync(Path.Combine(tmpDir, "bad.bin"), [0xFF, 0xFE, 0xFD]);
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.File.readText("bad.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            workingDirectory: tmpDir);
+        result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_file_write_text_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+            workingDirectory: tmpDir);
+        result.Stdout.ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_file_exists_programs()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x");
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
+            workingDirectory: tmpDir);
+        result.Stdout.ShouldBe("true:false\n");
     }
 
     [Test]
@@ -343,13 +440,13 @@ public sealed class LinuxBackendCoverageTests
         return (bool)method.Invoke(null, [ir])!;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, expectedExitCode);
+        return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
     {
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
 
@@ -373,6 +470,10 @@ public sealed class LinuxBackendCoverageTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        if (workingDirectory is not null)
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
         if (args is not null)
         {
             foreach (var arg in args)

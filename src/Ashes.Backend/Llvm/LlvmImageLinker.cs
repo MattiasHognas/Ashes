@@ -105,6 +105,9 @@ internal static class LlvmImageLinker
         var getStdHandleHintName = WriteImportHintName(rdata, 0, "GetStdHandle");
         var writeFileHintName = WriteImportHintName(rdata, 0, "WriteFile");
         var readFileHintName = WriteImportHintName(rdata, 0, "ReadFile");
+        var createFileHintName = WriteImportHintName(rdata, 0, "CreateFileA");
+        var closeHandleHintName = WriteImportHintName(rdata, 0, "CloseHandle");
+        var getFileAttributesHintName = WriteImportHintName(rdata, 0, "GetFileAttributesA");
         var getCommandLineHintName = WriteImportHintName(rdata, 0, "GetCommandLineW");
         var wideCharToMultiByteHintName = WriteImportHintName(rdata, 0, "WideCharToMultiByte");
         var localFreeHintName = WriteImportHintName(rdata, 0, "LocalFree");
@@ -112,10 +115,10 @@ internal static class LlvmImageLinker
         Align(rdata, 8);
         int iatSectionOffset = (int)rdata.Stream.Length;
 
-        var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
+        var kernel32Iat = new PEImportAddressTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, createFileHintName, closeHandleHintName, getFileAttributesHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
         var shell32Iat = new PEImportAddressTable64() { commandLineToArgvHintName };
         var iatDirectory = new PEImportAddressTableDirectory() { kernel32Iat, shell32Iat };
-        var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
+        var kernel32Ilt = new PEImportLookupTable64() { exitProcessHintName, getStdHandleHintName, writeFileHintName, readFileHintName, createFileHintName, closeHandleHintName, getFileAttributesHintName, getCommandLineHintName, wideCharToMultiByteHintName, localFreeHintName };
         var shell32Ilt = new PEImportLookupTable64() { commandLineToArgvHintName };
         var importDirectory = new PEImportDirectory
         {
@@ -131,10 +134,13 @@ internal static class LlvmImageLinker
         ulong getStdHandleIatVa = exitProcessIatVa + 8;
         ulong writeFileIatVa = exitProcessIatVa + 16;
         ulong readFileIatVa = exitProcessIatVa + 24;
-        ulong getCommandLineIatVa = exitProcessIatVa + 32;
-        ulong wideCharToMultiByteIatVa = exitProcessIatVa + 40;
-        ulong localFreeIatVa = exitProcessIatVa + 48;
-        ulong commandLineToArgvIatVa = exitProcessIatVa + 64;
+        ulong createFileIatVa = exitProcessIatVa + 32;
+        ulong closeHandleIatVa = exitProcessIatVa + 40;
+        ulong getFileAttributesIatVa = exitProcessIatVa + 48;
+        ulong getCommandLineIatVa = exitProcessIatVa + 56;
+        ulong wideCharToMultiByteIatVa = exitProcessIatVa + 64;
+        ulong localFreeIatVa = exitProcessIatVa + 72;
+        ulong commandLineToArgvIatVa = exitProcessIatVa + 88;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -153,6 +159,9 @@ internal static class LlvmImageLinker
                 ["__imp_GetStdHandle"] = getStdHandleIatVa,
                 ["__imp_WriteFile"] = writeFileIatVa,
                 ["__imp_ReadFile"] = readFileIatVa,
+                ["__imp_CreateFileA"] = createFileIatVa,
+                ["__imp_CloseHandle"] = closeHandleIatVa,
+                ["__imp_GetFileAttributesA"] = getFileAttributesIatVa,
                 ["__imp_GetCommandLineW"] = getCommandLineIatVa,
                 ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
                 ["__imp_LocalFree"] = localFreeIatVa,
