@@ -30,7 +30,7 @@ internal static class LlvmImageLinker
         typeof(PEOptionalHeader)
             .GetProperty(nameof(PEOptionalHeader.ImageBase), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
             .GetSetMethod(nonPublic: true)
-        ?? throw new InvalidOperationException("LibObjectFile.PEOptionalHeader.ImageBase setter was not found.");
+        ?? throw new InvalidOperationException("LibObjectFile.PE.PEOptionalHeader.ImageBase setter was not found.");
 
     public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
     {
