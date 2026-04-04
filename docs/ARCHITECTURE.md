@@ -139,7 +139,7 @@ are used.
 
 #### Updating LLVM native libraries
 
-The native libraries live in `lib/Ashes/{linux-x64,win-x64}/` and are
+The native libraries live in `runtimes/{linux-x64,win-x64}/` and are
 **not** checked into Git (see `.gitignore`). They must be provisioned
 before building `Ashes.Backend`:
 

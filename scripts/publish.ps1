@@ -31,14 +31,7 @@ foreach ($RID in @("win-x64", "linux-x64")) {
         Remove-Item (Join-Path $OutputDir "lib") -Recurse -Force
     }
 
-    # Copy standard library .ash files but exclude native LLVM binaries.
-    # Native libLLVM is already included in the self-contained publish output
-    # via OS-conditional <None> items in Ashes.Backend.csproj.
-    $DestLib = Join-Path $OutputDir "lib"
-    robocopy $LibSource $DestLib /E /XD linux-x64 win-x64 /NFL /NDL /NJH /NJS /NC /NS /NP
-    # robocopy returns 0-7 on success; only >=8 indicates failure.
-    if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
-    $LASTEXITCODE = 0
+    Copy-Item $LibSource (Join-Path $OutputDir "lib") -Recurse
 }
 
 Write-Host "Done."

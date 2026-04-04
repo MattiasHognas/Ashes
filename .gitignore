@@ -72,8 +72,7 @@ llvm-material
 
 
 # Native LLVM libraries (downloaded via scripts/download-llvm-native.*)
-lib/Ashes/linux-x64/
-lib/Ashes/win-x64/
+runtimes/
 
 # Personal files
 PLANNED_ISSUES*.md

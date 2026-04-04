@@ -18,15 +18,15 @@
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <None Include="..\..\lib\Ashes\win-x64\libLLVM.dll"
-          Condition="Exists('..\..\lib\Ashes\win-x64\libLLVM.dll')"
+    <None Include="..\..\runtimes\win-x64\libLLVM.dll"
+          Condition="Exists('..\..\runtimes\win-x64\libLLVM.dll')"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.dll" />
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
-    <None Include="..\..\lib\Ashes\linux-x64\libLLVM.so"
-          Condition="Exists('..\..\lib\Ashes\linux-x64\libLLVM.so')"
+    <None Include="..\..\runtimes\linux-x64\libLLVM.so"
+          Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so')"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.so" />
   </ItemGroup>

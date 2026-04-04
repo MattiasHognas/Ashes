@@ -27,9 +27,7 @@ for RID in win-x64 linux-x64; do
     --no-restore
 
   rm -rf "$OUTPUT_DIR/lib"
-  # Copy standard library .ash files but exclude native LLVM binaries
-  # (the self-contained publish already includes libLLVM in the app root).
-  rsync -a --exclude='linux-x64/' --exclude='win-x64/' "$LIB_SOURCE/" "$OUTPUT_DIR/lib/"
+  cp -R "$LIB_SOURCE" "$OUTPUT_DIR/lib"
 done
 
 chmod +x "$REPO_ROOT/dist/linux-x64/ashes"
