@@ -85,7 +85,7 @@
     "build-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.5.2",
     "@types/vscode": "^1.110.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.2",
