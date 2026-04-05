@@ -355,12 +355,15 @@ internal static partial class LlvmImageLinker
                 continue;
             }
 
-            // Collect debug relocation sections (.rela.debug_*)
-            if (sectionName.StartsWith(".rela.debug", StringComparison.Ordinal)
+            // DWARF sections commonly require relocation fixups. This linker copies
+            // debug sections verbatim, so fail fast rather than emitting unusable
+            // debug information when relocatable DWARF is present.
+            if ((sectionName.StartsWith(".rela.debug", StringComparison.Ordinal)
+                    || sectionName.StartsWith(".rel.debug", StringComparison.Ordinal))
                 && (section.Type == SectionTypeRela || section.Type == SectionTypeRel))
             {
-                debugRelocationSections.Add(section);
-                continue;
+                throw new InvalidOperationException(
+                    $"ELF object contains debug relocation section '{sectionName}', but this linker does not apply DWARF relocations when copying debug sections.");
             }
 
             if ((section.Flags & ElfSectionFlagAlloc) == 0)
