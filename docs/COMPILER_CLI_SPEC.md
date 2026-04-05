@@ -75,9 +75,9 @@ The following option is accepted by **compile** and **run** only:
 
 | Value | Platform |
 |-------|----------|
-| `linux-x64` | Linux x86-64 — emits a native ELF64 binary (default on Linux x86-64) |
-| `linux-arm64` | Linux AArch64 — emits a native ELF64 binary (default on Linux ARM64) |
-| `windows-x64` | Windows x86-64 — emits a native PE32+ binary (default on Windows) |
+| `linux-x64` | Linux x86-64 — emits a native ELF64 binary |
+| `linux-arm64` | Linux AArch64 — emits a native ELF64 binary |
+| `windows-x64` | Windows x86-64 — emits a native PE32+ binary |
 
 Any other value is rejected with an error message and exit code **1**.
 
