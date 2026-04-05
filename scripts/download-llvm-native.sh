@@ -43,9 +43,20 @@ fi
 sudo apt-get install -y -qq "libllvm${LLVM_MAJOR}"
 
 # ── Locate the installed .so ─────────────────────────────────────────────────
-SO_PATH=$(ldconfig -p | grep "libLLVM-${LLVM_MAJOR}.so" | awk '{print $NF}' | head -1)
+# Newer LLVM versions use libLLVM.so.<major>.<minor> naming; older versions
+# use libLLVM-<major>.so.  Try both patterns via ldconfig, then fall back to
+# the well-known filesystem paths.
+SO_PATH=$(ldconfig -p | grep -E "libLLVM[-.]${LLVM_MAJOR}[.]so|libLLVM[.]so[.]${LLVM_MAJOR}" | awk '{print $NF}' | head -1 || true)
 if [ -z "$SO_PATH" ]; then
-    SO_PATH="/usr/lib/x86_64-linux-gnu/libLLVM-${LLVM_MAJOR}.so"
+    # Filesystem fallback (covers both naming conventions)
+    for candidate in \
+        "/usr/lib/x86_64-linux-gnu/libLLVM-${LLVM_MAJOR}.so" \
+        "/usr/lib/x86_64-linux-gnu/libLLVM.so.${LLVM_MAJOR}"*; do
+        if [ -f "$candidate" ]; then
+            SO_PATH="$candidate"
+            break
+        fi
+    done
 fi
 
 if [ ! -f "$SO_PATH" ]; then

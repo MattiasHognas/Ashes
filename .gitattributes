@@ -1,4 +1,2 @@
 # Enforce LF line endings for all text files to keep editorconfig (end_of_line = lf) consistent
 * text=auto eol=lf
-# runtimes/linux-x64/libLLVM.so filter=lfs diff=lfs merge=lfs -text
-# runtimes/win-x64/libLLVM.dll filter=lfs diff=lfs merge=lfs -text
