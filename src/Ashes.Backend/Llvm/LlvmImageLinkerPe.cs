@@ -139,25 +139,28 @@ internal static partial class LlvmImageLinker
 
         int importDirSize = (int)rdataStream.Position - importDirOffset;
 
-        ulong exitProcessIatVa = PeImageBase + rdataRva + (ulong)iatSectionOffset;
-        ulong getStdHandleIatVa = exitProcessIatVa + 8;
-        ulong writeFileIatVa = exitProcessIatVa + 16;
-        ulong readFileIatVa = exitProcessIatVa + 24;
-        ulong createFileIatVa = exitProcessIatVa + 32;
-        ulong closeHandleIatVa = exitProcessIatVa + 40;
-        ulong getFileAttributesIatVa = exitProcessIatVa + 48;
-        ulong getCommandLineIatVa = exitProcessIatVa + 56;
-        ulong wideCharToMultiByteIatVa = exitProcessIatVa + 64;
-        ulong localFreeIatVa = exitProcessIatVa + 72;
-        // kernel32 IAT has 10 entries + null = 88 bytes; shell32 IAT starts at iatSectionOffset + 88
-        ulong commandLineToArgvIatVa = exitProcessIatVa + 88;
-        // shell32 IAT has 1 entry + null = 16 bytes; ws2 IAT starts at iatSectionOffset + 104
-        ulong wsaStartupIatVa = exitProcessIatVa + 104;
-        ulong socketIatVa = exitProcessIatVa + 112;
-        ulong connectIatVa = exitProcessIatVa + 120;
-        ulong sendIatVa = exitProcessIatVa + 128;
-        ulong recvIatVa = exitProcessIatVa + 136;
-        ulong closeSocketIatVa = exitProcessIatVa + 144;
+        // Compute IAT VAs from recorded offsets — each entry is 8 bytes.
+        ulong kernel32IatVa = PeImageBase + rdataRva + (ulong)kernel32IatOffset;
+        ulong shell32IatVa = PeImageBase + rdataRva + (ulong)shell32IatOffset;
+        ulong ws2IatVa = PeImageBase + rdataRva + (ulong)ws2IatOffset;
+
+        ulong exitProcessIatVa = kernel32IatVa;
+        ulong getStdHandleIatVa = kernel32IatVa + 1 * 8;
+        ulong writeFileIatVa = kernel32IatVa + 2 * 8;
+        ulong readFileIatVa = kernel32IatVa + 3 * 8;
+        ulong createFileIatVa = kernel32IatVa + 4 * 8;
+        ulong closeHandleIatVa = kernel32IatVa + 5 * 8;
+        ulong getFileAttributesIatVa = kernel32IatVa + 6 * 8;
+        ulong getCommandLineIatVa = kernel32IatVa + 7 * 8;
+        ulong wideCharToMultiByteIatVa = kernel32IatVa + 8 * 8;
+        ulong localFreeIatVa = kernel32IatVa + 9 * 8;
+        ulong commandLineToArgvIatVa = shell32IatVa;
+        ulong wsaStartupIatVa = ws2IatVa;
+        ulong socketIatVa = ws2IatVa + 1 * 8;
+        ulong connectIatVa = ws2IatVa + 2 * 8;
+        ulong sendIatVa = ws2IatVa + 3 * 8;
+        ulong recvIatVa = ws2IatVa + 4 * 8;
+        ulong closeSocketIatVa = ws2IatVa + 5 * 8;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -268,8 +271,8 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff, 2), 0x020B);       // Magic: PE32+
         output[optOff + 2] = 1;  // MajorLinkerVersion
         output[optOff + 3] = 0;  // MinorLinkerVersion
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 4, 4), (uint)codeBytes.Length);  // SizeOfCode
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 8, 4), (uint)rdataBytes.Length); // SizeOfInitializedData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 4, 4), textRawSize);   // SizeOfCode
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 8, 4), rdataRawSize);  // SizeOfInitializedData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 12, 4), bssTotalSize);           // SizeOfUninitializedData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 16, 4), PeTextRva);              // AddressOfEntryPoint
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 20, 4), PeTextRva);              // BaseOfCode
