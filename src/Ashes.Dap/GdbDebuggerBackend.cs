@@ -43,8 +43,9 @@ public sealed class GdbDebuggerBackend : IDisposable
         _gdbIn = _gdb.StandardInput;
         _gdbIn.AutoFlush = true;
 
-        // Start reading GDB output
+        // Start reading GDB output and draining stderr to prevent pipe buffer deadlocks
         _ = Task.Run(() => ReadGdbOutputAsync(_gdb.StandardOutput));
+        _ = Task.Run(() => DrainStreamAsync(_gdb.StandardError));
 
         // Wait for initial GDB prompt
         await Task.Delay(200);
@@ -137,6 +138,19 @@ public sealed class GdbDebuggerBackend : IDisposable
             {
                 ProcessGdbLine(line);
             }
+        }
+        catch (ObjectDisposedException)
+        {
+            // GDB process was disposed
+        }
+    }
+
+    private static async Task DrainStreamAsync(StreamReader reader)
+    {
+        try
+        {
+            var buffer = new char[1024];
+            while (await reader.ReadAsync(buffer, 0, buffer.Length) > 0) { }
         }
         catch (ObjectDisposedException)
         {
