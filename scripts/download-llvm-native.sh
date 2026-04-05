@@ -83,9 +83,9 @@ if [ "$CROSS_MODE" = true ]; then
 
     # Add architecture-specific package sources
     if [ "$DEB_ARCH" = "arm64" ]; then
-        PORTS_URL="http://ports.ubuntu.com/ubuntu-ports"
+        PORTS_URL="https://ports.ubuntu.com/ubuntu-ports"
     else
-        PORTS_URL="http://archive.ubuntu.com/ubuntu"
+        PORTS_URL="https://archive.ubuntu.com/ubuntu"
     fi
     echo "deb [arch=${DEB_ARCH}] ${PORTS_URL} ${CODENAME} main universe" \
         | sudo tee /etc/apt/sources.list.d/${DEB_ARCH}-ports.list
@@ -99,7 +99,9 @@ if [ "$CROSS_MODE" = true ]; then
         | sudo tee /etc/apt/sources.list.d/llvm-${LLVM_MAJOR}-${DEB_ARCH}.list
 
     # Update may warn about repos that don't carry the new arch — that's expected
-    sudo apt-get update -qq 2>/dev/null || true
+    if ! sudo apt-get update -qq 2>/tmp/apt-update-cross.log; then
+        echo "  (apt-get update reported warnings — this is expected when adding a cross-arch; check /tmp/apt-update-cross.log if the download below fails)"
+    fi
 
     # Download and extract the .deb (don't install — wrong arch for host)
     TMPDIR=$(mktemp -d)
@@ -120,7 +122,9 @@ if [ "$CROSS_MODE" = true ]; then
     done
 
     if [ -z "$SO_PATH" ]; then
-        echo "ERROR: libLLVM for ${DEB_ARCH} not found in extracted .deb" >&2
+        echo "ERROR: libLLVM for ${DEB_ARCH} not found in extracted .deb." >&2
+        echo "  This may indicate the package structure has changed or DEB_ARCH='${DEB_ARCH}' is incorrect." >&2
+        echo "  Expected path: extracted/usr/lib/${LIB_ARCH_DIR}/libLLVM-${LLVM_MAJOR}.so (or similar)" >&2
         ls -la "extracted/usr/lib/${LIB_ARCH_DIR}/" 2>/dev/null || true
         exit 1
     fi
