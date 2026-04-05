@@ -51,7 +51,7 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows, options);
 
         VerifyModule(target);
         byte[] objectBytes = EmitObjectCode(target);
@@ -62,7 +62,7 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux, options);
 
         VerifyModule(target);
         byte[] objectBytes = EmitObjectCode(target);
@@ -115,7 +115,8 @@ internal static partial class LlvmCodegen
         LlvmTargetContext target,
         IrProgram program,
         string entryFunctionName,
-        LlvmCodegenFlavor flavor)
+        LlvmCodegenFlavor flavor,
+        Backends.BackendCompileOptions options)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
@@ -276,6 +277,17 @@ internal static partial class LlvmCodegen
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 
+        // Debug info setup (Phase 2b)
+        using var dbg = CreateDebugInfoContext(target, options, program);
+        if (dbg is not null)
+        {
+            SetupFunctionDebugInfo(dbg, entryFunction, program.EntryFunction);
+            foreach (IrFunction function in program.Functions)
+            {
+                SetupFunctionDebugInfo(dbg, liftedFunctions[function.Label], function);
+            }
+        }
+
         EmitFunctionBody(
             target,
             entryFunction,
@@ -305,7 +317,8 @@ internal static partial class LlvmCodegen
             windowsWideCharToMultiByteImport,
             windowsLocalFreeImport,
             windowsCommandLineToArgvImport,
-            isEntry: true);
+            isEntry: true,
+            debugContext: dbg);
 
         foreach (IrFunction function in program.Functions)
         {
@@ -338,8 +351,11 @@ internal static partial class LlvmCodegen
                 windowsWideCharToMultiByteImport,
                 windowsLocalFreeImport,
                 windowsCommandLineToArgvImport,
-                isEntry: false);
+                isEntry: false,
+                debugContext: dbg);
         }
+
+        dbg?.FinalizeDebugInfo();
     }
 
     private static bool ProgramUsesInstruction<TInstruction>(IrProgram program)
@@ -383,7 +399,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsWideCharToMultiByteImport,
         LlvmValueHandle windowsLocalFreeImport,
         LlvmValueHandle windowsCommandLineToArgvImport,
-        bool isEntry)
+        bool isEntry,
+        DebugInfoContext? debugContext = null)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
@@ -509,6 +526,7 @@ internal static partial class LlvmCodegen
                 terminated = false;
             }
 
+            EmitInstructionDebugLocation(debugContext, target.Builder, instruction, function.Label);
             terminated = EmitInstruction(state, instruction, index);
         }
 
