@@ -17,6 +17,41 @@ jobs:
       - name: Download LLVM native library
         run: bash scripts/download-llvm-native.sh
 
+      - name: Download ARM64 LLVM native library (cross-compilation)
+        run: |
+          set -euo pipefail
+          LLVM_MAJOR=22
+          CODENAME=$(lsb_release -cs)
+
+          sudo dpkg --add-architecture arm64
+
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
+
+          # Add LLVM arm64 repo in case libllvm is not in default Ubuntu repos
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/llvm-archive-keyring-arm64.gpg > /dev/null
+          echo "deb [arch=arm64,signed-by=/usr/share/keyrings/llvm-archive-keyring-arm64.gpg] https://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-${LLVM_MAJOR}-arm64.list
+
+          sudo apt-get update -qq 2>/dev/null || true
+
+          mkdir -p /tmp/arm64-deb
+          cd /tmp/arm64-deb
+          apt-get download "libllvm${LLVM_MAJOR}:arm64"
+          dpkg-deb -x libllvm${LLVM_MAJOR}_*.deb extracted/
+
+          SO_PATH=$(find extracted/usr/lib/aarch64-linux-gnu -name "libLLVM*" | head -1)
+          if [ -z "$SO_PATH" ]; then
+            echo "ERROR: Could not find ARM64 libLLVM in extracted .deb" >&2
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/runtimes/linux-arm64"
+          cp -f "$SO_PATH" "$GITHUB_WORKSPACE/runtimes/linux-arm64/libLLVM.so"
+          SO_SIZE=$(du -h "$GITHUB_WORKSPACE/runtimes/linux-arm64/libLLVM.so" | cut -f1)
+          echo "  -> Copied ARM64 libLLVM.so ($SO_SIZE) to runtimes/linux-arm64/"
+
       - name: Download Windows LLVM native library
         shell: pwsh
         run: ./scripts/download-llvm-native.ps1
@@ -47,6 +82,7 @@ jobs:
       - name: Publish Ashes CLI binaries
         run: |
           dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-x64
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-arm64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-arm64
           dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/win-x64
 
       - name: Upload Ashes CLI binaries
@@ -76,16 +112,10 @@ jobs:
         include:
           - os: ubuntu-latest
             cli-path: artifacts/ashes/linux-x64/ashes
-            artifact-name: ashes-cli-binaries
-            artifact-path: artifacts/ashes
           - os: ubuntu-24.04-arm
             cli-path: artifacts/ashes/linux-arm64/ashes
-            artifact-name: ashes-cli-linux-arm64
-            artifact-path: artifacts/ashes/linux-arm64
           - os: windows-latest
             cli-path: artifacts\ashes\win-x64\ashes.exe
-            artifact-name: ashes-cli-binaries
-            artifact-path: artifacts/ashes
       fail-fast: false
 
     steps:
@@ -95,8 +125,8 @@ jobs:
       - name: Download Ashes CLI binaries
         uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-path }}
+          name: ashes-cli-binaries
+          path: artifacts/ashes
 
       - name: Run examples (Linux)
         if: runner.os == 'Linux'
