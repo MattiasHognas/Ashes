@@ -22,6 +22,10 @@
           Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so')"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.so" />
+    <None Include="..\..\runtimes\linux-arm64\libLLVM.so"
+          Condition="Exists('..\..\runtimes\linux-arm64\libLLVM.so')"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="libLLVM.so" />
   </ItemGroup>
 
 </Project>
