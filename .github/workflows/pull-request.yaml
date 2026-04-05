@@ -66,40 +66,8 @@ jobs:
           overwrite: true
           retention-days: 365
 
-  build-arm64:
-    runs-on: ubuntu-24.04-arm
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Download LLVM native library
-        run: bash scripts/download-llvm-native.sh
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: |
-            **/*.csproj
-            global.json
-
-      - name: Publish Ashes CLI (linux-arm64)
-        run: dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-arm64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-arm64
-
-      - name: Upload Ashes CLI (linux-arm64)
-        uses: actions/upload-artifact@v7
-        with:
-          name: ashes-cli-linux-arm64
-          path: artifacts/ashes/linux-arm64
-          overwrite: true
-          retention-days: 365
-
   test-matrix:
-    needs: [quality, build-arm64]
+    needs: [quality]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
