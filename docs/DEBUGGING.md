@@ -42,8 +42,7 @@ ashes compile --debug examples/hello.ash -o hello
 | **Ashes compiler** | Latest | `ashes compile --debug` support |
 | **GDB** | 10.0+ | Source-level debugger (default backend) |
 | **VS Code** | 1.80+ | IDE with debugging UI |
-| **Ashes language extension** | 0.0.1+ | Syntax highlighting, diagnostics |
-| **Ashes debug extension** | 0.1.0+ | DAP adapter for debugging |
+| **Ashes VS Code extension** | 0.0.1+ | Language support, diagnostics, and debugging |
 
 ### Installing GDB
 
@@ -75,36 +74,37 @@ brew install gdb
 pacman -S mingw-w64-x86_64-gdb
 ```
 
-### Installing the VS Code Extensions
+### Installing the VS Code Extension
 
-The Ashes debug extension (`ashes-debug`) is located at
-`editors/vscode-ashes-debug/`. To install locally:
+The Ashes VS Code extension bundles everything you need: language support
+(syntax highlighting, diagnostics, formatting) **and** debug support (DAP
+adapter, breakpoints, stepping).
+
+**From marketplace (future):**
 
 ```bash
-cd editors/vscode-ashes-debug
+code --install-extension mattiashognas.ashes-vscode
+```
+
+**Local development build:**
+
+```bash
+cd vscode-extension
 npm install
-npm run build
+npm run build-server      # Build the LSP server
+npm run build-dap-server  # Build the DAP server
+npm run compile           # Build the extension
 ```
 
-Then install the extension in VS Code:
-- Open VS Code
-- Press **Ctrl+Shift+P** → **Extensions: Install from VSIX...**
-- Select the built `.vsix` file
+Then install via **Ctrl+Shift+P** → **Extensions: Install from VSIX…** or
+use the local install script:
 
-Or for development, press **F5** in VS Code from the
-`editors/vscode-ashes-debug/` directory to launch an Extension Development
-Host.
-
-### Installing the DAP Server
-
-The DAP server (`ashes-dap`) must be built and available on your `PATH`:
-
-```bash
-dotnet publish src/Ashes.Dap -c Release -o ./publish/dap
+```powershell
+.\scripts\install-vscode-extension-local.ps1
 ```
 
-Add the publish directory to your `PATH`, or configure `dapServerPath` in
-your launch configuration (see below).
+The extension automatically uses the bundled DAP server — no manual PATH
+configuration is needed.
 
 ---
 
@@ -153,14 +153,11 @@ inline functions — all of which make source-level debugging unreliable.
 
 ## VS Code Extension Setup
 
-### Step 1: Install Both Extensions
+### Step 1: Install the Ashes Extension
 
-You need two VS Code extensions:
-
-1. **Ashes Language Extension** (`vscode-extension/`) — provides syntax
-   highlighting, formatting, diagnostics, and completions.
-2. **Ashes Debug Extension** (`editors/vscode-ashes-debug/`) — provides
-   breakpoints, stepping, variable inspection via the Debug Adapter Protocol.
+Install the Ashes VS Code extension — it includes both language support and
+debugging support. See [Prerequisites](#prerequisites) for installation
+instructions.
 
 ### Step 2: Create a Launch Configuration
 
@@ -237,7 +234,6 @@ All properties for `type: "ashes"` launch configurations:
 | `cwd` | `string` | No | `${workspaceFolder}` | Working directory for the debugged program. |
 | `stopOnEntry` | `boolean` | No | `false` | When `true`, the debugger pauses at the program entry point before any user code runs. |
 | `debuggerPath` | `string` | No | `"gdb"` | Path to the GDB binary. Set this if GDB is not on your `PATH` or you want to use a specific version. |
-| `dapServerPath` | `string` | No | `"ashes-dap"` | Path to the Ashes DAP server binary. Set this if `ashes-dap` is not on your `PATH`. |
 
 ### Example Configurations
 
@@ -383,16 +379,17 @@ binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 - Verify the source file path in the breakpoint matches the path used during
   compilation.
 
-### "ashes-dap not found"
+### "ashes-dap not found" or "DAP server not found"
 
-The DAP server must be built and on your `PATH`:
+The DAP server is bundled with the Ashes VS Code extension. If you see this
+error, the extension was not built with the DAP server:
 
 ```bash
-dotnet publish src/Ashes.Dap -c Release -o ./publish/dap
-export PATH="$PATH:$(pwd)/publish/dap"
+cd vscode-extension
+npm run build-dap-server
 ```
 
-Or set `dapServerPath` in your launch configuration to the full path.
+If you installed from the marketplace, try reinstalling the extension.
 
 ### Variables show as `<optimized out>`
 
