@@ -30,7 +30,8 @@ debugging.
 # 1. Compile with debug info
 ashes compile --debug examples/hello.ash -o hello
 
-# 2. Open VS Code, set breakpoints, press F5
+# 2. Open VS Code, set breakpoints, then start the Ashes debug configuration
+#    from Run and Debug
 ```
 
 ---
