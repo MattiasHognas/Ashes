@@ -53,7 +53,7 @@ jobs:
           name: ashes-cli-binaries
           path: artifacts/ashes
           overwrite: true
-          retention-days: 365
+          retention-days: 7
 
       - name: Upload test results
         if: always()
@@ -62,7 +62,7 @@ jobs:
           name: test-results-dotnet-quality
           path: TestResults
           overwrite: true
-          retention-days: 365
+          retention-days: 7
 
   test-matrix:
     needs: [quality]

@@ -30,9 +30,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download LLVM native library (Linux)
+      - name: Download all LLVM native libraries (Linux)
         if: runner.os == 'Linux'
-        run: bash scripts/download-llvm-native.sh
+        run: bash scripts/download-llvm-native.sh --all
 
       - name: Download LLVM native library (Windows)
         if: runner.os == 'Windows'
