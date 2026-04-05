@@ -385,6 +385,16 @@ internal static partial class LlvmCodegen
         long resolved = ResolveSyscallNr(state.Flavor, nr);
         if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
         {
+            // AArch64 Linux has no open() syscall — only openat(dirfd, path, flags, mode).
+            // When the caller requests SyscallOpen, translate it to openat with AT_FDCWD (-100)
+            // as the directory file descriptor, shifting the original arguments.
+            if (nr == SyscallOpen)
+            {
+                return EmitSyscall4Arm64(state, resolved,
+                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-100L)), 1), // AT_FDCWD
+                    arg1, arg2, arg3, name);
+            }
+
             return EmitSyscallArm64(state, resolved, arg1, arg2, arg3, name);
         }
 
@@ -436,6 +446,30 @@ internal static partial class LlvmCodegen
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
                 NormalizeToI64(state, arg3)
+            },
+            name);
+    }
+
+    private static LlvmValueHandle EmitSyscall4Arm64(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, LlvmValueHandle arg4, string name)
+    {
+        // AArch64 Linux 4-argument syscall (e.g., openat).
+        LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
+            syscallType,
+            "svc #0",
+            "={x0},{x8},{x0},{x1},{x2},{x3},~{memory},~{cc}",
+            true,
+            false);
+        return LlvmApi.BuildCall2(state.Target.Builder,
+            syscallType,
+            syscall,
+            new[]
+            {
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
+                NormalizeToI64(state, arg1),
+                NormalizeToI64(state, arg2),
+                NormalizeToI64(state, arg3),
+                NormalizeToI64(state, arg4)
             },
             name);
     }
