@@ -47,6 +47,7 @@ jobs:
         with:
           script: |
             const artifactName = 'llvm-runtimes';
+            // 10 pages × 100 artifacts per page gives up to 1000 recent artifacts.
             const maxPages = 10;
             const { owner, repo } = context.repo;
 
