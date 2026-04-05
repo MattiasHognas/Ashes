@@ -23,7 +23,7 @@ jobs:
             const artifactName = 'llvm-runtimes';
             const { owner, repo } = context.repo;
 
-            for (let page = 1; ; page += 1) {
+            for (let page = 1; page <= 10; page += 1) {
               const response = await github.rest.actions.listArtifactsForRepo({
                 owner,
                 repo,
@@ -64,7 +64,7 @@ jobs:
         id: llvm-runtimes
         shell: bash
         run: |
-          if [ -d runtimes ] && find runtimes -mindepth 1 -print -quit | grep -q .; then
+          if [ -d runtimes ] && [ -n "$(ls -A runtimes 2>/dev/null)" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
