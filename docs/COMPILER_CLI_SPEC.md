@@ -75,7 +75,8 @@ The following option is accepted by **compile** and **run** only:
 
 | Value | Platform |
 |-------|----------|
-| `linux-x64` | Linux x86-64 — emits a native ELF64 binary (default on Linux/macOS) |
+| `linux-x64` | Linux x86-64 — emits a native ELF64 binary (default on Linux x86-64) |
+| `linux-arm64` | Linux AArch64 — emits a native ELF64 binary (default on Linux ARM64) |
 | `windows-x64` | Windows x86-64 — emits a native PE32+ binary (default on Windows) |
 
 Any other value is rejected with an error message and exit code **1**.
@@ -126,7 +127,7 @@ ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]      
 
 | Property | Default value |
 |----------|---------------|
-| `--target` | `linux-x64` on Linux/macOS, `windows-x64` on Windows |
+| `--target` | `linux-x64` on Linux x86-64, `linux-arm64` on Linux ARM64, `windows-x64` on Windows |
 | `-o` / `--out` | Derived from input (see above) |
 | `-O0`..`-O3` | `-O2` (standard optimizations) |
 

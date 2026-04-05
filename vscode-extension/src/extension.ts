@@ -28,6 +28,9 @@ function getServerExecutable(context: vscode.ExtensionContext): string {
   }
 
   if (process.platform === "linux") {
+    if (process.arch !== "x64" && process.arch !== "arm64") {
+      throw new Error(`Unsupported Linux architecture: ${process.arch}`);
+    }
     const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
     return path.join(context.extensionPath, "server", rid, "Ashes.Lsp");
   }
@@ -46,6 +49,9 @@ function getDapServerExecutable(context: vscode.ExtensionContext): string {
   }
 
   if (process.platform === "linux") {
+    if (process.arch !== "x64" && process.arch !== "arm64") {
+      throw new Error(`Unsupported Linux architecture: ${process.arch}`);
+    }
     const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
     return path.join(
       context.extensionPath,

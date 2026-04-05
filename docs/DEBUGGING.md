@@ -7,7 +7,6 @@ debugging.
 > **Supported platforms:**
 > - **Linux** — GDB (default) or LLDB via `lldb-mi`
 > - **Windows** — GDB via MSYS2
-> - **macOS** — LLDB via `lldb-mi` (recommended) or GDB (requires code-signing)
 >
 > The Ashes DAP server uses the GDB Machine Interface (MI) protocol.
 > Both GDB and LLDB-MI implement this protocol, so the same adapter works
@@ -69,16 +68,6 @@ sudo apt install gdb
 sudo dnf install gdb
 ```
 
-**macOS (via Homebrew):**
-
-```bash
-brew install gdb
-```
-
-> **Note:** On macOS, GDB requires code-signing. See
-> [GDB on macOS](https://sourceware.org/gdb/wiki/PermissionsDarwin).
-> Using LLDB is recommended on macOS instead.
-
 **Windows (via MSYS2):**
 
 ```bash
@@ -94,16 +83,6 @@ Machine Interface driver). Install LLDB **and** `lldb-mi`:
 
 ```bash
 sudo apt install lldb lldb-mi
-```
-
-**macOS:**
-
-LLDB is pre-installed with Xcode Command Line Tools. Install `lldb-mi`
-separately if it is not already available:
-
-```bash
-brew install llvm          # includes lldb-mi
-export PATH="$(brew --prefix llvm)/bin:$PATH"
 ```
 
 > **Tip:** Set the `ashes.debugger` VS Code setting to `"lldb"` (see
@@ -309,7 +288,7 @@ All properties for `type: "ashes"` launch configurations:
 }
 ```
 
-**Using LLDB (macOS):**
+**Using LLDB (Linux):**
 
 ```json
 {
@@ -354,7 +333,7 @@ The Ashes DAP server supports two native debugger backends:
 | Backend | Binary | Best For | Notes |
 |---------|--------|----------|-------|
 | **GDB** | `gdb` | Linux, Windows (MSYS2) | Default. Mature MI support. |
-| **LLDB** | `lldb-mi` | macOS, Linux | Uses LLDB-MI, the GDB-MI–compatible driver for LLDB. |
+| **LLDB** | `lldb-mi` | Linux | Uses LLDB-MI, the GDB-MI–compatible driver for LLDB. |
 
 ### Extension Setting
 
@@ -481,8 +460,6 @@ binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 
 - Verify the debugger is installed: `gdb --version` or `lldb-mi --version`
 - If the binary is not on `PATH`, set `debuggerPath` in your launch configuration.
-- On macOS, GDB requires code-signing — use LLDB instead by setting
-  `"debuggerType": "lldb"` or `"ashes.debugger": "lldb"` in VS Code settings.
 
 ### Breakpoints not hitting
 
