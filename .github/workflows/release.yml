@@ -75,75 +75,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
 
-  build-dap:
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            rid: linux-x64
-            artifact: ashes-dap-linux-x64
-            binary: ashes-dap
-          - os: windows-latest
-            rid: win-x64
-            artifact: ashes-dap-win-x64
-            binary: ashes-dap.exe
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          lfs: true
-
-      - name: Get version
-        id: version
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: |
-            **/*.csproj
-            global.json
-
-      - name: Restore
-        run: dotnet restore src/Ashes.Dap/Ashes.Dap.csproj --runtime ${{ matrix.rid }}
-
-      - name: Publish
-        run: dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} --output publish/${{ matrix.rid }} --no-restore
-
-      - name: Stage and zip artifact (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p staging
-          cp publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
-          [ -f LICENSE ] && cp LICENSE staging/ || true
-          cp README.md staging/
-          (cd staging && zip ../${{ matrix.artifact }}.zip *)
-
-      - name: Stage and zip artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path staging | Out-Null
-          Copy-Item publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
-          if (Test-Path LICENSE) { Copy-Item LICENSE staging/ }
-          Copy-Item README.md staging/
-          Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact }}.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.zip
-
   build-vscode-extension:
     runs-on: ubuntu-latest
     permissions:
@@ -194,6 +125,7 @@ jobs:
           pnpm version --no-git-tag-version ${{ steps.version.outputs.version }}
           pnpm run compile
           pnpm run build-server
+          pnpm run build-dap-server
           pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-language-${{ steps.version.outputs.version }}.vsix
 
       - name: Upload artifact
@@ -203,7 +135,7 @@ jobs:
           path: ashes-language-${{ steps.version.outputs.version }}.vsix
 
   release:
-    needs: [build-compiler, build-dap, build-vscode-extension]
+    needs: [build-compiler, build-vscode-extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -232,6 +164,4 @@ jobs:
           files: |
             artifacts/ashes-win-x64/ashes-win-x64.zip
             artifacts/ashes-linux-x64/ashes-linux-x64.zip
-            artifacts/ashes-dap-win-x64/ashes-dap-win-x64.zip
-            artifacts/ashes-dap-linux-x64/ashes-dap-linux-x64.zip
             artifacts/ashes-vscode/ashes-language-${{ steps.version.outputs.version }}.vsix

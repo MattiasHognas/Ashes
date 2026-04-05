@@ -69,7 +69,7 @@ export async function activate(
 
   if (!fs.existsSync(executable)) {
     vscode.window.showErrorMessage(
-      `Ashes language server not found at ${executable}. Run \"npm run build-server\" in vscode-extension.`,
+      `Ashes language server not found at ${executable}. Run \"pnpm run build-server\" in vscode-extension.`,
     );
     return;
   }
@@ -157,7 +157,7 @@ class AshesDebugAdapterFactory
     if (!fs.existsSync(dapExecutable)) {
       vscode.window.showErrorMessage(
         `Ashes DAP server not found at ${dapExecutable}. ` +
-          'Run "npm run build-dap-server" in the vscode-extension directory.',
+          'Run "pnpm run build-dap-server" in the vscode-extension directory.',
       );
       return undefined;
     }
