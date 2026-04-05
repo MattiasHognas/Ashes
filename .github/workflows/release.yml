@@ -6,7 +6,27 @@ on:
       - 'v[0-9]*.*.*'
 
 jobs:
+  prepare-llvm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
+
   build-compiler:
+    needs: prepare-llvm
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -30,21 +50,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache LLVM native libraries
-        id: cache-llvm
-        uses: actions/cache@v4
+      - name: Restore LLVM native libraries from cache
+        uses: actions/cache/restore@v4
         with:
           path: runtimes
-          key: llvm-${{ runner.os }}-all-22.1.2
-
-      - name: Download all LLVM native libraries (Linux)
-        if: runner.os == 'Linux' && steps.cache-llvm.outputs.cache-hit != 'true'
-        run: bash scripts/download-llvm-native.sh --all
-
-      - name: Download LLVM native library (Windows)
-        if: runner.os == 'Windows' && steps.cache-llvm.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: .\scripts\download-llvm-native.ps1
+          key: llvm-all-22.1.2
 
       - name: Get version
         id: version
@@ -94,6 +104,7 @@ jobs:
           path: ${{ matrix.artifact }}.zip
 
   build-vscode-extension:
+    needs: prepare-llvm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,16 +113,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache LLVM native libraries
-        id: cache-llvm
-        uses: actions/cache@v4
+      - name: Restore LLVM native libraries from cache
+        uses: actions/cache/restore@v4
         with:
           path: runtimes
-          key: llvm-${{ runner.os }}-all-22.1.2
-
-      - name: Download all LLVM native libraries
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: bash scripts/download-llvm-native.sh --all
+          key: llvm-all-22.1.2
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
