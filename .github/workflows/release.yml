@@ -91,6 +91,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Download Windows LLVM native library
+        shell: pwsh
+        run: ./scripts/download-llvm-native.ps1
       - name: Download LLVM native library
         run: bash scripts/download-llvm-native.sh
 
