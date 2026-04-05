@@ -7,8 +7,4 @@
     <AssemblyName>ashes-dap</AssemblyName>
     <RootNamespace>Ashes.Dap</RootNamespace>
   </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
-  </ItemGroup>
 </Project>

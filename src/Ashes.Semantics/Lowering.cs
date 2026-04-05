@@ -224,7 +224,7 @@ public sealed class Lowering
             if (span.Length > 0 || span.Start > 0)
             {
                 var (filePath, line, column) = ResolveSourceLocation(span.Start);
-                inst.Location = new SourceLocation(filePath, line, column);
+                inst = inst with { Location = new SourceLocation(filePath, line, column) };
             }
         }
 

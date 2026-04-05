@@ -28,9 +28,10 @@ public abstract record IrInst
 {
     /// <summary>
     /// Optional source location for debug info emission (DWARF).
-    /// Mutable to avoid rewriting all subclass constructors.
+    /// Init-only so that Location is set once (via <c>with</c>) before the
+    /// instruction is added to the IR list, keeping record equality stable.
     /// </summary>
-    public SourceLocation? Location { get; set; }
+    public SourceLocation? Location { get; init; }
 
     public sealed record LoadConstInt(int Target, long Value) : IrInst;
     public sealed record LoadConstFloat(int Target, double Value) : IrInst;

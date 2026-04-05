@@ -101,8 +101,7 @@ public sealed class DebugInfoTests
     [Test]
     public void IrInst_Location_can_be_set()
     {
-        var inst = new IrInst.LoadConstInt(0, 42);
-        inst.Location = new SourceLocation("test.ash", 1, 1);
+        var inst = new IrInst.LoadConstInt(0, 42) with { Location = new SourceLocation("test.ash", 1, 1) };
         inst.Location.ShouldNotBeNull();
         inst.Location.Value.FilePath.ShouldBe("test.ash");
         inst.Location.Value.Line.ShouldBe(1);
