@@ -21,7 +21,7 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 0a. Define `SourceLocation` Record
 
-- [ ] **File:** `Ashes.Semantics/Ir.cs`
+- [x] **File:** `Ashes.Semantics/Ir.cs`
 - Add `public readonly record struct SourceLocation(string FilePath, int Line, int Column);`
 - Add a mutable `SourceLocation? Location { get; set; }` property on the
   abstract `IrInst` base record (line 25). A mutable property avoids rewriting
@@ -29,7 +29,7 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 0b. Line/Column Conversion Utility
 
-- [ ] **File:** New `Ashes.Frontend/SourceTextUtils.cs`
+- [x] **File:** New `Ashes.Frontend/SourceTextUtils.cs`
 - The LSP already has `LspTextUtils.ToLineCharacter`, but it lives in
   `Ashes.Lsp` which Semantics cannot depend on.
 - Extract the line-starts computation into Frontend (which both Semantics and
@@ -39,7 +39,7 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 0c. Tag IR Instructions with Source Locations During Lowering
 
-- [ ] **File:** `Ashes.Semantics/Lowering.cs`
+- [x] **File:** `Ashes.Semantics/Lowering.cs`
 - Add fields: `_currentFilePath`, `_lineStarts`, `_sourceLength`.
 - Initialize in `Lower()` from the source text and file path already available
   at the call site.
@@ -49,7 +49,7 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 0d. Multi-File Source Locations
 
-- [ ] **File:** `Ashes.Semantics/ProjectSupport.cs`
+- [x] **File:** `Ashes.Semantics/ProjectSupport.cs`
 - `CombinedCompilationLayout` already tracks `EntryOffset` and `BodyStart`.
 - Add `IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets`
   so that given an absolute position in the combined source we can determine
@@ -62,21 +62,21 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 1a. Backend Options
 
-- [ ] **File:** `Ashes.Backend` (options type, e.g. `BackendCompileOptions`)
+- [x] **File:** `Ashes.Backend` (options type, e.g. `BackendCompileOptions`)
 - Add property: `bool EmitDebugInfo { get; init; }`
 - When true, the backend emits DWARF debug metadata (on both Linux and
   Windows).
 
 ### 1b. CLI Flag
 
-- [ ] **File:** `Ashes.Cli/Program.cs`
+- [x] **File:** `Ashes.Cli/Program.cs`
 - Add `--debug` / `-g` flag to `compile` and `run` commands.
 - When set: `EmitDebugInfo = true`, optimisation capped at `-O1` (or forced
   `-O0` if no explicit `-O`), print `Debug: yes` in compilation summary.
 
 ### 1c. Documentation
 
-- [ ] **File:** `docs/COMPILER_CLI_SPEC.md`
+- [x] **File:** `docs/COMPILER_CLI_SPEC.md`
 - Document `--debug` / `-g`, its interaction with optimisation levels, and the
   debug metadata it enables.
 
@@ -86,7 +86,7 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 ### 2a. Extend LLVM Interop — Debug Info Bindings
 
-- [ ] **File:** `Ashes.Backend/Llvm/Interop/LlvmApi.cs`
+- [x] **File:** `Ashes.Backend/Llvm/Interop/LlvmApi.cs`
 
 Add opaque handle types `LlvmDIBuilderHandle`, `LlvmMetadataHandle` and
 P/Invoke bindings for ~20 LLVM-C functions:
@@ -115,7 +115,7 @@ P/Invoke bindings for ~20 LLVM-C functions:
 
 ### 2b. Debug Info Emission in Code Generation
 
-- [ ] **Files:** `LlvmCodegen.cs` and partial files
+- [x] **Files:** `LlvmCodegen.cs` and partial files
 
 When `EmitDebugInfo == true`:
 
@@ -172,7 +172,7 @@ completed after all types are defined.
 
 #### ELF (`LlvmImageLinkerElf.cs`)
 
-- [ ] Currently extracts only `SHF_ALLOC` sections (`.text`, `.data`, …).
+- [x] Currently extracts only `SHF_ALLOC` sections (`.text`, `.data`, …).
 - Debug sections (`.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str`,
   `.debug_ranges`, `.debug_line_str`, `.debug_addr`) have `SHF_ALLOC = 0`.
 - **Changes:**
@@ -197,7 +197,7 @@ completed after all types are defined.
 
 ### 3a. New Project: `Ashes.Dap`
 
-- [ ] **Location:** `src/Ashes.Dap/`
+- [x] **Location:** `src/Ashes.Dap/`
 - **Dependencies:** `Ashes.Backend`, `Ashes.Semantics`, system process
   management.
 
@@ -207,7 +207,7 @@ VS Code  ←─JSON/stdio─→  Ashes.Dap  ←─GDB-MI / LLDB─→  GDB/LLDB 
 
 ### 3b. DAP Protocol Layer
 
-- [ ] **Transport:** JSON messages over stdin/stdout.
+- [x] **Transport:** JSON messages over stdin/stdout.
 
 **Requests to implement:**
 
@@ -233,7 +233,7 @@ VS Code  ←─JSON/stdio─→  Ashes.Dap  ←─GDB-MI / LLDB─→  GDB/LLDB 
 
 ### 3c. Debugger Backend Abstraction
 
-- [ ] Interface `IDebuggerBackend` with:
+- [x] Interface `IDebuggerBackend` with:
   - `GdbMiBackend` — talks GDB Machine Interface protocol.
   - `LldbBackend` — talks `lldb-mi` or LLDB command interface.
 - Selection via launch configuration parameter `"debugger": "gdb" | "lldb"`.
@@ -295,7 +295,7 @@ during debug compilation (see 3e).
 
 ### 4a. Debugger Contribution
 
-- [ ] **File:** `vscode-extension/package.json`
+- [x] **File:** `vscode-extension/package.json`
 
 Add to `contributes`:
 
@@ -330,7 +330,7 @@ Add to `contributes`:
 
 ### 4b. Extension Activation
 
-- [ ] **File:** `vscode-extension/src/extension.ts`
+- [x] **File:** `vscode-extension/src/extension.ts`
 - Add DAP server acquisition (same pattern as LSP — download from releases or
   use bundled binary).
 - Register `DebugAdapterDescriptorFactory` → `ExecutableDebugAdapterDescriptor`
@@ -338,7 +338,7 @@ Add to `contributes`:
 
 ### 4c. Debug Configuration Provider
 
-- [ ] **File:** New `vscode-extension/src/debugProvider.ts`
+- [x] **File:** New `vscode-extension/src/debugProvider.ts`
 - `DebugConfigurationProvider`:
   - Auto-detect project vs. single-file.
   - Resolve `program` relative to workspace.
@@ -346,14 +346,14 @@ Add to `contributes`:
 
 ### 4d. Keybindings
 
-- [ ] **File:** `vscode-extension/package.json`
+- [x] **File:** `vscode-extension/package.json`
 - **F5** → start debug session (`workbench.action.debug.start`).
 - **Ctrl+F5** → run without debugging (`ashes.run`).
 - Existing `ashes.run` remains for non-debug execution.
 
 ### 4e. Build Script
 
-- [ ] **File:** `vscode-extension/package.json` scripts
+- [x] **File:** `vscode-extension/package.json` scripts
 - Add `build-dap-server` that publishes `Ashes.Dap` for `win-x64` and
   `linux-x64` (mirrors existing `build-server` for the LSP).
 

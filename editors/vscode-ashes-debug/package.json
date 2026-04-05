@@ -1,0 +1,100 @@
+{
+  "name": "ashes-debug",
+  "displayName": "Ashes Debug",
+  "description": "Debug Adapter Protocol support for the Ashes programming language",
+  "version": "0.1.0",
+  "publisher": "ashes-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onDebugResolve:ashes",
+    "onLanguage:ashes"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "ashes",
+        "label": "Ashes Debug",
+        "languages": [
+          "ashes"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the compiled Ashes binary (compiled with --debug).",
+                "default": "${workspaceFolder}/out/${workspaceFolderBasename}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments to pass to the program.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the program.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop at the entry point of the program.",
+                "default": false
+              },
+              "debuggerPath": {
+                "type": "string",
+                "description": "Path to GDB. Defaults to 'gdb' on PATH.",
+                "default": "gdb"
+              },
+              "dapServerPath": {
+                "type": "string",
+                "description": "Path to the ashes-dap server binary.",
+                "default": "ashes-dap"
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "Ashes: Launch",
+            "description": "Launch and debug an Ashes program compiled with --debug",
+            "body": {
+              "name": "Ashes: Launch",
+              "type": "ashes",
+              "request": "launch",
+              "program": "^\"\\${workspaceFolder}/out/\\${workspaceFolderBasename}\"",
+              "cwd": "^\"\\${workspaceFolder}\"",
+              "stopOnEntry": false
+            }
+          }
+        ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "ashes"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -watch -p ."
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {}
+}
