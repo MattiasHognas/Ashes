@@ -7,7 +7,7 @@ namespace Ashes.Frontend;
 public static class SourceTextUtils
 {
     /// <summary>
-    /// Returns the byte offsets of each line start in <paramref name="text"/>.
+    /// Returns the character offsets of each line start in <paramref name="text"/>.
     /// The first entry is always 0 (start of line 1).
     /// </summary>
     public static int[] GetLineStarts(string text)
