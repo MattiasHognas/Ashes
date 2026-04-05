@@ -146,6 +146,7 @@ public sealed class DapServer : IDisposable
                 await _debugger.SetBreakpointAsync(path, line);
             }
 
+            _pendingBreakpoints.Clear();
             _transport.SendResponse(request, success: true);
 
             // If stopOnEntry, don't auto-run (GDB will stop at entry)
