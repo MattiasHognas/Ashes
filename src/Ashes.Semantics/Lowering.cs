@@ -31,6 +31,8 @@ public sealed class Lowering
     private int[]? _lineStarts;
     private int _sourceLength;
     private Expr? _currentSourceExpr;
+    private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
+    private Dictionary<string, int[]>? _moduleLineStarts;
 
     private readonly bool _hasAshesIO;
     private readonly List<string> _diagnosticContext = [];
@@ -184,6 +186,34 @@ public sealed class Lowering
     }
 
     /// <summary>
+    /// Sets multi-file source context using a <see cref="CombinedCompilationLayout"/>
+    /// so that emitted IR instructions carry per-file source locations.
+    /// </summary>
+    public void SetSourceContext(CombinedCompilationLayout layout)
+    {
+        _lineStarts = SourceTextUtils.GetLineStarts(layout.Source);
+        _sourceLength = layout.Source.Length;
+        _moduleOffsets = layout.ModuleOffsets;
+        _moduleLineStarts = new Dictionary<string, int[]>(StringComparer.Ordinal);
+
+        // Pre-compute line starts per module file for file-relative line/column
+        foreach (var (filePath, startOffset, endOffset) in layout.ModuleOffsets)
+        {
+            if (!_moduleLineStarts.ContainsKey(filePath))
+            {
+                var moduleText = layout.Source[startOffset..endOffset];
+                _moduleLineStarts[filePath] = SourceTextUtils.GetLineStarts(moduleText);
+            }
+        }
+
+        // Default to first entry module file
+        if (layout.ModuleOffsets.Count > 0)
+        {
+            _currentFilePath = layout.ModuleOffsets[^1].FilePath;
+        }
+    }
+
+    /// <summary>
     /// Emits an IR instruction, optionally tagging it with the source
     /// location of <see cref="_currentSourceExpr"/> when debug context is set.
     /// </summary>
@@ -194,12 +224,38 @@ public sealed class Lowering
             var span = AstSpans.GetOrDefault(_currentSourceExpr);
             if (span.Length > 0 || span.Start > 0)
             {
-                var (line, column) = SourceTextUtils.ToLineColumn(_lineStarts, _sourceLength, span.Start);
-                inst.Location = new SourceLocation(_currentFilePath!, line, column);
+                var (filePath, line, column) = ResolveSourceLocation(span.Start);
+                inst.Location = new SourceLocation(filePath, line, column);
             }
         }
 
         _inst.Add(inst);
+    }
+
+    private (string FilePath, int Line, int Column) ResolveSourceLocation(int absolutePosition)
+    {
+        // Multi-file resolution: find which module the position falls in
+        if (_moduleOffsets is not null)
+        {
+            for (int i = _moduleOffsets.Count - 1; i >= 0; i--)
+            {
+                var (filePath, startOffset, endOffset) = _moduleOffsets[i];
+                if (absolutePosition >= startOffset && absolutePosition < endOffset)
+                {
+                    var relativePosition = absolutePosition - startOffset;
+                    if (_moduleLineStarts is not null && _moduleLineStarts.TryGetValue(filePath, out var moduleStarts))
+                    {
+                        var moduleLength = endOffset - startOffset;
+                        var (line, column) = SourceTextUtils.ToLineColumn(moduleStarts, moduleLength, relativePosition);
+                        return (filePath, line, column);
+                    }
+                }
+            }
+        }
+
+        // Single-file fallback
+        var (l, c) = SourceTextUtils.ToLineColumn(_lineStarts!, _sourceLength, absolutePosition);
+        return (_currentFilePath ?? "<unknown>", l, c);
     }
 
     public IrProgram Lower(Program program)

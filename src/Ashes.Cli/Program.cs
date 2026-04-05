@@ -12,8 +12,8 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]]");
     AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
@@ -28,6 +28,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
+    table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
     AnsiConsole.Write(table);
@@ -480,6 +481,8 @@ async Task<int> RunCompileAsync(string[] a)
 
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
+    bool explicitOpt = false;
+    bool debugMode = false;
     string? outPath = null;
     string? expr = null;
     string? inputFile = null;
@@ -493,11 +496,26 @@ async Task<int> RunCompileAsync(string[] a)
         if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
-        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
+        if (arg is "--debug" or "-g") { debugMode = true; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
 
         throw new CliUsageException("Unknown argument.");
+    }
+
+    // When --debug is set without explicit optimization, default to -O0;
+    // when explicit optimization is set, cap at -O1.
+    if (debugMode)
+    {
+        if (!explicitOpt)
+        {
+            optimizationLevel = BackendOptimizationLevel.O0;
+        }
+        else if (optimizationLevel > BackendOptimizationLevel.O1)
+        {
+            optimizationLevel = BackendOptimizationLevel.O1;
+        }
     }
 
     var project = ResolveProject(projectPath, inputFile, expr);
@@ -507,7 +525,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode);
 
     var sw = Stopwatch.StartNew();
     byte[] image;
@@ -565,6 +583,10 @@ async Task<int> RunCompileAsync(string[] a)
 
     AnsiConsole.MarkupLine($"[green]OK[/] Wrote [bold]{Runner.FormatSize(image.Length)}[/] to [italic]{outPath}[/]");
     AnsiConsole.MarkupLine($"     Target: [bold]{target}[/]");
+    if (debugMode)
+    {
+        AnsiConsole.MarkupLine($"     Debug:  [bold]yes[/]");
+    }
     AnsiConsole.MarkupLine($"     Time:   [bold]{Runner.FormatElapsed(sw.ElapsedMilliseconds)}[/]");
     return 0;
 }
@@ -582,6 +604,8 @@ async Task<int> RunRunAsync(string[] a)
 
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
+    bool explicitOpt = false;
+    bool debugMode = false;
     string? expr = null;
     string? inputFile = null;
     string? projectPath = null;
@@ -592,11 +616,24 @@ async Task<int> RunRunAsync(string[] a)
         if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
         if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
-        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
+        if (arg is "--debug" or "-g") { debugMode = true; continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
 
         throw new CliUsageException("Unknown argument.");
+    }
+
+    if (debugMode)
+    {
+        if (!explicitOpt)
+        {
+            optimizationLevel = BackendOptimizationLevel.O0;
+        }
+        else if (optimizationLevel > BackendOptimizationLevel.O1)
+        {
+            optimizationLevel = BackendOptimizationLevel.O1;
+        }
     }
 
     var project = ResolveProject(projectPath, inputFile, expr);
@@ -606,7 +643,7 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode);
 
     byte[] image;
     if (project is null)
