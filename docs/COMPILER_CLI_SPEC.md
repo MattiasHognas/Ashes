@@ -527,18 +527,18 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 
 ## Debug Mode
 
-The `--debug` (or `-g`) flag instructs the compiler to embed DWARF debug
-information in the output binary. This enables source-level debugging with
-GDB or LLDB via the Ashes DAP server and VS Code extension.
+The `--debug` (or `-g`) flag instructs the compiler to embed debug
+information in the output binary for source-level debugging. The exact debug
+format is target-dependent.
 
 ### Behaviour
 
 | Aspect | Effect |
 |--------|--------|
-| **Debug metadata** | DWARF v5 sections (`.debug_info`, `.debug_line`, etc.) are emitted into the ELF or PE binary. |
+| **Debug metadata** | Debug information is emitted into the output binary; the exact sections and format depend on the target platform. |
 | **Optimization cap** | Without an explicit `-O` flag, optimization defaults to `-O0`. With an explicit flag, optimization is capped at `-O1` to preserve variable liveness and source mapping. |
 | **Compile summary** | An extra `Debug: yes` line is printed in the `ashes compile` success output. |
-| **Target triple** | On Windows the LLVM target triple switches to `x86_64-pc-windows-gnu` (MinGW) to produce DWARF instead of CodeView/PDB. |
+| **Target triple** | `--debug` does not change the Windows LLVM target triple; the current implementation continues to target `x86_64-pc-windows-msvc`. |
 
 ### Interaction with Optimization Levels
 
