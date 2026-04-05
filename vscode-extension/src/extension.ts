@@ -69,7 +69,7 @@ export async function activate(
 
   if (!fs.existsSync(executable)) {
     vscode.window.showErrorMessage(
-      `Ashes language server not found at ${executable}. Run \"pnpm run build-server\" in vscode-extension.`,
+      `Ashes language server not found at ${executable}. Run \"pnpm run build-lsp-server\" in vscode-extension.`,
     );
     return;
   }

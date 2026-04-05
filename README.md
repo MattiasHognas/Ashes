@@ -226,7 +226,7 @@ Full editor support with diagnostics, formatting, hover, go-to-definition,
 semantic tokens, and completions.
 
 ```sh
-cd vscode-extension && npm run build-server
+cd vscode-extension && npm run build-lsp-server
 code --install-extension ashes-vscode.vsix
 ```
 

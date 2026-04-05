@@ -355,7 +355,7 @@ Add to `contributes`:
 
 - [x] **File:** `vscode-extension/package.json` scripts
 - Add `build-dap-server` that publishes `Ashes.Dap` for `win-x64` and
-  `linux-x64` (mirrors existing `build-server` for the LSP).
+  `linux-x64` (mirrors existing `build-lsp-server` for the LSP).
 
 ---
 

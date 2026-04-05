@@ -91,7 +91,7 @@ code --install-extension mattiashognas.ashes-vscode
 ```bash
 cd vscode-extension
 npm install
-npm run build-server      # Build the LSP server
+npm run build-lsp-server  # Build the LSP server
 npm run build-dap-server  # Build the DAP server
 npm run compile           # Build the extension
 ```
