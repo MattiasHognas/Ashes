@@ -238,7 +238,7 @@ For local development:
 
 ### Debugging
 
-Compile with `--debug` and use the Ashes Debug extension for VS Code:
+Compile with `--debug` and use the Ashes VS Code extension (which bundles debug support):
 
 ```sh
 ashes compile --debug examples/hello.ash -o hello
