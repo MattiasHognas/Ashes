@@ -47,9 +47,10 @@ jobs:
         with:
           script: |
             const artifactName = 'llvm-runtimes';
+            const maxPages = 10;
             const { owner, repo } = context.repo;
 
-            for (let page = 1; page <= 10; page += 1) {
+            for (let page = 1; page <= maxPages; page += 1) {
               const response = await github.rest.actions.listArtifactsForRepo({
                 owner,
                 repo,
