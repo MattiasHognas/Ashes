@@ -495,14 +495,14 @@ public sealed class LspDocumentServiceCoverageTests
 
     private static string CreateTempDir()
     {
-        var path = Path.Combine(Path.GetTempPath(), "ashes_lsp_cov_test_" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(Path.GetTempPath(), $"ashes_lsp_cov_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
 
     private static string CreateTempProjectDir(string mathAshSource)
     {
-        var root = Path.Combine(Path.GetTempPath(), "ashes_lsp_cov_proj_" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), $"ashes_lsp_cov_proj_{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
         File.WriteAllText(Path.Combine(root, "Math.ash"), mathAshSource);
