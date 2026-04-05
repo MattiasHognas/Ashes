@@ -116,8 +116,8 @@ public sealed class ExampleSocketFixtureTests
         {
             using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
             using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
-            client.ReceiveTimeout = SocketTestConstants.SocketTimeoutMs;
-            client.SendTimeout = SocketTestConstants.SocketTimeoutMs;
+            client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
+            client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
             await handleClientAsync(client);
             return null;
         }
