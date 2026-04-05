@@ -32,7 +32,7 @@ public sealed class Lowering
     private int _sourceLength;
     private Expr? _currentSourceExpr;
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
-    private Dictionary<string, int[]>? _moduleLineStarts;
+    private int[][]? _moduleLineStarts;
 
     private readonly bool _hasAshesIO;
     private readonly List<string> _diagnosticContext = [];
@@ -194,16 +194,15 @@ public sealed class Lowering
         _lineStarts = SourceTextUtils.GetLineStarts(layout.Source);
         _sourceLength = layout.Source.Length;
         _moduleOffsets = layout.ModuleOffsets;
-        _moduleLineStarts = new Dictionary<string, int[]>(StringComparer.Ordinal);
 
-        // Pre-compute line starts per module file for file-relative line/column
-        foreach (var (filePath, startOffset, endOffset) in layout.ModuleOffsets)
+        // Pre-compute line starts per region (not per file) so disjoint regions
+        // for the same file each get correct line/column mappings.
+        _moduleLineStarts = new int[layout.ModuleOffsets.Count][];
+        for (int i = 0; i < layout.ModuleOffsets.Count; i++)
         {
-            if (!_moduleLineStarts.ContainsKey(filePath))
-            {
-                var moduleText = layout.Source[startOffset..endOffset];
-                _moduleLineStarts[filePath] = SourceTextUtils.GetLineStarts(moduleText);
-            }
+            var (_, startOffset, endOffset) = layout.ModuleOffsets[i];
+            var moduleText = layout.Source[startOffset..endOffset];
+            _moduleLineStarts[i] = SourceTextUtils.GetLineStarts(moduleText);
         }
 
         // Default to first entry module file
@@ -243,10 +242,10 @@ public sealed class Lowering
                 if (absolutePosition >= startOffset && absolutePosition < endOffset)
                 {
                     var relativePosition = absolutePosition - startOffset;
-                    if (_moduleLineStarts is not null && _moduleLineStarts.TryGetValue(filePath, out var moduleStarts))
+                    if (_moduleLineStarts is not null)
                     {
                         var moduleLength = endOffset - startOffset;
-                        var (line, column) = SourceTextUtils.ToLineColumn(moduleStarts, moduleLength, relativePosition);
+                        var (line, column) = SourceTextUtils.ToLineColumn(_moduleLineStarts[i], moduleLength, relativePosition);
                         return (filePath, line, column);
                     }
                 }
