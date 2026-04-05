@@ -279,11 +279,20 @@ internal static partial class LlvmImageLinker
                         }
                     case ElfRelocAArch64AdrPrelPgHi21:
                         {
-                            // ADRP: page-relative 21-bit offset shifted by 12.
+                            // ADRP: page-relative 21-bit signed offset shifted by 12.
                             long pageTarget = targetVa & ~0xFFFL;
                             long pagePc = placeVa & ~0xFFFL;
                             long pageDelta = pageTarget - pagePc;
-                            int immHi = (int)(pageDelta >> 12);
+                            long immFull = pageDelta >> 12;
+                            const long MinImm21 = -(1L << 20);
+                            const long MaxImm21 = (1L << 20) - 1;
+                            if (immFull < MinImm21 || immFull > MaxImm21)
+                            {
+                                throw new InvalidOperationException(
+                                    $"AArch64 ADR_PREL_PG_HI21 relocation at offset 0x{relocOffset:X} is out of range: page delta {immFull} does not fit in signed 21 bits (±4 GiB).");
+                            }
+
+                            int immHi = (int)immFull;
                             int immLo = immHi & 0x3;
                             int immHi19 = (immHi >> 2) & 0x7FFFF;
                             Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
