@@ -17,6 +17,10 @@ jobs:
             rid: linux-x64
             artifact: ashes-linux-x64
             binary: ashes
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            artifact: ashes-linux-arm64
+            binary: ashes
           - os: windows-latest
             rid: win-x64
             artifact: ashes-win-x64
@@ -175,4 +179,5 @@ jobs:
           files: |
             artifacts/ashes-win-x64/ashes-win-x64.zip
             artifacts/ashes-linux-x64/ashes-linux-x64.zip
+            artifacts/ashes-linux-arm64/ashes-linux-arm64.zip
             artifacts/ashes-vscode/ashes-language-${{ steps.version.outputs.version }}.vsix

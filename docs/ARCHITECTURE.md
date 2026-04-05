@@ -95,34 +95,44 @@ The backend converts IR into a native executable through LLVM:
 flowchart TD
     Factory["BackendFactory.Create(targetId)"]
     Linux["LinuxX64LlvmBackend"]
+    LinuxArm64["LinuxArm64LlvmBackend"]
     Windows["WindowsX64LlvmBackend"]
     Codegen["LlvmCodegen.Compile()"]
     Setup["LlvmTargetSetup\n(LLVM context, module, builder)"]
     LLVMIR["LLVM IR module"]
     ObjLinux[".o  (ELF relocatable)"]
+    ObjLinuxArm64[".o  (ELF relocatable, AArch64)"]
     ObjWindows[".obj  (COFF relocatable)"]
     LinkerLinux["LlvmImageLinker\n.LinkLinuxExecutable()"]
+    LinkerLinuxArm64["LlvmImageLinker\n.LinkLinuxArm64Executable()"]
     LinkerWindows["LlvmImageLinker\n.LinkWindowsExecutable()"]
-    ElfWriter["Hand-rolled\nELF64 writer"]
+    ElfWriter["Hand-rolled\nELF64 writer (x86-64)"]
+    ElfArm64Writer["Hand-rolled\nELF64 writer (AArch64)"]
     PeWriter["Hand-rolled\nPE32+ writer"]
     ELF["ELF64 executable"]
+    ELFArm64["ELF64 executable (AArch64)"]
     PE["PE32+ executable"]
 
     Factory -->|"linux-x64"| Linux
+    Factory -->|"linux-arm64"| LinuxArm64
     Factory -->|"windows-x64"| Windows
     Linux --> Codegen
+    LinuxArm64 --> Codegen
     Windows --> Codegen
     Codegen --> Setup
     Codegen --> LLVMIR
-    LLVMIR -->|Linux| ObjLinux
+    LLVMIR -->|Linux x64| ObjLinux
+    LLVMIR -->|Linux ARM64| ObjLinuxArm64
     LLVMIR -->|Windows| ObjWindows
     ObjLinux --> LinkerLinux
+    ObjLinuxArm64 --> LinkerLinuxArm64
     ObjWindows --> LinkerWindows
     LinkerLinux --> ElfWriter --> ELF
+    LinkerLinuxArm64 --> ElfArm64Writer --> ELFArm64
     LinkerWindows --> PeWriter --> PE
 ```
 
-Both backends implement `IBackend` and delegate to the same
+All backends implement `IBackend` and delegate to the same
 `LlvmCodegen.Compile()` entry point, which branches internally based on
 the target ID.
 
@@ -138,11 +148,9 @@ are used.
 
 #### Updating LLVM native libraries
 
-The native libraries live in `runtimes/{linux-x64,win-x64}/` and are
-tracked in this repository via Git LFS. After cloning or switching
-commits, run `git lfs pull` if the actual native library files have not
-been fetched yet. They can also be provisioned or refreshed before
-building `Ashes.Backend` with the following scripts:
+The native libraries live in `runtimes/{linux-x64,linux-arm64,win-x64}/`
+and are provisioned before building `Ashes.Backend` with the following
+scripts:
 
 | Platform | Command |
 |----------|---------|
@@ -232,7 +240,7 @@ The compiler does **not** shell out to an external linker. Instead,
 `LlvmImageLinker` directly transforms LLVM-emitted object files into
 executable images.
 
-### Linux (ELF64)
+### Linux x86-64 (ELF64)
 
 1. LLVM emits an **ELF relocatable** (`.o`).
 2. `ParseElfObject` reads section headers, symbol table, and string tables
@@ -245,6 +253,20 @@ executable images.
    the entry function, then invokes `syscall exit(0)`.
 6. A hand-rolled binary writer emits the final two-segment (text + data)
    ELF64 executable with the ELF header and two `PT_LOAD` program headers.
+
+### Linux AArch64 (ELF64)
+
+1. LLVM emits an **ELF relocatable** (`.o`) targeting `aarch64-unknown-linux-gnu`.
+2. The same `ParseElfObject` parser is reused — the ELF container format
+   is identical for both architectures.
+3. AArch64-specific relocations are applied: `R_AARCH64_CALL26`,
+   `R_AARCH64_JUMP26`, `R_AARCH64_ADR_PREL_PG_HI21`,
+   `R_AARCH64_ADD_ABS_LO12_NC`, `R_AARCH64_LDST_IMM12_LO12_NC*`,
+   `R_AARCH64_ABS64`, `R_AARCH64_ABS32`, and `R_AARCH64_PREL32`.
+4. A 28-byte **trampoline** (7 AArch64 instructions) is prepended:
+   `mov x0, sp; bl entry; mov x0, #0; mov x8, #93; svc #0; brk #0; brk #0`.
+5. The ELF header uses `EM_AARCH64 (183)` as the machine type.
+6. The same two-segment layout (text + data) is used.
 
 ### Windows (PE32+)
 
@@ -277,7 +299,7 @@ executable images.
 
 ## How to Add a New Target
 
-Adding a new compile target (e.g., `arm64-linux`) requires:
+Adding a new compile target requires:
 
 1. **Add a target ID** in `Backends/TargetIds.cs`.
 2. **Create a backend class** implementing `IBackend` in `Backends/`.
@@ -285,9 +307,19 @@ Adding a new compile target (e.g., `arm64-linux`) requires:
 3. **Register it** in `BackendFactory.Create()`.
 4. **Add a target triple** in `Llvm/LlvmTargetSetup.cs` (e.g.,
    `"aarch64-unknown-linux-gnu"`).
-5. **Add codegen branches** in `LlvmCodegen` for any platform-specific
-   code (syscall numbers, calling conventions, ABI details).
+5. **Add a codegen flavor** in `LlvmCodegen.LlvmCodegenFlavor` and add
+   codegen branches for any platform-specific code (syscall numbers,
+   calling conventions, ABI details). Use `IsLinuxFlavor()` for shared
+   Linux behavior and `ResolveSyscallNr()` for syscall number translation.
 6. **Add a linker path** in `LlvmImageLinker` for the new object format
    and executable format.
 7. **Initialize the LLVM target** in `LlvmTargetSetup.EnsureInitialized()`
-   (e.g., `LLVM.InitializeAArch64*`).
+   (e.g., `LlvmApi.InitializeAArch64*`).
+
+### Currently supported targets
+
+| Target ID | Triple | Object format | Executable format |
+|-----------|--------|---------------|-------------------|
+| `linux-x64` | `x86_64-unknown-linux-gnu` | ELF64 | ELF64 (x86-64) |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
+| `windows-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |

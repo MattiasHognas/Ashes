@@ -252,109 +252,109 @@ internal static partial class LlvmImageLinker
                 {
                     case ElfRelocAArch64Call26:
                     case ElfRelocAArch64Jump26:
-                    {
-                        // Encodes a 26-bit signed offset (in 4-byte units) into a BL/B instruction.
-                        long pcRelOffset = targetVa - placeVa;
-                        int imm26 = checked((int)(pcRelOffset >> 2)) & 0x03FFFFFF;
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFC000000) | (uint)imm26;
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // Encodes a 26-bit signed offset (in 4-byte units) into a BL/B instruction.
+                            long pcRelOffset = targetVa - placeVa;
+                            int imm26 = checked((int)(pcRelOffset >> 2)) & 0x03FFFFFF;
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFC000000) | (uint)imm26;
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64AdrPrelPgHi21:
-                    {
-                        // ADRP: page-relative 21-bit offset shifted by 12.
-                        long pageTarget = targetVa & ~0xFFFL;
-                        long pagePc = placeVa & ~0xFFFL;
-                        long pageDelta = pageTarget - pagePc;
-                        int immHi = (int)(pageDelta >> 12);
-                        int immLo = immHi & 0x3;
-                        int immHi19 = (immHi >> 2) & 0x7FFFF;
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0x9F00001F) | ((uint)immLo << 29) | ((uint)immHi19 << 5);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // ADRP: page-relative 21-bit offset shifted by 12.
+                            long pageTarget = targetVa & ~0xFFFL;
+                            long pagePc = placeVa & ~0xFFFL;
+                            long pageDelta = pageTarget - pagePc;
+                            int immHi = (int)(pageDelta >> 12);
+                            int immLo = immHi & 0x3;
+                            int immHi19 = (immHi >> 2) & 0x7FFFF;
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0x9F00001F) | ((uint)immLo << 29) | ((uint)immHi19 << 5);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64AddAbsLo12Nc:
-                    {
-                        // ADD: low 12 bits of target address (no carry).
-                        uint imm12 = (uint)(targetVa & 0xFFF);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // ADD: low 12 bits of target address (no carry).
+                            uint imm12 = (uint)(targetVa & 0xFFF);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64LdstImm12Lo12Nc8:
-                    {
-                        // LDR/STR with 12-bit immediate, 1-byte scaled.
-                        uint imm12 = (uint)(targetVa & 0xFFF);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // LDR/STR with 12-bit immediate, 1-byte scaled.
+                            uint imm12 = (uint)(targetVa & 0xFFF);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64LdstImm12Lo12Nc16:
-                    {
-                        // LDR/STR with 12-bit immediate, 2-byte scaled.
-                        uint imm12 = (uint)((targetVa & 0xFFF) >> 1);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // LDR/STR with 12-bit immediate, 2-byte scaled.
+                            uint imm12 = (uint)((targetVa & 0xFFF) >> 1);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64LdstImm12Lo12Nc32:
-                    {
-                        // LDR/STR with 12-bit immediate, 4-byte scaled.
-                        uint imm12 = (uint)((targetVa & 0xFFF) >> 2);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // LDR/STR with 12-bit immediate, 4-byte scaled.
+                            uint imm12 = (uint)((targetVa & 0xFFF) >> 2);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64LdstImm12Lo12Nc64:
-                    {
-                        // LDR/STR with 12-bit immediate, 8-byte scaled.
-                        uint imm12 = (uint)((targetVa & 0xFFF) >> 3);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // LDR/STR with 12-bit immediate, 8-byte scaled.
+                            uint imm12 = (uint)((targetVa & 0xFFF) >> 3);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64LdstImm12Lo12Nc128:
-                    {
-                        // LDR/STR with 12-bit immediate, 16-byte scaled.
-                        uint imm12 = (uint)((targetVa & 0xFFF) >> 4);
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                        instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
-                        break;
-                    }
+                        {
+                            // LDR/STR with 12-bit immediate, 16-byte scaled.
+                            uint imm12 = (uint)((targetVa & 0xFFF) >> 4);
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            instruction = (instruction & 0xFFC003FF) | (imm12 << 10);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
+                            break;
+                        }
                     case ElfRelocAArch64Abs64:
-                    {
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 8);
-                        BinaryPrimitives.WriteInt64LittleEndian(patch, targetVa);
-                        break;
-                    }
+                        {
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 8);
+                            BinaryPrimitives.WriteInt64LittleEndian(patch, targetVa);
+                            break;
+                        }
                     case ElfRelocAArch64Abs32:
-                    {
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
-                        break;
-                    }
+                        {
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
+                            break;
+                        }
                     case ElfRelocAArch64Prel32:
-                    {
-                        Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
-                        break;
-                    }
+                        {
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                            break;
+                        }
                     default:
                         throw new InvalidOperationException($"LLVM ELF emitted unsupported AArch64 .text relocation type {relocationType}.");
                 }
