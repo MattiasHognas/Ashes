@@ -144,15 +144,16 @@ public sealed class MiResponseParserTests
     }
 
     [Test]
-    public void ParseLocals_should_use_empty_string_for_missing_value()
+    public void ParseLocals_should_ignore_entries_with_missing_value()
     {
-        // The regex requires value field in the match, so this tests when
-        // the regex doesn't match at all because value is absent.
+        // ParseLocals only matches entries with both name and value fields,
+        // so an entry missing value is not parsed into a variable.
         var mi = """^done,locals=[{name="x"}]""";
 
         var vars = MiResponseParser.ParseLocals(mi);
 
-        // Regex won't match since it requires name="...",value="..." pattern
+        // No variable is returned because the expected
+        // {name="...",value="..."} shape is not present.
         vars.ShouldBeEmpty();
     }
 
