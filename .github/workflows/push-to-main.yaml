@@ -40,15 +40,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache LLVM native libraries
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: runtimes
-          key: llvm-all-22.1.2
-
       - name: Download all LLVM native libraries
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
       - name: Setup .NET
