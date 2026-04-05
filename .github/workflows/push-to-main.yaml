@@ -34,14 +34,79 @@ jobs:
     # needs: analyze
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Find latest LLVM native libraries artifact
+        id: find-llvm-runtimes
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const artifactName = 'llvm-runtimes';
+            const { owner, repo } = context.repo;
+
+            for (let page = 1; ; page += 1) {
+              const response = await github.rest.actions.listArtifactsForRepo({
+                owner,
+                repo,
+                name: artifactName,
+                per_page: 100,
+                page,
+              });
+
+              const artifact = response.data.artifacts.find(candidate =>
+                !candidate.expired &&
+                candidate.workflow_run?.id !== context.runId
+              );
+
+              if (artifact) {
+                core.setOutput('run-id', String(artifact.workflow_run.id));
+                return;
+              }
+
+              if (response.data.artifacts.length < 100) {
+                break;
+              }
+            }
+
+            core.setOutput('run-id', '');
+
+      - name: Download LLVM native libraries artifact
+        if: steps.find-llvm-runtimes.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: llvm-runtimes
+          path: runtimes
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.find-llvm-runtimes.outputs.run-id }}
+
+      - name: Check LLVM native libraries
+        id: llvm-runtimes
+        shell: bash
+        run: |
+          if [ -d runtimes ] && find runtimes -mindepth 1 -print -quit | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download all LLVM native libraries
+        if: steps.llvm-runtimes.outputs.present != 'true'
         run: bash scripts/download-llvm-native.sh --all
+
+      - name: Upload LLVM native libraries artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: llvm-runtimes
+          path: runtimes
+          overwrite: true
+          retention-days: 7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
