@@ -9,6 +9,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExtensionRoot = Join-Path $RepoRoot "vscode-extension"
 $CompilerRoot = Join-Path $ExtensionRoot "compiler"
 $ServerRoot = Join-Path $ExtensionRoot "server"
+$DapServerRoot = Join-Path $ExtensionRoot "dap-server"
 $VsixPath = Join-Path $RepoRoot "ashes-vscode-local.vsix"
 
 function Resolve-CodeCommand {
@@ -124,17 +125,44 @@ function Publish-LanguageServer {
         -Description "Publishing Ashes language server for $Rid (Debug)"
 }
 
+function Publish-DapServer {
+    param([string]$Rid)
+
+    $outputDir = Join-Path $DapServerRoot $Rid
+    if (Test-Path $outputDir) {
+        Remove-Item $outputDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+    Invoke-Step `
+        -FilePath "dotnet" `
+        -ArgumentList @(
+            "publish",
+            "src/Ashes.Dap/Ashes.Dap.csproj",
+            "--configuration", "Debug",
+            "--runtime", $Rid,
+            "-p:UseAppHost=true",
+            "--self-contained", "false",
+            "--output", $outputDir
+        ) `
+        -WorkingDirectory $RepoRoot `
+        -Description "Publishing Ashes DAP server for $Rid (Debug)"
+}
+
 $version = Get-ExtensionVersion
 $pnpmCommand = Resolve-PnpmCommand
 $resolvedCodeCommand = if ($SkipInstall) { $null } else { Resolve-CodeCommand -RequestedCommand $CodeCommand }
 
 New-Item -ItemType Directory -Force -Path $CompilerRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $ServerRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $DapServerRoot | Out-Null
 
 Publish-Compiler -Rid "win-x64" -Version $version
 Publish-Compiler -Rid "linux-x64" -Version $version
 Publish-LanguageServer -Rid "win-x64"
 Publish-LanguageServer -Rid "linux-x64"
+Publish-DapServer -Rid "win-x64"
+Publish-DapServer -Rid "linux-x64"
 
 Invoke-Step `
     -FilePath $pnpmCommand `
