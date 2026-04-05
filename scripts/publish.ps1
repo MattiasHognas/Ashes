@@ -1,5 +1,5 @@
-# Publish self-contained Ashes compiler executables for win-x64 and linux-x64.
-# Outputs: dist\win-x64\ashes.exe  and  dist\linux-x64\ashes
+# Publish self-contained Ashes compiler executables for win-x64, linux-x64, and linux-arm64.
+# Outputs: dist\win-x64\ashes.exe, dist\linux-x64\ashes, and dist\linux-arm64\ashes
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -15,7 +15,7 @@ param(
 Write-Host "Restoring..."
 dotnet restore $CliProject
 
-foreach ($RID in @("win-x64", "linux-x64")) {
+foreach ($RID in @("win-x64", "linux-x64", "linux-arm64")) {
     Write-Host "Publishing $RID (version $Version)..."
     $OutputDir = Join-Path $RepoRoot "dist\$RID"
     dotnet publish $CliProject `
@@ -37,3 +37,4 @@ foreach ($RID in @("win-x64", "linux-x64")) {
 Write-Host "Done."
 Write-Host "  dist\win-x64\ashes.exe"
 Write-Host "  dist\linux-x64\ashes"
+Write-Host "  dist\linux-arm64\ashes"

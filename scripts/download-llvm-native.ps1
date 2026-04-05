@@ -5,16 +5,17 @@
 #   Downloads LLVM-C.dll from the official LLVM GitHub release and renames it
 #   to libLLVM.dll to match the DllImport name.
 #
-# Linux libLLVM.so (via -Linux switch):
+# Linux libLLVM.so (via -Linux or -All switch):
 #   Invokes the bash script inside WSL, which runs `apt install libllvm<major>`
-#   and copies the .so into runtimes/linux-x64/libLLVM.so so that dotnet on
-#   Windows can include it in cross-platform builds.
+#   and copies the .so into runtimes/linux-{x64,arm64}/libLLVM.so so that dotnet
+#   on Windows can include it in cross-platform builds.
 #
 # Usage:
 #   .\scripts\download-llvm-native.ps1                       # Windows DLL only
-#   .\scripts\download-llvm-native.ps1 -Linux                # also provision Linux .so via WSL
+#   .\scripts\download-llvm-native.ps1 -Linux                # Windows DLL + native-arch Linux .so via WSL
+#   .\scripts\download-llvm-native.ps1 -All                  # all three: win-x64 + linux-x64 + linux-arm64
 #   .\scripts\download-llvm-native.ps1 -LlvmVersion 22.1.3   # specify a different version
-#   .\scripts\download-llvm-native.ps1 -Linux -LlvmMajor 23  # specify major for apt
+#   .\scripts\download-llvm-native.ps1 -LlvmMajor 23         # specify major for apt
 #
 # Prerequisites:
 #   Windows DLL: tar (ships with Windows 10+)
@@ -23,7 +24,8 @@
 param(
     [string]$LlvmVersion = "22.1.2",
     [string]$LlvmMajor,
-    [switch]$Linux
+    [switch]$Linux,
+    [switch]$All
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +33,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $LlvmMajor) {
     $LlvmMajor = $LlvmVersion.Split('.')[0]
 }
+
+# -All implies -Linux
+if ($All) { $Linux = $true }
 
 $ScriptDir = $PSScriptRoot
 $RepoRoot  = (Resolve-Path "$ScriptDir/..").Path
@@ -82,16 +87,55 @@ try {
         $wslRepoRoot = wsl wslpath -u ($RepoRoot -replace '\\','/')
         $wslScript = "$wslRepoRoot/scripts/download-llvm-native.sh"
 
-        Write-Host "Running: wsl bash $wslScript $LlvmMajor"
-        wsl bash $wslScript $LlvmMajor
+        if ($All) {
+            # Download both linux-x64 and linux-arm64 via WSL
+            Write-Host "Running: wsl bash $wslScript $LlvmMajor (native arch)"
+            wsl bash $wslScript $LlvmMajor
 
-        $linuxOut = Join-Path $LibDir 'linux-x64'
-        $soPath = Join-Path $linuxOut 'libLLVM.so'
-        if (Test-Path $soPath) {
-            $soSize = [math]::Round((Get-Item $soPath).Length / 1MB, 1)
-            Write-Host "  -> $soPath ($soSize MB)"
+            # Determine WSL's native arch to know which is the cross-arch
+            $wslArch = wsl uname -m
+            if ($wslArch -match 'x86_64|amd64') {
+                $crossArch = "arm64"
+            } else {
+                $crossArch = "x64"
+            }
+
+            Write-Host ""
+            Write-Host "Running: wsl bash $wslScript $LlvmMajor $crossArch (cross-download)"
+            wsl bash $wslScript $LlvmMajor $crossArch
         } else {
-            Write-Host "  WARNING: $soPath not found after WSL script. Check WSL output above."
+            Write-Host "Running: wsl bash $wslScript $LlvmMajor"
+            wsl bash $wslScript $LlvmMajor
+        }
+
+        # The bash script auto-detects the WSL architecture and writes to
+        # runtimes/linux-x64/ or runtimes/linux-arm64/ accordingly.
+        $foundLinuxSo = $false
+        foreach ($rid in @("linux-x64", "linux-arm64")) {
+            $linuxOut = Join-Path $LibDir $rid
+            $soPath = Join-Path $linuxOut 'libLLVM.so'
+            if (Test-Path $soPath) {
+                $foundLinuxSo = $true
+                $soSize = [math]::Round((Get-Item $soPath).Length / 1MB, 1)
+                Write-Host "  -> $soPath ($soSize MB)"
+            }
+        }
+        if (-not $foundLinuxSo) {
+            throw "WSL completed, but no Linux libLLVM.so was found in either '$LibDir/linux-x64/libLLVM.so' or '$LibDir/linux-arm64/libLLVM.so'. Check the output from scripts/download-llvm-native.sh and verify it copied the library to the expected runtime folder."
+        }
+
+        if ($All) {
+            # Verify both were downloaded
+            $missingRids = @()
+            foreach ($rid in @("linux-x64", "linux-arm64")) {
+                $soPath = Join-Path (Join-Path $LibDir $rid) 'libLLVM.so'
+                if (-not (Test-Path $soPath)) {
+                    $missingRids += $rid
+                }
+            }
+            if ($missingRids.Count -gt 0) {
+                throw "WSL completed, but libLLVM.so is missing for: $($missingRids -join ', '). When using -All, both linux-x64 and linux-arm64 are expected."
+            }
         }
     }
 
@@ -100,15 +144,18 @@ try {
     Write-Host "=== Done (LLVM $LlvmVersion) ==="
     Write-Host "Native libraries installed into:"
     Write-Host "  $WinOut/libLLVM.dll"
-    if ($Linux) {
-        Write-Host "  $(Join-Path $LibDir 'linux-x64')/libLLVM.so"
+    if ($All) {
+        Write-Host "  $LibDir/linux-x64/libLLVM.so"
+        Write-Host "  $LibDir/linux-arm64/libLLVM.so"
+    } elseif ($Linux) {
+        Write-Host "  Linux .so provisioned via WSL (see output above)"
     }
     Write-Host ""
     Write-Host "These are copied to the build output by Ashes.Backend.csproj."
-    if (-not $Linux) {
+    if (-not $Linux -and -not $All) {
         Write-Host ""
         Write-Host "TIP: To also provision the Linux .so for cross-builds, run:"
-        Write-Host "  .\scripts\download-llvm-native.ps1 -Linux"
+        Write-Host "  .\scripts\download-llvm-native.ps1 -All"
     }
 }
 finally {

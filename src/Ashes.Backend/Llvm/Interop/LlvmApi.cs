@@ -67,6 +67,21 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMInitializeX86AsmPrinter")]
     public static partial void InitializeX86AsmPrinter();
 
+    [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64TargetInfo")]
+    public static partial void InitializeAArch64TargetInfo();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64Target")]
+    public static partial void InitializeAArch64Target();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64TargetMC")]
+    public static partial void InitializeAArch64TargetMC();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64AsmParser")]
+    public static partial void InitializeAArch64AsmParser();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64AsmPrinter")]
+    public static partial void InitializeAArch64AsmPrinter();
+
     // ── Target lookup & machine ─────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMGetTargetFromTriple", StringMarshalling = StringMarshalling.Utf8)]
     public static partial int GetTargetFromTriple(string triple, out LlvmTargetHandle target, out nint errorMessage);

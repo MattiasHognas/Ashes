@@ -65,7 +65,7 @@ internal static partial class LlvmCodegen
     {
         if (state.IsEntry)
         {
-            if (state.Flavor == LlvmCodegenFlavor.Linux)
+            if (IsLinuxFlavor(state.Flavor))
             {
                 EmitExit(state, LlvmApi.ConstInt(state.I64, 0, 0));
             }
@@ -86,7 +86,7 @@ internal static partial class LlvmCodegen
     {
         EmitPrintStringFromTemp(state, stringRef, appendNewline: true);
 
-        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        if (IsLinuxFlavor(state.Flavor))
         {
             EmitExit(state, LlvmApi.ConstInt(state.I64, 1, 0));
         }
@@ -100,7 +100,7 @@ internal static partial class LlvmCodegen
 
     private static void EmitExit(LlvmCodegenState state, LlvmValueHandle exitCode)
     {
-        EmitSyscall(state, SyscallExit, exitCode, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sys_exit");
+        EmitLinuxSyscall(state, SyscallExit, exitCode, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sys_exit");
         LlvmApi.BuildUnreachable(state.Target.Builder);
     }
 

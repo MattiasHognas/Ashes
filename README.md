@@ -196,13 +196,15 @@ Ashes is split into focused phases:
 
 ### Compile Targets
 
-| Target | Format |
-|---|---|
-| `linux-x64` | ELF64 |
-| `windows-x64` | PE32+ |
+| Target | Format | Architecture |
+|---|---|---|
+| `linux-x64` | ELF64 | x86-64 |
+| `linux-arm64` | ELF64 | AArch64 |
+| `windows-x64` | PE32+ | x86-64 |
 
 ```sh
 dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello
+dotnet run --project src/Ashes.Cli -- compile --target linux-arm64 hello.ash -o hello
 ```
 
 ------------------------------------------------------------------------

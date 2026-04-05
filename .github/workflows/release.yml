@@ -6,7 +6,27 @@ on:
       - 'v[0-9]*.*.*'
 
 jobs:
+  prepare-llvm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
+
   build-compiler:
+    needs: prepare-llvm
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -17,6 +37,10 @@ jobs:
             rid: linux-x64
             artifact: ashes-linux-x64
             binary: ashes
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            artifact: ashes-linux-arm64
+            binary: ashes
           - os: windows-latest
             rid: win-x64
             artifact: ashes-win-x64
@@ -26,14 +50,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download LLVM native library (Linux)
-        if: runner.os == 'Linux'
-        run: bash scripts/download-llvm-native.sh
-
-      - name: Download LLVM native library (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .\scripts\download-llvm-native.ps1
+      - name: Restore LLVM native libraries from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
 
       - name: Get version
         id: version
@@ -83,6 +104,7 @@ jobs:
           path: ${{ matrix.artifact }}.zip
 
   build-vscode-extension:
+    needs: prepare-llvm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,11 +113,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download Windows LLVM native library
-        shell: pwsh
-        run: ./scripts/download-llvm-native.ps1
-      - name: Download LLVM native library
-        run: bash scripts/download-llvm-native.sh
+      - name: Restore LLVM native libraries from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -175,4 +197,5 @@ jobs:
           files: |
             artifacts/ashes-win-x64/ashes-win-x64.zip
             artifacts/ashes-linux-x64/ashes-linux-x64.zip
+            artifacts/ashes-linux-arm64/ashes-linux-arm64.zip
             artifacts/ashes-vscode/ashes-language-${{ steps.version.outputs.version }}.vsix

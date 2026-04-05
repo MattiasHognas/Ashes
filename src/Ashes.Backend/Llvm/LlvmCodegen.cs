@@ -22,6 +22,16 @@ internal static partial class LlvmCodegen
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
     private const long SyscallExit = 60;
+
+    // AArch64 Linux syscall numbers
+    private const long Arm64SyscallClose = 57;
+    private const long Arm64SyscallOpenat = 56;
+    private const long Arm64SyscallLseek = 62;
+    private const long Arm64SyscallRead = 63;
+    private const long Arm64SyscallWrite = 64;
+    private const long Arm64SyscallExit = 93;
+    private const long Arm64SyscallSocket = 198;
+    private const long Arm64SyscallConnect = 203;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -42,6 +52,7 @@ internal static partial class LlvmCodegen
         return targetId switch
         {
             Backends.TargetIds.LinuxX64 => CompileLinux(program, options),
+            Backends.TargetIds.LinuxArm64 => CompileLinuxArm64(program, options),
             Backends.TargetIds.WindowsX64 => CompileWindows(program, options),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
@@ -51,7 +62,7 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Windows, options);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options);
 
         VerifyModule(target);
         byte[] objectBytes = EmitObjectCode(target);
@@ -62,11 +73,22 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.Linux, options);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options);
 
         VerifyModule(target);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
+    }
+
+    private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
+    {
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel);
+        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options);
+
+        VerifyModule(target);
+        byte[] objectBytes = EmitObjectCode(target);
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry");
     }
 
     private static void VerifyModule(LlvmTargetContext target)
@@ -131,25 +153,25 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
         bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
-        bool usesWindowsStdout = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsStdout = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
                 || ProgramUsesInstruction<IrInst.PrintBool>(program)
                 || ProgramUsesInstruction<IrInst.PanicStr>(program)
                 || usesReadLine);
-        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.PanicStr>(program)
                 || usesReadLine);
-        bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.WindowsX64
             && usesProgramArgs;
-        bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.WindowsX64
             && usesReadLine;
-        bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program));
-        bool usesWindowsSockets = flavor == LlvmCodegenFlavor.Windows
+        bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.HttpGet>(program)
                 || ProgramUsesInstruction<IrInst.HttpPost>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
@@ -264,7 +286,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
-            flavor == LlvmCodegenFlavor.Linux
+            IsLinuxFlavor(flavor)
                 ? LlvmApi.FunctionType(voidType, [i64])
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
@@ -411,7 +433,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(target.Context, llvmFunction, "entry");
         LlvmApi.PositionBuilderAtEnd(target.Builder, entryBlock);
 
-        LlvmValueHandle entryStackPointer = isEntry && flavor == LlvmCodegenFlavor.Linux
+        LlvmValueHandle entryStackPointer = isEntry && IsLinuxFlavor(flavor)
             ? LlvmApi.GetParam(llvmFunction, 0)
             : default;
 
@@ -534,7 +556,7 @@ internal static partial class LlvmCodegen
         {
             if (state.IsEntry)
             {
-                if (state.Flavor == LlvmCodegenFlavor.Linux)
+                if (IsLinuxFlavor(state.Flavor))
                 {
                     EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));
                 }
@@ -712,7 +734,36 @@ internal static partial class LlvmCodegen
 
     private enum LlvmCodegenFlavor
     {
-        Linux,
-        Windows
+        LinuxX64,
+        LinuxArm64,
+        WindowsX64
+    }
+
+    private static bool IsLinuxFlavor(LlvmCodegenFlavor flavor) =>
+        flavor is LlvmCodegenFlavor.LinuxX64 or LlvmCodegenFlavor.LinuxArm64;
+
+    /// <summary>
+    /// Translates x86-64 syscall constants to the correct number for the target architecture.
+    /// AArch64 Linux uses different syscall numbers from x86-64.
+    /// </summary>
+    private static long ResolveSyscallNr(LlvmCodegenFlavor flavor, long x86Nr)
+    {
+        if (flavor != LlvmCodegenFlavor.LinuxArm64)
+        {
+            return x86Nr;
+        }
+
+        return x86Nr switch
+        {
+            SyscallRead => Arm64SyscallRead,
+            SyscallWrite => Arm64SyscallWrite,
+            SyscallOpen => Arm64SyscallOpenat,
+            SyscallClose => Arm64SyscallClose,
+            SyscallLseek => Arm64SyscallLseek,
+            SyscallSocket => Arm64SyscallSocket,
+            SyscallConnect => Arm64SyscallConnect,
+            SyscallExit => Arm64SyscallExit,
+            _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
+        };
     }
 }

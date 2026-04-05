@@ -18,7 +18,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle stdinHandle = default;
         LlvmValueHandle bytesReadSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.Windows)
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
         {
             stdinHandle = EmitWindowsGetStdHandle(state, StdInputHandle, "stdin_handle");
             bytesReadSlot = LlvmApi.BuildAlloca(builder, state.I32, "read_line_bytes_read");
@@ -38,8 +38,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
-        LlvmValueHandle bytesRead = state.Flavor == LlvmCodegenFlavor.Linux
-            ? EmitSyscall(
+        LlvmValueHandle bytesRead = IsLinuxFlavor(state.Flavor)
+            ? EmitLinuxSyscall(
                 state,
                 SyscallRead,
                 LlvmApi.ConstInt(state.I64, 0, 0),
@@ -98,21 +98,21 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxFileReadText(state, pathRef)
             : EmitWindowsFileReadText(state, pathRef);
     }
 
     private static LlvmValueHandle EmitFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxFileWriteText(state, pathRef, textRef)
             : EmitWindowsFileWriteText(state, pathRef, textRef);
     }
 
     private static LlvmValueHandle EmitFileExists(LlvmCodegenState state, LlvmValueHandle pathRef)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxFileExists(state, pathRef)
             : EmitWindowsFileExists(state, pathRef);
     }
@@ -148,7 +148,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, openBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
-        LlvmValueHandle fd = EmitSyscall(
+        LlvmValueHandle fd = EmitLinuxSyscall(
             state,
             SyscallOpen,
             LlvmApi.BuildPtrToInt(builder, pathCstr, state.I64, "fs_read_path_ptr"),
@@ -160,7 +160,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, openFailed, returnErrorBlock, seekEndBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, seekEndBlock);
-        LlvmValueHandle fileLength = EmitSyscall(
+        LlvmValueHandle fileLength = EmitLinuxSyscall(
             state,
             SyscallLseek,
             fd,
@@ -171,7 +171,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, seekEndFailed, maybeCloseErrorBlock, seekStartBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, seekStartBlock);
-        LlvmValueHandle seekStart = EmitSyscall(
+        LlvmValueHandle seekStart = EmitLinuxSyscall(
             state,
             SyscallLseek,
             fd,
@@ -202,7 +202,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, readBodyBlock);
         LlvmValueHandle cursorAddress = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "fs_read_cursor_value");
-        LlvmValueHandle readBytes = EmitSyscall(
+        LlvmValueHandle readBytes = EmitLinuxSyscall(
             state,
             SyscallRead,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_read_fd_value"),
@@ -227,7 +227,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isUtf8Valid, closeOkBlock, closeInvalidBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_read_close_fd"),
@@ -238,7 +238,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeInvalidBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_read_invalid_fd"),
@@ -254,7 +254,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldClose, closeHandleBlock, returnErrorBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeHandleBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_read_close_error_fd"),
@@ -298,7 +298,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, openBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
-        LlvmValueHandle fd = EmitSyscall(
+        LlvmValueHandle fd = EmitLinuxSyscall(
             state,
             SyscallOpen,
             LlvmApi.BuildPtrToInt(builder, pathCstr, state.I64, "fs_write_path_ptr"),
@@ -318,7 +318,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
         LlvmValueHandle cursorAddress = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "fs_write_cursor_value");
-        LlvmValueHandle bytesWritten = EmitSyscall(
+        LlvmValueHandle bytesWritten = EmitLinuxSyscall(
             state,
             SyscallWrite,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_write_fd_value"),
@@ -334,7 +334,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_write_close_fd"),
@@ -350,7 +350,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldClose, closeErrorBlock, returnErrorBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeErrorBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_write_close_error_fd"),
@@ -380,7 +380,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, openBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
-        LlvmValueHandle fd = EmitSyscall(
+        LlvmValueHandle fd = EmitLinuxSyscall(
             state,
             SyscallOpen,
             LlvmApi.BuildPtrToInt(builder, pathCstr, state.I64, "fs_exists_path_ptr"),
@@ -391,7 +391,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, openFailed, missingBlock, foundBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, foundBlock);
-        EmitSyscall(
+        EmitLinuxSyscall(
             state,
             SyscallClose,
             fd,
@@ -607,28 +607,28 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitTcpConnect(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxTcpConnect(state, hostRef, port)
             : EmitWindowsTcpConnect(state, hostRef, port);
     }
 
     private static LlvmValueHandle EmitTcpSend(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle textRef)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxTcpSend(state, socket, textRef)
             : EmitWindowsTcpSend(state, socket, textRef);
     }
 
     private static LlvmValueHandle EmitTcpReceive(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle maxBytes)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxTcpReceive(state, socket, maxBytes)
             : EmitWindowsTcpReceive(state, socket, maxBytes);
     }
 
     private static LlvmValueHandle EmitTcpClose(LlvmCodegenState state, LlvmValueHandle socket)
     {
-        return state.Flavor == LlvmCodegenFlavor.Linux
+        return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxTcpClose(state, socket)
             : EmitWindowsTcpClose(state, socket);
     }
@@ -1043,7 +1043,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, validPort, openSocketBlock, connectFailBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, openSocketBlock);
-        LlvmValueHandle socketValue = EmitSyscall(
+        LlvmValueHandle socketValue = EmitLinuxSyscall(
             state,
             SyscallSocket,
             LlvmApi.ConstInt(state.I64, 2, 0),
@@ -1069,7 +1069,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, EmitByteSwap16(state, port, "tcp_connect_port_network"), i16, "tcp_connect_port_i16"), LlvmApi.BuildBitCast(builder, portPtr, i16Ptr, "tcp_connect_port_ptr"));
         LlvmValueHandle addrPtr = LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, new[] { LlvmApi.ConstInt(state.I64, 4, 0) }, "tcp_connect_addr_ptr_byte");
         LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, LoadMemory(state, resolveResult, 8, "tcp_connect_addr_value"), state.I32, "tcp_connect_addr_i32"), LlvmApi.BuildBitCast(builder, addrPtr, state.I32Ptr, "tcp_connect_addr_ptr"));
-        LlvmValueHandle connectResult = EmitSyscall(
+        LlvmValueHandle connectResult = EmitLinuxSyscall(
             state,
             SyscallConnect,
             LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "tcp_connect_socket_value"),
@@ -1081,7 +1081,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, connectFailed, connectCloseBlock, connectSuccessBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, connectCloseBlock);
-        EmitSyscall(state, SyscallClose, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "tcp_connect_close_socket_value"), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_close_call");
+        EmitLinuxSyscall(state, SyscallClose, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "tcp_connect_close_socket_value"), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_close_call");
         LlvmApi.BuildBr(builder, connectFailBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, connectFailBlock);
@@ -1197,7 +1197,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, done, doneBlock, loopBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle sent = EmitSyscall(state, SyscallWrite, socket, LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "tcp_send_cursor_value"), remaining, "tcp_send_syscall");
+        LlvmValueHandle sent = EmitLinuxSyscall(state, SyscallWrite, socket, LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "tcp_send_cursor_value"), remaining, "tcp_send_syscall");
         LlvmValueHandle sendFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, sent, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_send_failed");
         LlvmApi.BuildCondBr(builder, sendFailed, failBlock, updateBlock);
 
@@ -1272,7 +1272,7 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitLinuxTcpReceive(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle maxBytes)
     {
-        return EmitTcpReceiveCommon(state, socket, maxBytes, "tcp_receive", static (s, sock, bytesPtr, max, name) => EmitSyscall(s, SyscallRead, sock, LlvmApi.BuildPtrToInt(s.Target.Builder, bytesPtr, s.I64, name + "_ptr"), LlvmApi.BuildSExt(s.Target.Builder, max, s.I64, name + "_len"), name));
+        return EmitTcpReceiveCommon(state, socket, maxBytes, "tcp_receive", static (s, sock, bytesPtr, max, name) => EmitLinuxSyscall(s, SyscallRead, sock, LlvmApi.BuildPtrToInt(s.Target.Builder, bytesPtr, s.I64, name + "_ptr"), LlvmApi.BuildSExt(s.Target.Builder, max, s.I64, name + "_len"), name));
     }
 
     private static LlvmValueHandle EmitWindowsTcpReceive(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle maxBytes)
@@ -1340,7 +1340,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitLinuxTcpClose(LlvmCodegenState state, LlvmValueHandle socket)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle result = EmitSyscall(state, SyscallClose, socket, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_call");
+        LlvmValueHandle result = EmitLinuxSyscall(state, SyscallClose, socket, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_call");
         LlvmValueHandle success = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, result, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_success");
         return LlvmApi.BuildSelect(builder, success, EmitResultOk(state, EmitUnitValue(state)), EmitResultError(state, EmitHeapStringLiteral(state, TcpCloseFailedMessage)), "tcp_close_result");
     }
@@ -1642,7 +1642,7 @@ internal static partial class LlvmCodegen
     {
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, 0, 0), state.ProgramArgsSlot);
 
-        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        if (IsLinuxFlavor(state.Flavor))
         {
             EmitLinuxProgramArgsInitialization(state);
             return;
