@@ -39,8 +39,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          lfs: true
+
+      - name: Download LLVM native library
+        run: bash scripts/download-llvm-native.sh
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
