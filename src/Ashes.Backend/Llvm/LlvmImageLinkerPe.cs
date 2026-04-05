@@ -303,9 +303,7 @@ internal static partial class LlvmImageLinker
 
         // Entry 12 (index 12): IAT Directory
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 96, 4), rdataRva + (uint)iatSectionOffset); // IAT RVA
-        int iatTotalSize = (int)rdataStream.Position - iatSectionOffset -
-            ((int)rdataStream.Position - kernel32IltOffset); // IAT ends where ILT begins
-        iatTotalSize = ws2IatOffset + (ws2Hints.Length + 1) * 8 - iatSectionOffset;
+        int iatTotalSize = ws2IatOffset + (ws2Hints.Length + 1) * 8 - iatSectionOffset;
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 100, 4), (uint)iatTotalSize); // IAT Size
 
         // Section headers
@@ -377,8 +375,9 @@ internal static partial class LlvmImageLinker
     {
         AlignStream(stream, 2);
         int offset = (int)stream.Position;
-        stream.WriteByte((byte)(hint & 0xFF));
-        stream.WriteByte((byte)((hint >> 8) & 0xFF));
+        Span<byte> hintBytes = stackalloc byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(hintBytes, hint);
+        stream.Write(hintBytes);
         stream.Write(Encoding.ASCII.GetBytes(name));
         stream.WriteByte(0);
         if (stream.Position % 2 != 0)
