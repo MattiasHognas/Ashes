@@ -37,7 +37,8 @@ jobs:
 
               const artifact = response.data.artifacts.find(candidate =>
                 !candidate.expired &&
-                candidate.workflow_run?.id > 0 &&
+                typeof candidate.workflow_run?.id === 'number' &&
+                candidate.workflow_run.id > 0 &&
                 candidate.workflow_run.id !== currentRunId
               );
 
@@ -83,7 +84,6 @@ jobs:
         with:
           name: llvm-runtimes
           path: runtimes
-          overwrite: true
           retention-days: 7
 
       - name: Setup .NET
