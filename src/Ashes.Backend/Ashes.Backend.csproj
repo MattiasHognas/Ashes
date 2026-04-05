@@ -13,17 +13,23 @@
     <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
   </ItemGroup>
 
+  <!-- When no explicit RID is set, detect host platform for native library selection -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">
+    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</_HostLinuxRid>
+    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</_HostLinuxRid>
+  </PropertyGroup>
+
   <ItemGroup>
     <None Include="..\..\runtimes\win-x64\libLLVM.dll"
           Condition="Exists('..\..\runtimes\win-x64\libLLVM.dll')"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.dll" />
     <None Include="..\..\runtimes\linux-x64\libLLVM.so"
-          Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-x64' or $([System.String]::Copy(';$(RuntimeIdentifiers);').Contains(';linux-x64;')) )"
+          Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-x64' or '$(_HostLinuxRid)' == 'linux-x64' )"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.so" />
     <None Include="..\..\runtimes\linux-arm64\libLLVM.so"
-          Condition="Exists('..\..\runtimes\linux-arm64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-arm64' or $([System.String]::Copy(';$(RuntimeIdentifiers);').Contains(';linux-arm64;')) )"
+          Condition="Exists('..\..\runtimes\linux-arm64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-arm64' or '$(_HostLinuxRid)' == 'linux-arm64' )"
           CopyToOutputDirectory="PreserveNewest"
           Link="libLLVM.so" />
   </ItemGroup>
