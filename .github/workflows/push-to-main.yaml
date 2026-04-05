@@ -43,6 +43,9 @@ jobs:
       - name: Download LLVM native library
         run: bash scripts/download-llvm-native.sh
 
+      - name: Download ARM64 LLVM native library (cross-compilation)
+        run: bash scripts/download-llvm-native.sh 22 arm64
+
       - name: Download Windows LLVM native library
         shell: pwsh
         run: ./scripts/download-llvm-native.ps1
