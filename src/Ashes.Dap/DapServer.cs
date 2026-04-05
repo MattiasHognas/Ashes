@@ -56,7 +56,7 @@ public sealed class DapServer : IDisposable
                 await HandleLaunchAsync(request);
                 break;
             case "setBreakpoints":
-                HandleSetBreakpoints(request);
+                await HandleSetBreakpointsAsync(request);
                 break;
             case "configurationDone":
                 await HandleConfigurationDoneAsync(request);
@@ -189,7 +189,7 @@ public sealed class DapServer : IDisposable
         };
     }
 
-    private void HandleSetBreakpoints(DapRequest request)
+    private async Task HandleSetBreakpointsAsync(DapRequest request)
     {
         var args = request.Arguments.HasValue
             ? JsonSerializer.Deserialize<DapSetBreakpointsArguments>(request.Arguments.Value.GetRawText())
@@ -205,19 +205,28 @@ public sealed class DapServer : IDisposable
             int id = 1;
             foreach (var bp in args.Breakpoints)
             {
+                bool verified = true;
+
+                // If debugger is already running, set breakpoint immediately and track success
+                if (_debugger is not null && _launchArgs is not null)
+                {
+                    try
+                    {
+                        await _debugger.SetBreakpointAsync(args.Source.Path, bp.Line);
+                    }
+                    catch
+                    {
+                        verified = false;
+                    }
+                }
+
                 breakpoints.Add(new DapBreakpoint
                 {
                     Id = id++,
-                    Verified = true,
+                    Verified = verified,
                     Line = bp.Line,
                     Source = args.Source,
                 });
-
-                // If debugger is already running, set breakpoint immediately
-                if (_debugger is not null && _launchArgs is not null)
-                {
-                    _ = _debugger.SetBreakpointAsync(args.Source.Path, bp.Line);
-                }
             }
         }
         else if (args?.Source.Path is not null)
