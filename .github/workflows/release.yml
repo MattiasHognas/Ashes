@@ -14,15 +14,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download all LLVM native libraries
-        run: bash scripts/download-llvm-native.sh --all
-
-      - name: Upload LLVM native libraries
-        uses: actions/upload-artifact@v7
+      - name: Cache Runtimes
+        id: cache-runtimes
+        uses: actions/cache@v4
         with:
-          name: llvm-runtimes
           path: runtimes
-          retention-days: 1
+          key: runtimes-22
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
 
   build-compiler:
     needs: prepare-llvm
@@ -49,11 +50,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download LLVM native libraries
-        uses: actions/download-artifact@v8
+      - name: Cache Runtimes
+        id: cache-runtimes
+        uses: actions/cache@v4
         with:
-          name: llvm-runtimes
           path: runtimes
+          key: runtimes-22
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
 
       - name: Get version
         id: version
@@ -112,11 +118,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download LLVM native libraries
-        uses: actions/download-artifact@v8
+      - name: Cache Runtimes
+        id: cache-runtimes
+        uses: actions/cache@v4
         with:
-          name: llvm-runtimes
           path: runtimes
+          key: runtimes-22
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
