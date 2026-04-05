@@ -1,6 +1,6 @@
 <Project>
   <!--
-    During 'dotnet publish -\-runtime linux-arm64', project reference evaluation may
+    During 'dotnet publish' with a cross-architecture runtime, project reference evaluation may
     resolve the wrong-arch libLLVM.so (from _HostLinuxRid fallback in Backend.csproj).
     This target runs after Publish to ensure the correct RID-specific native library
     is placed alongside the published executable.
