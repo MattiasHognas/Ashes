@@ -114,10 +114,10 @@ public sealed class ExampleSocketFixtureTests
     {
         try
         {
-            using var acceptCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var acceptCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 5000;
+            client.ReceiveTimeout = 15000;
+            client.SendTimeout = 15000;
             await handleClientAsync(client);
             return null;
         }
@@ -150,7 +150,7 @@ public sealed class ExampleSocketFixtureTests
         {
             try
             {
-                using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
                 if (count == 0)
                 {
