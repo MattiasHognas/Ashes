@@ -214,9 +214,14 @@ public sealed class DapServer : IDisposable
                     {
                         await _debugger.SetBreakpointAsync(args.Source.Path, bp.Line);
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         verified = false;
+                        _transport.SendEvent("output", new
+                        {
+                            category = "console",
+                            output = $"Failed to set breakpoint at {args.Source.Path}:{bp.Line}: {ex.Message}\n",
+                        });
                     }
                 }
 
