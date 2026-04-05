@@ -185,7 +185,7 @@ completed after all types are defined.
 
 #### PE (`LlvmImageLinkerPe.cs`)
 
-- [ ] Use DWARF on Windows (same as Linux) for consistency.
+- [x] Use DWARF on Windows (same as Linux) for consistency.
   Set LLVM target triple to `x86_64-pc-windows-gnu` (MinGW) instead of MSVC;
   this produces DWARF sections which GDB/LLDB on Windows understand.
 - Include `.debug_*` COFF sections in the PE image (similar approach to ELF:
@@ -251,7 +251,7 @@ VS Code  ←─JSON/stdio─→  Ashes.Dap  ←─GDB-MI / LLDB─→  GDB/LLDB 
 
 ### 3d. Variable Inspection — Full Recursive
 
-- [ ] **Primitives** (`Int`, `Float`, `Bool`): read directly.
+- [x] **Primitives** (`Int`, `Float`, `Bool`): read directly.
 - **Strings:** dereference pointer → read `length` at offset 0, bytes at
   offset 8. Display as `"hello"`.
 - **Lists:** read ADT pointer → tag 0 (Nil) → `[]`; tag 1 (Cons) → read
