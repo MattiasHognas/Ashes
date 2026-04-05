@@ -128,8 +128,8 @@
               "name": "Ashes: Launch",
               "type": "ashes",
               "request": "launch",
-              "program": "^\"\\${workspaceFolder}/out/\\${workspaceFolderBasename}\"",
-              "cwd": "^\"\\${workspaceFolder}\"",
+              "program": "${workspaceFolder}/out/${workspaceFolderBasename}",
+              "cwd": "${workspaceFolder}",
               "stopOnEntry": false
             }
           }
