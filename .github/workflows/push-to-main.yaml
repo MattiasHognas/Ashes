@@ -40,16 +40,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache LLVM native libraries
-        id: cache-llvm
-        uses: actions/cache@v4
+      - name: Download LLVM native libraries artifact
+        id: download-llvm-runtimes
+        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
+          name: llvm-runtimes
           path: runtimes
-          key: llvm-all-22.1.2
 
       - name: Download all LLVM native libraries
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        if: steps.download-llvm-runtimes.outcome != 'success'
         run: bash scripts/download-llvm-native.sh --all
+
+      - name: Upload LLVM native libraries artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: llvm-runtimes
+          path: runtimes
+          retention-days: 7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5

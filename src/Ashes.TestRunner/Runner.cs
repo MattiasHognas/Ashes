@@ -634,7 +634,11 @@ public static class Runner
 
             var exeName = targetId == TargetIds.WindowsX64 ? "program.exe" : "program";
             var exePath = Path.Combine(workDir, exeName);
-            File.WriteAllBytes(exePath, image);
+            using (var fs = new FileStream(exePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(image);
+                fs.Flush(flushToDisk: true);
+            }
 
             if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             {

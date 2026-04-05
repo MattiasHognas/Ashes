@@ -53,12 +53,7 @@ function getDapServerExecutable(context: vscode.ExtensionContext): string {
       throw new Error(`Unsupported Linux architecture: ${process.arch}`);
     }
     const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
-    return path.join(
-      context.extensionPath,
-      "dap-server",
-      rid,
-      "ashes-dap",
-    );
+    return path.join(context.extensionPath, "dap-server", rid, "ashes-dap");
   }
 
   throw new Error(`Unsupported platform: ${process.platform}`);
@@ -135,7 +130,10 @@ export async function activate(
 
   const debugConfigProvider = new AshesDebugConfigurationProvider();
   context.subscriptions.push(
-    vscode.debug.registerDebugConfigurationProvider("ashes", debugConfigProvider),
+    vscode.debug.registerDebugConfigurationProvider(
+      "ashes",
+      debugConfigProvider,
+    ),
   );
 }
 
@@ -147,9 +145,7 @@ export async function deactivate(): Promise<void> {
   disposeCommands();
 }
 
-class AshesDebugAdapterFactory
-  implements vscode.DebugAdapterDescriptorFactory
-{
+class AshesDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   private readonly context: vscode.ExtensionContext;
 
   constructor(context: vscode.ExtensionContext) {
@@ -189,8 +185,7 @@ class AshesDebugConfigurationProvider
         config.type = "ashes";
         config.name = "Ashes: Launch";
         config.request = "launch";
-        config.program =
-          "${workspaceFolder}/out/${workspaceFolderBasename}";
+        config.program = "${workspaceFolder}/out/${workspaceFolderBasename}";
         config.cwd = "${workspaceFolder}";
         config.stopOnEntry = false;
       }
