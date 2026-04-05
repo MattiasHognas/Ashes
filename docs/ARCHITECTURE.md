@@ -103,8 +103,8 @@ flowchart TD
     ObjWindows[".obj  (COFF relocatable)"]
     LinkerLinux["LlvmImageLinker\n.LinkLinuxExecutable()"]
     LinkerWindows["LlvmImageLinker\n.LinkWindowsExecutable()"]
-    ElfWriter["LibObjectFile\n(ElfFile)"]
-    PeWriter["LibObjectFile\n(PEFile)"]
+    ElfWriter["Hand-rolled\nELF64 writer"]
+    PeWriter["Hand-rolled\nPE32+ writer"]
     ELF["ELF64 executable"]
     PE["PE32+ executable"]
 
@@ -131,7 +131,6 @@ the target ID.
 | Dependency | Source | Purpose |
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
-| LibObjectFile | NuGet 2.1.0 | ELF64 and PE32+ executable construction |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
@@ -244,7 +243,7 @@ executable images.
    are resolved against text and data section base addresses.
 5. A 20-byte **trampoline** is prepended: saves the stack pointer, calls
    the entry function, then invokes `syscall exit(0)`.
-6. **LibObjectFile** (`ElfFile`) builds the final two-segment (text + data)
+6. A hand-rolled binary writer emits the final two-segment (text + data)
    ELF64 executable with the ELF header and two `PT_LOAD` program headers.
 
 ### Windows (PE32+)
@@ -261,7 +260,7 @@ executable images.
    are resolved, preserving encoded addends.
 6. A 24-byte **trampoline** + 35-byte **`__chkstk` stub** are prepended.
    The chkstk stub probes each 4 KB page for stack allocations >4096 bytes.
-7. **LibObjectFile** (`PEFile`) assembles the final PE32+ executable with
+7. A hand-rolled binary writer assembles the final PE32+ executable with
    `.text`, `.rdata`, optional `.bss` sections, and the import directory.
 
 ### Constants

@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Text;
-using LibObjectFile.Elf;
 
 namespace Ashes.Backend.Llvm;
 
@@ -16,6 +15,9 @@ internal static partial class LlvmImageLinker
     private const uint ElfRelocX86_64Pc32 = 2;
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
+
+    private const int ElfHeaderSize = 64;
+    private const int ElfProgramHeaderSize = 56;
 
     public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
     {
@@ -40,65 +42,86 @@ internal static partial class LlvmImageLinker
             .Concat(parsed.TextBytes)
             .ToArray();
 
-        var elf = new ElfFile(ElfArch.X86_64, addDefaultSections: true)
-        {
-            FileType = ElfFileType.Executable,
-            EntryPointAddress = textVa
-        };
+        bool hasData = laidOutData.DataBytes.Length > 0;
+        int programHeaderCount = hasData ? 2 : 1;
+        int totalSize = hasData
+            ? dataFileOffset + laidOutData.DataBytes.Length
+            : textFileOffset + codeBytes.Length;
 
-        var textSection = new ElfStreamSection(ElfSectionSpecialType.Text, new MemoryStream(codeBytes))
-        {
-            Flags = ElfSectionFlags.Alloc | ElfSectionFlags.Executable,
-            VirtualAddress = textVa,
-            VirtualAddressAlignment = (ulong)PageSize,
-            FileAlignment = (uint)PageSize,
-        };
-        elf.Add(textSection);
+        var output = new byte[totalSize];
+        WriteElf64Header(output, textVa, programHeaderCount);
 
-        ElfStreamSection? dataSection = null;
-        if (laidOutData.DataBytes.Length > 0)
+        // Program header 1: text (R+X)
+        WriteElf64ProgramHeader(output, 0,
+            fileOffset: (ulong)textFileOffset,
+            virtualAddress: textVa,
+            fileSize: (ulong)codeBytes.Length,
+            memorySize: (ulong)codeBytes.Length,
+            flags: 0x05); // PF_R | PF_X
+
+        if (hasData)
         {
-            dataSection = new ElfStreamSection(ElfSectionSpecialType.Data, new MemoryStream(laidOutData.DataBytes))
-            {
-                Flags = ElfSectionFlags.Alloc | ElfSectionFlags.Write,
-                VirtualAddress = dataVa,
-                VirtualAddressAlignment = (ulong)PageSize,
-                FileAlignment = (uint)PageSize,
-            };
-            elf.Add(dataSection);
+            // Program header 2: data (R+W)
+            WriteElf64ProgramHeader(output, 1,
+                fileOffset: (ulong)dataFileOffset,
+                virtualAddress: dataVa,
+                fileSize: (ulong)laidOutData.DataBytes.Length,
+                memorySize: (ulong)laidOutData.DataBytes.Length,
+                flags: 0x06); // PF_R | PF_W
         }
 
-        elf.Add(new ElfSectionHeaderStringTable());
-        elf.Add(new ElfSectionHeaderTable());
+        // Write .text content
+        Array.Copy(codeBytes, 0, output, textFileOffset, codeBytes.Length);
 
-        elf.Segments.Add(new ElfSegment
+        // Write .data content
+        if (hasData)
         {
-            Type = ElfSegmentTypeCore.Load,
-            Flags = ElfSegmentFlagsCore.Readable | ElfSegmentFlagsCore.Executable,
-            Range = new ElfContentRange(textSection),
-            VirtualAddress = textVa,
-            PhysicalAddress = textVa,
-            VirtualAddressAlignment = (ulong)PageSize,
-            SizeInMemory = (ulong)codeBytes.Length,
-        });
-
-        if (dataSection is not null)
-        {
-            elf.Segments.Add(new ElfSegment
-            {
-                Type = ElfSegmentTypeCore.Load,
-                Flags = ElfSegmentFlagsCore.Readable | ElfSegmentFlagsCore.Writable,
-                Range = new ElfContentRange(dataSection),
-                VirtualAddress = dataVa,
-                PhysicalAddress = dataVa,
-                VirtualAddressAlignment = (ulong)PageSize,
-                SizeInMemory = (ulong)laidOutData.DataBytes.Length,
-            });
+            Array.Copy(laidOutData.DataBytes, 0, output, dataFileOffset, laidOutData.DataBytes.Length);
         }
 
-        using var output = new MemoryStream();
-        elf.Write(output);
-        return output.ToArray();
+        return output;
+    }
+
+    private static void WriteElf64Header(byte[] output, ulong entryPoint, int programHeaderCount)
+    {
+        // e_ident: magic, class, data, version, OS/ABI, padding
+        output[0] = 0x7F;
+        output[1] = (byte)'E';
+        output[2] = (byte)'L';
+        output[3] = (byte)'F';
+        output[4] = 2;   // ELFCLASS64
+        output[5] = 1;   // ELFDATA2LSB
+        output[6] = 1;   // EV_CURRENT
+        output[7] = 0;   // ELFOSABI_NONE
+        // bytes 8..15 are padding (zero)
+
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(16, 2), 2);  // e_type: ET_EXEC
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(18, 2), 62); // e_machine: EM_X86_64
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(20, 4), 1);  // e_version: EV_CURRENT
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(24, 8), entryPoint); // e_entry
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(32, 8), ElfHeaderSize); // e_phoff
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(40, 8), 0);  // e_shoff (no section headers)
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(48, 4), 0);  // e_flags
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(52, 2), ElfHeaderSize);  // e_ehsize
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(54, 2), ElfProgramHeaderSize); // e_phentsize
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(56, 2), checked((ushort)programHeaderCount)); // e_phnum
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(58, 2), 0);  // e_shentsize
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(60, 2), 0);  // e_shnum
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(62, 2), 0);  // e_shstrndx
+    }
+
+    private static void WriteElf64ProgramHeader(byte[] output, int index,
+        ulong fileOffset, ulong virtualAddress, ulong fileSize, ulong memorySize, uint flags)
+    {
+        int offset = ElfHeaderSize + index * ElfProgramHeaderSize;
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset, 4), 1);             // p_type: PT_LOAD
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset + 4, 4), flags);     // p_flags
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 8, 8), fileOffset); // p_offset
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 16, 8), virtualAddress); // p_vaddr
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 24, 8), virtualAddress); // p_paddr
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 32, 8), fileSize);  // p_filesz
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 40, 8), memorySize); // p_memsz
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 48, 8), (ulong)PageSize); // p_align
     }
 
     private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)

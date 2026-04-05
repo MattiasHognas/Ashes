@@ -14,10 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="LibObjectFile" Version="2.1.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Include="..\..\runtimes\win-x64\libLLVM.dll"
           Condition="Exists('..\..\runtimes\win-x64\libLLVM.dll')"
           CopyToOutputDirectory="PreserveNewest"
