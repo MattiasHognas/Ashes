@@ -56,7 +56,7 @@ class AshesDebugConfigurationProvider implements vscode.DebugConfigurationProvid
 
         if (!config.program) {
             return vscode.window.showInformationMessage(
-                'Cannot start debugging: no program specified in launch configuration.'
+                'Cannot start debugging: no program specified in launch configuration. Add a "program" property to your launch.json pointing to the compiled binary.'
             ).then(_ => undefined);
         }
 

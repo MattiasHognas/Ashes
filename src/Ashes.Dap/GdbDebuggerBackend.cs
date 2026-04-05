@@ -108,7 +108,9 @@ public sealed class GdbDebuggerBackend : IDisposable
             }
             catch
             {
-                try { _gdb.Kill(); } catch { /* best effort */ }
+                try { _gdb.Kill(); }
+                catch (InvalidOperationException) { /* process already exited */ }
+                catch (SystemException) { /* process no longer accessible */ }
             }
         }
     }

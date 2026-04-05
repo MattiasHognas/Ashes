@@ -64,37 +64,14 @@ internal static partial class LlvmImageLinker
         // Build section header string table (.shstrtab)
         int shstrtabOffset = 0;
         byte[] shstrtabBytes = [];
+        Dictionary<string, int> shstrtabNameOffsets = new(StringComparer.Ordinal);
         int sectionHeaderCount = 0;
         int shstrtabIndex = 0;
         int sectionHeaderOffset = 0;
 
         if (hasDebug)
         {
-            // Section names: null, .text, (.data if present), .debug_*, .shstrtab
-            var shstrtab = new MemoryStream();
-            shstrtab.WriteByte(0); // null name at offset 0
-
-            var nameOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
-
-            nameOffsets[".text"] = (int)shstrtab.Position;
-            shstrtab.Write(Encoding.ASCII.GetBytes(".text\0"));
-
-            if (hasData)
-            {
-                nameOffsets[".data"] = (int)shstrtab.Position;
-                shstrtab.Write(Encoding.ASCII.GetBytes(".data\0"));
-            }
-
-            foreach (var debugSection in parsed.DebugSections)
-            {
-                nameOffsets[debugSection.Name] = (int)shstrtab.Position;
-                shstrtab.Write(Encoding.ASCII.GetBytes(debugSection.Name + "\0"));
-            }
-
-            nameOffsets[".shstrtab"] = (int)shstrtab.Position;
-            shstrtab.Write(Encoding.ASCII.GetBytes(".shstrtab\0"));
-
-            shstrtabBytes = shstrtab.ToArray();
+            (shstrtabBytes, shstrtabNameOffsets) = BuildSectionNameStringTable(hasData, parsed.DebugSections);
             shstrtabOffset = debugCursor;
 
             // Section header count: null + .text + (.data?) + debug sections + .shstrtab
@@ -145,25 +122,6 @@ internal static partial class LlvmImageLinker
         // Write debug sections and section headers
         if (hasDebug)
         {
-            var nameOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
-            var shstrtab = new MemoryStream();
-            shstrtab.WriteByte(0);
-            nameOffsets[".text"] = (int)shstrtab.Position;
-            shstrtab.Write(Encoding.ASCII.GetBytes(".text\0"));
-            if (hasData)
-            {
-                nameOffsets[".data"] = (int)shstrtab.Position;
-                shstrtab.Write(Encoding.ASCII.GetBytes(".data\0"));
-            }
-            foreach (var debugSection in parsed.DebugSections)
-            {
-                nameOffsets[debugSection.Name] = (int)shstrtab.Position;
-                shstrtab.Write(Encoding.ASCII.GetBytes(debugSection.Name + "\0"));
-            }
-            nameOffsets[".shstrtab"] = (int)shstrtab.Position;
-            shstrtab.Write(Encoding.ASCII.GetBytes(".shstrtab\0"));
-            shstrtabBytes = shstrtab.ToArray();
-
             for (int i = 0; i < parsed.DebugSections.Count; i++)
             {
                 Array.Copy(parsed.DebugSections[i].Bytes, 0, output, debugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
@@ -179,7 +137,7 @@ internal static partial class LlvmImageLinker
 
             // .text
             WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                nameOffset: (uint)nameOffsets[".text"],
+                nameOffset: (uint)shstrtabNameOffsets[".text"],
                 type: 1, // SHT_PROGBITS
                 flags: 0x06, // SHF_ALLOC | SHF_EXECINSTR
                 fileOffset: (ulong)textFileOffset,
@@ -191,7 +149,7 @@ internal static partial class LlvmImageLinker
             if (hasData)
             {
                 WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                    nameOffset: (uint)nameOffsets[".data"],
+                    nameOffset: (uint)shstrtabNameOffsets[".data"],
                     type: 1, // SHT_PROGBITS
                     flags: 0x03, // SHF_ALLOC | SHF_WRITE
                     fileOffset: (ulong)dataFileOffset,
@@ -204,7 +162,7 @@ internal static partial class LlvmImageLinker
             for (int i = 0; i < parsed.DebugSections.Count; i++)
             {
                 WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                    nameOffset: (uint)nameOffsets[parsed.DebugSections[i].Name],
+                    nameOffset: (uint)shstrtabNameOffsets[parsed.DebugSections[i].Name],
                     type: 1, // SHT_PROGBITS
                     flags: 0, // no flags (non-ALLOC)
                     fileOffset: (ulong)debugFileOffsets[i],
@@ -215,7 +173,7 @@ internal static partial class LlvmImageLinker
 
             // .shstrtab
             WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx,
-                nameOffset: (uint)nameOffsets[".shstrtab"],
+                nameOffset: (uint)shstrtabNameOffsets[".shstrtab"],
                 type: 3, // SHT_STRTAB
                 flags: 0,
                 fileOffset: (ulong)shstrtabOffset,
@@ -583,6 +541,35 @@ internal static partial class LlvmImageLinker
         }
 
         return new LaidOutElfSections(stream.ToArray(), sectionBaseVas);
+    }
+
+    private static (byte[] Bytes, Dictionary<string, int> NameOffsets) BuildSectionNameStringTable(
+        bool hasData, IReadOnlyList<ElfDebugSection> debugSections)
+    {
+        var shstrtab = new MemoryStream();
+        var nameOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        shstrtab.WriteByte(0); // null name at offset 0
+
+        nameOffsets[".text"] = (int)shstrtab.Position;
+        shstrtab.Write(Encoding.ASCII.GetBytes(".text\0"));
+
+        if (hasData)
+        {
+            nameOffsets[".data"] = (int)shstrtab.Position;
+            shstrtab.Write(Encoding.ASCII.GetBytes(".data\0"));
+        }
+
+        foreach (var debugSection in debugSections)
+        {
+            nameOffsets[debugSection.Name] = (int)shstrtab.Position;
+            shstrtab.Write(Encoding.ASCII.GetBytes(debugSection.Name + "\0"));
+        }
+
+        nameOffsets[".shstrtab"] = (int)shstrtab.Position;
+        shstrtab.Write(Encoding.ASCII.GetBytes(".shstrtab\0"));
+
+        return (shstrtab.ToArray(), nameOffsets);
     }
 
     private static byte[] BuildLinuxTrampoline(int entryOffsetInText)

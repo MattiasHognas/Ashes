@@ -201,6 +201,8 @@ public sealed class DebugInfoTests
         // The entry module should cover the entire source
         var entryOffset = layout.ModuleOffsets[^1];
         entryOffset.FilePath.ShouldBe("<memory>");
+        entryOffset.StartOffset.ShouldBeGreaterThanOrEqualTo(0);
+        entryOffset.EndOffset.ShouldBeGreaterThanOrEqualTo(entryOffset.StartOffset);
     }
 
     // ── CLI flag parsing tests ───────────────────────────────────────────
