@@ -706,10 +706,10 @@ public sealed class LinuxBackendCoverageTests
     {
         try
         {
-            using var acceptCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
             using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 5000;
+            client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
+            client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
             await handleClientAsync(client);
             return null;
         }
@@ -732,7 +732,7 @@ public sealed class LinuxBackendCoverageTests
         {
             try
             {
-                using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
                 var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
                 if (count == 0)
                 {
