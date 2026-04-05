@@ -68,7 +68,7 @@ examples/*.exe
 /*.exe
 /*.txt
 *.received.txt
-llvm-material
+runtimes
 
 
 # Personal files
