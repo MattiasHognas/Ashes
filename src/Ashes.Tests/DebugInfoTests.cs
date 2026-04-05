@@ -99,7 +99,7 @@ public sealed class DebugInfoTests
     }
 
     [Test]
-    public void IrInst_Location_can_be_set()
+    public void IrInst_Location_can_be_initialized_via_with_expression()
     {
         var inst = new IrInst.LoadConstInt(0, 42) with { Location = new SourceLocation("test.ash", 1, 1) };
         inst.Location.ShouldNotBeNull();
