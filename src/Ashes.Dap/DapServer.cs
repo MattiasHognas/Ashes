@@ -10,6 +10,7 @@ namespace Ashes.Dap;
 public sealed class DapServer : IDisposable
 {
     private readonly DapTransport _transport;
+    private readonly Func<string?, IDebuggerBackend> _backendFactory;
     private IDebuggerBackend? _debugger;
     private bool _initialized;
     private bool _configurationDone;
@@ -17,8 +18,17 @@ public sealed class DapServer : IDisposable
     private readonly Dictionary<string, List<int>> _pendingBreakpoints = [];
 
     public DapServer(Stream input, Stream output)
+        : this(input, output, CreateBackend)
+    {
+    }
+
+    /// <summary>
+    /// Creates a DapServer with a custom backend factory (used for testing).
+    /// </summary>
+    public DapServer(Stream input, Stream output, Func<string?, IDebuggerBackend> backendFactory)
     {
         _transport = new DapTransport(input, output);
+        _backendFactory = backendFactory;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -114,7 +124,7 @@ public sealed class DapServer : IDisposable
 
         try
         {
-            _debugger = CreateBackend(_launchArgs.DebuggerType);
+            _debugger = _backendFactory(_launchArgs.DebuggerType);
             WireDebuggerEvents(_debugger);
 
             await _debugger.StartAsync(
@@ -147,7 +157,7 @@ public sealed class DapServer : IDisposable
         }
     }
 
-    private static IDebuggerBackend CreateBackend(string? debuggerType)
+    public static IDebuggerBackend CreateBackend(string? debuggerType)
     {
         return debuggerType?.ToLowerInvariant() switch
         {

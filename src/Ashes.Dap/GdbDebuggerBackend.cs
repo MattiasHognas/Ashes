@@ -10,7 +10,7 @@ namespace Ashes.Dap;
 /// Abstracts the debugger backend (GDB MI protocol).
 /// Manages a GDB subprocess to debug the target Ashes-compiled binary.
 /// </summary>
-public sealed class GdbDebuggerBackend : IDebuggerBackend
+public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 {
     private Process? _gdb;
     private StreamWriter? _gdbIn;
@@ -225,7 +225,8 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
         return true;
     }
 
-    private static Regex ResultRecordRegex() => new(@"^(\d+)\^", RegexOptions.Compiled);
+    [GeneratedRegex(@"^(\d+)\^")]
+    private static partial Regex ResultRecordRegex();
 
     private static string? ExtractGdbField(string miRecord, string fieldName)
     {

@@ -57,7 +57,7 @@
             "lldb"
           ],
           "default": "gdb",
-          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows or 'lldb' on macOS."
+          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on macOS (recommended)."
         }
       }
     },

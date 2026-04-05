@@ -296,6 +296,218 @@ public sealed class DapServerTests
         vars.Length.ShouldBe(0);
     }
 
+    // ── Backend selection and integration tests ────────────────────────
+
+    [Test]
+    public void CreateBackend_defaults_to_gdb_for_null()
+    {
+        using var backend = DapServer.CreateBackend(null);
+        backend.ShouldBeOfType<GdbDebuggerBackend>();
+    }
+
+    [Test]
+    public void CreateBackend_defaults_to_gdb_for_unknown_value()
+    {
+        using var backend = DapServer.CreateBackend("unknown");
+        backend.ShouldBeOfType<GdbDebuggerBackend>();
+    }
+
+    [Test]
+    public void CreateBackend_returns_gdb_for_gdb()
+    {
+        using var backend = DapServer.CreateBackend("gdb");
+        backend.ShouldBeOfType<GdbDebuggerBackend>();
+    }
+
+    [Test]
+    public void CreateBackend_returns_lldb_for_lldb()
+    {
+        using var backend = DapServer.CreateBackend("lldb");
+        backend.ShouldBeOfType<LldbDebuggerBackend>();
+    }
+
+    [Test]
+    public void CreateBackend_is_case_insensitive()
+    {
+        using var backend = DapServer.CreateBackend("LLDB");
+        backend.ShouldBeOfType<LldbDebuggerBackend>();
+    }
+
+    [Test]
+    public async Task Server_launch_with_gdb_type_uses_gdb_backend()
+    {
+        IDebuggerBackend? capturedBackend = null;
+
+        var launchArgs = JsonSerializer.SerializeToElement(new
+        {
+            program = "/tmp/test",
+            debuggerType = "gdb",
+        });
+
+        var (inputStream, outputStream) = CreateDapStreams(
+            CreateRequest(1, "initialize"),
+            CreateRequest(2, "launch", launchArgs),
+            CreateRequest(3, "disconnect"));
+
+        using var server = new DapServer(inputStream, outputStream, debuggerType =>
+        {
+            var mock = new MockDebuggerBackend();
+            capturedBackend = mock;
+            return mock;
+        });
+        await server.RunAsync();
+
+        capturedBackend.ShouldNotBeNull();
+        capturedBackend.ShouldBeOfType<MockDebuggerBackend>();
+
+        var responses = ParseDapOutput(outputStream);
+        var launchResponse = responses.FirstOrDefault(r =>
+            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "launch"
+            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+
+        launchResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
+        launchResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Server_launch_with_lldb_type_passes_debugger_type_to_factory()
+    {
+        string? receivedDebuggerType = null;
+
+        var launchArgs = JsonSerializer.SerializeToElement(new
+        {
+            program = "/tmp/test",
+            debuggerType = "lldb",
+        });
+
+        var (inputStream, outputStream) = CreateDapStreams(
+            CreateRequest(1, "initialize"),
+            CreateRequest(2, "launch", launchArgs),
+            CreateRequest(3, "disconnect"));
+
+        using var server = new DapServer(inputStream, outputStream, debuggerType =>
+        {
+            receivedDebuggerType = debuggerType;
+            return new MockDebuggerBackend();
+        });
+        await server.RunAsync();
+
+        receivedDebuggerType.ShouldBe("lldb");
+    }
+
+    [Test]
+    public async Task Server_launch_with_mock_backend_sets_pending_breakpoints()
+    {
+        var mock = new MockDebuggerBackend();
+
+        var bpArgs = JsonSerializer.SerializeToElement(new
+        {
+            source = new { path = "/test/main.ash" },
+            breakpoints = new[] { new { line = 5 }, new { line = 10 } }
+        });
+
+        var launchArgs = JsonSerializer.SerializeToElement(new
+        {
+            program = "/tmp/test",
+            stopOnEntry = true,
+        });
+
+        var (inputStream, outputStream) = CreateDapStreams(
+            CreateRequest(1, "initialize"),
+            CreateRequest(2, "setBreakpoints", bpArgs),
+            CreateRequest(3, "launch", launchArgs),
+            CreateRequest(4, "disconnect"));
+
+        using var server = new DapServer(inputStream, outputStream, _ => mock);
+        await server.RunAsync();
+
+        mock.BreakpointsSet.ShouldContain(("/test/main.ash", 5));
+        mock.BreakpointsSet.ShouldContain(("/test/main.ash", 10));
+    }
+
+    [Test]
+    public async Task Server_stackTrace_returns_parsed_frames_from_backend()
+    {
+        var mock = new MockDebuggerBackend
+        {
+            StackTraceResponse = """1^done,stack=[frame={level="0",addr="0x401000",func="main",file="main.ash",fullname="/home/user/main.ash",line="5"}]""",
+        };
+
+        var launchArgs = JsonSerializer.SerializeToElement(new
+        {
+            program = "/tmp/test",
+            stopOnEntry = true,
+        });
+
+        var (inputStream, outputStream) = CreateDapStreams(
+            CreateRequest(1, "initialize"),
+            CreateRequest(2, "launch", launchArgs),
+            CreateRequest(3, "stackTrace"),
+            CreateRequest(4, "disconnect"));
+
+        using var server = new DapServer(inputStream, outputStream, _ => mock);
+        await server.RunAsync();
+
+        var responses = ParseDapOutput(outputStream);
+        var stResponse = responses.FirstOrDefault(r =>
+            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "stackTrace"
+            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+
+        stResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
+        stResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
+
+        var body = stResponse.GetProperty("body");
+        body.GetProperty("totalFrames").GetInt32().ShouldBe(1);
+        var frames = body.GetProperty("stackFrames");
+        frames.GetArrayLength().ShouldBe(1);
+        frames[0].GetProperty("name").GetString().ShouldBe("main");
+        frames[0].GetProperty("line").GetInt32().ShouldBe(5);
+    }
+
+    [Test]
+    public async Task Server_variables_returns_parsed_locals_from_backend()
+    {
+        var mock = new MockDebuggerBackend
+        {
+            LocalsResponse = """1^done,locals=[{name="x",value="42"},{name="msg",value="hello"}]""",
+        };
+
+        var launchArgs = JsonSerializer.SerializeToElement(new
+        {
+            program = "/tmp/test",
+            stopOnEntry = true,
+        });
+
+        var scopeArgs = JsonSerializer.SerializeToElement(new
+        {
+            variablesReference = 1,
+        });
+
+        var (inputStream, outputStream) = CreateDapStreams(
+            CreateRequest(1, "initialize"),
+            CreateRequest(2, "launch", launchArgs),
+            CreateRequest(3, "variables", scopeArgs),
+            CreateRequest(4, "disconnect"));
+
+        using var server = new DapServer(inputStream, outputStream, _ => mock);
+        await server.RunAsync();
+
+        var responses = ParseDapOutput(outputStream);
+        var varResponse = responses.FirstOrDefault(r =>
+            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "variables"
+            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+
+        varResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
+        varResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
+
+        var variables = varResponse.GetProperty("body").GetProperty("variables");
+        variables.GetArrayLength().ShouldBe(2);
+        variables[0].GetProperty("name").GetString().ShouldBe("x");
+        variables[0].GetProperty("value").GetString().ShouldBe("42");
+        variables[1].GetProperty("name").GetString().ShouldBe("msg");
+        variables[1].GetProperty("value").GetString().ShouldBe("hello");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static string CreateRequest(int seq, string command, JsonElement? arguments = null)
@@ -362,4 +574,60 @@ public sealed class DapServerTests
 
         return messages;
     }
+}
+
+/// <summary>
+/// In-memory mock debugger backend for testing DapServer without requiring
+/// a real GDB or LLDB process.
+/// </summary>
+internal sealed class MockDebuggerBackend : IDebuggerBackend
+{
+    public event Action<string>? OnStopped;
+    public event Action<int>? OnExited;
+    public event Action<string>? OnOutput;
+
+    public List<(string Path, int Line)> BreakpointsSet { get; } = [];
+    public string StackTraceResponse { get; init; } = "";
+    public string LocalsResponse { get; init; } = "";
+    public bool Started { get; private set; }
+    public bool Terminated { get; private set; }
+    public bool RunCalled { get; private set; }
+
+    public Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
+    {
+        Started = true;
+        return Task.CompletedTask;
+    }
+
+    public Task SetBreakpointAsync(string filePath, int line)
+    {
+        BreakpointsSet.Add((filePath, line));
+        return Task.CompletedTask;
+    }
+
+    public Task ContinueAsync() => Task.CompletedTask;
+    public Task StepOverAsync() => Task.CompletedTask;
+    public Task StepInAsync() => Task.CompletedTask;
+    public Task StepOutAsync() => Task.CompletedTask;
+
+    public Task RunAsync()
+    {
+        RunCalled = true;
+        return Task.CompletedTask;
+    }
+
+    public Task<string> GetStackTraceAsync() => Task.FromResult(StackTraceResponse);
+    public Task<string> GetLocalsAsync() => Task.FromResult(LocalsResponse);
+
+    public Task TerminateAsync()
+    {
+        Terminated = true;
+        return Task.CompletedTask;
+    }
+
+    public void FireStopped(string reason) => OnStopped?.Invoke(reason);
+    public void FireExited(int exitCode) => OnExited?.Invoke(exitCode);
+    public void FireOutput(string text) => OnOutput?.Invoke(text);
+
+    public void Dispose() { }
 }

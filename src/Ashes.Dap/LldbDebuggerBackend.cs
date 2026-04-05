@@ -12,7 +12,7 @@ namespace Ashes.Dap;
 /// (<c>lldb-mi</c>) or built into <c>lldb</c> via
 /// <c>--interpreter=mi2</c> (LLDB 18+).
 /// </summary>
-public sealed class LldbDebuggerBackend : IDebuggerBackend
+public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 {
     private Process? _lldb;
     private StreamWriter? _lldbIn;
@@ -226,7 +226,8 @@ public sealed class LldbDebuggerBackend : IDebuggerBackend
         return true;
     }
 
-    private static Regex ResultRecordRegex() => new(@"^(\d+)\^", RegexOptions.Compiled);
+    [GeneratedRegex(@"^(\d+)\^")]
+    private static partial Regex ResultRecordRegex();
 
     private static string? ExtractMiField(string miRecord, string fieldName)
     {
