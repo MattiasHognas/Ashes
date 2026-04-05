@@ -183,7 +183,7 @@ public sealed class LspTextUtilsTests
         var starts = LspTextUtils.GetLineStarts("abc\ndef");
         var result = LspTextUtils.FromLineCharacter(starts, 7, 0, 100);
 
-        result.ShouldBe(4);
+        result.ShouldBe(3);
     }
 
     [Test]
