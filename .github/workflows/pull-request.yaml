@@ -18,39 +18,7 @@ jobs:
         run: bash scripts/download-llvm-native.sh
 
       - name: Download ARM64 LLVM native library (cross-compilation)
-        run: |
-          set -euo pipefail
-          LLVM_MAJOR=22
-          CODENAME=$(lsb_release -cs)
-
-          sudo dpkg --add-architecture arm64
-
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
-
-          # Add LLVM arm64 repo in case libllvm is not in default Ubuntu repos
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | gpg --dearmor | sudo tee /usr/share/keyrings/llvm-archive-keyring-arm64.gpg > /dev/null
-          echo "deb [arch=arm64,signed-by=/usr/share/keyrings/llvm-archive-keyring-arm64.gpg] https://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-${LLVM_MAJOR}-arm64.list
-
-          sudo apt-get update -qq 2>/dev/null || true
-
-          mkdir -p /tmp/arm64-deb
-          cd /tmp/arm64-deb
-          apt-get download "libllvm${LLVM_MAJOR}:arm64"
-          dpkg-deb -x libllvm${LLVM_MAJOR}_*.deb extracted/
-
-          SO_PATH=$(find extracted/usr/lib/aarch64-linux-gnu -name "libLLVM*" | head -1)
-          if [ -z "$SO_PATH" ]; then
-            echo "ERROR: Could not find ARM64 libLLVM in extracted .deb" >&2
-            exit 1
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/runtimes/linux-arm64"
-          cp -f "$SO_PATH" "$GITHUB_WORKSPACE/runtimes/linux-arm64/libLLVM.so"
-          SO_SIZE=$(du -h "$GITHUB_WORKSPACE/runtimes/linux-arm64/libLLVM.so" | cut -f1)
-          echo "  -> Copied ARM64 libLLVM.so ($SO_SIZE) to runtimes/linux-arm64/"
+        run: bash scripts/download-llvm-native.sh 22 arm64
 
       - name: Download Windows LLVM native library
         shell: pwsh
