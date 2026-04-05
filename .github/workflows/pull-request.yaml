@@ -23,6 +23,7 @@ jobs:
             const artifactName = 'llvm-runtimes';
             // 10 pages × 100 artifacts per page gives up to 1000 recent artifacts.
             const maxPages = 10;
+            const currentRunId = Number(process.env.GITHUB_RUN_ID);
             const { owner, repo } = context.repo;
 
             for (let page = 1; page <= maxPages; page += 1) {
@@ -36,7 +37,7 @@ jobs:
 
               const artifact = response.data.artifacts.find(candidate =>
                 !candidate.expired &&
-                candidate.workflow_run?.id !== context.runId
+                candidate.workflow_run?.id !== currentRunId
               );
 
               if (artifact) {
