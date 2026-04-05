@@ -34,75 +34,22 @@ jobs:
     # needs: analyze
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Find latest LLVM native libraries artifact
-        id: find-llvm-runtimes
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const artifactName = 'llvm-runtimes';
-            // 10 pages × 100 artifacts per page gives up to 1000 recent artifacts.
-            const maxPages = 10;
-            const currentRunId = context.runId;
-            const { owner, repo } = context.repo;
-
-            for (let currentPage = 1; currentPage <= maxPages; currentPage += 1) {
-              const response = await github.rest.actions.listArtifactsForRepo({
-                owner,
-                repo,
-                name: artifactName,
-                per_page: 100,
-                page: currentPage,
-              });
-
-              const artifact = response.data.artifacts.find(candidate =>
-                !candidate.expired &&
-                typeof candidate.workflow_run?.id === 'number' &&
-                candidate.workflow_run.conclusion === 'success' &&
-                candidate.workflow_run.id !== currentRunId
-              );
-
-              if (artifact) {
-                core.setOutput('run-id', String(artifact.workflow_run.id));
-                return;
-              }
-
-              if (response.data.artifacts.length < 100) {
-                break;
-              }
-            }
-
-            core.setOutput('run-id', '');
-
       - name: Download LLVM native libraries artifact
-        if: steps.find-llvm-runtimes.outputs.run-id != ''
+        id: download-llvm-runtimes
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: llvm-runtimes
           path: runtimes
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ steps.find-llvm-runtimes.outputs.run-id }}
-
-      - name: Check LLVM native libraries
-        id: llvm-runtimes
-        shell: bash
-        run: |
-          if [ -d runtimes ] && [ -n "$(ls -A runtimes 2>/dev/null)" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Download all LLVM native libraries
-        if: steps.llvm-runtimes.outputs.present != 'true'
+        if: steps.download-llvm-runtimes.outcome != 'success'
         run: bash scripts/download-llvm-native.sh --all
 
       - name: Upload LLVM native libraries artifact
