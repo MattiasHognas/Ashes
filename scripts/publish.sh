@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Publish self-contained Ashes compiler executables for win-x64 and linux-x64.
-# Outputs: dist/win-x64/ashes.exe  and  dist/linux-x64/ashes
+# Publish self-contained Ashes compiler executables for win-x64, linux-x64, and linux-arm64.
+# Outputs: dist/win-x64/ashes.exe, dist/linux-x64/ashes, and dist/linux-arm64/ashes
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +14,7 @@ VERSION="${VERSION:-0.0.0-dev}"
 echo "Restoring..."
 dotnet restore "$CLI_PROJECT"
 
-for RID in win-x64 linux-x64; do
+for RID in win-x64 linux-x64 linux-arm64; do
   echo "Publishing $RID (version $VERSION)..."
   OUTPUT_DIR="$REPO_ROOT/dist/$RID"
   dotnet publish "$CLI_PROJECT" \
@@ -31,7 +31,9 @@ for RID in win-x64 linux-x64; do
 done
 
 chmod +x "$REPO_ROOT/dist/linux-x64/ashes"
+chmod +x "$REPO_ROOT/dist/linux-arm64/ashes"
 
 echo "Done."
 echo "  dist/win-x64/ashes.exe"
 echo "  dist/linux-x64/ashes"
+echo "  dist/linux-arm64/ashes"

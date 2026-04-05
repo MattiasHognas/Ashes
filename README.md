@@ -196,13 +196,15 @@ Ashes is split into focused phases:
 
 ### Compile Targets
 
-| Target | Format |
-|---|---|
-| `linux-x64` | ELF64 |
-| `windows-x64` | PE32+ |
+| Target | Format | Architecture |
+|---|---|---|
+| `linux-x64` | ELF64 | x86-64 |
+| `linux-arm64` | ELF64 | AArch64 |
+| `windows-x64` | PE32+ | x86-64 |
 
 ```sh
 dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello
+dotnet run --project src/Ashes.Cli -- compile --target linux-arm64 hello.ash -o hello
 ```
 
 ------------------------------------------------------------------------
@@ -226,7 +228,7 @@ Full editor support with diagnostics, formatting, hover, go-to-definition,
 semantic tokens, and completions.
 
 ```sh
-cd vscode-extension && npm run build-server
+cd vscode-extension && npm run build-lsp-server
 code --install-extension ashes-vscode.vsix
 ```
 
@@ -235,6 +237,17 @@ For local development:
 ```powershell
 .\scripts\install-vscode-extension-local.ps1
 ```
+
+### Debugging
+
+Compile with `--debug` and use the Ashes VS Code extension (which bundles debug support):
+
+```sh
+ashes compile --debug examples/hello.ash -o hello
+```
+
+See [docs/DEBUGGING.md](docs/DEBUGGING.md) for the full debugging guide,
+including VS Code extension setup, launch configuration, and GDB usage.
 
 ------------------------------------------------------------------------
 
@@ -290,7 +303,10 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 |---|---|
 | [Language Specification](docs/LANGUAGE_SPEC.md) | Authoritative syntax and semantics |
 | [Project Specification](docs/PROJECT_SPEC.md) | Multi-file project format |
+| [Compiler Architecture](docs/ARCHITECTURE.md) | Pipeline, backend, memory model, linking |
+| [IR Reference](docs/IR_REFERENCE.md) | Intermediate representation instruction set |
 | [CLI Specification](docs/COMPILER_CLI_SPEC.md) | All CLI commands and flags |
+| [Debugging Guide](docs/DEBUGGING.md) | Debug extension setup and usage |
 | [Formatter Specification](docs/FORMATTER_SPEC.md) | Canonical formatting rules |
 | [Diagnostics Reference](docs/DIAGNOSTICS.md) | Error codes and messages |
 | [Testing Reference](docs/TESTING.md) | Test directives and conventions |

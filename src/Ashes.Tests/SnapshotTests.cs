@@ -73,7 +73,7 @@ public sealed class SnapshotTests
 
             if (diag.Errors.Count == 0)
             {
-                var elf = new Ashes.Backend.Backends.LinuxX64ElfBackend().Compile(ir);
+                var elf = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
                 elfSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(elf));
             }
         }

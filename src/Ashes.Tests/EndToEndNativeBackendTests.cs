@@ -34,6 +34,18 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task String_comparison_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var stdout = await CompileRunCaptureAsync("if (\"he\" + \"llo\") == \"hello\" then if \"hello\" != \"world\" then Ashes.IO.print(\"ok\") else Ashes.IO.print(\"bad\") else Ashes.IO.print(\"bad\")");
+        stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())
@@ -178,6 +190,18 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Float_arithmetic_and_comparisons_work()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = "if ((1.5 + 2.5) * 2.0 / 2.0) == 4.0 then if 4.0 >= 4.0 then if 3.0 <= 4.0 then if 3.0 != 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0)";
+        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
     public async Task Match_with_list_literal_works()
     {
         if (!OperatingSystem.IsLinux())
@@ -282,6 +306,23 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
     }
 
+    [Test]
+    public async Task Adt_constructor_with_multiple_fields_and_match()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = """
+            type Pair = | Pair(A, B)
+            let value = Pair(40, 2)
+            in match value with
+            | Pair(a, b) -> Ashes.IO.print(a + b)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();
@@ -308,7 +349,7 @@ public sealed class EndToEndNativeBackendTests
 
     private static async Task<string> RunElfAsync(IrProgram ir, string[]? programArgs, string? stdin)
     {
-        var elfBytes = new Ashes.Backend.Backends.LinuxX64ElfBackend().Compile(ir);
+        var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
         Directory.CreateDirectory(tmpDir);

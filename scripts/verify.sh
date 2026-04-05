@@ -115,5 +115,6 @@ fi
 "$pnpmCmd" run lint
 "$pnpmCmd" run format:check
 "$pnpmCmd" run compile
-"$pnpmCmd" run build-server
+"$pnpmCmd" run build-lsp-server
+"$pnpmCmd" run build-dap-server
 "$pnpmCmd" dlx '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' '--config.ignoredBuiltDependencies[]=keytar' @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix

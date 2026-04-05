@@ -10,7 +10,7 @@ public sealed class BackendFactoryTests
     {
         var backend = BackendFactory.Create(TargetIds.LinuxX64);
 
-        backend.ShouldBeOfType<LinuxX64ElfBackend>();
+        backend.ShouldBeOfType<LinuxX64LlvmBackend>();
     }
 
     [Test]
@@ -18,7 +18,7 @@ public sealed class BackendFactoryTests
     {
         var backend = BackendFactory.Create(TargetIds.WindowsX64);
 
-        backend.ShouldBeOfType<WindowsX64PeBackend>();
+        backend.ShouldBeOfType<WindowsX64LlvmBackend>();
     }
 
     [Test]

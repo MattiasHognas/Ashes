@@ -16,7 +16,8 @@
     "onLanguage:ashes",
     "onCommand:ashes.compile",
     "onCommand:ashes.run",
-    "onCommand:ashes.test"
+    "onCommand:ashes.test",
+    "onDebugResolve:ashes"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -46,6 +47,20 @@
         "editor.formatOnSave": true
       }
     },
+    "configuration": {
+      "title": "Ashes",
+      "properties": {
+        "ashes.debugger": {
+          "type": "string",
+          "enum": [
+            "gdb",
+            "lldb"
+          ],
+          "default": "gdb",
+          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on Linux."
+        }
+      }
+    },
     "commands": [
       {
         "command": "ashes.compile",
@@ -66,13 +81,87 @@
     "keybindings": [
       {
         "command": "ashes.run",
-        "key": "f5",
-        "when": "editorLangId == ashes"
+        "key": "ctrl+f5",
+        "when": "editorLangId == ashes && !inDebugMode"
       },
       {
         "command": "ashes.compile",
         "key": "shift+f5",
         "when": "editorLangId == ashes"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "ashes",
+        "label": "Ashes Debug",
+        "languages": [
+          "ashes"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the compiled Ashes binary (compiled with --debug).",
+                "default": "${workspaceFolder}/out/${workspaceFolderBasename}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments to pass to the program.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the program.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop at the entry point of the program.",
+                "default": false
+              },
+              "debuggerPath": {
+                "type": "string",
+                "description": "Path to the debugger binary. Defaults to 'gdb' or 'lldb-mi' depending on debuggerType.",
+                "default": ""
+              },
+              "debuggerType": {
+                "type": "string",
+                "enum": [
+                  "gdb",
+                  "lldb"
+                ],
+                "description": "The native debugger backend to use. Overrides the ashes.debugger extension setting for this configuration.",
+                "default": ""
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "Ashes: Launch",
+            "description": "Launch and debug an Ashes program compiled with --debug",
+            "body": {
+              "name": "Ashes: Launch",
+              "type": "ashes",
+              "request": "launch",
+              "program": "${workspaceFolder}/out/${workspaceFolderBasename}",
+              "cwd": "${workspaceFolder}",
+              "stopOnEntry": false
+            }
+          }
+        ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "ashes"
       }
     ]
   },
@@ -82,7 +171,8 @@
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
     "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
-    "build-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64"
+    "build-lsp-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-arm64 -p:UseAppHost=true --self-contained false -o ./server/linux-arm64",
+    "build-dap-server": "dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./dap-server/win-x64 && dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./dap-server/linux-x64 && dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r linux-arm64 -p:UseAppHost=true --self-contained false -o ./dap-server/linux-arm64"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

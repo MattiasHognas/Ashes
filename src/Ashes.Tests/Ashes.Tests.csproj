@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
     <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
+    <ProjectReference Include="..\Ashes.Dap\Ashes.Dap.csproj" />
     <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
     <ProjectReference Include="..\Ashes.Lsp\Ashes.Lsp.csproj" />
     <ProjectReference Include="..\Ashes.TestRunner\Ashes.TestRunner.csproj" />

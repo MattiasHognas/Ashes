@@ -14,6 +14,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -33,15 +44,16 @@ jobs:
         run: dotnet format Ashes.slnx --verify-no-changes --no-restore
 
       - name: Run Ashes.Tests
-        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --report-trx
+        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --report-trx
 
       - name: Run Ashes.Lsp.Tests
-        run: dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --report-trx
+        run: dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --report-trx
 
       - name: Publish Ashes CLI binaries
         run: |
-          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux
-          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/windows
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-x64
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-arm64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-arm64
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/win-x64
 
       - name: Upload Ashes CLI binaries
         uses: actions/upload-artifact@v7
@@ -49,7 +61,7 @@ jobs:
           name: ashes-cli-binaries
           path: artifacts/ashes
           overwrite: true
-          retention-days: 365
+          retention-days: 7
 
       - name: Upload test results
         if: always()
@@ -58,18 +70,22 @@ jobs:
           name: test-results-dotnet-quality
           path: TestResults
           overwrite: true
-          retention-days: 365
+          retention-days: 7
 
   test-matrix:
-    needs: quality
+    needs: [quality]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       matrix:
-        os: 
-          - ubuntu-latest
-          - windows-latest
+        include:
+          - os: ubuntu-latest
+            cli-path: artifacts/ashes/linux-x64/ashes
+          - os: ubuntu-24.04-arm
+            cli-path: artifacts/ashes/linux-arm64/ashes
+          - os: windows-latest
+            cli-path: artifacts\ashes\win-x64\ashes.exe
       fail-fast: false
 
     steps:
@@ -85,8 +101,8 @@ jobs:
       - name: Run examples (Linux)
         if: runner.os == 'Linux'
         run: |
-          chmod +x artifacts/ashes/linux/ashes
-          ASHES_CLI=./artifacts/ashes/linux/ashes
+          chmod +x "${{ matrix.cli-path }}"
+          ASHES_CLI="./${{ matrix.cli-path }}"
           for example in examples/*.ash; do
             case "$(basename "$example")" in
               http_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash)
@@ -101,7 +117,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+          $ashesCli = ".\${{ matrix.cli-path }}"
           Get-ChildItem examples\*.ash |
             Where-Object { $_.Name -notin @('http_get.ash', 'tcp_close.ash', 'tcp_connect.ash', 'tcp_receive.ash', 'tcp_send.ash') } |
             ForEach-Object {
@@ -114,18 +130,21 @@ jobs:
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 2
-        run: ./artifacts/ashes/linux/ashes test tests
+        run: |
+          "./${{ matrix.cli-path }}" test tests
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 2
-        run: .\artifacts\ashes\windows\ashes.exe test tests
+        shell: pwsh
+        run: |
+          & ".\${{ matrix.cli-path }}" test tests
 
       - name: Verify fmt on test and example files (Linux)
         if: runner.os == 'Linux'
         run: |
           set -e
-          ASHES_CLI=./artifacts/ashes/linux/ashes
+          ASHES_CLI="./${{ matrix.cli-path }}"
           "$ASHES_CLI" fmt examples -w > /dev/null
           "$ASHES_CLI" fmt tests/imports -w > /dev/null
           for test in tests/*.ash; do
@@ -141,7 +160,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $ashesCli = ".\artifacts\ashes\windows\ashes.exe"
+          $ashesCli = ".\${{ matrix.cli-path }}"
           & $ashesCli fmt examples -w > $null
           & $ashesCli fmt tests\imports -w > $null
           Get-ChildItem tests\*.ash | ForEach-Object {

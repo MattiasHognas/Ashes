@@ -607,13 +607,13 @@ public sealed class ProjectSupportTests
         string exePath;
         if (OperatingSystem.IsWindows())
         {
-            image = new Ashes.Backend.Backends.WindowsX64PeBackend().Compile(ir);
+            image = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}.exe");
             await File.WriteAllBytesAsync(exePath, image);
         }
         else
         {
-            image = new Ashes.Backend.Backends.LinuxX64ElfBackend().Compile(ir);
+            image = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}");
             await File.WriteAllBytesAsync(exePath, image);
 #pragma warning disable CA1416

@@ -68,10 +68,13 @@ examples/*.exe
 /*.exe
 /*.txt
 *.received.txt
+runtimes
+
 
 # Personal files
 PLANNED_ISSUES*.md
 ROADMAP.md
+LLVM_*.md
 
 # Git
 .git/
