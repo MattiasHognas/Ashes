@@ -43,13 +43,53 @@ internal static partial class LlvmImageLinker
             .ToArray();
 
         bool hasData = laidOutData.DataBytes.Length > 0;
+        bool hasDebug = parsed.DebugSections.Count > 0;
         int programHeaderCount = hasData ? 2 : 1;
-        int totalSize = hasData
+
+        int endOfLoadable = hasData
             ? dataFileOffset + laidOutData.DataBytes.Length
             : textFileOffset + codeBytes.Length;
 
+        // Layout debug sections after loadable content
+        var debugFileOffsets = new List<int>();
+        int debugCursor = endOfLoadable;
+        foreach (var debugSection in parsed.DebugSections)
+        {
+            int align = checked((int)Math.Max(1, Math.Min(debugSection.Alignment, (ulong)int.MaxValue)));
+            debugCursor = Align(debugCursor, align);
+            debugFileOffsets.Add(debugCursor);
+            debugCursor += debugSection.Bytes.Length;
+        }
+
+        // Build section header string table (.shstrtab)
+        int shstrtabOffset = 0;
+        byte[] shstrtabBytes = [];
+        Dictionary<string, int> shstrtabNameOffsets = new(StringComparer.Ordinal);
+        int sectionHeaderCount = 0;
+        int shstrtabIndex = 0;
+        int sectionHeaderOffset = 0;
+
+        if (hasDebug)
+        {
+            (shstrtabBytes, shstrtabNameOffsets) = BuildSectionNameStringTable(hasData, parsed.DebugSections);
+            shstrtabOffset = debugCursor;
+
+            // Section header count: null + .text + (.data?) + debug sections + .shstrtab
+            sectionHeaderCount = 1 + 1 + (hasData ? 1 : 0) + parsed.DebugSections.Count + 1;
+            shstrtabIndex = sectionHeaderCount - 1; // .shstrtab is last
+
+            sectionHeaderOffset = Align(shstrtabOffset + shstrtabBytes.Length, 8);
+        }
+
+        int totalSize = hasDebug
+            ? sectionHeaderOffset + sectionHeaderCount * ElfSectionHeaderSize
+            : endOfLoadable;
+
         var output = new byte[totalSize];
-        WriteElf64Header(output, textVa, programHeaderCount);
+        WriteElf64Header(output, textVa, programHeaderCount,
+            sectionHeaderOffset: hasDebug ? sectionHeaderOffset : 0,
+            sectionHeaderCount: hasDebug ? sectionHeaderCount : 0,
+            shstrtabIndex: hasDebug ? shstrtabIndex : 0);
 
         // Program header 1: text (R+X)
         WriteElf64ProgramHeader(output, 0,
@@ -79,10 +119,76 @@ internal static partial class LlvmImageLinker
             Array.Copy(laidOutData.DataBytes, 0, output, dataFileOffset, laidOutData.DataBytes.Length);
         }
 
+        // Write debug sections and section headers
+        if (hasDebug)
+        {
+            for (int i = 0; i < parsed.DebugSections.Count; i++)
+            {
+                Array.Copy(parsed.DebugSections[i].Bytes, 0, output, debugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
+            }
+
+            Array.Copy(shstrtabBytes, 0, output, shstrtabOffset, shstrtabBytes.Length);
+
+            // Write section headers
+            int shIdx = 0;
+
+            // SHT_NULL entry
+            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++, 0, 0, 0, 0, 0, 0, 0);
+
+            // .text
+            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
+                nameOffset: (uint)shstrtabNameOffsets[".text"],
+                type: 1, // SHT_PROGBITS
+                flags: 0x06, // SHF_ALLOC | SHF_EXECINSTR
+                fileOffset: (ulong)textFileOffset,
+                size: (ulong)codeBytes.Length,
+                addr: textVa,
+                alignment: 16);
+
+            // .data (if present)
+            if (hasData)
+            {
+                WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
+                    nameOffset: (uint)shstrtabNameOffsets[".data"],
+                    type: 1, // SHT_PROGBITS
+                    flags: 0x03, // SHF_ALLOC | SHF_WRITE
+                    fileOffset: (ulong)dataFileOffset,
+                    size: (ulong)laidOutData.DataBytes.Length,
+                    addr: dataVa,
+                    alignment: 8);
+            }
+
+            // Debug sections
+            for (int i = 0; i < parsed.DebugSections.Count; i++)
+            {
+                WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
+                    nameOffset: (uint)shstrtabNameOffsets[parsed.DebugSections[i].Name],
+                    type: 1, // SHT_PROGBITS
+                    flags: 0, // no flags (non-ALLOC)
+                    fileOffset: (ulong)debugFileOffsets[i],
+                    size: (ulong)parsed.DebugSections[i].Bytes.Length,
+                    addr: 0,
+                    alignment: Math.Max(1, parsed.DebugSections[i].Alignment));
+            }
+
+            // .shstrtab
+            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx,
+                nameOffset: (uint)shstrtabNameOffsets[".shstrtab"],
+                type: 3, // SHT_STRTAB
+                flags: 0,
+                fileOffset: (ulong)shstrtabOffset,
+                size: (ulong)shstrtabBytes.Length,
+                addr: 0,
+                alignment: 1);
+        }
+
         return output;
     }
 
-    private static void WriteElf64Header(byte[] output, ulong entryPoint, int programHeaderCount)
+    private const int ElfSectionHeaderSize = 64;
+
+    private static void WriteElf64Header(byte[] output, ulong entryPoint, int programHeaderCount,
+        int sectionHeaderOffset = 0, int sectionHeaderCount = 0, int shstrtabIndex = 0)
     {
         // e_ident: magic, class, data, version, OS/ABI, padding
         output[0] = 0x7F;
@@ -100,14 +206,14 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(20, 4), 1);  // e_version: EV_CURRENT
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(24, 8), entryPoint); // e_entry
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(32, 8), ElfHeaderSize); // e_phoff
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(40, 8), 0);  // e_shoff (no section headers)
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(40, 8), (ulong)sectionHeaderOffset);  // e_shoff
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(48, 4), 0);  // e_flags
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(52, 2), ElfHeaderSize);  // e_ehsize
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(54, 2), ElfProgramHeaderSize); // e_phentsize
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(56, 2), checked((ushort)programHeaderCount)); // e_phnum
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(58, 2), 0);  // e_shentsize
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(60, 2), 0);  // e_shnum
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(62, 2), 0);  // e_shstrndx
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(58, 2), sectionHeaderCount > 0 ? (ushort)ElfSectionHeaderSize : (ushort)0);  // e_shentsize
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(60, 2), checked((ushort)sectionHeaderCount));  // e_shnum
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(62, 2), checked((ushort)shstrtabIndex));  // e_shstrndx
     }
 
     private static void WriteElf64ProgramHeader(byte[] output, int index,
@@ -122,6 +228,22 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 32, 8), fileSize);  // p_filesz
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 40, 8), memorySize); // p_memsz
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 48, 8), (ulong)PageSize); // p_align
+    }
+
+    private static void WriteElf64SectionHeader(byte[] output, int sectionHeaderTableOffset, int index,
+        uint nameOffset, uint type, ulong flags, ulong fileOffset, ulong size, ulong addr, ulong alignment)
+    {
+        int offset = sectionHeaderTableOffset + index * ElfSectionHeaderSize;
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset, 4), nameOffset);       // sh_name
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset + 4, 4), type);         // sh_type
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 8, 8), flags);        // sh_flags
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 16, 8), addr);        // sh_addr
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 24, 8), fileOffset);  // sh_offset
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 32, 8), size);        // sh_size
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset + 40, 4), 0);           // sh_link
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset + 44, 4), 0);           // sh_info
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 48, 8), alignment);   // sh_addralign
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 56, 8), 0);           // sh_entsize
     }
 
     private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)
@@ -202,6 +324,8 @@ internal static partial class LlvmImageLinker
 
         var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
         var allocatedSections = new List<ElfAllocatedSection>();
+        var debugSections = new List<ElfDebugSection>();
+        var debugRelocationSections = new List<ElfSectionHeader>();
         for (int i = 0; i < sections.Length; i++)
         {
             if (i == textSectionIndex)
@@ -210,7 +334,39 @@ internal static partial class LlvmImageLinker
             }
 
             ElfSectionHeader section = sections[i];
-            if (section.Size == 0 || (section.Flags & ElfSectionFlagAlloc) == 0)
+            string sectionName = ReadElfString(sectionNames, section.NameOffset);
+
+            if (section.Size == 0)
+            {
+                continue;
+            }
+
+            // Collect debug sections (non-ALLOC, name starts with .debug)
+            if (sectionName.StartsWith(".debug", StringComparison.Ordinal)
+                && (section.Flags & ElfSectionFlagAlloc) == 0
+                && section.Type != SectionTypeRela
+                && section.Type != SectionTypeRel)
+            {
+                debugSections.Add(new ElfDebugSection(
+                    Name: sectionName,
+                    SectionIndex: i,
+                    Bytes: bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                    Alignment: section.AddressAlign));
+                continue;
+            }
+
+            // DWARF sections commonly require relocation fixups. This linker copies
+            // debug sections verbatim, so fail fast rather than emitting unusable
+            // debug information when relocatable DWARF is present.
+            if ((sectionName.StartsWith(".rela.debug", StringComparison.Ordinal)
+                    || sectionName.StartsWith(".rel.debug", StringComparison.Ordinal))
+                && (section.Type == SectionTypeRela || section.Type == SectionTypeRel))
+            {
+                throw new InvalidOperationException(
+                    $"ELF object contains debug relocation section '{sectionName}', but this linker does not apply DWARF relocations when copying debug sections.");
+            }
+
+            if ((section.Flags & ElfSectionFlagAlloc) == 0)
             {
                 continue;
             }
@@ -230,7 +386,9 @@ internal static partial class LlvmImageLinker
             RelocationSections: textRelocationSections,
             SymbolTable: symtab.Value,
             TextSectionIndex: textSectionIndex,
-            AllocatedSections: allocatedSections);
+            AllocatedSections: allocatedSections,
+            DebugSections: debugSections,
+            DebugRelocationSections: debugRelocationSections);
     }
 
     private static void ApplyElfTextRelocations(
@@ -388,6 +546,35 @@ internal static partial class LlvmImageLinker
         return new LaidOutElfSections(stream.ToArray(), sectionBaseVas);
     }
 
+    private static (byte[] Bytes, Dictionary<string, int> NameOffsets) BuildSectionNameStringTable(
+        bool hasData, IReadOnlyList<ElfDebugSection> debugSections)
+    {
+        var shstrtab = new MemoryStream();
+        var nameOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        shstrtab.WriteByte(0); // null name at offset 0
+
+        nameOffsets[".text"] = (int)shstrtab.Position;
+        shstrtab.Write(Encoding.ASCII.GetBytes(".text\0"));
+
+        if (hasData)
+        {
+            nameOffsets[".data"] = (int)shstrtab.Position;
+            shstrtab.Write(Encoding.ASCII.GetBytes(".data\0"));
+        }
+
+        foreach (var debugSection in debugSections)
+        {
+            nameOffsets[debugSection.Name] = (int)shstrtab.Position;
+            shstrtab.Write(Encoding.ASCII.GetBytes(debugSection.Name + "\0"));
+        }
+
+        nameOffsets[".shstrtab"] = (int)shstrtab.Position;
+        shstrtab.Write(Encoding.ASCII.GetBytes(".shstrtab\0"));
+
+        return (shstrtab.ToArray(), nameOffsets);
+    }
+
     private static byte[] BuildLinuxTrampoline(int entryOffsetInText)
     {
         var bytes = new byte[LinuxTrampolineLength];
@@ -416,7 +603,9 @@ internal static partial class LlvmImageLinker
         List<ElfSectionHeader> RelocationSections,
         ElfSectionHeader SymbolTable,
         int TextSectionIndex,
-        List<ElfAllocatedSection> AllocatedSections);
+        List<ElfAllocatedSection> AllocatedSections,
+        List<ElfDebugSection> DebugSections,
+        List<ElfSectionHeader> DebugRelocationSections);
 
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
@@ -441,4 +630,10 @@ internal static partial class LlvmImageLinker
     private readonly record struct LaidOutElfSections(
         byte[] DataBytes,
         Dictionary<int, ulong> SectionBaseVas);
+
+    private readonly record struct ElfDebugSection(
+        string Name,
+        int SectionIndex,
+        byte[] Bytes,
+        ulong Alignment);
 }

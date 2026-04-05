@@ -124,7 +124,8 @@ jobs:
           pnpm install --frozen-lockfile --force
           pnpm version --no-git-tag-version ${{ steps.version.outputs.version }}
           pnpm run compile
-          pnpm run build-server
+          pnpm run build-lsp-server
+          pnpm run build-dap-server
           pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-language-${{ steps.version.outputs.version }}.vsix
 
       - name: Upload artifact

@@ -26,6 +26,14 @@ public sealed class Lowering
     private bool _usesClosures;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
+    // Source location tracking for debug info (Phase 0c)
+    private string? _currentFilePath;
+    private int[]? _lineStarts;
+    private int _sourceLength;
+    private Expr? _currentSourceExpr;
+    private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
+    private int[][]? _moduleLineStarts;
+
     private readonly bool _hasAshesIO;
     private readonly List<string> _diagnosticContext = [];
     private readonly Stack<TextSpan> _diagnosticSpans = new();
@@ -164,6 +172,89 @@ public sealed class Lowering
             AddStdIOBindings(rootScope);
         }
         _scopes.Push(rootScope);
+    }
+
+    /// <summary>
+    /// Sets source context for debug info tagging. Call before Lower()
+    /// so that emitted IR instructions carry source locations.
+    /// </summary>
+    public void SetSourceContext(string filePath, string sourceText)
+    {
+        _currentFilePath = filePath;
+        _lineStarts = SourceTextUtils.GetLineStarts(sourceText);
+        _sourceLength = sourceText.Length;
+    }
+
+    /// <summary>
+    /// Sets multi-file source context using a <see cref="CombinedCompilationLayout"/>
+    /// so that emitted IR instructions carry per-file source locations.
+    /// </summary>
+    public void SetSourceContext(CombinedCompilationLayout layout)
+    {
+        _lineStarts = SourceTextUtils.GetLineStarts(layout.Source);
+        _sourceLength = layout.Source.Length;
+        _moduleOffsets = layout.ModuleOffsets;
+
+        // Pre-compute line starts per region (not per file) so disjoint regions
+        // for the same file each get correct line/column mappings.
+        _moduleLineStarts = new int[layout.ModuleOffsets.Count][];
+        for (int i = 0; i < layout.ModuleOffsets.Count; i++)
+        {
+            var (_, startOffset, endOffset) = layout.ModuleOffsets[i];
+            var moduleText = layout.Source[startOffset..endOffset];
+            _moduleLineStarts[i] = SourceTextUtils.GetLineStarts(moduleText);
+        }
+
+        // Default to first entry module file
+        if (layout.ModuleOffsets.Count > 0)
+        {
+            _currentFilePath = layout.ModuleOffsets[^1].FilePath;
+        }
+    }
+
+    /// <summary>
+    /// Emits an IR instruction, optionally tagging it with the source
+    /// location of <see cref="_currentSourceExpr"/> when debug context is set.
+    /// </summary>
+    private void Emit(IrInst inst)
+    {
+        if (_lineStarts is not null && _currentSourceExpr is not null)
+        {
+            var span = AstSpans.GetOrDefault(_currentSourceExpr);
+            if (span.Length > 0 || span.Start > 0)
+            {
+                var (filePath, line, column) = ResolveSourceLocation(span.Start);
+                inst.Location = new SourceLocation(filePath, line, column);
+            }
+        }
+
+        _inst.Add(inst);
+    }
+
+    private (string FilePath, int Line, int Column) ResolveSourceLocation(int absolutePosition)
+    {
+        // Multi-file resolution: find which module the position falls in
+        if (_moduleOffsets is not null)
+        {
+            for (int i = _moduleOffsets.Count - 1; i >= 0; i--)
+            {
+                var (filePath, startOffset, endOffset) = _moduleOffsets[i];
+                if (absolutePosition >= startOffset && absolutePosition < endOffset)
+                {
+                    var relativePosition = absolutePosition - startOffset;
+                    if (_moduleLineStarts is not null)
+                    {
+                        var moduleLength = endOffset - startOffset;
+                        var (line, column) = SourceTextUtils.ToLineColumn(_moduleLineStarts[i], moduleLength, relativePosition);
+                        return (filePath, line, column);
+                    }
+                }
+            }
+        }
+
+        // Single-file fallback
+        var (l, c) = SourceTextUtils.ToLineColumn(_lineStarts!, _sourceLength, absolutePosition);
+        return (_currentFilePath ?? "<unknown>", l, c);
     }
 
     public IrProgram Lower(Program program)
@@ -387,7 +478,7 @@ public sealed class Lowering
         // Entry function lowering (no env/arg params)
         var (resultTemp, resultType) = LowerExpr(expr);
         LastLoweredType = Prune(resultType);
-        _inst.Add(new IrInst.Return(resultTemp));
+        Emit(new IrInst.Return(resultTemp));
 
         var entry = new IrFunction(
             Label: "_start_main",
@@ -411,6 +502,9 @@ public sealed class Lowering
 
     private (int Temp, TypeRef Type) LowerExpr(Expr e)
     {
+        var previousExpr = _currentSourceExpr;
+        _currentSourceExpr = e;
+
         (int Temp, TypeRef Type) lowered = e switch
         {
             Expr.IntLit lit => LowerInt(lit),
@@ -443,27 +537,28 @@ public sealed class Lowering
         };
 
         RecordExprHoverType(e, lowered.Type);
+        _currentSourceExpr = previousExpr;
         return (lowered.Temp, Prune(lowered.Type));
     }
 
     private (int, TypeRef) LowerInt(Expr.IntLit lit)
     {
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(t, lit.Value));
+        Emit(new IrInst.LoadConstInt(t, lit.Value));
         return (t, new TypeRef.TInt());
     }
 
     private (int, TypeRef) LowerFloat(Expr.FloatLit lit)
     {
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstFloat(t, lit.Value));
+        Emit(new IrInst.LoadConstFloat(t, lit.Value));
         return (t, new TypeRef.TFloat());
     }
 
     private (int, TypeRef) LowerBool(Expr.BoolLit lit)
     {
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstBool(t, lit.Value));
+        Emit(new IrInst.LoadConstBool(t, lit.Value));
         return (t, new TypeRef.TBool());
     }
 
@@ -471,7 +566,7 @@ public sealed class Lowering
     {
         var label = InternString(str.Value);
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstStr(t, label));
+        Emit(new IrInst.LoadConstStr(t, label));
         return (t, new TypeRef.TStr());
     }
 
@@ -508,30 +603,30 @@ public sealed class Lowering
         switch (b)
         {
             case Binding.Local loc:
-                _inst.Add(new IrInst.LoadLocal(temp, loc.Slot));
+                Emit(new IrInst.LoadLocal(temp, loc.Slot));
                 result = (temp, loc.Type);
                 break;
 
             case Binding.Env env:
-                _inst.Add(new IrInst.LoadEnv(temp, env.Index));
+                Emit(new IrInst.LoadEnv(temp, env.Index));
                 result = (temp, env.Type);
                 break;
 
             case Binding.EnvScheme envSch:
-                _inst.Add(new IrInst.LoadEnv(temp, envSch.Index));
+                Emit(new IrInst.LoadEnv(temp, envSch.Index));
                 result = (temp, Instantiate(envSch.S));
                 break;
 
             case Binding.Self self:
                 int envTemp = NewTemp();
-                _inst.Add(new IrInst.LoadLocal(envTemp, 0));
-                _inst.Add(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp));
+                Emit(new IrInst.LoadLocal(envTemp, 0));
+                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp));
                 result = (temp, self.Type);
                 break;
 
             case Binding.Intrinsic intrinsic:
                 ReportDiagnostic(GetSpan(v), $"Intrinsic '{v.Name}' must be called directly.");
-                _inst.Add(new IrInst.LoadConstInt(temp, 0));
+                Emit(new IrInst.LoadConstInt(temp, 0));
                 result = (temp, intrinsic.Type);
                 break;
 
@@ -544,7 +639,7 @@ public sealed class Lowering
                 break;
 
             case Binding.Scheme sch:
-                _inst.Add(new IrInst.LoadLocal(temp, sch.Slot));
+                Emit(new IrInst.LoadLocal(temp, sch.Slot));
                 result = (temp, Instantiate(sch.S));
                 break;
 
@@ -558,7 +653,7 @@ public sealed class Lowering
 
     private (int, TypeRef) LowerProgramArgs(int target, TypeRef type)
     {
-        _inst.Add(new IrInst.LoadProgramArgs(target));
+        Emit(new IrInst.LoadProgramArgs(target));
         return (target, type);
     }
 
@@ -628,7 +723,7 @@ public sealed class Lowering
     {
         var temp = NewTemp();
         ReportDiagnostic(0, $"Intrinsic '{name}' must be called directly.");
-        _inst.Add(new IrInst.LoadConstInt(temp, 0));
+        Emit(new IrInst.LoadConstInt(temp, 0));
         return (temp, type);
     }
 
@@ -674,14 +769,14 @@ public sealed class Lowering
         if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(new IrInst.AddInt(target, leftTemp, rightTemp));
+            Emit(new IrInst.AddInt(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
 
         if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(new IrInst.AddFloat(target, leftTemp, rightTemp));
+            Emit(new IrInst.AddFloat(target, leftTemp, rightTemp));
             return (target, new TypeRef.TFloat());
         }
 
@@ -689,14 +784,14 @@ public sealed class Lowering
         {
             _usesConcatStr = true;
             int target = NewTemp();
-            _inst.Add(new IrInst.ConcatStr(target, leftTemp, rightTemp));
+            Emit(new IrInst.ConcatStr(target, leftTemp, rightTemp));
             return (target, new TypeRef.TStr());
         }
 
         var addTypes = PrettyPair(leftPruned, rightPruned);
         ReportDiagnostic(GetSpan(add), $"'+' requires Int+Int, Float+Float, or Str+Str, got {addTypes.Left} and {addTypes.Right}.", DiagnosticCodes.TypeMismatch);
         int errorTemp = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(errorTemp, 0));
+        Emit(new IrInst.LoadConstInt(errorTemp, 0));
         return (errorTemp, new TypeRef.TInt());
     }
 
@@ -802,33 +897,33 @@ public sealed class Lowering
         var tagTemp = NewTemp();
         var expectedOkTagTemp = NewTemp();
         var isOkTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtTag(tagTemp, leftTemp));
-        _inst.Add(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-        _inst.Add(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-        _inst.Add(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+        Emit(new IrInst.GetAdtTag(tagTemp, leftTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
 
         var payloadTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtField(payloadTemp, leftTemp, 0));
+        Emit(new IrInst.GetAdtField(payloadTemp, leftTemp, 0));
         var rhsResultTemp = NewTemp();
-        _inst.Add(new IrInst.CallClosure(rhsResultTemp, funcTemp, payloadTemp));
+        Emit(new IrInst.CallClosure(rhsResultTemp, funcTemp, payloadTemp));
 
         if (isFlatMap)
         {
-            _inst.Add(new IrInst.StoreLocal(resultSlot, rhsResultTemp));
+            Emit(new IrInst.StoreLocal(resultSlot, rhsResultTemp));
         }
         else
         {
             var wrappedTemp = LowerSingleFieldConstructorValue(okConstructor, rhsResultTemp);
-            _inst.Add(new IrInst.StoreLocal(resultSlot, wrappedTemp));
+            Emit(new IrInst.StoreLocal(resultSlot, wrappedTemp));
         }
 
-        _inst.Add(new IrInst.Jump(endLabel));
-        _inst.Add(new IrInst.Label(errorLabel));
-        _inst.Add(new IrInst.StoreLocal(resultSlot, leftTemp));
-        _inst.Add(new IrInst.Label(endLabel));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(errorLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, leftTemp));
+        Emit(new IrInst.Label(endLabel));
 
         var resultTemp = NewTemp();
-        _inst.Add(new IrInst.LoadLocal(resultTemp, resultSlot));
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
     }
 
@@ -868,25 +963,25 @@ public sealed class Lowering
         var tagTemp = NewTemp();
         var expectedErrorTagTemp = NewTemp();
         var isErrorTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtTag(tagTemp, leftTemp));
-        _inst.Add(new IrInst.LoadConstInt(expectedErrorTagTemp, GetConstructorTag(errorConstructor)));
-        _inst.Add(new IrInst.CmpIntEq(isErrorTemp, tagTemp, expectedErrorTagTemp));
-        _inst.Add(new IrInst.JumpIfFalse(isErrorTemp, errorLabel));
+        Emit(new IrInst.GetAdtTag(tagTemp, leftTemp));
+        Emit(new IrInst.LoadConstInt(expectedErrorTagTemp, GetConstructorTag(errorConstructor)));
+        Emit(new IrInst.CmpIntEq(isErrorTemp, tagTemp, expectedErrorTagTemp));
+        Emit(new IrInst.JumpIfFalse(isErrorTemp, errorLabel));
 
         var payloadTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtField(payloadTemp, leftTemp, 0));
+        Emit(new IrInst.GetAdtField(payloadTemp, leftTemp, 0));
         var mappedPayloadTemp = NewTemp();
-        _inst.Add(new IrInst.CallClosure(mappedPayloadTemp, funcTemp, payloadTemp));
+        Emit(new IrInst.CallClosure(mappedPayloadTemp, funcTemp, payloadTemp));
         var wrappedTemp = LowerSingleFieldConstructorValue(errorConstructor, mappedPayloadTemp);
-        _inst.Add(new IrInst.StoreLocal(resultSlot, wrappedTemp));
-        _inst.Add(new IrInst.Jump(endLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, wrappedTemp));
+        Emit(new IrInst.Jump(endLabel));
 
-        _inst.Add(new IrInst.Label(errorLabel));
-        _inst.Add(new IrInst.StoreLocal(resultSlot, leftTemp));
-        _inst.Add(new IrInst.Label(endLabel));
+        Emit(new IrInst.Label(errorLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, leftTemp));
+        Emit(new IrInst.Label(endLabel));
 
         var resultTemp = NewTemp();
-        _inst.Add(new IrInst.LoadLocal(resultTemp, resultSlot));
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
     }
 
@@ -921,21 +1016,21 @@ public sealed class Lowering
         if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
         if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpFloatNe(target, leftTemp, rightTemp) : new IrInst.CmpFloatEq(target, leftTemp, rightTemp));
+            Emit(negate ? new IrInst.CmpFloatNe(target, leftTemp, rightTemp) : new IrInst.CmpFloatEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
         if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
             int target = NewTemp();
-            _inst.Add(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
+            Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
@@ -943,7 +1038,7 @@ public sealed class Lowering
         var equalityTypes = PrettyPair(leftPruned, rightPruned);
         ReportDiagnostic(0, $"'{op}' requires Int{op}Int, Float{op}Float, or Str{op}Str, got {equalityTypes.Left} and {equalityTypes.Right}.", DiagnosticCodes.TypeMismatch);
         int errorTemp = NewTemp();
-        _inst.Add(new IrInst.LoadConstBool(errorTemp, false));
+        Emit(new IrInst.LoadConstBool(errorTemp, false));
         return (errorTemp, new TypeRef.TBool());
     }
 
@@ -962,21 +1057,21 @@ public sealed class Lowering
         if (resolvedLeft is TypeRef.TInt && resolvedRight is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(intFactory(target, leftTemp, rightTemp));
+            Emit(intFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
 
         if (resolvedLeft is TypeRef.TFloat && resolvedRight is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(floatFactory(target, leftTemp, rightTemp));
+            Emit(floatFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TFloat());
         }
 
         var types = PrettyPair(resolvedLeft, resolvedRight);
         ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int or Float{op}Float, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
         int fallback = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(fallback, 0));
+        Emit(new IrInst.LoadConstInt(fallback, 0));
         return (fallback, new TypeRef.TInt());
     }
 
@@ -995,21 +1090,21 @@ public sealed class Lowering
         if (resolvedLeft is TypeRef.TInt && resolvedRight is TypeRef.TInt)
         {
             int target = NewTemp();
-            _inst.Add(intFactory(target, leftTemp, rightTemp));
+            Emit(intFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
         if (resolvedLeft is TypeRef.TFloat && resolvedRight is TypeRef.TFloat)
         {
             int target = NewTemp();
-            _inst.Add(floatFactory(target, leftTemp, rightTemp));
+            Emit(floatFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
         }
 
         var types = PrettyPair(resolvedLeft, resolvedRight);
         ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int or Float{op}Float, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
         int fallback = NewTemp();
-        _inst.Add(new IrInst.LoadConstBool(fallback, false));
+        Emit(new IrInst.LoadConstBool(fallback, false));
         return (fallback, new TypeRef.TBool());
     }
 
@@ -1124,8 +1219,8 @@ public sealed class Lowering
     private int LowerSingleFieldConstructorValue(ConstructorSymbol constructor, int payloadTemp)
     {
         int ptrTemp = NewTemp();
-        _inst.Add(new IrInst.AllocAdt(ptrTemp, GetConstructorTag(constructor), constructor.Arity));
-        _inst.Add(new IrInst.SetAdtField(ptrTemp, 0, payloadTemp));
+        Emit(new IrInst.AllocAdt(ptrTemp, GetConstructorTag(constructor), constructor.Arity));
+        Emit(new IrInst.SetAdtField(ptrTemp, 0, payloadTemp));
         return ptrTemp;
     }
 
@@ -1138,7 +1233,7 @@ public sealed class Lowering
         var (valTemp, valType) = LowerExpr(let.Value);
 
         int slot = NewLocal();
-        _inst.Add(new IrInst.StoreLocal(slot, valTemp));
+        Emit(new IrInst.StoreLocal(slot, valTemp));
 
         var scheme = Generalize(Prune(valType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
@@ -1183,16 +1278,16 @@ public sealed class Lowering
         var tagTemp = NewTemp();
         var expectedOkTagTemp = NewTemp();
         var isOkTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtTag(tagTemp, valueTemp));
-        _inst.Add(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-        _inst.Add(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-        _inst.Add(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
 
         var payloadTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtField(payloadTemp, valueTemp, 0));
+        Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, 0));
 
         var boundSlot = NewLocal();
-        _inst.Add(new IrInst.StoreLocal(boundSlot, payloadTemp));
+        Emit(new IrInst.StoreLocal(boundSlot, payloadTemp));
 
         var child = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
         {
@@ -1217,14 +1312,14 @@ public sealed class Lowering
             resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(bodySuccessType)]);
         }
 
-        _inst.Add(new IrInst.StoreLocal(resultSlot, bodyTemp));
-        _inst.Add(new IrInst.Jump(endLabel));
-        _inst.Add(new IrInst.Label(errorLabel));
-        _inst.Add(new IrInst.StoreLocal(resultSlot, valueTemp));
-        _inst.Add(new IrInst.Label(endLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(errorLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, valueTemp));
+        Emit(new IrInst.Label(endLabel));
 
         var resultTemp = NewTemp();
-        _inst.Add(new IrInst.LoadLocal(resultTemp, resultSlot));
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
     }
 
@@ -1278,7 +1373,7 @@ public sealed class Lowering
 
         Unify(recType, valueAndType.valType);
         RecordHoverType(AstSpans.GetLetRecNameOrDefault(letRec), letRec.Name, recType);
-        _inst.Add(new IrInst.StoreLocal(slot, valueAndType.valTemp));
+        Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
 
         var (bodyTemp, bodyType) = LowerExpr(letRec.Body);
         _scopes.Pop();
@@ -1357,21 +1452,21 @@ public sealed class Lowering
         if (t is TypeRef.TInt)
         {
             _usesPrintInt = true;
-            _inst.Add(new IrInst.PrintInt(vTemp));
+            Emit(new IrInst.PrintInt(vTemp));
             return (vTemp, unitType);
         }
 
         if (t is TypeRef.TStr)
         {
             _usesPrintStr = true;
-            _inst.Add(new IrInst.PrintStr(vTemp));
+            Emit(new IrInst.PrintStr(vTemp));
             return (vTemp, unitType);
         }
 
         if (t is TypeRef.TBool)
         {
             _usesPrintBool = true;
-            _inst.Add(new IrInst.PrintBool(vTemp));
+            Emit(new IrInst.PrintBool(vTemp));
             return (vTemp, unitType);
         }
 
@@ -1405,11 +1500,11 @@ public sealed class Lowering
         if (appendNewline)
         {
             _usesPrintStr = true;
-            _inst.Add(new IrInst.PrintStr(valueTemp));
+            Emit(new IrInst.PrintStr(valueTemp));
         }
         else
         {
-            _inst.Add(new IrInst.WriteStr(valueTemp));
+            Emit(new IrInst.WriteStr(valueTemp));
         }
 
         return LowerUnitValue();
@@ -1429,7 +1524,7 @@ public sealed class Lowering
         Unify(loweredType, _resolvedTypes["Unit"]);
 
         var target = NewTemp();
-        _inst.Add(new IrInst.ReadLine(target));
+        Emit(new IrInst.ReadLine(target));
         return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
@@ -1467,7 +1562,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FileReadText(target, pathTemp));
+        Emit(new IrInst.FileReadText(target, pathTemp));
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
@@ -1516,7 +1611,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FileWriteText(target, pathTemp, textTemp));
+        Emit(new IrInst.FileWriteText(target, pathTemp, textTemp));
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
@@ -1544,7 +1639,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.FileExists(target, pathTemp));
+        Emit(new IrInst.FileExists(target, pathTemp));
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
@@ -1619,7 +1714,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.NetTcpConnect(target, hostTemp, portTemp));
+        Emit(new IrInst.NetTcpConnect(target, hostTemp, portTemp));
         return (target, CreateStringResultType(_resolvedTypes["Socket"]));
     }
 
@@ -1646,7 +1741,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.HttpGet(target, urlTemp));
+        Emit(new IrInst.HttpGet(target, urlTemp));
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
@@ -1693,7 +1788,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.HttpPost(target, urlTemp, bodyTemp));
+        Emit(new IrInst.HttpPost(target, urlTemp, bodyTemp));
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
@@ -1733,7 +1828,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.NetTcpSend(target, socketTemp, textTemp));
+        Emit(new IrInst.NetTcpSend(target, socketTemp, textTemp));
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
@@ -1773,7 +1868,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.NetTcpReceive(target, socketTemp, maxBytesTemp));
+        Emit(new IrInst.NetTcpReceive(target, socketTemp, maxBytesTemp));
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
@@ -1793,7 +1888,7 @@ public sealed class Lowering
         }
 
         var target = NewTemp();
-        _inst.Add(new IrInst.NetTcpClose(target, socketTemp));
+        Emit(new IrInst.NetTcpClose(target, socketTemp));
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
@@ -1811,7 +1906,7 @@ public sealed class Lowering
         var elseLabel = NewLabel("else");
         var endLabel = NewLabel("endif");
 
-        _inst.Add(new IrInst.JumpIfFalse(cTemp, elseLabel));
+        Emit(new IrInst.JumpIfFalse(cTemp, elseLabel));
 
         // Both branches ARE in tail position (if the if itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -1819,15 +1914,15 @@ public sealed class Lowering
         int slot = NewLocal();
         var (tTemp, tType) = LowerExpr(iff.Then);
         var thenType = Prune(tType);
-        _inst.Add(new IrInst.StoreLocal(slot, tTemp));
+        Emit(new IrInst.StoreLocal(slot, tTemp));
 
-        _inst.Add(new IrInst.Jump(endLabel));
-        _inst.Add(new IrInst.Label(elseLabel));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(elseLabel));
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (eTemp, eType) = LowerExpr(iff.Else);
         var elseType = Prune(eType);
-        _inst.Add(new IrInst.StoreLocal(slot, eTemp));
+        Emit(new IrInst.StoreLocal(slot, eTemp));
 
         // unify branch types
         using (PushDiagnosticContext("in if branches"))
@@ -1837,8 +1932,8 @@ public sealed class Lowering
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
-        _inst.Add(new IrInst.Label(endLabel));
-        _inst.Add(new IrInst.LoadLocal(target, slot));
+        Emit(new IrInst.Label(endLabel));
+        Emit(new IrInst.LoadLocal(target, slot));
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
@@ -1882,19 +1977,19 @@ public sealed class Lowering
         if (captures.Count == 0)
         {
             envPtrTemp = NewTemp();
-            _inst.Add(new IrInst.LoadConstInt(envPtrTemp, 0)); // null env
+            Emit(new IrInst.LoadConstInt(envPtrTemp, 0)); // null env
         }
         else
         {
             // alloc env: captures.Count * 8
             envPtrTemp = NewTemp();
-            _inst.Add(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+            Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
 
             for (int i = 0; i < captures.Count; i++)
             {
                 var (capTemp, capTy) = LowerVar(new Expr.Var(captures[i]));
                 // store capTemp into [envPtr + i*8]
-                _inst.Add(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
                 // Constrain types: the captured binding type should match capTy; already does.
             }
         }
@@ -1994,8 +2089,8 @@ public sealed class Lowering
                     var localSlot = NewLocal();
                     // Load from env into local at function start
                     int loadTemp = NewTemp();
-                    _inst.Add(new IrInst.LoadEnv(loadTemp, envIdx));
-                    _inst.Add(new IrInst.StoreLocal(localSlot, loadTemp));
+                    Emit(new IrInst.LoadEnv(loadTemp, envIdx));
+                    Emit(new IrInst.StoreLocal(localSlot, loadTemp));
                     // Override binding to use local slot
                     scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
                     tco.ParamSlots.Add(localSlot);
@@ -2007,7 +2102,7 @@ public sealed class Lowering
 
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
-            _inst.Add(new IrInst.Label(tco.BodyLabel));
+            Emit(new IrInst.Label(tco.BodyLabel));
             tco.InTailPosition = true;
         }
 
@@ -2018,7 +2113,7 @@ public sealed class Lowering
             savedTcoCtx.InTailPosition = false;
         }
         Unify(bodyType, retTy);
-        _inst.Add(new IrInst.Return(bodyTemp));
+        Emit(new IrInst.Return(bodyTemp));
 
         var func = new IrFunction(
             Label: label,
@@ -2043,7 +2138,7 @@ public sealed class Lowering
 
         // Produce closure object: alloc 16 bytes and store (code_ptr, env_ptr)
         int closureTemp = NewTemp();
-        _inst.Add(new IrInst.MakeClosure(closureTemp, label, envPtrTemp));
+        Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp));
         return (closureTemp, funTy);
     }
 
@@ -2264,17 +2359,17 @@ public sealed class Lowering
             // Store new values into TCO param slots
             for (int i = 0; i < tco.ParamSlots.Count; i++)
             {
-                _inst.Add(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
+                Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
             }
 
             // Jump back to loop start
-            _inst.Add(new IrInst.Jump(tco.BodyLabel));
+            Emit(new IrInst.Jump(tco.BodyLabel));
 
             tco.InTailPosition = savedTail;
 
             // Return a dummy value — this code path won't execute at runtime
             int dummy = NewTemp();
-            _inst.Add(new IrInst.LoadConstInt(dummy, 0));
+            Emit(new IrInst.LoadConstInt(dummy, 0));
             return (dummy, NewTypeVar());
         }
 
@@ -2384,7 +2479,7 @@ public sealed class Lowering
             }
 
             int target = NewTemp();
-            _inst.Add(new IrInst.CallClosure(target, currentTemp, argTemp));
+            Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
             currentTemp = target;
             currentType = Prune(fun.Ret);
         }
@@ -2397,7 +2492,7 @@ public sealed class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (msgTemp, msgType) = LowerExpr(arg);
         Unify(msgType, new TypeRef.TStr());
-        _inst.Add(new IrInst.PanicStr(msgTemp));
+        Emit(new IrInst.PanicStr(msgTemp));
         return (msgTemp, new TypeRef.TNever());
     }
 
@@ -2408,7 +2503,7 @@ public sealed class Lowering
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        _inst.Add(new IrInst.AllocAdt(ptrTemp, tag, 0));
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
         return (ptrTemp, resultType);
     }
 
@@ -2465,10 +2560,10 @@ public sealed class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
-        _inst.Add(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
         for (int i = 0; i < argTemps.Count; i++)
         {
-            _inst.Add(new IrInst.SetAdtField(ptrTemp, i, argTemps[i]));
+            Emit(new IrInst.SetAdtField(ptrTemp, i, argTemps[i]));
         }
 
         return (ptrTemp, resultType);
@@ -2535,10 +2630,10 @@ public sealed class Lowering
         }
 
         int tupleTemp = NewTemp();
-        _inst.Add(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8));
+        Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8));
         for (int i = 0; i < elementTemps.Count; i++)
         {
-            _inst.Add(new IrInst.StoreMemOffset(tupleTemp, i * 8, elementTemps[i]));
+            Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elementTemps[i]));
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -2609,17 +2704,17 @@ public sealed class Lowering
                     Unify(resultType, bodyType);
                 }
             }
-            _inst.Add(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            _inst.Add(new IrInst.Jump(endLabel));
+            Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+            Emit(new IrInst.Jump(endLabel));
 
             _scopes.Pop();
             if (i < match.Cases.Count - 1)
             {
-                _inst.Add(new IrInst.Label(caseFailLabel));
+                Emit(new IrInst.Label(caseFailLabel));
             }
         }
 
-        _inst.Add(new IrInst.Label(noMatchLabel));
+        Emit(new IrInst.Label(noMatchLabel));
         var prunedValueType = Prune(valueType);
         var missingAdtConstructors = GetMissingAdtConstructors(prunedValueType, match.Cases);
         var missingListCases = GetMissingListCases(prunedValueType, match.Cases);
@@ -2664,12 +2759,12 @@ public sealed class Lowering
         }
 
         int defaultTemp = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(defaultTemp, 0));
-        _inst.Add(new IrInst.StoreLocal(resultSlot, defaultTemp));
-        _inst.Add(new IrInst.Label(endLabel));
+        Emit(new IrInst.LoadConstInt(defaultTemp, 0));
+        Emit(new IrInst.StoreLocal(resultSlot, defaultTemp));
+        Emit(new IrInst.Label(endLabel));
 
         int resultTemp = NewTemp();
-        _inst.Add(new IrInst.LoadLocal(resultTemp, resultSlot));
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
     }
 
@@ -2701,7 +2796,7 @@ public sealed class Lowering
     private (int Temp, TypeRef Type) LowerEmptyList()
     {
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(t, 0));
+        Emit(new IrInst.LoadConstInt(t, 0));
         return (t, new TypeRef.TList(NewTypeVar()));
     }
 
@@ -2711,9 +2806,9 @@ public sealed class Lowering
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        _inst.Add(new IrInst.Alloc(nodeTemp, 16));
-        _inst.Add(new IrInst.StoreMemOffset(nodeTemp, 0, headTemp));
-        _inst.Add(new IrInst.StoreMemOffset(nodeTemp, 8, tailTemp));
+        Emit(new IrInst.Alloc(nodeTemp, 16));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, 0, headTemp));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, 8, tailTemp));
         return (nodeTemp, Prune(listType));
     }
 
@@ -2819,7 +2914,7 @@ public sealed class Lowering
                     return;
                 }
                 int slot = NewLocal();
-                _inst.Add(new IrInst.StoreLocal(slot, valueTemp));
+                Emit(new IrInst.StoreLocal(slot, valueTemp));
                 _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
                 return;
 
@@ -2827,8 +2922,8 @@ public sealed class Lowering
                 EmitRequireNonZero(valueTemp, failLabel);
                 int headTemp = NewTemp();
                 int tailTemp = NewTemp();
-                _inst.Add(new IrInst.LoadMemOffset(headTemp, valueTemp, 0));
-                _inst.Add(new IrInst.LoadMemOffset(tailTemp, valueTemp, 8));
+                Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, 0));
+                Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, 8));
                 EmitPattern(c.Head, headTemp, failLabel, bindingTypes);
                 EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes);
                 return;
@@ -2837,7 +2932,7 @@ public sealed class Lowering
                 for (int i = 0; i < tuple.Elements.Count; i++)
                 {
                     int elemTemp = NewTemp();
-                    _inst.Add(new IrInst.LoadMemOffset(elemTemp, valueTemp, i * 8));
+                    Emit(new IrInst.LoadMemOffset(elemTemp, valueTemp, i * 8));
                     EmitPattern(tuple.Elements[i], elemTemp, failLabel, bindingTypes);
                 }
                 return;
@@ -2868,7 +2963,7 @@ public sealed class Lowering
         {
             // Extract payload at each field index and bind sub-patterns.
             int payloadTemp = NewTemp();
-            _inst.Add(new IrInst.GetAdtField(payloadTemp, valueTemp, i));
+            Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, i));
             EmitPattern(ctor.Patterns[i], payloadTemp, failLabel, bindingTypes);
         }
     }
@@ -2881,12 +2976,12 @@ public sealed class Lowering
         int geTemp = NewTemp();
         int leTemp = NewTemp();
         int expectedTagTemp = NewTemp();
-        _inst.Add(new IrInst.GetAdtTag(tagTemp, ptrTemp));
-        _inst.Add(new IrInst.LoadConstInt(expectedTagTemp, expectedTag));
-        _inst.Add(new IrInst.CmpIntGe(geTemp, tagTemp, expectedTagTemp));
-        _inst.Add(new IrInst.JumpIfFalse(geTemp, failLabel));
-        _inst.Add(new IrInst.CmpIntLe(leTemp, tagTemp, expectedTagTemp));
-        _inst.Add(new IrInst.JumpIfFalse(leTemp, failLabel));
+        Emit(new IrInst.GetAdtTag(tagTemp, ptrTemp));
+        Emit(new IrInst.LoadConstInt(expectedTagTemp, expectedTag));
+        Emit(new IrInst.CmpIntGe(geTemp, tagTemp, expectedTagTemp));
+        Emit(new IrInst.JumpIfFalse(geTemp, failLabel));
+        Emit(new IrInst.CmpIntLe(leTemp, tagTemp, expectedTagTemp));
+        Emit(new IrInst.JumpIfFalse(leTemp, failLabel));
     }
 
     private void EmitRequireZero(int valueTemp, string failLabel)
@@ -2895,11 +2990,11 @@ public sealed class Lowering
         int zeroTemp = NewTemp();
         int geTemp = NewTemp();
         int leTemp = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(zeroTemp, 0));
-        _inst.Add(new IrInst.CmpIntGe(geTemp, valueTemp, zeroTemp));
-        _inst.Add(new IrInst.JumpIfFalse(geTemp, failLabel));
-        _inst.Add(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
-        _inst.Add(new IrInst.JumpIfFalse(leTemp, failLabel));
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.CmpIntGe(geTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(geTemp, failLabel));
+        Emit(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(leTemp, failLabel));
     }
 
     private void EmitRequireNonZero(int valueTemp, string failLabel)
@@ -2908,11 +3003,11 @@ public sealed class Lowering
         int zeroTemp = NewTemp();
         int leTemp = NewTemp();
         var passLabel = NewLabel("match_nonzero");
-        _inst.Add(new IrInst.LoadConstInt(zeroTemp, 0));
-        _inst.Add(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
-        _inst.Add(new IrInst.JumpIfFalse(leTemp, passLabel));
-        _inst.Add(new IrInst.Jump(failLabel));
-        _inst.Add(new IrInst.Label(passLabel));
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(leTemp, passLabel));
+        Emit(new IrInst.Jump(failLabel));
+        Emit(new IrInst.Label(passLabel));
     }
 
     // ---------------- Type vars + unification ----------------
@@ -4016,7 +4111,7 @@ public sealed class Lowering
     private (int Temp, TypeRef Type) ReturnNeverWithDummyTemp()
     {
         int t = NewTemp();
-        _inst.Add(new IrInst.LoadConstInt(t, 0));
+        Emit(new IrInst.LoadConstInt(t, 0));
         return (t, new TypeRef.TNever());
     }
 

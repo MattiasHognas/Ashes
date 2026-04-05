@@ -50,6 +50,12 @@ The following options are accepted by **compile**, **run**, **repl**, and **test
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 
+The following option is accepted by **compile** and **run** only:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info into the output binary. See [Debug Mode](#debug-mode) below. |
+
 **Optimization level values:**
 
 | Flag | Meaning |
@@ -85,10 +91,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] <input.ash>
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -108,6 +114,7 @@ ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [-o <output>]          # discove
 | `--target` | | enum | OS default | No | Target back end (`linux-x64` or `windows-x64`). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
+| `--debug` | `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
 
 **Default output path rules (when `-o` is not given):**
 
@@ -139,6 +146,7 @@ On success, a confirmation line is printed:
 ```
 OK  Wrote <size> to <output>
      Target: <target>
+     Debug:  yes          (only when --debug / -g is set)
      Time:   <elapsed>
 ```
 
@@ -179,10 +187,10 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] <input.ash> [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] --project <ashes.json> [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] [-- <args...>]   # auto-discovers ashes.json
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
 ```
 
 #### Arguments
@@ -202,6 +210,7 @@ ashes run [--target <id>] [-O0|-O1|-O2|-O3] [-- <args...>]   # auto-discovers as
 | `--target` | enum | OS default | No | Target back end. |
 | `--project` | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
+| `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
 
 #### Exit Codes
 
@@ -513,6 +522,47 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | Parse / type error in source | Diagnostic message | `1` |
 | `ashes fmt` given more or fewer than one path | `Provide exactly one file or directory.` | `2` |
 | `ashes fmt` path does not exist | `Path not found: <path>` | `1` |
+
+---
+
+## Debug Mode
+
+The `--debug` (or `-g`) flag instructs the compiler to embed DWARF debug
+information in the output binary. This enables source-level debugging with
+GDB or LLDB via the Ashes DAP server and VS Code extension.
+
+### Behaviour
+
+| Aspect | Effect |
+|--------|--------|
+| **Debug metadata** | DWARF v5 sections (`.debug_info`, `.debug_line`, etc.) are emitted into the ELF or PE binary. |
+| **Optimization cap** | Without an explicit `-O` flag, optimization defaults to `-O0`. With an explicit flag, optimization is capped at `-O1` to preserve variable liveness and source mapping. |
+| **Compile summary** | An extra `Debug: yes` line is printed in the `ashes compile` success output. |
+| **Target triple** | On Windows the LLVM target triple switches to `x86_64-pc-windows-gnu` (MinGW) to produce DWARF instead of CodeView/PDB. |
+
+### Interaction with Optimization Levels
+
+| User flags | Effective optimization |
+|------------|----------------------|
+| `--debug` (no `-O`) | `-O0` |
+| `--debug -O0` | `-O0` |
+| `--debug -O1` | `-O1` |
+| `--debug -O2` | `-O1` (capped) |
+| `--debug -O3` | `-O1` (capped) |
+| `-O3` (no `--debug`) | `-O3` (unchanged) |
+
+### Example
+
+```bash
+# Compile with debug info (defaults to -O0)
+ashes compile --debug examples/hello.ash -o hello
+
+# Compile with debug info and explicit -O1
+ashes compile -g -O1 examples/hello.ash
+
+# Run under debugger
+ashes run --debug examples/hello.ash
+```
 
 ---
 
