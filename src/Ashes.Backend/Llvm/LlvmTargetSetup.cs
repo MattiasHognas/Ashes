@@ -16,6 +16,7 @@ internal static class LlvmTargetSetup
         string targetTriple = targetId switch
         {
             Backends.TargetIds.LinuxX64 => "x86_64-unknown-linux-gnu",
+            Backends.TargetIds.LinuxArm64 => "aarch64-unknown-linux-gnu",
             Backends.TargetIds.WindowsX64 => "x86_64-pc-windows-msvc",
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
@@ -37,9 +38,11 @@ internal static class LlvmTargetSetup
             _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
         };
 
+        string cpu = targetId == Backends.TargetIds.LinuxArm64 ? "generic" : "x86-64";
+
         LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target,
             targetTriple,
-            "x86-64",
+            cpu,
             string.Empty,
             optLevel,
             LlvmRelocMode.Static,
@@ -87,6 +90,11 @@ internal static class LlvmTargetSetup
             LlvmApi.InitializeX86TargetMC();
             LlvmApi.InitializeX86AsmParser();
             LlvmApi.InitializeX86AsmPrinter();
+            LlvmApi.InitializeAArch64TargetInfo();
+            LlvmApi.InitializeAArch64Target();
+            LlvmApi.InitializeAArch64TargetMC();
+            LlvmApi.InitializeAArch64AsmParser();
+            LlvmApi.InitializeAArch64AsmPrinter();
             _initialized = true;
         }
     }

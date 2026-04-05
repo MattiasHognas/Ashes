@@ -301,9 +301,9 @@ internal static partial class LlvmCodegen
 
     private static void EmitWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
     {
-        if (state.Flavor == LlvmCodegenFlavor.Linux)
+        if (IsLinuxFlavor(state.Flavor))
         {
-            EmitSyscall(
+            EmitLinuxSyscall(
                 state,
                 SyscallWrite,
                 LlvmApi.ConstInt(state.I64, 1, 0),
@@ -380,13 +380,51 @@ internal static partial class LlvmCodegen
             "write_file");
     }
 
-    private static LlvmValueHandle EmitSyscall(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
+    private static LlvmValueHandle EmitLinuxSyscall(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
+    {
+        long resolved = ResolveSyscallNr(state.Flavor, nr);
+        if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            return EmitSyscallArm64(state, resolved, arg1, arg2, arg3, name);
+        }
+
+        return EmitSyscallX86(state, resolved, arg1, arg2, arg3, name);
+    }
+
+    private static LlvmValueHandle EmitSyscallX86(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
     {
         LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64]);
         LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
             syscallType,
             "syscall",
             "={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}",
+            true,
+            false);
+        return LlvmApi.BuildCall2(state.Target.Builder,
+            syscallType,
+            syscall,
+            new[]
+            {
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
+                NormalizeToI64(state, arg1),
+                NormalizeToI64(state, arg2),
+                NormalizeToI64(state, arg3)
+            },
+            name);
+    }
+
+    private static LlvmValueHandle EmitSyscallArm64(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
+    {
+        // AArch64 Linux syscall convention:
+        //   x8 = syscall number
+        //   x0 = arg1, x1 = arg2, x2 = arg3
+        //   svc #0 to invoke
+        //   result in x0
+        LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
+            syscallType,
+            "svc #0",
+            "={x0},{x8},{x0},{x1},{x2},~{memory},~{cc}",
             true,
             false);
         return LlvmApi.BuildCall2(state.Target.Builder,
