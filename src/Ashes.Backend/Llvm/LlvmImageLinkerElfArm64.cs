@@ -255,10 +255,25 @@ internal static partial class LlvmImageLinker
                         {
                             // Encodes a 26-bit signed offset (in 4-byte units) into a BL/B instruction.
                             long pcRelOffset = targetVa - placeVa;
-                            int imm26 = checked((int)(pcRelOffset >> 2)) & 0x03FFFFFF;
+                            if ((pcRelOffset & 0x3) != 0)
+                            {
+                                throw new InvalidOperationException(
+                                    $"AArch64 CALL26/JUMP26 relocation at offset 0x{relocOffset:X} has unaligned target offset {pcRelOffset}.");
+                            }
+
+                            long imm26Value = pcRelOffset >> 2;
+                            const int MinImm26 = -(1 << 25);
+                            const int MaxImm26 = (1 << 25) - 1;
+                            if (imm26Value < MinImm26 || imm26Value > MaxImm26)
+                            {
+                                throw new InvalidOperationException(
+                                    $"AArch64 CALL26/JUMP26 relocation at offset 0x{relocOffset:X} is out of range: immediate {imm26Value} does not fit in signed 26 bits.");
+                            }
+
+                            int imm26 = (int)imm26Value;
                             Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                             uint instruction = BinaryPrimitives.ReadUInt32LittleEndian(patch);
-                            instruction = (instruction & 0xFC000000) | (uint)imm26;
+                            instruction = (instruction & 0xFC000000) | ((uint)imm26 & 0x03FFFFFF);
                             BinaryPrimitives.WriteUInt32LittleEndian(patch, instruction);
                             break;
                         }
