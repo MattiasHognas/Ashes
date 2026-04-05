@@ -87,13 +87,18 @@ try {
 
         # The bash script auto-detects the WSL architecture and writes to
         # runtimes/linux-x64/ or runtimes/linux-arm64/ accordingly.
+        $foundLinuxSo = $false
         foreach ($rid in @("linux-x64", "linux-arm64")) {
             $linuxOut = Join-Path $LibDir $rid
             $soPath = Join-Path $linuxOut 'libLLVM.so'
             if (Test-Path $soPath) {
+                $foundLinuxSo = $true
                 $soSize = [math]::Round((Get-Item $soPath).Length / 1MB, 1)
                 Write-Host "  -> $soPath ($soSize MB)"
             }
+        }
+        if (-not $foundLinuxSo) {
+            throw "WSL completed, but no Linux libLLVM.so was found in either '$LibDir/linux-x64/libLLVM.so' or '$LibDir/linux-arm64/libLLVM.so'. Check the output from scripts/download-llvm-native.sh and verify it copied the library to the expected runtime folder."
         }
     }
 
