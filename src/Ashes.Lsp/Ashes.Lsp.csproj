@@ -12,4 +12,9 @@
     <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
     <ProjectReference Include="..\Ashes.Formatter\Ashes.Formatter.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Ashes.Lsp.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
