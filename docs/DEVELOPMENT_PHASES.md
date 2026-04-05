@@ -4,7 +4,7 @@ This document defines the ordered phases for evolving Ashes from its
 current pure-functional compiler into a memory-safe, high-performance
 language with ownership, borrowing, and ergonomic pattern matching.
 
-All phases ship under a single version (`1.1.0`). The phase numbers
+All 6 phases will probably ship under a single version (`1.1.0`). The phase numbers
 exist only to communicate dependency order and guide development
 sequencing.
 
