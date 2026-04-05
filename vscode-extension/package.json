@@ -67,7 +67,7 @@
     "keybindings": [
       {
         "command": "ashes.run",
-        "key": "f5",
+        "key": "ctrl+f5",
         "when": "editorLangId == ashes && !inDebugMode"
       },
       {
