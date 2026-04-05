@@ -37,7 +37,7 @@ jobs:
 
               const artifact = response.data.artifacts.find(candidate =>
                 !candidate.expired &&
-                candidate.workflow_run &&
+                candidate.workflow_run?.id &&
                 candidate.workflow_run.id !== currentRunId
               );
 
