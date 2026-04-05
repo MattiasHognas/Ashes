@@ -7,6 +7,8 @@
 > 4. **Variable inspection:** Full recursive
 > 5. **Extension delivery:** Integrate into existing VS Code extension
 > 6. **Source mapping granularity:** Per-expression
+> 7. **IDE target:** VS Code only (no Visual Studio support planned)
+> 8. **Debug format:** DWARF on both Linux and Windows (no CodeView/PDB)
 
 ---
 
@@ -62,8 +64,8 @@ accesses spans via `GetSpan(expr)` → `AstSpans.GetOrDefault(expr)` and records
 
 - [ ] **File:** `Ashes.Backend` (options type, e.g. `BackendCompileOptions`)
 - Add property: `bool EmitDebugInfo { get; init; }`
-- When true, the backend emits DWARF (Linux) or CodeView (Windows) debug
-  metadata.
+- When true, the backend emits DWARF debug metadata (on both Linux and
+  Windows).
 
 ### 1b. CLI Flag
 
@@ -120,8 +122,7 @@ When `EmitDebugInfo == true`:
 **Module-level setup (in `EmitProgramModule()`):**
 
 1. Create `DIBuilder`.
-2. Add module flags: `"Dwarf Version" = 5` (Linux) or `"CodeView" = 1`
-   (Windows), `"Debug Info Version" = 3`.
+2. Add module flags: `"Dwarf Version" = 5`, `"Debug Info Version" = 3`.
 3. Create `DICompileUnit` — language `DW_LANG_C99` (stand-in), producer
    `"Ashes Compiler"`, not optimised.
 4. Create `DIFile` entries per source file (multi-file from day one via
@@ -184,12 +185,11 @@ completed after all types are defined.
 
 #### PE (`LlvmImageLinkerPe.cs`)
 
-- [ ] **Recommendation:** Use DWARF on both platforms for consistency.
+- [ ] Use DWARF on Windows (same as Linux) for consistency.
   Set LLVM target triple to `x86_64-pc-windows-gnu` (MinGW) instead of MSVC;
-  this produces DWARF which GDB/LLDB on Windows understand.
-- Alternatively, handle `.debug$S` / `.debug$T` COFF sections and add a PE
-  debug directory entry. Full PDB generation is complex — defer to a later
-  phase.
+  this produces DWARF sections which GDB/LLDB on Windows understand.
+- Include `.debug_*` COFF sections in the PE image (similar approach to ELF:
+  write them after loadable sections, add COFF section headers).
 
 ---
 
@@ -380,11 +380,6 @@ Add to `contributes`:
 
 - [ ] Recompile changed function, patch in running process. Requires
   cooperative runtime support — very complex, long-term.
-
-### 5e. CodeView / PDB for Windows
-
-- [ ] Switch from DWARF-on-Windows to native CodeView + PDB for Visual Studio
-  compatibility. Requires PDB stream writers or `llvm-pdbutil`.
 
 ---
 
