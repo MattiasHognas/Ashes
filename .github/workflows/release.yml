@@ -30,12 +30,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-${{ runner.os }}-${{ runner.os == 'Windows' && 'win-x64' || 'all' }}-22.1.2
+
       - name: Download all LLVM native libraries (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
       - name: Download LLVM native library (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.cache-llvm.outputs.cache-hit != 'true'
         shell: pwsh
         run: .\scripts\download-llvm-native.ps1
 
@@ -95,7 +102,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-${{ runner.os }}-all-22.1.2
+
       - name: Download all LLVM native libraries
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
       - name: Setup .NET
