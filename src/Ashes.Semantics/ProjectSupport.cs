@@ -39,7 +39,8 @@ public readonly record struct ParsedImportHeader(
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
-    int BodyStart
+    int BodyStart,
+    IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets
 );
 
 public static class ProjectSupport
@@ -474,16 +475,39 @@ public static class ProjectSupport
             .ToList();
 
         var prefix = new StringBuilder();
-        prefix.Append(entryShape.TypeDeclarationsSource);
+
+        // Track module offset regions as content is appended
+        var moduleOffsets = new List<(string FilePath, int StartOffset, int EndOffset)>();
+
+        // Entry module type declarations
+        if (entryShape.TypeDeclarationsSource.Length > 0)
+        {
+            var start = prefix.Length;
+            prefix.Append(entryShape.TypeDeclarationsSource);
+            moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
+        }
+
+        // Non-entry module type declarations
         foreach (var module in nonEntryModules)
         {
-            prefix.Append(shapes[module.ModuleName].TypeDeclarationsSource);
+            var typeDecls = shapes[module.ModuleName].TypeDeclarationsSource;
+            if (typeDecls.Length > 0)
+            {
+                var start = prefix.Length;
+                prefix.Append(typeDecls);
+                moduleOffsets.Add((module.FilePath, start, prefix.Length));
+            }
         }
 
         var usedBindingNames = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var module in nonEntryModules)
         {
+            var start = prefix.Length;
             prefix.Append(BuildModuleBindingPrefix(module, shapes[module.ModuleName], exportedNames, usedBindingNames));
+            if (prefix.Length > start)
+            {
+                moduleOffsets.Add((module.FilePath, start, prefix.Length));
+            }
         }
 
         var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
@@ -494,17 +518,20 @@ public static class ProjectSupport
             var entryOffset = prefix.Length;
             prefix.Append(entryExpression);
             prefix.Append(')');
-            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, 0);
+            moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
+            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, 0, moduleOffsets);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
         {
-            return new CombinedCompilationLayout(entryExpression, 0, 0);
+            moduleOffsets.Add((entryModule.FilePath, 0, entryExpression.Length));
+            return new CombinedCompilationLayout(entryExpression, 0, 0, moduleOffsets);
         }
 
         var offset = prefix.Length;
         prefix.Append(entryExpression);
-        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length);
+        moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
+        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets);
     }
 
     private static string BuildEntryExpression(

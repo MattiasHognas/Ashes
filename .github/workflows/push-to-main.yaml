@@ -40,6 +40,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Cache LLVM native libraries
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: runtimes
+          key: llvm-all-22.1.2
+
+      - name: Download all LLVM native libraries
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: bash scripts/download-llvm-native.sh --all
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -62,7 +73,7 @@ jobs:
         run: dotnet build Ashes.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --maximum-parallel-tests 1 --coverage --coverage-output coverage.cobertura.xml --coverage-output-format cobertura 
+        run: dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release --no-build --no-restore -- --results-directory TestResults --coverage --coverage-output coverage.cobertura.xml --coverage-output-format cobertura 
 
       - name: Bundle VS Code extension (Release)
         run: |
@@ -72,7 +83,8 @@ jobs:
           pnpm run lint
           pnpm run format:check
           pnpm run compile
-          pnpm run build-server
+          pnpm run build-lsp-server
+          pnpm run build-dap-server
           pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
 
       - name: Upload VS Code extension bundle

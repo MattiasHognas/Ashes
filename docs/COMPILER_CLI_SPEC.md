@@ -43,11 +43,27 @@ The following help flags are accepted at the top level and for each command:
 |--------|-----------|---------|------------|-------------|
 | `--help` / `-h` | — | — | No | Print CLI help text and exit successfully. |
 
-The following option is accepted by **compile**, **run**, **repl**, and **test**:
+The following options are accepted by **compile**, **run**, **repl**, and **test**:
 
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
+
+The following option is accepted by **compile** and **run** only:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info into the output binary. See [Debug Mode](#debug-mode) below. |
+
+**Optimization level values:**
+
+| Flag | Meaning |
+|------|---------|
+| `-O0` | No optimization |
+| `-O1` | Basic optimizations |
+| `-O2` | Standard optimizations (default) |
+| `-O3` | Aggressive optimizations |
 
 `--project` is accepted by **compile**, **run**, and **test** only (not by `ashes repl`):
 
@@ -59,8 +75,9 @@ The following option is accepted by **compile**, **run**, **repl**, and **test**
 
 | Value | Platform |
 |-------|----------|
-| `linux-x64` | Linux x86-64 — emits a native ELF64 binary (default on Linux/macOS) |
-| `windows-x64` | Windows x86-64 — emits a native PE32+ binary (default on Windows) |
+| `linux-x64` | Linux x86-64 — emits a native ELF64 binary |
+| `linux-arm64` | Linux AArch64 — emits a native ELF64 binary |
+| `windows-x64` | Windows x86-64 — emits a native PE32+ binary |
 
 Any other value is rejected with an error message and exit code **1**.
 
@@ -75,10 +92,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```
-ashes compile [--target <id>] [-o <output>] <input.ash>
-ashes compile [--target <id>] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -97,6 +114,8 @@ ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upwa
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
 | `--target` | | enum | OS default | No | Target back end (`linux-x64` or `windows-x64`). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
+| `--debug` | `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
 
 **Default output path rules (when `-o` is not given):**
 
@@ -108,8 +127,9 @@ ashes compile [--target <id>] [-o <output>]          # discovers ashes.json upwa
 
 | Property | Default value |
 |----------|---------------|
-| `--target` | `linux-x64` on Linux/macOS, `windows-x64` on Windows |
+| `--target` | `linux-x64` on Linux x86-64, `linux-arm64` on Linux ARM64, `windows-x64` on Windows |
 | `-o` / `--out` | Derived from input (see above) |
+| `-O0`..`-O3` | `-O2` (standard optimizations) |
 
 #### Exit Codes
 
@@ -127,6 +147,7 @@ On success, a confirmation line is printed:
 ```
 OK  Wrote <size> to <output>
      Target: <target>
+     Debug:  yes          (only when --debug / -g is set)
      Time:   <elapsed>
 ```
 
@@ -167,10 +188,10 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```
-ashes run [--target <id>] <input.ash> [-- <args...>]
-ashes run [--target <id>] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] --project <ashes.json> [-- <args...>]
-ashes run [--target <id>] [-- <args...>]   # auto-discovers ashes.json
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
 ```
 
 #### Arguments
@@ -189,6 +210,8 @@ ashes run [--target <id>] [-- <args...>]   # auto-discovers ashes.json
 | `--expr` | string | — | No | Inline Ashes source to compile and run. |
 | `--target` | enum | OS default | No | Target back end. |
 | `--project` | file path | — | No | Path to an `ashes.json` project file. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
+| `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
 
 #### Exit Codes
 
@@ -233,7 +256,7 @@ Start an interactive read-eval-print loop. Each expression is compiled to a temp
 #### Synopsis
 
 ```
-ashes repl [--target <id>]
+ashes repl [--target <id>] [-O0|-O1|-O2|-O3]
 ```
 
 #### Options
@@ -241,6 +264,7 @@ ashes repl [--target <id>]
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end used for all REPL evaluations. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level used for all REPL evaluations. |
 
 #### REPL Commands (typed at the prompt)
 
@@ -285,7 +309,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 #### Synopsis
 
 ```
-ashes test [--target <id>] [--project <ashes.json>] [paths...]
+ashes test [--target <id>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
 ```
 
 #### Arguments
@@ -300,6 +324,7 @@ ashes test [--target <id>] [--project <ashes.json>] [paths...]
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end for test compilation. |
 | `--project` | file path | — | No | Load a project manifest. When no explicit `[paths...]` are given, test discovery uses `<projectDir>/tests` if that directory exists; otherwise it falls back to the project directory itself. |
+| `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level for test compilation. |
 
 #### Test File Conventions
 
@@ -498,6 +523,47 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | Parse / type error in source | Diagnostic message | `1` |
 | `ashes fmt` given more or fewer than one path | `Provide exactly one file or directory.` | `2` |
 | `ashes fmt` path does not exist | `Path not found: <path>` | `1` |
+
+---
+
+## Debug Mode
+
+The `--debug` (or `-g`) flag instructs the compiler to embed debug
+information in the output binary for source-level debugging. The exact debug
+format is target-dependent.
+
+### Behaviour
+
+| Aspect | Effect |
+|--------|--------|
+| **Debug metadata** | Debug information is emitted into the output binary; the exact sections and format depend on the target platform. |
+| **Optimization cap** | Without an explicit `-O` flag, optimization defaults to `-O0`. With an explicit flag, optimization is capped at `-O1` to preserve variable liveness and source mapping. |
+| **Compile summary** | An extra `Debug: yes` line is printed in the `ashes compile` success output. |
+| **Target triple** | `--debug` does not change the Windows LLVM target triple; the current implementation continues to target `x86_64-pc-windows-msvc`. |
+
+### Interaction with Optimization Levels
+
+| User flags | Effective optimization |
+|------------|----------------------|
+| `--debug` (no `-O`) | `-O0` |
+| `--debug -O0` | `-O0` |
+| `--debug -O1` | `-O1` |
+| `--debug -O2` | `-O1` (capped) |
+| `--debug -O3` | `-O1` (capped) |
+| `-O3` (no `--debug`) | `-O3` (unchanged) |
+
+### Example
+
+```bash
+# Compile with debug info (defaults to -O0)
+ashes compile --debug examples/hello.ash -o hello
+
+# Compile with debug info and explicit -O1
+ashes compile -g -O1 examples/hello.ash
+
+# Run under debugger
+ashes run --debug examples/hello.ash
+```
 
 ---
 

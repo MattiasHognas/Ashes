@@ -16,7 +16,7 @@ const GITHUB_REPO = "Ashes";
  */
 const RID_MAP: Readonly<Record<string, Record<string, string>>> = {
   win32: { x64: "win-x64" },
-  linux: { x64: "linux-x64" },
+  linux: { x64: "linux-x64", arm64: "linux-arm64" },
 };
 
 /** Resolve the .NET runtime identifier for the current platform/arch. */

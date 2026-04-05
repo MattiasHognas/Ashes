@@ -22,8 +22,17 @@ public abstract record TypeRef
     public sealed record TTypeParam(TypeParameterSymbol Symbol) : TypeRef;
 }
 
+public readonly record struct SourceLocation(string FilePath, int Line, int Column);
+
 public abstract record IrInst
 {
+    /// <summary>
+    /// Optional source location for debug info emission (DWARF).
+    /// Init-only so that Location is set once (via <c>with</c>) before the
+    /// instruction is added to the IR list, keeping record equality stable.
+    /// </summary>
+    public SourceLocation? Location { get; init; }
+
     public sealed record LoadConstInt(int Target, long Value) : IrInst;
     public sealed record LoadConstFloat(int Target, double Value) : IrInst;
     public sealed record LoadConstBool(int Target, bool Value) : IrInst;
