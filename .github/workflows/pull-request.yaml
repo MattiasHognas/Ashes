@@ -26,13 +26,13 @@ jobs:
             const currentRunId = context.runId;
             const { owner, repo } = context.repo;
 
-            for (let page = 1; page <= maxPages; page += 1) {
+            for (let currentPage = 1; currentPage <= maxPages; currentPage += 1) {
               const response = await github.rest.actions.listArtifactsForRepo({
                 owner,
                 repo,
                 name: artifactName,
                 per_page: 100,
-                page,
+                page: currentPage,
               });
 
               const artifact = response.data.artifacts.find(candidate =>
