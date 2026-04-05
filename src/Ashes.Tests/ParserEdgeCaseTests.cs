@@ -268,12 +268,13 @@ public sealed class ParserEdgeCaseTests
     }
 
     [Test]
-    public void Parse_should_support_constructor_pattern_with_no_args()
+    public void Parse_should_parse_nullary_constructor_name_as_variable_pattern()
     {
+        // The parser produces Pattern.Var for bare identifiers like "None";
+        // disambiguation into Pattern.Constructor happens later in Semantics.
         var match = Parse("match x with | None -> 0")
             .ShouldBeOfType<Expr.Match>();
 
-        // None without parens is a variable pattern, not constructor
         match.Cases[0].Pattern.ShouldBeOfType<Pattern.Var>().Name.ShouldBe("None");
     }
 
