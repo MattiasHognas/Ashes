@@ -12,6 +12,8 @@ public readonly record struct LlvmBasicBlockHandle(nint Ptr);
 public readonly record struct LlvmTargetHandle(nint Ptr);
 public readonly record struct LlvmTargetMachineHandle(nint Ptr);
 public readonly record struct LlvmTargetDataHandle(nint Ptr);
+public readonly record struct LlvmDIBuilderHandle(nint Ptr);
+public readonly record struct LlvmMetadataHandle(nint Ptr);
 
 // ── Enums ───────────────────────────────────────────────────────────────
 public enum LlvmIntPredicate
@@ -379,4 +381,225 @@ internal static partial class LlvmApi
             constraints, (nint)constraints.Length,
             hasSideEffects ? 1 : 0, isAlignStack ? 1 : 0, 0, 0);
     }
+
+    // ── Debug Info (DWARF) ──────────────────────────────────────────────
+
+    [LibraryImport(Lib, EntryPoint = "LLVMCreateDIBuilder")]
+    public static partial LlvmDIBuilderHandle CreateDIBuilder(LlvmModuleHandle module);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDisposeDIBuilder")]
+    public static partial void DisposeDIBuilder(LlvmDIBuilderHandle builder);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderFinalize")]
+    public static partial void DIBuilderFinalize(LlvmDIBuilderHandle builder);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateFile", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateFile(
+        LlvmDIBuilderHandle builder,
+        string filename, nint filenameLen,
+        string directory, nint directoryLen);
+
+    public static LlvmMetadataHandle DIBuilderCreateFile(LlvmDIBuilderHandle builder, string filename, string directory)
+    {
+        return DIBuilderCreateFile(builder, filename, (nint)filename.Length, directory, (nint)directory.Length);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateCompileUnit", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateCompileUnit(
+        LlvmDIBuilderHandle builder,
+        uint lang,
+        LlvmMetadataHandle fileRef,
+        string producer, nint producerLen,
+        int isOptimized,
+        string flags, nint flagsLen,
+        uint runtimeVer,
+        string splitName, nint splitNameLen,
+        uint kind,
+        uint dwoId,
+        int splitDebugInlining,
+        int debugInfoForProfiling,
+        string sysRoot, nint sysRootLen,
+        string sdk, nint sdkLen);
+
+    public static LlvmMetadataHandle DIBuilderCreateCompileUnit(
+        LlvmDIBuilderHandle builder, uint lang, LlvmMetadataHandle fileRef,
+        string producer, bool isOptimized)
+    {
+        return DIBuilderCreateCompileUnit(
+            builder, lang, fileRef,
+            producer, (nint)producer.Length,
+            isOptimized ? 1 : 0,
+            "", 0,    // flags
+            0,        // runtimeVer
+            "", 0,    // splitName
+            1,        // DW_NameTableKind_Default (full debug)
+            0,        // dwoId
+            1,        // splitDebugInlining
+            0,        // debugInfoForProfiling
+            "", 0,    // sysRoot
+            "", 0);   // sdk
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateFunction", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateFunction(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        string name, nint nameLen,
+        string linkageName, nint linkageNameLen,
+        LlvmMetadataHandle file,
+        uint lineNo,
+        LlvmMetadataHandle ty,
+        int isLocalToUnit,
+        int isDefinition,
+        uint scopeLine,
+        uint flags,
+        int isOptimized);
+
+    public static LlvmMetadataHandle DIBuilderCreateFunction(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle scope,
+        string name, string linkageName, LlvmMetadataHandle file,
+        uint line, LlvmMetadataHandle ty, bool isOptimized)
+    {
+        return DIBuilderCreateFunction(
+            builder, scope,
+            name, (nint)name.Length,
+            linkageName, (nint)linkageName.Length,
+            file, line, ty,
+            0,   // not local to unit
+            1,   // is definition
+            line, // scopeLine
+            0,   // flags
+            isOptimized ? 1 : 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateSubroutineType")]
+    public static partial LlvmMetadataHandle DIBuilderCreateSubroutineType(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle file,
+        nint parameterTypes,
+        uint numParameterTypes,
+        uint flags);
+
+    public static LlvmMetadataHandle DIBuilderCreateSubroutineType(LlvmDIBuilderHandle builder, LlvmMetadataHandle file)
+    {
+        return DIBuilderCreateSubroutineType(builder, file, 0, 0, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateBasicType", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateBasicType(
+        LlvmDIBuilderHandle builder,
+        string name, nint nameLen,
+        ulong sizeInBits,
+        uint encoding,
+        uint flags);
+
+    public static LlvmMetadataHandle DIBuilderCreateBasicType(
+        LlvmDIBuilderHandle builder, string name, ulong sizeInBits, uint encoding)
+    {
+        return DIBuilderCreateBasicType(builder, name, (nint)name.Length, sizeInBits, encoding, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreatePointerType")]
+    public static partial LlvmMetadataHandle DIBuilderCreatePointerType(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle pointeeType,
+        ulong sizeInBits,
+        uint alignInBits,
+        uint addressSpace,
+        nint name, nint nameLen);
+
+    public static LlvmMetadataHandle DIBuilderCreatePointerType(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle pointeeType, ulong sizeInBits)
+    {
+        return DIBuilderCreatePointerType(builder, pointeeType, sizeInBits, 0, 0, 0, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateAutoVariable", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateAutoVariable(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        string name, nint nameLen,
+        LlvmMetadataHandle file,
+        uint lineNo,
+        LlvmMetadataHandle ty,
+        int alwaysPreserve,
+        uint flags,
+        uint alignInBits);
+
+    public static LlvmMetadataHandle DIBuilderCreateAutoVariable(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle scope,
+        string name, LlvmMetadataHandle file, uint line, LlvmMetadataHandle ty)
+    {
+        return DIBuilderCreateAutoVariable(
+            builder, scope, name, (nint)name.Length, file, line, ty, 1, 0, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareAtEnd")]
+    public static partial LlvmValueHandle DIBuilderInsertDeclareAtEnd(
+        LlvmDIBuilderHandle builder,
+        LlvmValueHandle storage,
+        LlvmMetadataHandle varInfo,
+        LlvmMetadataHandle expr,
+        LlvmMetadataHandle debugLoc,
+        LlvmBasicBlockHandle block);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateExpression")]
+    public static partial LlvmMetadataHandle DIBuilderCreateExpression(
+        LlvmDIBuilderHandle builder,
+        nint addr,
+        nint length);
+
+    public static LlvmMetadataHandle DIBuilderCreateExpression(LlvmDIBuilderHandle builder)
+    {
+        return DIBuilderCreateExpression(builder, 0, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetSubprogram")]
+    public static partial void SetSubprogram(LlvmValueHandle func, LlvmMetadataHandle sp);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetCurrentDebugLocation2")]
+    public static partial void SetCurrentDebugLocation2(LlvmBuilderHandle builder, LlvmMetadataHandle loc);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMCreateDebugLocation")]
+    public static partial LlvmMetadataHandle CreateDebugLocation(
+        LlvmContextHandle ctx,
+        uint line,
+        uint column,
+        LlvmMetadataHandle scope,
+        LlvmMetadataHandle inlinedAt);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMAddModuleFlag", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void AddModuleFlag(
+        LlvmModuleHandle module,
+        int behavior,
+        string key, nint keyLen,
+        LlvmMetadataHandle val);
+
+    public static void AddModuleFlag(LlvmModuleHandle module, int behavior, string key, LlvmMetadataHandle val)
+    {
+        AddModuleFlag(module, behavior, key, (nint)key.Length, val);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMValueAsMetadata")]
+    public static partial LlvmMetadataHandle ValueAsMetadata(LlvmValueHandle val);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMMetadataAsValue")]
+    public static partial LlvmValueHandle MetadataAsValue(LlvmContextHandle context, LlvmMetadataHandle md);
+
+    // ── Constants for debug info ────────────────────────────────────────
+
+    /// <summary>DW_LANG_C99 — stand-in language code for Ashes in DWARF.</summary>
+    public const uint DwarfLangC99 = 12;
+
+    /// <summary>DW_ATE_signed — DWARF signed integer encoding.</summary>
+    public const uint DwarfAteSigned = 5;
+
+    /// <summary>DW_ATE_float — DWARF floating-point encoding.</summary>
+    public const uint DwarfAteFloat = 4;
+
+    /// <summary>DW_ATE_boolean — DWARF boolean encoding.</summary>
+    public const uint DwarfAteBoolean = 2;
+
+    /// <summary>LLVMModuleFlagBehaviorWarning — module flag behavior: warn on conflict.</summary>
+    public const int ModuleFlagBehaviorWarning = 1;
 }
