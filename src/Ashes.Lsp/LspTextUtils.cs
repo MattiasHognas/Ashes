@@ -43,11 +43,11 @@ internal static class LspTextUtils
 
         var clampedLine = Math.Clamp(line, 0, lineStarts.Length - 1);
         var lineStart = lineStarts[clampedLine];
-        var lineEndExclusive = clampedLine + 1 < lineStarts.Length
-            ? lineStarts[clampedLine + 1]
+        var lineEnd = clampedLine + 1 < lineStarts.Length
+            ? lineStarts[clampedLine + 1] - 1
             : textLength;
 
-        var clampedCharacter = Math.Clamp(character, 0, Math.Max(lineEndExclusive - lineStart, 0));
+        var clampedCharacter = Math.Clamp(character, 0, Math.Max(lineEnd - lineStart, 0));
         return Math.Clamp(lineStart + clampedCharacter, 0, textLength);
     }
 }
