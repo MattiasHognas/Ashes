@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="src/Ashes.Backend/Ashes.Backend.csproj" />
   <Project Path="src/Ashes.Cli/Ashes.Cli.csproj" />
+  <Project Path="src/Ashes.Dap/Ashes.Dap.csproj" />
   <Project Path="src/Ashes.Formatter/Ashes.Formatter.csproj" />
   <Project Path="src/Ashes.Frontend/Ashes.Frontend.csproj" />
   <Project Path="src/Ashes.Lsp/Ashes.Lsp.csproj" />
