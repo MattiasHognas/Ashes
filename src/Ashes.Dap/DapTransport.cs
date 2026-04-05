@@ -34,7 +34,14 @@ public sealed class DapTransport
             return null;
         }
 
-        return JsonSerializer.Deserialize<DapRequest>(json, SerializerOptions);
+        try
+        {
+            return JsonSerializer.Deserialize<DapRequest>(json, SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public void SendResponse(DapRequest request, bool success, object? body = null, string? message = null)

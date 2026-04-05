@@ -7,13 +7,15 @@ using System.Text.RegularExpressions;
 namespace Ashes.Dap;
 
 /// <summary>
-/// Abstracts the debugger backend (GDB MI protocol).
-/// Manages a GDB subprocess to debug the target Ashes-compiled binary.
+/// Debugger backend that drives LLDB via the LLDB-MI (Machine Interface)
+/// protocol.  LLDB-MI is a GDB-MI–compatible front-end shipped with LLDB
+/// (<c>lldb-mi</c>) or built into <c>lldb</c> via
+/// <c>--interpreter=mi2</c> (LLDB 18+).
 /// </summary>
-public sealed class GdbDebuggerBackend : IDebuggerBackend
+public sealed class LldbDebuggerBackend : IDebuggerBackend
 {
-    private Process? _gdb;
-    private StreamWriter? _gdbIn;
+    private Process? _lldb;
+    private StreamWriter? _lldbIn;
     private int _tokenCounter;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<string>> _pendingCommands = new();
 
@@ -23,8 +25,8 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
 
     public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
     {
-        var gdbPath = debuggerPath ?? "gdb";
-        var psi = new ProcessStartInfo(gdbPath)
+        var lldbPath = debuggerPath ?? "lldb-mi";
+        var psi = new ProcessStartInfo(lldbPath)
         {
             UseShellExecute = false,
             RedirectStandardInput = true,
@@ -33,7 +35,6 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("--interpreter=mi2");
-        psi.ArgumentList.Add("--quiet");
         psi.ArgumentList.Add(program);
 
         if (cwd is not null)
@@ -41,28 +42,28 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
             psi.WorkingDirectory = cwd;
         }
 
-        _gdb = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start GDB.");
-        _gdbIn = _gdb.StandardInput;
-        _gdbIn.AutoFlush = true;
+        _lldb = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start LLDB-MI.");
+        _lldbIn = _lldb.StandardInput;
+        _lldbIn.AutoFlush = true;
 
-        // Start reading GDB output and draining stderr to prevent pipe buffer deadlocks
-        _ = Task.Run(() => ReadGdbOutputAsync(_gdb.StandardOutput));
-        _ = Task.Run(() => DrainStreamAsync(_gdb.StandardError));
+        // Start reading LLDB output and draining stderr to prevent pipe buffer deadlocks
+        _ = Task.Run(() => ReadOutputAsync(_lldb.StandardOutput));
+        _ = Task.Run(() => DrainStreamAsync(_lldb.StandardError));
 
-        // Wait for initial GDB prompt
+        // Wait for initial prompt
         await Task.Delay(200);
 
         // Set program arguments if provided
         if (args is not null && args.Length > 0)
         {
-            var escapedArgs = string.Join(" ", args.Select(EscapeGdbArg));
+            var escapedArgs = string.Join(" ", args.Select(EscapeArg));
             await SendCommandAsync($"-exec-arguments {escapedArgs}");
         }
     }
 
     public async Task SetBreakpointAsync(string filePath, int line)
     {
-        await SendCommandAsync($"-break-insert {EscapeGdbArg(filePath)}:{line}");
+        await SendCommandAsync($"-break-insert {EscapeArg(filePath)}:{line}");
     }
 
     public async Task ContinueAsync()
@@ -102,16 +103,16 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
 
     public async Task TerminateAsync()
     {
-        if (_gdb is not null && !_gdb.HasExited)
+        if (_lldb is not null && !_lldb.HasExited)
         {
             try
             {
                 await SendCommandAsync("-gdb-exit");
-                await _gdb.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                await _lldb.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
             }
             catch
             {
-                try { _gdb.Kill(); }
+                try { _lldb.Kill(); }
                 catch (InvalidOperationException) { /* process already exited */ }
                 catch (SystemException) { /* process no longer accessible */ }
             }
@@ -120,7 +121,7 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
 
     private async Task<string> SendCommandAsync(string command)
     {
-        if (_gdbIn is null)
+        if (_lldbIn is null)
         {
             return "";
         }
@@ -129,7 +130,7 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingCommands[token] = tcs;
 
-        await _gdbIn.WriteLineAsync($"{token}{command}");
+        await _lldbIn.WriteLineAsync($"{token}{command}");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
@@ -147,18 +148,18 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
         }
     }
 
-    private async Task ReadGdbOutputAsync(StreamReader reader)
+    private async Task ReadOutputAsync(StreamReader reader)
     {
         try
         {
             while (await reader.ReadLineAsync() is { } line)
             {
-                ProcessGdbLine(line);
+                ProcessMiLine(line);
             }
         }
         catch (ObjectDisposedException)
         {
-            // GDB process was disposed
+            // LLDB process was disposed
         }
     }
 
@@ -171,11 +172,11 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
         }
         catch (ObjectDisposedException)
         {
-            // GDB process was disposed
+            // LLDB process was disposed
         }
     }
 
-    private void ProcessGdbLine(string line)
+    private void ProcessMiLine(string line)
     {
         // Result records: <token>^done,...  or <token>^error,...  or <token>^running
         if (TryCompleteResultRecord(line))
@@ -185,10 +186,10 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
 
         if (line.StartsWith("*stopped", StringComparison.Ordinal))
         {
-            var reason = ExtractGdbField(line, "reason");
+            var reason = ExtractMiField(line, "reason");
             if (reason == "exited-normally" || reason == "exited")
             {
-                var exitCodeStr = ExtractGdbField(line, "exit-code");
+                var exitCodeStr = ExtractMiField(line, "exit-code");
                 var exitCode = exitCodeStr is not null
                     ? int.Parse(exitCodeStr, CultureInfo.InvariantCulture)
                     : 0;
@@ -227,14 +228,14 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
 
     private static Regex ResultRecordRegex() => new(@"^(\d+)\^", RegexOptions.Compiled);
 
-    private static string? ExtractGdbField(string miRecord, string fieldName)
+    private static string? ExtractMiField(string miRecord, string fieldName)
     {
         var pattern = $"{fieldName}=\"([^\"]*)\"";
         var match = Regex.Match(miRecord, pattern);
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static string EscapeGdbArg(string arg)
+    private static string EscapeArg(string arg)
     {
         return "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
@@ -247,6 +248,6 @@ public sealed class GdbDebuggerBackend : IDebuggerBackend
         }
 
         _pendingCommands.Clear();
-        _gdb?.Dispose();
+        _lldb?.Dispose();
     }
 }

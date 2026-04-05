@@ -197,6 +197,15 @@ class AshesDebugConfigurationProvider
         .then((_) => undefined);
     }
 
+    // Inject the debuggerType from the extension setting when not
+    // explicitly provided in the launch configuration.
+    if (!config.debuggerType) {
+      const setting = vscode.workspace
+        .getConfiguration("ashes")
+        .get<string>("debugger", "gdb");
+      config.debuggerType = setting;
+    }
+
     return config;
   }
 }

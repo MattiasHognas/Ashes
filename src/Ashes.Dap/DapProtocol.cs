@@ -126,6 +126,13 @@ public sealed record DapLaunchArguments
 
     [JsonPropertyName("debuggerPath")]
     public string? DebuggerPath { get; init; }
+
+    /// <summary>
+    /// Selects the native debugger backend. Accepted values are
+    /// <c>"gdb"</c> (default) and <c>"lldb"</c>.
+    /// </summary>
+    [JsonPropertyName("debuggerType")]
+    public string? DebuggerType { get; init; }
 }
 
 public sealed record DapSetBreakpointsArguments

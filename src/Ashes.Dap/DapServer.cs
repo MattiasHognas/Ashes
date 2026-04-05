@@ -4,41 +4,21 @@ namespace Ashes.Dap;
 
 /// <summary>
 /// Debug Adapter Protocol server for Ashes. Communicates with the IDE
-/// (VS Code) over stdin/stdout and delegates to GDB via the MI protocol.
+/// (VS Code) over stdin/stdout and delegates to a native debugger
+/// (GDB or LLDB) via the Machine Interface protocol.
 /// </summary>
 public sealed class DapServer : IDisposable
 {
     private readonly DapTransport _transport;
-    private readonly GdbDebuggerBackend _debugger;
+    private IDebuggerBackend? _debugger;
     private bool _initialized;
     private bool _configurationDone;
     private DapLaunchArguments? _launchArgs;
-    private readonly List<(string Path, int Line)> _pendingBreakpoints = [];
+    private readonly Dictionary<string, List<int>> _pendingBreakpoints = [];
 
     public DapServer(Stream input, Stream output)
     {
         _transport = new DapTransport(input, output);
-        _debugger = new GdbDebuggerBackend();
-
-        _debugger.OnStopped += reason =>
-        {
-            _transport.SendEvent("stopped", new DapStoppedEventBody
-            {
-                Reason = reason switch
-                {
-                    "breakpoint-hit" => "breakpoint",
-                    "end-stepping-range" => "step",
-                    "signal-received" => "pause",
-                    _ => reason,
-                },
-            });
-        };
-
-        _debugger.OnExited += exitCode =>
-        {
-            _transport.SendEvent("exited", new DapExitedEventBody { ExitCode = exitCode });
-            _transport.SendEvent("terminated", new DapTerminatedEventBody());
-        };
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -134,6 +114,9 @@ public sealed class DapServer : IDisposable
 
         try
         {
+            _debugger = CreateBackend(_launchArgs.DebuggerType);
+            WireDebuggerEvents(_debugger);
+
             await _debugger.StartAsync(
                 _launchArgs.Program,
                 _launchArgs.Cwd,
@@ -141,15 +124,18 @@ public sealed class DapServer : IDisposable
                 _launchArgs.DebuggerPath);
 
             // Set any breakpoints that were sent before launch
-            foreach (var (path, line) in _pendingBreakpoints)
+            foreach (var (path, lines) in _pendingBreakpoints)
             {
-                await _debugger.SetBreakpointAsync(path, line);
+                foreach (var line in lines)
+                {
+                    await _debugger.SetBreakpointAsync(path, line);
+                }
             }
 
             _pendingBreakpoints.Clear();
             _transport.SendResponse(request, success: true);
 
-            // If stopOnEntry, don't auto-run (GDB will stop at entry)
+            // If stopOnEntry, don't auto-run (debugger will stop at entry)
             if (!_launchArgs.StopOnEntry && _configurationDone)
             {
                 await _debugger.RunAsync();
@@ -161,6 +147,38 @@ public sealed class DapServer : IDisposable
         }
     }
 
+    private static IDebuggerBackend CreateBackend(string? debuggerType)
+    {
+        return debuggerType?.ToLowerInvariant() switch
+        {
+            "lldb" => new LldbDebuggerBackend(),
+            _ => new GdbDebuggerBackend(),
+        };
+    }
+
+    private void WireDebuggerEvents(IDebuggerBackend backend)
+    {
+        backend.OnStopped += reason =>
+        {
+            _transport.SendEvent("stopped", new DapStoppedEventBody
+            {
+                Reason = reason switch
+                {
+                    "breakpoint-hit" => "breakpoint",
+                    "end-stepping-range" => "step",
+                    "signal-received" => "pause",
+                    _ => reason,
+                },
+            });
+        };
+
+        backend.OnExited += exitCode =>
+        {
+            _transport.SendEvent("exited", new DapExitedEventBody { ExitCode = exitCode });
+            _transport.SendEvent("terminated", new DapTerminatedEventBody());
+        };
+    }
+
     private void HandleSetBreakpoints(DapRequest request)
     {
         var args = request.Arguments.HasValue
@@ -170,10 +188,13 @@ public sealed class DapServer : IDisposable
         var breakpoints = new List<DapBreakpoint>();
         if (args?.Source.Path is not null && args.Breakpoints is not null)
         {
+            // Replace breakpoints for this source (DAP spec: setBreakpoints replaces all for a file)
+            var lines = args.Breakpoints.Select(bp => bp.Line).ToList();
+            _pendingBreakpoints[args.Source.Path] = lines;
+
             int id = 1;
             foreach (var bp in args.Breakpoints)
             {
-                _pendingBreakpoints.Add((args.Source.Path, bp.Line));
                 breakpoints.Add(new DapBreakpoint
                 {
                     Id = id++,
@@ -183,11 +204,16 @@ public sealed class DapServer : IDisposable
                 });
 
                 // If debugger is already running, set breakpoint immediately
-                if (_launchArgs is not null)
+                if (_debugger is not null && _launchArgs is not null)
                 {
                     _ = _debugger.SetBreakpointAsync(args.Source.Path, bp.Line);
                 }
             }
+        }
+        else if (args?.Source.Path is not null)
+        {
+            // Empty breakpoints array means clear all breakpoints for this source
+            _pendingBreakpoints.Remove(args.Source.Path);
         }
 
         _transport.SendResponse(request, success: true, body: new { breakpoints });
@@ -199,7 +225,7 @@ public sealed class DapServer : IDisposable
         _transport.SendResponse(request, success: true);
 
         // If launch was already called and not stopOnEntry, start execution
-        if (_launchArgs is not null && !_launchArgs.StopOnEntry)
+        if (_debugger is not null && _launchArgs is not null && !_launchArgs.StopOnEntry)
         {
             await _debugger.RunAsync();
         }
@@ -215,12 +241,17 @@ public sealed class DapServer : IDisposable
 
     private async Task HandleStackTraceAsync(DapRequest request)
     {
-        // TODO: Parse GDB MI stack-list-frames response
-        await _debugger.GetStackTraceAsync();
+        DapStackFrame[] stackFrames = [];
+        if (_debugger is not null)
+        {
+            var miResponse = await _debugger.GetStackTraceAsync();
+            stackFrames = MiResponseParser.ParseStackFrames(miResponse);
+        }
+
         _transport.SendResponse(request, success: true, body: new
         {
-            stackFrames = Array.Empty<DapStackFrame>(),
-            totalFrames = 0,
+            stackFrames,
+            totalFrames = stackFrames.Length,
         });
     }
 
@@ -237,52 +268,57 @@ public sealed class DapServer : IDisposable
 
     private async Task HandleVariablesAsync(DapRequest request)
     {
-        // TODO: Parse GDB MI stack-list-locals response
-        await _debugger.GetLocalsAsync();
+        DapVariable[] variables = [];
+        if (_debugger is not null)
+        {
+            var miResponse = await _debugger.GetLocalsAsync();
+            variables = MiResponseParser.ParseLocals(miResponse);
+        }
+
         _transport.SendResponse(request, success: true, body: new
         {
-            variables = Array.Empty<DapVariable>()
+            variables,
         });
     }
 
     private async Task HandleContinueAsync(DapRequest request)
     {
-        await _debugger.ContinueAsync();
+        if (_debugger is not null) await _debugger.ContinueAsync();
         _transport.SendResponse(request, success: true, body: new { allThreadsContinued = true });
     }
 
     private async Task HandleNextAsync(DapRequest request)
     {
-        await _debugger.StepOverAsync();
+        if (_debugger is not null) await _debugger.StepOverAsync();
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleStepInAsync(DapRequest request)
     {
-        await _debugger.StepInAsync();
+        if (_debugger is not null) await _debugger.StepInAsync();
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleStepOutAsync(DapRequest request)
     {
-        await _debugger.StepOutAsync();
+        if (_debugger is not null) await _debugger.StepOutAsync();
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleDisconnectAsync(DapRequest request)
     {
-        await _debugger.TerminateAsync();
+        if (_debugger is not null) await _debugger.TerminateAsync();
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleTerminateAsync(DapRequest request)
     {
-        await _debugger.TerminateAsync();
+        if (_debugger is not null) await _debugger.TerminateAsync();
         _transport.SendResponse(request, success: true);
     }
 
     public void Dispose()
     {
-        _debugger.Dispose();
+        _debugger?.Dispose();
     }
 }

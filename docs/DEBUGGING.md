@@ -1,8 +1,17 @@
 # Debugging Ashes Programs
 
 This document covers how to compile Ashes programs with debug information,
-set up the VS Code debug extension, and use GDB/LLDB for source-level
+set up the VS Code debug extension, and use GDB or LLDB for source-level
 debugging.
+
+> **Supported platforms:**
+> - **Linux** — GDB (default) or LLDB via `lldb-mi`
+> - **Windows** — GDB via MSYS2
+> - **macOS** — LLDB via `lldb-mi` (recommended) or GDB (requires code-signing)
+>
+> The Ashes DAP server uses the GDB Machine Interface (MI) protocol.
+> Both GDB and LLDB-MI implement this protocol, so the same adapter works
+> with either debugger.
 
 > **Related documents:**
 > - [CLI Specification — Debug Mode](COMPILER_CLI_SPEC.md#debug-mode) for the
@@ -18,9 +27,10 @@ debugging.
 3. [Compiling with Debug Info](#compiling-with-debug-info)
 4. [VS Code Extension Setup](#vs-code-extension-setup)
 5. [Launch Configuration Reference](#launch-configuration-reference)
-6. [Debugging Workflow](#debugging-workflow)
-7. [Debugging with GDB Directly](#debugging-with-gdb-directly)
-8. [Troubleshooting](#troubleshooting)
+6. [Choosing a Debugger](#choosing-a-debugger)
+7. [Debugging Workflow](#debugging-workflow)
+8. [Debugging with GDB / LLDB Directly](#debugging-with-gdb--lldb-directly)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -41,7 +51,7 @@ ashes compile --debug examples/hello.ash -o hello
 | Requirement | Minimum Version | Notes |
 |-------------|----------------|-------|
 | **Ashes compiler** | Latest | `ashes compile --debug` support |
-| **GDB** | 10.0+ | Source-level debugger (default backend) |
+| **GDB** *or* **LLDB** | GDB 10.0+ / LLDB 14.0+ | Native debugger backend |
 | **VS Code** | 1.80+ | IDE with debugging UI |
 | **Ashes VS Code extension** | 0.0.1+ | Language support, diagnostics, and debugging |
 
@@ -67,13 +77,37 @@ brew install gdb
 
 > **Note:** On macOS, GDB requires code-signing. See
 > [GDB on macOS](https://sourceware.org/gdb/wiki/PermissionsDarwin).
-> Alternatively, use LLDB which is pre-installed with Xcode.
+> Using LLDB is recommended on macOS instead.
 
 **Windows (via MSYS2):**
 
 ```bash
 pacman -S mingw-w64-x86_64-gdb
 ```
+
+### Installing LLDB
+
+The Ashes DAP server communicates with LLDB through `lldb-mi` (the LLDB
+Machine Interface driver). Install LLDB **and** `lldb-mi`:
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt install lldb lldb-mi
+```
+
+**macOS:**
+
+LLDB is pre-installed with Xcode Command Line Tools. Install `lldb-mi`
+separately if it is not already available:
+
+```bash
+brew install llvm          # includes lldb-mi
+export PATH="$(brew --prefix llvm)/bin:$PATH"
+```
+
+> **Tip:** Set the `ashes.debugger` VS Code setting to `"lldb"` (see
+> [Choosing a Debugger](#choosing-a-debugger) below).
 
 ### Installing the VS Code Extension
 
@@ -234,7 +268,8 @@ All properties for `type: "ashes"` launch configurations:
 | `args` | `string[]` | No | `[]` | Command-line arguments passed to the program at runtime. |
 | `cwd` | `string` | No | `${workspaceFolder}` | Working directory for the debugged program. |
 | `stopOnEntry` | `boolean` | No | `false` | When `true`, the debugger pauses at the program entry point before any user code runs. |
-| `debuggerPath` | `string` | No | `"gdb"` | Path to the GDB binary. Set this if GDB is not on your `PATH` or you want to use a specific version. |
+| `debuggerType` | `string` | No | *(from setting)* | Native debugger backend: `"gdb"` or `"lldb"`. When omitted, the value of the `ashes.debugger` extension setting is used. |
+| `debuggerPath` | `string` | No | *(auto)* | Path to the debugger binary. Defaults to `gdb` when `debuggerType` is `"gdb"`, or `lldb-mi` when `"lldb"`. Set this if the binary is not on your `PATH`. |
 
 ### Example Configurations
 
@@ -274,6 +309,18 @@ All properties for `type: "ashes"` launch configurations:
 }
 ```
 
+**Using LLDB (macOS):**
+
+```json
+{
+  "name": "Debug (LLDB)",
+  "type": "ashes",
+  "request": "launch",
+  "program": "${workspaceFolder}/out/myapp",
+  "debuggerType": "lldb"
+}
+```
+
 **Stop on entry (useful for inspecting initial state):**
 
 ```json
@@ -295,6 +342,48 @@ All properties for `type: "ashes"` launch configurations:
   "request": "launch",
   "program": "${workspaceFolder}/out/myproject",
   "preLaunchTask": "ashes: compile (debug)"
+}
+```
+
+---
+
+## Choosing a Debugger
+
+The Ashes DAP server supports two native debugger backends:
+
+| Backend | Binary | Best For | Notes |
+|---------|--------|----------|-------|
+| **GDB** | `gdb` | Linux, Windows (MSYS2) | Default. Mature MI support. |
+| **LLDB** | `lldb-mi` | macOS, Linux | Uses LLDB-MI, the GDB-MI–compatible driver for LLDB. |
+
+### Extension Setting
+
+Set the default debugger for all launch configurations:
+
+1. Open **Settings** (Ctrl+,).
+2. Search for `ashes.debugger`.
+3. Choose `gdb` or `lldb`.
+
+Or in `settings.json`:
+
+```json
+{
+  "ashes.debugger": "lldb"
+}
+```
+
+### Per-Configuration Override
+
+Add `"debuggerType"` to a specific launch configuration to override the
+extension setting:
+
+```json
+{
+  "name": "Debug with LLDB",
+  "type": "ashes",
+  "request": "launch",
+  "program": "${workspaceFolder}/out/myapp",
+  "debuggerType": "lldb"
 }
 ```
 
@@ -335,9 +424,11 @@ bindings and their values. Ashes types are displayed as:
 
 ---
 
-## Debugging with GDB Directly
+## Debugging with GDB / LLDB Directly
 
-You can also debug Ashes binaries directly with GDB without VS Code:
+You can also debug Ashes binaries directly without VS Code:
+
+### GDB
 
 ```bash
 # Compile with debug info
@@ -357,6 +448,26 @@ gdb ./main
 (gdb) quit                     # Exit GDB
 ```
 
+### LLDB
+
+```bash
+# Compile with debug info
+ashes compile --debug main.ash -o main
+
+# Start LLDB
+lldb ./main
+
+# In LLDB:
+(lldb) breakpoint set --file main.ash --line 5
+(lldb) run
+(lldb) next
+(lldb) step
+(lldb) frame variable          # Show locals
+(lldb) bt                      # Show call stack
+(lldb) continue
+(lldb) quit
+```
+
 ---
 
 ## Troubleshooting
@@ -366,11 +477,12 @@ gdb ./main
 Ensure your `launch.json` has a `program` property pointing to a compiled
 binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 
-### "Failed to start GDB"
+### "Failed to start GDB" / "Failed to start LLDB-MI"
 
-- Verify GDB is installed: `gdb --version`
-- If GDB is not on `PATH`, set `debuggerPath` in your launch configuration.
-- On macOS, GDB requires code-signing (or use LLDB instead).
+- Verify the debugger is installed: `gdb --version` or `lldb-mi --version`
+- If the binary is not on `PATH`, set `debuggerPath` in your launch configuration.
+- On macOS, GDB requires code-signing — use LLDB instead by setting
+  `"debuggerType": "lldb"` or `"ashes.debugger": "lldb"` in VS Code settings.
 
 ### Breakpoints not hitting
 
@@ -416,16 +528,17 @@ etc. If not, the binary was not compiled with `--debug`.
 ## Architecture
 
 ```
-┌──────────┐     DAP/stdio      ┌───────────┐     GDB-MI      ┌─────┐     ptrace     ┌────────┐
-│  VS Code │ ◄─────────────────► │ ashes-dap │ ◄──────────────► │ GDB │ ◄────────────► │ Binary │
-│  (IDE)   │                     │ (server)  │                  │     │                │ (DWARF)│
-└──────────┘                     └───────────┘                  └─────┘                └────────┘
+┌──────────┐     DAP/stdio      ┌───────────┐     GDB-MI      ┌──────────┐     ptrace     ┌────────┐
+│  VS Code │ ◄─────────────────► │ ashes-dap │ ◄──────────────► │ GDB or   │ ◄────────────► │ Binary │
+│  (IDE)   │                     │ (server)  │                  │ LLDB-MI  │                │ (DWARF)│
+└──────────┘                     └───────────┘                  └──────────┘                └────────┘
 ```
 
 1. **VS Code** sends DAP requests (setBreakpoints, continue, stackTrace, etc.)
    over stdin/stdout to the DAP server.
-2. **ashes-dap** translates DAP requests into GDB Machine Interface (MI)
-   commands and sends them to GDB.
-3. **GDB** uses `ptrace` to control the debuggee and reads DWARF debug info
-   from the binary to map machine code back to source locations.
+2. **ashes-dap** translates DAP requests into Machine Interface (MI) commands
+   and sends them to the selected debugger (GDB or LLDB-MI).
+3. **GDB** or **LLDB-MI** uses `ptrace` to control the debuggee and reads
+   DWARF debug info from the binary to map machine code back to source
+   locations.
 4. Responses flow back through the same chain.

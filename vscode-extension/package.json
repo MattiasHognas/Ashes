@@ -47,6 +47,20 @@
         "editor.formatOnSave": true
       }
     },
+    "configuration": {
+      "title": "Ashes",
+      "properties": {
+        "ashes.debugger": {
+          "type": "string",
+          "enum": [
+            "gdb",
+            "lldb"
+          ],
+          "default": "gdb",
+          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows or 'lldb' on macOS."
+        }
+      }
+    },
     "commands": [
       {
         "command": "ashes.compile",
@@ -114,8 +128,17 @@
               },
               "debuggerPath": {
                 "type": "string",
-                "description": "Path to GDB. Defaults to 'gdb' on PATH.",
-                "default": "gdb"
+                "description": "Path to the debugger binary. Defaults to 'gdb' or 'lldb-mi' depending on debuggerType.",
+                "default": ""
+              },
+              "debuggerType": {
+                "type": "string",
+                "enum": [
+                  "gdb",
+                  "lldb"
+                ],
+                "description": "The native debugger backend to use. Overrides the ashes.debugger extension setting for this configuration.",
+                "default": ""
               }
             }
           }
