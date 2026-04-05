@@ -28,7 +28,8 @@ function getServerExecutable(context: vscode.ExtensionContext): string {
   }
 
   if (process.platform === "linux") {
-    return path.join(context.extensionPath, "server", "linux-x64", "Ashes.Lsp");
+    const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
+    return path.join(context.extensionPath, "server", rid, "Ashes.Lsp");
   }
 
   throw new Error(`Unsupported platform: ${process.platform}`);
@@ -45,10 +46,11 @@ function getDapServerExecutable(context: vscode.ExtensionContext): string {
   }
 
   if (process.platform === "linux") {
+    const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
     return path.join(
       context.extensionPath,
       "dap-server",
-      "linux-x64",
+      rid,
       "ashes-dap",
     );
   }

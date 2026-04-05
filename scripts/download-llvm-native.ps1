@@ -85,13 +85,15 @@ try {
         Write-Host "Running: wsl bash $wslScript $LlvmMajor"
         wsl bash $wslScript $LlvmMajor
 
-        $linuxOut = Join-Path $LibDir 'linux-x64'
-        $soPath = Join-Path $linuxOut 'libLLVM.so'
-        if (Test-Path $soPath) {
-            $soSize = [math]::Round((Get-Item $soPath).Length / 1MB, 1)
-            Write-Host "  -> $soPath ($soSize MB)"
-        } else {
-            Write-Host "  WARNING: $soPath not found after WSL script. Check WSL output above."
+        # The bash script auto-detects the WSL architecture and writes to
+        # runtimes/linux-x64/ or runtimes/linux-arm64/ accordingly.
+        foreach ($rid in @("linux-x64", "linux-arm64")) {
+            $linuxOut = Join-Path $LibDir $rid
+            $soPath = Join-Path $linuxOut 'libLLVM.so'
+            if (Test-Path $soPath) {
+                $soSize = [math]::Round((Get-Item $soPath).Length / 1MB, 1)
+                Write-Host "  -> $soPath ($soSize MB)"
+            }
         }
     }
 
@@ -101,7 +103,7 @@ try {
     Write-Host "Native libraries installed into:"
     Write-Host "  $WinOut/libLLVM.dll"
     if ($Linux) {
-        Write-Host "  $(Join-Path $LibDir 'linux-x64')/libLLVM.so"
+        Write-Host "  Linux .so provisioned via WSL (see output above)"
     }
     Write-Host ""
     Write-Host "These are copied to the build output by Ashes.Backend.csproj."

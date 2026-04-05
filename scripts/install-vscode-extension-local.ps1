@@ -159,10 +159,13 @@ New-Item -ItemType Directory -Force -Path $DapServerRoot | Out-Null
 
 Publish-Compiler -Rid "win-x64" -Version $version
 Publish-Compiler -Rid "linux-x64" -Version $version
+Publish-Compiler -Rid "linux-arm64" -Version $version
 Publish-LanguageServer -Rid "win-x64"
 Publish-LanguageServer -Rid "linux-x64"
+Publish-LanguageServer -Rid "linux-arm64"
 Publish-DapServer -Rid "win-x64"
 Publish-DapServer -Rid "linux-x64"
+Publish-DapServer -Rid "linux-arm64"
 
 Invoke-Step `
     -FilePath $pnpmCommand `
