@@ -34,6 +34,12 @@ jobs:
             **/*.csproj
             global.json
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+          check-latest: true
+
       - name: Restore
         run: dotnet restore Ashes.slnx
 
@@ -62,6 +68,15 @@ jobs:
           path: artifacts/ashes
           overwrite: true
           retention-days: 7
+
+      - name: Verify VS Code extension
+        run: |
+          cd vscode-extension
+          corepack enable
+          pnpm install --frozen-lockfile --force
+          pnpm run lint
+          pnpm run format:check
+          pnpm run compile
 
       - name: Upload test results
         if: always()
