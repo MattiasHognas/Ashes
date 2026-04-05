@@ -34,7 +34,7 @@ ownership complexity.
 | Semantics | Reject double-drop (resource closed twice). |
 | IR | Add `Drop` instruction (value → void, no-op for non-resource types). |
 | Backend | Lower `Drop` to runtime calls (`file_close`, `socket_close`). |
-| Std | Define runtime drop functions (idempotent; compiler guarantees single invocation). |
+| Std | Define runtime drop functions. Compiler guarantees single invocation; functions may assume exactly-once semantics. |
 | Tests | Resource lifecycle: scope drop, control-flow drop, no double drop, no use-after-drop. |
 | Docs | Describe resource types, automatic cleanup, no GC. Do NOT expose `Drop` as user syntax. |
 
@@ -84,7 +84,7 @@ owned value is dropped exactly once.
 | IR | Ownership-aware drop insertion (do not drop moved values). |
 | Backend | Extend drop lowering for String, List, ADTs, Closures. |
 | Tests | Move semantics, use-after-move, correct drop insertion, function ownership. |
-| Docs | Owned vs copy types, move semantics, drop behaviour. No borrowing yet. |
+| Docs | Owned vs copy types, move semantics, drop behavior. No borrowing yet. |
 
 ### What does NOT change
 
@@ -258,7 +258,7 @@ matching expressiveness and integrating it with ownership and borrowing.
 | Semantics | Result/Option ergonomics (integrate with `|?>` pipeline, reduce nested matches). |
 | IR | Improved pattern matching lowering (efficient branching, no redundant checks). |
 | Tests | Destructuring, ownership in patterns, borrowing in patterns, exhaustiveness. |
-| Docs | Pattern syntax, ownership behaviour, match ergonomics, Result/Option workflows. |
+| Docs | Pattern syntax, ownership behavior, match ergonomics, Result/Option workflows. |
 
 ### What does NOT change
 
