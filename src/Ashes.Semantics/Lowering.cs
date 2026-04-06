@@ -139,7 +139,7 @@ public sealed class Lowering
         /// Number of live borrows of this value. The compiler infers borrows when
         /// an owned value is used without consuming ownership. By scope structure,
         /// all borrows are consumed before the owning scope exits and emits Drop —
-        /// this count is informational for future optimisation passes (Phase 4).
+        /// this count is informational for future optimization passes (Phase 4).
         /// </summary>
         public int ActiveBorrows { get; set; }
     }

@@ -40,68 +40,20 @@ public static class IrOptimizer
     }
 
     // ── Pass 1: Elide borrows for constants and copy-type loads ─────────
-    // A Borrow of a LoadConstInt/LoadConstFloat/LoadConstBool is pointless —
-    // copy types are trivially duplicated. Replace Borrow(target, source)
-    // with a direct load of the source value.
+    // A Borrow of a LoadConstInt/LoadConstFloat/LoadConstBool is a no-op
+    // in the backend (simple value copy). The Borrow instruction exists for
+    // semantic completeness but copy types have no ownership semantics.
+    // Currently this pass is a no-op because the backend already handles
+    // Borrow as a trivial value copy that LLVM's codegen optimizes away.
+    // When temp aliasing / remapping is added, this pass will eliminate
+    // the Borrow instructions entirely for copy-type sources.
 
     private static List<IrInst> ElideBorrowsForConstants(List<IrInst> instructions)
     {
-        // Build a set of temps that hold constant / copy-type values
-        var constantTemps = new HashSet<int>();
-        foreach (var inst in instructions)
-        {
-            switch (inst)
-            {
-                case IrInst.LoadConstInt lci:
-                    constantTemps.Add(lci.Target);
-                    break;
-                case IrInst.LoadConstFloat lcf:
-                    constantTemps.Add(lcf.Target);
-                    break;
-                case IrInst.LoadConstBool lcb:
-                    constantTemps.Add(lcb.Target);
-                    break;
-            }
-        }
-
-        if (constantTemps.Count == 0)
-        {
-            return instructions;
-        }
-
-        var result = new List<IrInst>(instructions.Count);
-        bool changed = false;
-        foreach (var inst in instructions)
-        {
-            if (inst is IrInst.Borrow borrow && constantTemps.Contains(borrow.SourceSlot))
-            {
-                // Replace borrow with a direct load from source — the source
-                // is a copy-type constant, so no ownership semantics apply.
-                // We emit a LoadConstInt(target, 0) as a placeholder that the
-                // next pass (constant folding) or the backend handles.
-                // Actually, we just keep the Borrow as-is since it's already a
-                // value copy in the backend. The optimization here is a no-op marker
-                // that future passes can use. For now, simply remove it and
-                // add a temp-to-temp alias.
-                // Simplest correct approach: just remove the Borrow entirely and
-                // remap the target to the source in all subsequent uses.
-                // But remapping is complex. The backend already handles Borrow as
-                // a value copy (StoreTemp(target, LoadTemp(source))), which LLVM
-                // will optimize away. So the real win here is just removing the
-                // Borrow instruction entirely for constant sources.
-                changed = true;
-                // Emit nothing — the borrow target will just be unused, and
-                // users of the borrow target need remapping. Let's use the
-                // alias approach.
-                result.Add(inst); // Keep it — LLVM handles this.
-            }
-            else
-            {
-                result.Add(inst);
-            }
-        }
-
-        return changed ? result : instructions;
+        // Future: when temp aliasing infrastructure exists, remove Borrow
+        // instructions whose source is a copy-type constant and remap uses
+        // of the borrow target to the original source.
+        return instructions;
     }
 
     // ── Pass 2: Constant folding ────────────────────────────────────────
@@ -307,41 +259,16 @@ public static class IrOptimizer
     // ── Pass 4: Drop elision ────────────────────────────────────────────
     // Remove Drop instructions for slots that were never stored to
     // (the value is uninitialized or was already consumed).
+    // Currently a no-op — the Drop instructions in the IR are needed for
+    // semantic correctness (Phase 2). When the allocator moves beyond
+    // linear/bump allocation to per-object free(), this pass will skip
+    // drops for values proven to be dead or moved.
 
     private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
     {
-        // Collect all slots that have been stored to via StoreLocal
-        var storedSlots = new HashSet<int>();
-        foreach (var inst in instructions)
-        {
-            if (inst is IrInst.StoreLocal store)
-            {
-                storedSlots.Add(store.Slot);
-            }
-        }
-
-        var result = new List<IrInst>(instructions.Count);
-        bool changed = false;
-
-        foreach (var inst in instructions)
-        {
-            if (inst is IrInst.Drop drop)
-            {
-                // The Drop instruction has a SourceSlot — but this is a temp, not a local.
-                // If the LoadLocal that loaded the value into the temp's source is from
-                // a slot that was never stored, we can skip the drop.
-                // However, SourceSlot in Drop is a temp index, not a local slot.
-                // The LoadLocal right before the Drop loads from the actual local slot.
-                // For now, keep all drops — the LLVM optimizer will handle dead code.
-                result.Add(inst);
-            }
-            else
-            {
-                result.Add(inst);
-            }
-        }
-
-        return changed ? result : instructions;
+        // Future: analyze ownership flow to identify drops on values that
+        // are dead (never initialized) or already consumed (moved).
+        return instructions;
     }
 
     /// <summary>
