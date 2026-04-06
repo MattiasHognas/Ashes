@@ -94,4 +94,29 @@ public sealed class BuiltinModuleRegistryTests
         module.Name.ShouldBe("Ashes.Test");
         module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Test.ash");
     }
+
+    [Test]
+    public void Ashes_async_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Async", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Async");
+        module.Members.ContainsKey("run").ShouldBeTrue();
+        module.Members.ContainsKey("fromResult").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Task_builtin_type_is_registered()
+    {
+        BuiltinRegistry.TryGetType("Task", out var taskType).ShouldBeTrue();
+        taskType.Name.ShouldBe("Task");
+        taskType.TypeParameters.Count.ShouldBe(2);
+        taskType.TypeParameters[0].Name.ShouldBe("E");
+        taskType.TypeParameters[1].Name.ShouldBe("A");
+    }
+
+    [Test]
+    public void Task_is_a_reserved_type_name()
+    {
+        BuiltinRegistry.IsReservedTypeName("Task").ShouldBeTrue();
+    }
 }

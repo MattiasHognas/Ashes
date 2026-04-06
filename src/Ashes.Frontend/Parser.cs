@@ -237,21 +237,43 @@ public sealed class Parser
         if (_current.Kind == TokenKind.LetBang)
         {
             // let! x = expr in body  ⟶  let x = await expr in body
-            var start = _current.Position;
-            Consume(TokenKind.LetBang);
-            var nameToken = Consume(TokenKind.Ident);
-            Consume(TokenKind.Equals);
-            var value = ParseExpressionCore();
-            var awaitValue = RegisterExpr(new Expr.Await(value), AstSpans.GetOrDefault(value).Start, AstSpans.GetOrDefault(value).End);
-            Consume(TokenKind.In);
-            var body = ParseExpressionCore();
-
-            var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body), start, LastConsumedEnd);
-            AstSpans.SetLetName(letExpr, nameToken.Span);
-            return letExpr;
+            // let! x = expr1 let! y = expr2 in body  ⟶  let x = await expr1 in let y = await expr2 in body
+            return ParseLetBangChain();
         }
 
         return ParseLambda();
+    }
+
+    /// <summary>
+    /// Parses a chain of <c>let!</c> bindings, desugaring each into
+    /// <c>let name = await value in body</c>. Consecutive <c>let!</c>
+    /// bindings chain without explicit <c>in</c> between them — only the
+    /// final binding requires <c>in</c> before the result expression.
+    /// </summary>
+    private Expr ParseLetBangChain()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.LetBang);
+        var nameToken = Consume(TokenKind.Ident);
+        Consume(TokenKind.Equals);
+        var value = ParseExpressionCore();
+        var awaitValue = RegisterExpr(new Expr.Await(value), AstSpans.GetOrDefault(value).Start, AstSpans.GetOrDefault(value).End);
+
+        Expr body;
+        if (_current.Kind == TokenKind.LetBang)
+        {
+            // Chain: the body is the next let! binding (no 'in' required between them)
+            body = ParseLetBangChain();
+        }
+        else
+        {
+            Consume(TokenKind.In);
+            body = ParseExpressionCore();
+        }
+
+        var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body), start, LastConsumedEnd);
+        AstSpans.SetLetName(letExpr, nameToken.Span);
+        return letExpr;
     }
 
     /// <summary>

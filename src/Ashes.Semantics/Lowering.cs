@@ -2048,7 +2048,7 @@ public sealed class Lowering
     /// Ashes.Async.fromResult(result) — Phase A: synchronous stub.
     /// Wraps a Result(E, A) into a Task(E, A).
     /// In Phase A, extracts the Ok value from the result and wraps it
-    /// in a task (CreateTask). If the result is Error, the task holds the error.
+    /// in a task (CreateTask). If the result is Error, the error is preserved.
     /// </summary>
     private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
     {
@@ -2056,7 +2056,7 @@ public sealed class Lowering
 
         var (resultTemp, resultType) = LowerExpr(resultArg);
 
-        if (!TryGetStandardResultParts(out var resultSymbol, out _, out _)
+        if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
             || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
         {
             return ReturnNeverWithDummyTemp();
@@ -2067,10 +2067,40 @@ public sealed class Lowering
         var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
         Unify(resultType, expectedResultType);
 
-        // Phase A: CreateTask wraps the result value directly
-        int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, resultTemp));
-        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+        // Phase A: extract the Ok payload from the Result and wrap in CreateTask.
+        // Check tag to determine Ok vs Error: Ok → extract field[0], Error → pass through.
+        var tagTemp = NewTemp();
+        var expectedOkTagTemp = NewTemp();
+        var isOkTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+
+        var errorLabel = NewLabel("from_result_error");
+        var endLabel = NewLabel("from_result_end");
+        var resultSlot = NewLocal();
+
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+
+        // Ok path: extract payload
+        var payloadTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
+        int okTaskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(okTaskTemp, payloadTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        // Error path: pass through the result value as the task (error propagation placeholder)
+        Emit(new IrInst.Label(errorLabel));
+        int errTaskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(errTaskTemp, resultTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        Emit(new IrInst.Label(endLabel));
+        int finalTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(finalTemp, resultSlot));
+        return (finalTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
     }
 
     private (int, TypeRef) LowerIf(Expr.If iff)
