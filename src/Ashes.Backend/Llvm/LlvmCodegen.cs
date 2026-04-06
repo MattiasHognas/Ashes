@@ -107,6 +107,52 @@ internal static partial class LlvmCodegen
         }
     }
 
+    /// <summary>
+    /// Runs the LLVM new pass manager optimization pipeline on the module.
+    /// Uses the standard "default&lt;ON&gt;" pipeline string which includes:
+    /// instcombine, simplifycfg, mem2reg, dead-code elimination, inlining,
+    /// loop optimizations, and other standard LLVM passes.
+    /// At O0 no passes are run — codegen output is used as-is.
+    ///
+    /// NOTE: Currently not wired into the compilation pipeline because the
+    /// custom ELF/PE linkers do not yet handle the additional relocation
+    /// types and sections that module-level optimization passes produce.
+    /// The codegen optimization level (set via LlvmCodeGenOptLevel in
+    /// LlvmTargetSetup) still applies LLVM optimizations during instruction
+    /// selection and register allocation. Full pass manager integration
+    /// will be enabled when the linker supports a broader relocation set.
+    /// </summary>
+    internal static void RunLlvmOptimizationPasses(LlvmTargetContext target, Backends.BackendOptimizationLevel level)
+    {
+        if (level == Backends.BackendOptimizationLevel.O0)
+        {
+            return; // No optimization at O0
+        }
+
+        string passString = level switch
+        {
+            Backends.BackendOptimizationLevel.O1 => "default<O1>",
+            Backends.BackendOptimizationLevel.O2 => "default<O2>",
+            Backends.BackendOptimizationLevel.O3 => "default<O3>",
+            _ => "default<O2>",
+        };
+
+        LlvmPassBuilderOptionsHandle passOptions = LlvmApi.CreatePassBuilderOptions();
+        try
+        {
+            int err = LlvmApi.RunPasses(target.Module, passString, target.TargetMachine, passOptions);
+            if (err != 0)
+            {
+                // Non-fatal: if passes fail, continue with unoptimized code.
+                // This can happen in edge cases; the code is still correct.
+            }
+        }
+        finally
+        {
+            LlvmApi.DisposePassBuilderOptions(passOptions);
+        }
+    }
+
     private static byte[] EmitObjectCode(LlvmTargetContext target)
     {
         int err = LlvmApi.TargetMachineEmitToMemoryBuffer(
