@@ -9,7 +9,7 @@ is complete. Subsequent work focuses on runtime and ecosystem.
 | Async Runtime | Scheduler, concurrency and runtime support |
 | Networking | HTTP and TCP layers with async |
 | Package Manager | Ecosystem and dependency management |
-| HTTPS/TLS | TLS encryption, encryption, certificates and security concerns |
+| HTTPS/TLS | TLS, encryption, certificates and security concerns |
 
 ------------------------------------------------------------------------
 
