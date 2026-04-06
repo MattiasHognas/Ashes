@@ -193,6 +193,26 @@ If required behavior is undefined:
 
 ---
 
+# C# Formatting (REQUIRED)
+
+All C# source files must pass the .NET formatter.
+
+After making any C# changes, run:
+
+```bash
+dotnet format Ashes.slnx --verify-no-changes
+```
+
+If it reports errors, fix them with:
+
+```bash
+dotnet format Ashes.slnx
+```
+
+This check is enforced by CI alongside the test suite.
+
+---
+
 # Copilot Behavioral Contract
 
 Copilot acts as a compiler contributor, not a prototype generator.
@@ -204,7 +224,8 @@ A task is complete only when:
 3. Tests added/updated
 4. Tests pass end-to-end
 5. `.ash` files formatted
-6. No architectural rules violated
+6. C# formatting verified (`dotnet format Ashes.slnx --verify-no-changes`)
+7. No architectural rules violated
 
 ---
 

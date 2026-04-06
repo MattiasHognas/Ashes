@@ -89,113 +89,113 @@ public static class IrOptimizer
                     break;
 
                 case IrInst.AddInt add when knownInts.ContainsKey(add.Left) && knownInts.ContainsKey(add.Right):
-                {
-                    long folded = knownInts[add.Left] + knownInts[add.Right];
-                    knownInts[add.Target] = folded;
-                    result.Add(new IrInst.LoadConstInt(add.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        long folded = knownInts[add.Left] + knownInts[add.Right];
+                        knownInts[add.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(add.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.SubInt sub when knownInts.ContainsKey(sub.Left) && knownInts.ContainsKey(sub.Right):
-                {
-                    long folded = knownInts[sub.Left] - knownInts[sub.Right];
-                    knownInts[sub.Target] = folded;
-                    result.Add(new IrInst.LoadConstInt(sub.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        long folded = knownInts[sub.Left] - knownInts[sub.Right];
+                        knownInts[sub.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(sub.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.MulInt mul when knownInts.ContainsKey(mul.Left) && knownInts.ContainsKey(mul.Right):
-                {
-                    long folded = knownInts[mul.Left] * knownInts[mul.Right];
-                    knownInts[mul.Target] = folded;
-                    result.Add(new IrInst.LoadConstInt(mul.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        long folded = knownInts[mul.Left] * knownInts[mul.Right];
+                        knownInts[mul.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(mul.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.DivInt div when knownInts.ContainsKey(div.Left) && knownInts.ContainsKey(div.Right)
                                            && knownInts[div.Right] != 0:
-                {
-                    long folded = knownInts[div.Left] / knownInts[div.Right];
-                    knownInts[div.Target] = folded;
-                    result.Add(new IrInst.LoadConstInt(div.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        long folded = knownInts[div.Left] / knownInts[div.Right];
+                        knownInts[div.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(div.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.AddFloat addF when knownFloats.ContainsKey(addF.Left) && knownFloats.ContainsKey(addF.Right):
-                {
-                    double folded = knownFloats[addF.Left] + knownFloats[addF.Right];
-                    knownFloats[addF.Target] = folded;
-                    result.Add(new IrInst.LoadConstFloat(addF.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        double folded = knownFloats[addF.Left] + knownFloats[addF.Right];
+                        knownFloats[addF.Target] = folded;
+                        result.Add(new IrInst.LoadConstFloat(addF.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.SubFloat subF when knownFloats.ContainsKey(subF.Left) && knownFloats.ContainsKey(subF.Right):
-                {
-                    double folded = knownFloats[subF.Left] - knownFloats[subF.Right];
-                    knownFloats[subF.Target] = folded;
-                    result.Add(new IrInst.LoadConstFloat(subF.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        double folded = knownFloats[subF.Left] - knownFloats[subF.Right];
+                        knownFloats[subF.Target] = folded;
+                        result.Add(new IrInst.LoadConstFloat(subF.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.MulFloat mulF when knownFloats.ContainsKey(mulF.Left) && knownFloats.ContainsKey(mulF.Right):
-                {
-                    double folded = knownFloats[mulF.Left] * knownFloats[mulF.Right];
-                    knownFloats[mulF.Target] = folded;
-                    result.Add(new IrInst.LoadConstFloat(mulF.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        double folded = knownFloats[mulF.Left] * knownFloats[mulF.Right];
+                        knownFloats[mulF.Target] = folded;
+                        result.Add(new IrInst.LoadConstFloat(mulF.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.DivFloat divF when knownFloats.ContainsKey(divF.Left) && knownFloats.ContainsKey(divF.Right):
-                {
-                    double folded = knownFloats[divF.Left] / knownFloats[divF.Right];
-                    knownFloats[divF.Target] = folded;
-                    result.Add(new IrInst.LoadConstFloat(divF.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        double folded = knownFloats[divF.Left] / knownFloats[divF.Right];
+                        knownFloats[divF.Target] = folded;
+                        result.Add(new IrInst.LoadConstFloat(divF.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.CmpIntEq cmpEq when knownInts.ContainsKey(cmpEq.Left) && knownInts.ContainsKey(cmpEq.Right):
-                {
-                    bool folded = knownInts[cmpEq.Left] == knownInts[cmpEq.Right];
-                    knownBools[cmpEq.Target] = folded;
-                    result.Add(new IrInst.LoadConstBool(cmpEq.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        bool folded = knownInts[cmpEq.Left] == knownInts[cmpEq.Right];
+                        knownBools[cmpEq.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpEq.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.CmpIntNe cmpNe when knownInts.ContainsKey(cmpNe.Left) && knownInts.ContainsKey(cmpNe.Right):
-                {
-                    bool folded = knownInts[cmpNe.Left] != knownInts[cmpNe.Right];
-                    knownBools[cmpNe.Target] = folded;
-                    result.Add(new IrInst.LoadConstBool(cmpNe.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        bool folded = knownInts[cmpNe.Left] != knownInts[cmpNe.Right];
+                        knownBools[cmpNe.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpNe.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.CmpIntGe cmpGe when knownInts.ContainsKey(cmpGe.Left) && knownInts.ContainsKey(cmpGe.Right):
-                {
-                    bool folded = knownInts[cmpGe.Left] >= knownInts[cmpGe.Right];
-                    knownBools[cmpGe.Target] = folded;
-                    result.Add(new IrInst.LoadConstBool(cmpGe.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        bool folded = knownInts[cmpGe.Left] >= knownInts[cmpGe.Right];
+                        knownBools[cmpGe.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpGe.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 case IrInst.CmpIntLe cmpLe when knownInts.ContainsKey(cmpLe.Left) && knownInts.ContainsKey(cmpLe.Right):
-                {
-                    bool folded = knownInts[cmpLe.Left] <= knownInts[cmpLe.Right];
-                    knownBools[cmpLe.Target] = folded;
-                    result.Add(new IrInst.LoadConstBool(cmpLe.Target, folded) { Location = inst.Location });
-                    changed = true;
-                    break;
-                }
+                    {
+                        bool folded = knownInts[cmpLe.Left] <= knownInts[cmpLe.Right];
+                        knownBools[cmpLe.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpLe.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
 
                 // Labels, jumps, and control flow invalidate constant knowledge
                 case IrInst.Label:
@@ -324,9 +324,9 @@ public static class IrOptimizer
             case IrInst.PanicStr p: usedTemps.Add(p.Source); break;
             case IrInst.JumpIfFalse j: usedTemps.Add(j.CondTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;
-            // LoadConstInt, LoadConstFloat, LoadConstBool, LoadConstStr, LoadLocal,
-            // LoadEnv, LoadProgramArgs, ReadLine, Alloc, AllocAdt, Label, Jump:
-            // These either have no source temps or only define targets.
+                // LoadConstInt, LoadConstFloat, LoadConstBool, LoadConstStr, LoadLocal,
+                // LoadEnv, LoadProgramArgs, ReadLine, Alloc, AllocAdt, Label, Jump:
+                // These either have no source temps or only define targets.
         }
     }
 }

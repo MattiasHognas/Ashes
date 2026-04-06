@@ -623,7 +623,7 @@ public sealed class ProjectSupportTests
                 UseShellExecute = false
             };
 
-            using var proc = await TestProcessHelper.StartProcessAsync(psi);;
+            using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
             var stdout = await proc.StandardOutput.ReadToEndAsync();
             var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();

@@ -367,7 +367,7 @@ public sealed class EndToEndNativeBackendTests
             psi.ArgumentList.Add(arg);
         }
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);;
+        using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
         if (stdin is not null)
         {
             await proc.StandardInput.WriteAsync(stdin);
