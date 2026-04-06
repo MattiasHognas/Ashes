@@ -6,9 +6,10 @@ is complete. Subsequent work focuses on runtime and ecosystem.
 | Feature | Area |
 |---------|------|
 | Async/Await | Async syntax and core primitives |
-| Async Runtime | Scheduler and runtime support |
-| Networking | HTTP and TCP layers |
+| Async Runtime | Scheduler, concurrency and runtime support |
+| Networking | HTTP and TCP layers with async |
 | Package Manager | Ecosystem and dependency management |
+| HTTPS/TLS | TLS encryption, encryption, certificates and security concerns |
 
 ------------------------------------------------------------------------
 
