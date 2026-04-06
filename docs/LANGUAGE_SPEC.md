@@ -583,7 +583,9 @@ All branches must return compatible types.
 
 # 9. Lists
 
-Lists are immutable linked lists.
+Lists are immutable linked lists. All list operations — cons (`::`),
+`Ashes.List.append`, `Ashes.List.map`, `Ashes.List.filter`, etc. —
+return a **new** list. The original list is never modified.
 
 ## 9.1 Empty List
 
@@ -935,6 +937,8 @@ It prints the provided message and terminates execution with a non-zero exit cod
 ## 13.5 Shipped Standard Library Modules
 
 Ashes also ships pure library modules implemented in Ashes source.
+Every function in these modules is pure: it returns a new value and
+never mutates its arguments.
 
 Current shipped modules include:
 
@@ -1096,8 +1100,25 @@ Ashes is:
 - strictly evaluated
 - immutable
 - recursion-based
+- pure — all functions return new values; no function mutates its arguments
 
 Iteration is expressed using recursion and pattern matching.
+
+**Purity contract.** Every standard library and user-defined function
+is pure in the following sense:
+
+- Calling a function never changes the value of any existing binding.
+- Operations that conceptually "add" or "remove" (e.g. `Ashes.List.append`,
+  cons `::`, `Ashes.List.filter`) always return a **new** value; the
+  original is unmodified.
+- There are no in-place updates. If a program needs a modified version of
+  a value, it builds one via expression — the original remains available
+  until it goes out of scope.
+
+The compiler and runtime may optimise representation internally (structure
+sharing, in-place reuse when safe), but these optimisations are invisible
+to user code. From the programmer's perspective, every value is immutable
+once created.
 
 ---
 

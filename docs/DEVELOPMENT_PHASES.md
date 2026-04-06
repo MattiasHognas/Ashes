@@ -298,5 +298,8 @@ runtime and ecosystem:
 4. **No user-visible `Drop`.** `Drop` is a compiler concept. Users see
    automatic cleanup.
 5. **Purity preserved.** All values are immutable. There is no mutation.
+   All APIs — standard library and user-defined — are pure: they return
+   new values and never modify their arguments. There are no in-place
+   updates visible to user code.
 6. **No GC.** All resource and memory management is deterministic and
    compile-time verified.
