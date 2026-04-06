@@ -1470,7 +1470,8 @@ computation that may fail with error type `E` or succeed with value type `A`.
 - `await <expr>` where `<expr> : Task(E, A)` produces `A`.
 - `await` may only appear inside an `async` block. Using `await` outside
   `async` is a compile-time error (`ASH010`).
-- If the awaited task fails, the error propagates immediately.
+- Tasks are currently infallible: `Ashes.Async.run` always returns `Ok(value)`.
+  Task failure/error propagation semantics are reserved for a future release.
 
 ## 19.4 Async Let (let!)
 

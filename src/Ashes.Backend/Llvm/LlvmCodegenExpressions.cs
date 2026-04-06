@@ -149,8 +149,8 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// CreateTask: allocate a task/state struct and initialize it.
-    /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), captures...]
-    /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures.
+    /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), next_task(0), sleep_duration_ms(0), captures...]
+    /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures starting at <see cref="TaskStructLayout.HeaderSize"/>.
     /// </summary>
     private static LlvmValueHandle EmitCreateTask(LlvmCodegenState state, LlvmValueHandle closurePtr,
         int stateStructSize, int captureCount)
@@ -176,6 +176,14 @@ internal static partial class LlvmCodegen
         // Initialize awaited_task = 0
         StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask,
             LlvmApi.ConstInt(state.I64, 0, 0), "task_awaited_init");
+
+        // Initialize next_task = 0 (linked-list pointer for scheduler/task chaining)
+        StoreMemory(state, taskPtr, TaskStructLayout.NextTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_next_init");
+
+        // Initialize sleep_duration_ms = 0 (scheduler delay metadata)
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_sleep_init");
 
         // Copy captured env variables from closure env into task struct
         if (captureCount > 0)
