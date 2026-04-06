@@ -534,7 +534,7 @@ public static class Formatter
                 return;
             case Pattern.StrLit strLit:
                 sb.Append('"');
-                sb.Append(strLit.Value);
+                sb.Append(EscapeString(strLit.Value));
                 sb.Append('"');
                 return;
             case Pattern.BoolLit boolLit:
