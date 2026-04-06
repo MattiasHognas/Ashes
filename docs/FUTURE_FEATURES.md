@@ -106,6 +106,111 @@ This desugars to:
 - `async` blocks may be nested. Inner `async` blocks create child
   tasks, not implicit awaits.
 
+### 1.5 Supported Examples
+
+Both the **async/await keyword** style and the **let! sugar** style
+must be supported. The two forms are interchangeable; `let!` desugars
+to `let ... = await ...`.
+
+#### Example 1 — HTTP Fetch and Parse (async/await keywords)
+
+    let parseCount =
+        fun (text) ->
+            if text == "42"
+            then Ok(42)
+            else Error("not a number")
+    in
+        let result = Ashes.Async.run(
+            async
+                let body = await Ashes.Http.get("http://api.example.com/count")
+                in
+                    let parsed = await Ashes.Async.fromResult(parseCount(body))
+                    in parsed + 1
+        )
+        in
+            match result with
+                | Ok(n) -> Ashes.IO.print(n)
+                | Error(e) -> Ashes.IO.print("Error: " + e)
+
+Uses standard `let`/`in` nesting with `await` on the right-hand side.
+Each subsequent await nests one level deeper — consistent with how
+every other Ashes expression works.
+
+#### Example 2 — HTTP Fetch and Parse (let! sugar)
+
+    let parseCount =
+        fun (text) ->
+            if text == "42"
+            then Ok(42)
+            else Error("not a number")
+    in
+        let result = Ashes.Async.run(
+            async
+                let! body = Ashes.Http.get("http://api.example.com/count")
+                let! parsed = Ashes.Async.fromResult(parseCount(body))
+                in parsed + 1
+        )
+        in
+            match result with
+                | Ok(n) -> Ashes.IO.print(n)
+                | Error(e) -> Ashes.IO.print("Error: " + e)
+
+`let!` flattens the binding chain — no additional nesting per await
+point. This desugars to the nested form in Example 1.
+
+#### Example 3 — Concurrent Fetch (async/await keywords)
+
+    let result = Ashes.Async.run(
+        async
+            let responses = await Ashes.Async.all([
+                Ashes.Http.get("http://a.example.com/data"),
+                Ashes.Http.get("http://b.example.com/data")
+            ])
+            in responses
+    )
+    in
+        match result with
+            | Ok(list) -> Ashes.IO.print(list)
+            | Error(e) -> Ashes.IO.print("Error: " + e)
+
+#### Example 4 — Concurrent Fetch (let! sugar)
+
+    let result = Ashes.Async.run(
+        async
+            let! responses = Ashes.Async.all([
+                Ashes.Http.get("http://a.example.com/data"),
+                Ashes.Http.get("http://b.example.com/data")
+            ])
+            in responses
+    )
+    in
+        match result with
+            | Ok(list) -> Ashes.IO.print(list)
+            | Error(e) -> Ashes.IO.print("Error: " + e)
+
+#### Example 5 — Multiple Sequential Awaits (comparison)
+
+**async/await keywords (nested):**
+
+    async
+        let a = await Ashes.Http.get("http://a.com")
+        in
+            let b = await Ashes.Http.get("http://b.com")
+            in
+                let c = await Ashes.Http.get("http://c.com")
+                in a + b + c
+
+**let! sugar (flat):**
+
+    async
+        let! a = Ashes.Http.get("http://a.com")
+        let! b = Ashes.Http.get("http://b.com")
+        let! c = Ashes.Http.get("http://c.com")
+        in a + b + c
+
+The `let!` form is especially useful when chaining many sequential
+async operations, avoiding deeply nested `let`/`in` blocks.
+
 ------------------------------------------------------------------------
 
 ## 2. Type System
