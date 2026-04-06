@@ -126,19 +126,39 @@ This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries.
 
 # Tests
 
-There are two test layers:
+There are three test layers:
 
 1) Ashes.TestRunner + `tests/*.ash`
-   - End-to-end language tests using `// expect:`.
+   - End-to-end language tests using `// expect:` and `// expect-compile-error:`.
 
 2) Ashes.Tests
    - Compiler-internal deterministic tests.
+
+3) Ashes.Lsp.Tests
+   - LSP-internal tests.
 
 All new language features must include:
 
 - `.ash` tests
 - `// expect:` assertions
 - full end-to-end compilation
+
+## Running Tests (REQUIRED after changes)
+
+After making changes, run all three test layers:
+
+```bash
+# 1. C# compiler tests
+dotnet run --project src/Ashes.Tests -- --no-progress
+
+# 2. LSP tests
+dotnet run --project src/Ashes.Lsp.Tests -- --no-progress
+
+# 3. End-to-end .ash tests (requires LLVM runtimes + built CLI)
+dotnet run --project src/Ashes.Cli -- test tests
+```
+
+All three must pass before a task is considered complete.
 
 ---
 
@@ -222,10 +242,12 @@ A task is complete only when:
 1. Code compiles
 2. Spec matches implementation
 3. Tests added/updated
-4. Tests pass end-to-end
-5. `.ash` files formatted
-6. C# formatting verified (`dotnet format Ashes.slnx --verify-no-changes`)
-7. No architectural rules violated
+4. C# tests pass (`dotnet run --project src/Ashes.Tests -- --no-progress`)
+5. LSP tests pass (`dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`)
+6. End-to-end `.ash` tests pass (`dotnet run --project src/Ashes.Cli -- test tests`)
+7. `.ash` files formatted
+8. C# formatting verified (`dotnet format Ashes.slnx --verify-no-changes`)
+9. No architectural rules violated
 
 ---
 
