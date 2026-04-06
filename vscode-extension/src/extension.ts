@@ -57,7 +57,8 @@ export async function activate(
   }
 
   // Acquire DAP server and compiler eagerly in the background.
-  // Failures show a notification but do not block the language server.
+  // DAP promise is stored so the debug adapter factory can await it later.
+  // Compiler is fire-and-forget — failures show a notification only.
   const dapReady = acquireTool(context, DAP_CONFIG, requiredVersion).catch(
     (err: unknown) => {
       vscode.window.showErrorMessage(
@@ -108,8 +109,8 @@ export async function activate(
     vscode.commands.registerCommand("ashes.test", () => testCommand(context)),
   );
 
-  // Register debug adapter — acquires the DAP server binary on demand
-  const dapFactory = new AshesDebugAdapterFactory(context, dapReady);
+  // Register debug adapter — awaits the DAP binary acquired during activation
+  const dapFactory = new AshesDebugAdapterFactory(dapReady);
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory("ashes", dapFactory),
   );
@@ -134,10 +135,7 @@ export async function deactivate(): Promise<void> {
 class AshesDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   private readonly dapReady: Promise<string | undefined>;
 
-  constructor(
-    _context: vscode.ExtensionContext,
-    dapReady: Promise<string | undefined>,
-  ) {
+  constructor(dapReady: Promise<string | undefined>) {
     this.dapReady = dapReady;
   }
 
