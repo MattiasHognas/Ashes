@@ -42,7 +42,7 @@ produced binaries have **zero runtime dependencies** — no external
 assembler, toolchain, or garbage collector required.
 
 This repository contains the full toolchain: compiler, formatter, test
-runner, language server, and VS Code extension.
+runner, language server, debugger, and VS Code extension.
 
 ### Design Principles
 
@@ -192,6 +192,7 @@ Ashes is split into focused phases:
 | **Ashes.Formatter** | Canonical source formatting |
 | **Ashes.Cli** | CLI orchestration (`compile`, `run`, `repl`, `test`, `fmt`) |
 | **Ashes.Lsp** | Language server (diagnostics, formatting, hover, completions) |
+| **Ashes.Dap** | Debug server (gdb and lldb support) |
 | **Ashes.TestRunner** | End-to-end `.ash` test execution |
 
 ### Compile Targets
