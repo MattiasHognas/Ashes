@@ -3131,9 +3131,10 @@ public sealed class Lowering
 
     private void EmitRequireStrEqual(int valueTemp, string expected, string failLabel)
     {
+        var label = InternString(expected);
         int expectedTemp = NewTemp();
         int cmpTemp = NewTemp();
-        Emit(new IrInst.LoadConstStr(expectedTemp, expected));
+        Emit(new IrInst.LoadConstStr(expectedTemp, label));
         Emit(new IrInst.CmpStrEq(cmpTemp, valueTemp, expectedTemp));
         Emit(new IrInst.JumpIfFalse(cmpTemp, failLabel));
     }
