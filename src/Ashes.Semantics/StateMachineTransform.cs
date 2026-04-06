@@ -488,6 +488,7 @@ public static class StateMachineTransform
             IrInst.CreateCompletedTask i => [i.Target],
             IrInst.AwaitTask i => [i.Target],
             IrInst.RunTask i => [i.Target],
+            IrInst.AsyncSleep i => [i.Target],
             _ => []
         };
     }
@@ -545,6 +546,7 @@ public static class StateMachineTransform
             IrInst.CreateCompletedTask ct => [ct.ResultTemp],
             IrInst.AwaitTask at => [at.TaskTemp],
             IrInst.RunTask rt => [rt.TaskTemp],
+            IrInst.AsyncSleep sl => [sl.MillisecondsTemp],
             IrInst.PanicStr p => [p.Source],
             IrInst.JumpIfFalse j => [j.CondTemp],
             IrInst.Return r => [r.Source],

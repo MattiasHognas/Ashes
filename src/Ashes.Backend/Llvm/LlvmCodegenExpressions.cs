@@ -276,13 +276,43 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, suspendedBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "run_awaited_task");
 
-        // Recursively run the awaited sub-task to completion
+        // Check if the awaited sub-task is a sleep task (state_index == -2)
+        LlvmValueHandle awaitedState = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "run_awaited_state");
+        LlvmValueHandle sleepConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
+        LlvmValueHandle isSleep = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            awaitedState, sleepConst, "run_is_sleep");
+
+        LlvmBasicBlockHandle sleepHandleBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_sleep_handle");
+        LlvmBasicBlockHandle normalSubBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_normal_sub");
+        LlvmBasicBlockHandle afterSubBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_after_sub");
+
+        LlvmApi.BuildCondBr(builder, isSleep, sleepHandleBlock, normalSubBlock);
+
+        // --- Sleep handle: perform nanosleep, mark sub-task complete ---
+        LlvmApi.PositionBuilderAtEnd(builder, sleepHandleBlock);
+        LlvmValueHandle sleepMs = LoadMemory(state, awaitedTask, TaskStructLayout.SleepDeadlineNs, "run_sleep_ms");
+        EmitNanosleep(state, sleepMs);
+        // Mark sleep task as completed
+        StoreMemory(state, awaitedTask, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "run_sleep_done");
+        StoreMemory(state, awaitedTask, TaskStructLayout.ResultSlot,
+            LlvmApi.ConstInt(state.I64, 0, 0), "run_sleep_result");
+        // Get result and store
+        LlvmValueHandle sleepResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "run_sleep_result_load");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, sleepResult, "run_sleep_sub_store");
+        LlvmApi.BuildBr(builder, afterSubBlock);
+
+        // --- Normal sub-task: recursively run to completion ---
+        LlvmApi.PositionBuilderAtEnd(builder, normalSubBlock);
         LlvmValueHandle subResult = EmitRunTaskRecursive(state, awaitedTask);
-
-        // Store the sub-task's result into our task's result slot
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, subResult, "run_sub_result_store");
+        LlvmApi.BuildBr(builder, afterSubBlock);
 
-        // Loop back to step the coroutine again
+        // --- After sub-task: loop back to step the coroutine again ---
+        LlvmApi.PositionBuilderAtEnd(builder, afterSubBlock);
         LlvmApi.BuildBr(builder, stepBlock);
 
         // --- Done block: extract and return the result ---
@@ -317,7 +347,32 @@ internal static partial class LlvmCodegen
         LlvmValueHandle minusOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1), 1);
         LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             stateIdx, minusOne, "sub_is_done");
-        LlvmApi.BuildCondBr(builder, isDone, subDoneBlock, subStepBlock);
+
+        // Also check if sleeping (-2) — if so, perform nanosleep and mark complete
+        LlvmValueHandle sleepingConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
+        LlvmValueHandle isSleeping = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx, sleepingConst, "sub_is_sleeping");
+
+        LlvmBasicBlockHandle subSleepBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_run_sleep");
+        LlvmBasicBlockHandle subNotDoneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_run_not_done");
+
+        LlvmApi.BuildCondBr(builder, isDone, subDoneBlock, subNotDoneBlock);
+
+        // Check if sleeping
+        LlvmApi.PositionBuilderAtEnd(builder, subNotDoneBlock);
+        LlvmApi.BuildCondBr(builder, isSleeping, subSleepBlock, subStepBlock);
+
+        // --- Sleep handling ---
+        LlvmApi.PositionBuilderAtEnd(builder, subSleepBlock);
+        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs, "sub_sleep_ms");
+        EmitNanosleep(state, sleepMs);
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "sub_sleep_mark_done");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sub_sleep_result");
+        LlvmApi.BuildBr(builder, subDoneBlock);
 
         // --- Step: call coroutine ---
         LlvmApi.PositionBuilderAtEnd(builder, subStepBlock);
@@ -384,5 +439,142 @@ internal static partial class LlvmCodegen
         // --- Done: extract result ---
         LlvmApi.PositionBuilderAtEnd(builder, subDoneBlock);
         return LoadMemory(state, taskPtr, TaskStructLayout.ResultSlot, "sub_task_result");
+    }
+
+    // ── Phase C: Async Sleep ────────────────────────────────────────────
+
+    /// <summary>
+    /// EmitAsyncSleep: Create a sleep task.
+    /// The task struct has state_index = -2 (SLEEPING) and the sleep duration
+    /// stored in SleepDeadlineNs as milliseconds (the runtime converts to nanoseconds).
+    /// Layout: [state=-2, fn=0, result=0, awaited=0, next=0, sleep_ms=ms]
+    /// </summary>
+    private static LlvmValueHandle EmitAsyncSleep(LlvmCodegenState state, LlvmValueHandle millisecondsValue)
+    {
+        LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+
+        // state_index = -2 (SLEEPING)
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1), "sleep_state");
+
+        // coroutine_fn = 0 (not needed)
+        StoreMemory(state, taskPtr, TaskStructLayout.CoroutineFn,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_fn_null");
+
+        // result = 0 (will hold the result after completion)
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_result_init");
+
+        // awaited_task = 0
+        StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_awaited_null");
+
+        // next_task = 0
+        StoreMemory(state, taskPtr, TaskStructLayout.NextTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_next_null");
+
+        // sleep_deadline_ns = milliseconds (runtime interprets as ms)
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs,
+            millisecondsValue, "sleep_ms");
+
+        return taskPtr;
+    }
+
+    /// <summary>
+    /// EmitNanosleep: perform a platform-specific sleep for the given milliseconds.
+    /// On Linux: uses nanosleep syscall with a timespec struct.
+    /// On Windows: uses Sleep() from kernel32.dll.
+    /// </summary>
+    private static void EmitNanosleep(LlvmCodegenState state, LlvmValueHandle milliseconds)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // Convert milliseconds to timespec {tv_sec, tv_nsec}
+            // tv_sec = ms / 1000
+            // tv_nsec = (ms % 1000) * 1000000
+            LlvmValueHandle thousand = LlvmApi.ConstInt(state.I64, 1000, 0);
+            LlvmValueHandle million = LlvmApi.ConstInt(state.I64, 1000000, 0);
+            LlvmValueHandle tvSec = LlvmApi.BuildSDiv(builder, milliseconds, thousand, "sleep_sec");
+            LlvmValueHandle msRem = LlvmApi.BuildSRem(builder, milliseconds, thousand, "sleep_ms_rem");
+            LlvmValueHandle tvNsec = LlvmApi.BuildMul(builder, msRem, million, "sleep_nsec");
+
+            // Allocate timespec on stack: {i64 tv_sec, i64 tv_nsec}
+            LlvmTypeHandle timespecType = LlvmApi.ArrayType2(state.I64, 2);
+            LlvmValueHandle timespecPtr = LlvmApi.BuildAlloca(builder, timespecType, "timespec");
+            LlvmValueHandle secPtr = GetArrayElementPointer(state, timespecType, timespecPtr,
+                LlvmApi.ConstInt(state.I64, 0, 0), "timespec_sec_ptr");
+            LlvmApi.BuildStore(builder, tvSec, secPtr);
+            LlvmValueHandle nsecPtr = GetArrayElementPointer(state, timespecType, timespecPtr,
+                LlvmApi.ConstInt(state.I64, 1, 0), "timespec_nsec_ptr");
+            LlvmApi.BuildStore(builder, tvNsec, nsecPtr);
+
+            // nanosleep(&timespec, NULL)
+            LlvmValueHandle timespecI64 = LlvmApi.BuildPtrToInt(builder, timespecPtr, state.I64, "timespec_addr");
+            EmitLinuxSyscall(state, SyscallNanosleep,
+                timespecI64,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "sys_nanosleep");
+        }
+        else
+        {
+            // Windows: Sleep(milliseconds)
+            EmitWindowsSleep(state, milliseconds);
+        }
+    }
+
+    /// <summary>
+    /// Handle a potentially sleeping sub-task in the event loop.
+    /// If the task has state_index == -2 (SLEEPING), perform nanosleep and mark it complete.
+    /// Otherwise, step the task normally.
+    /// This is called from the run-task loop when a parent task suspends on a sub-task.
+    /// </summary>
+    private static void EmitHandleSubTask(LlvmCodegenState state, LlvmValueHandle taskPtr,
+        LlvmBasicBlockHandle doneBlock, LlvmBasicBlockHandle stepBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        // Check if sub-task is SLEEPING (-2)
+        LlvmValueHandle stateIdx = LoadMemory(state, taskPtr, TaskStructLayout.StateIndex, "sub_check_state");
+        LlvmValueHandle sleepingConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
+        LlvmValueHandle isSleeping = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx, sleepingConst, "sub_is_sleeping");
+
+        LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_sleep_handle");
+
+        LlvmApi.BuildCondBr(builder, isSleeping, sleepBlock, stepBlock);
+
+        // --- Sleep handling block ---
+        LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
+        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs, "sleep_ms_val");
+        EmitNanosleep(state, sleepMs);
+
+        // Mark the sleep task as completed with result = 0 (Unit)
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "sleep_mark_done");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_result_zero");
+
+        LlvmApi.BuildBr(builder, doneBlock);
+    }
+
+    /// <summary>
+    /// Windows Sleep(DWORD dwMilliseconds) — imported from kernel32.dll.
+    /// </summary>
+    private static void EmitWindowsSleep(LlvmCodegenState state, LlvmValueHandle milliseconds)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Truncate i64 ms to i32 for Sleep(DWORD)
+        LlvmValueHandle ms32 = LlvmApi.BuildTrunc(builder, milliseconds, state.I32, "sleep_ms32");
+        LlvmTypeHandle sleepType = LlvmApi.FunctionType(
+            LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32]);
+        LlvmValueHandle sleepFnPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsSleepImport,
+            "sleep_fn_ptr");
+        LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
 }

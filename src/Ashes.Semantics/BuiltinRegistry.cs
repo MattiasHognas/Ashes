@@ -27,7 +27,8 @@ public static class BuiltinRegistry
         NetTcpReceive,
         NetTcpClose,
         AsyncRun,
-        AsyncFromResult
+        AsyncFromResult,
+        AsyncSleep
     }
 
     public sealed record BuiltinModuleMember(
@@ -120,7 +121,8 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["run"] = new("run", BuiltinValueKind.AsyncRun, IsCallable: true, Arity: 1),
-                    ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1)
+                    ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
+                    ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1)
                 })
         };
 

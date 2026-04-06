@@ -159,6 +159,13 @@ public abstract record IrInst
     public sealed record Resume(int StateStructTemp, int ResultTemp,
         IReadOnlyList<(int SlotOffset, int TargetTemp)> RestoreVars) : IrInst;
 
+    /// <summary>
+    /// Creates a sleep task that completes after the given number of milliseconds.
+    /// Returns a Task(Str, Unit) that suspends and resumes after the timeout.
+    /// Used by Ashes.Async.sleep.
+    /// </summary>
+    public sealed record AsyncSleep(int Target, int MillisecondsTemp) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;
@@ -185,13 +192,20 @@ public sealed record CoroutineInfo(
 /// </summary>
 public static class TaskStructLayout
 {
-    public const int StateIndex = 0;       // current state number (i64)
+    public const int StateIndex = 0;       // current state number (i64): -1 = COMPLETED, -2 = SLEEPING
     public const int CoroutineFn = 8;      // pointer to coroutine function (i64)
     public const int ResultSlot = 16;      // result value / awaited task result (i64)
     public const int AwaitedTask = 24;     // pointer to sub-task being awaited (i64)
-    public const int HeaderSize = 32;      // total header size in bytes
+    public const int NextTask = 32;        // queue linked list pointer (i64) — Phase C event loop
+    public const int SleepDeadlineNs = 40; // absolute nanosecond deadline for sleep (i64) — Phase C
+    public const int HeaderSize = 48;      // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
+
+    /// <summary>State index value indicating the task has completed.</summary>
+    public const long StateCompleted = -1;
+    /// <summary>State index value indicating the task is sleeping (timer-based suspend).</summary>
+    public const long StateSleeping = -2;
 }
 
 public sealed record IrFunction(

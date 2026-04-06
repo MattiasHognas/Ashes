@@ -85,7 +85,8 @@ public sealed class Lowering
         Print,
         Panic,
         AsyncRun,
-        AsyncFromResult
+        AsyncFromResult,
+        AsyncSleep
     }
 
     private enum PreludeValueKind
@@ -771,6 +772,7 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -2104,6 +2106,35 @@ public sealed class Lowering
         return (finalTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
     }
 
+    /// <summary>
+    /// Ashes.Async.sleep(ms) — Phase C: creates a sleep task.
+    /// Returns Task(Str, Int) — a task that completes after the given milliseconds
+    /// and returns 0 (Unit placeholder).
+    /// </summary>
+    private (int, TypeRef) LowerAsyncSleep(Expr msArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(msArg);
+        _usesAsync = true;
+
+        var (msTemp, msType) = LowerExpr(msArg);
+        Unify(msType, new TypeRef.TInt());
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(msArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // AsyncSleep creates a pre-configured sleep task
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncSleep(taskTemp, msTemp));
+
+        // Return type: Task(Str, Int) — sleep returns 0 on completion
+        var strType = new TypeRef.TStr();
+        var intType = new TypeRef.TInt();
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [strType, intType]));
+    }
+
     private (int, TypeRef) LowerIf(Expr.If iff)
     {
         using var diagnosticSpan = PushDiagnosticSpan(iff);
@@ -2598,6 +2629,7 @@ public sealed class Lowering
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+                IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -2636,6 +2668,7 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
                 BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                 _ => StdMemberNotFound(qv.Module, qv.Name)
             };
         }
@@ -5148,6 +5181,21 @@ public sealed class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.AsyncFromResult,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(resultType, taskType))
+        );
+    }
+
+    // Ashes.Async.sleep : Int -> Task(Str, Int)
+    private Binding.Intrinsic CreateAsyncSleepBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var taskType = new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), new TypeRef.TInt()]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncSleep,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), taskType))
         );
     }
 }
