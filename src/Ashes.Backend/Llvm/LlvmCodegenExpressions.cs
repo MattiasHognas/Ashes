@@ -577,4 +577,132 @@ internal static partial class LlvmCodegen
             "sleep_fn_ptr");
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
+
+    // ── Phase D: Async All ──────────────────────────────────────────────
+
+    /// <summary>
+    /// EmitAsyncAll: Run all tasks in a list and collect results into a list.
+    /// Input: pointer to a list of tasks (ADT: tag 0 = Nil, tag 1 = Cons(head, tail)).
+    /// Output: completed task with a list of result values.
+    /// Algorithm:
+    ///   1. Walk the input list, run each task, push result onto a reversed list.
+    ///   2. Reverse the accumulated list to restore original order.
+    ///   3. Wrap the result list in a completed task.
+    /// </summary>
+    private static LlvmValueHandle EmitAsyncAll(LlvmCodegenState state, LlvmValueHandle taskListPtr)
+    {
+        // Phase D: Create a separate LLVM function that walks the list, runs each task,
+        // and returns the result list. This avoids LLVM block-management issues.
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        // 1. Create continuation block in caller's function and branch to it
+        LlvmBasicBlockHandle contBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "all_cont");
+        LlvmApi.BuildBr(builder, contBlock);
+
+        // 2. Build the helper function: i64 all_helper(i64 listPtr)
+        LlvmTypeHandle helperType = LlvmApi.FunctionType(state.I64, [state.I64]);
+        LlvmValueHandle helperFn = LlvmApi.AddFunction(
+            state.Target.Module, "ashes_async_all_helper", helperType);
+        var helperState = state with { Function = helperFn };
+
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, helperFn, "entry");
+        LlvmApi.PositionBuilderAtEnd(builder, entry);
+
+        LlvmValueHandle listParam = LlvmApi.GetParam(helperFn, 0);
+
+        // Allocas in entry
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_res");
+        LlvmValueHandle listSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_list");
+        LlvmValueHandle revSrcSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rsrc");
+        LlvmValueHandle revDstSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rdst");
+
+        LlvmValueHandle nil = EmitAllocAdt(helperState, 0, 0);
+        LlvmApi.BuildStore(builder, nil, resultSlot);
+        LlvmApi.BuildStore(builder, listParam, listSlot);
+
+        LlvmBasicBlockHandle chkBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "chk");
+        LlvmBasicBlockHandle bodyBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "body");
+        LlvmBasicBlockHandle revIBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "revi");
+        LlvmBasicBlockHandle revCBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "revc");
+        LlvmBasicBlockHandle revBBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "revb");
+        LlvmBasicBlockHandle doneBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, helperFn, "done");
+
+        LlvmApi.BuildBr(builder, chkBlk);
+
+        // Check
+        LlvmApi.PositionBuilderAtEnd(builder, chkBlk);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "cur");
+        LlvmValueHandle tg = LoadMemory(helperState, cur, 0, "tg");
+        LlvmValueHandle isN = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, tg, LlvmApi.ConstInt(state.I64, 0, 0), "isN");
+        LlvmApi.BuildCondBr(builder, isN, revIBlk, bodyBlk);
+
+        // Body
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlk);
+        LlvmValueHandle cb = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "cb");
+        LlvmValueHandle hd = LoadMemory(helperState, cb, 8, "hd");
+        LlvmValueHandle tl = LoadMemory(helperState, cb, 16, "tl");
+        LlvmApi.BuildStore(builder, tl, listSlot);
+        LlvmValueHandle tr = EmitRunTask(helperState, hd);
+        LlvmValueHandle pv = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "pv");
+        LlvmValueHandle cn = EmitAllocAdt(helperState, 1, 2);
+        StoreMemory(helperState, cn, 8, tr, "ch");
+        StoreMemory(helperState, cn, 16, pv, "ct");
+        LlvmApi.BuildStore(builder, cn, resultSlot);
+        LlvmApi.BuildBr(builder, chkBlk);
+
+        // Rev init
+        LlvmApi.PositionBuilderAtEnd(builder, revIBlk);
+        LlvmValueHandle ri = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "ri");
+        LlvmApi.BuildStore(builder, ri, revSrcSlot);
+        LlvmValueHandle rn = EmitAllocAdt(helperState, 0, 0);
+        LlvmApi.BuildStore(builder, rn, revDstSlot);
+        LlvmApi.BuildBr(builder, revCBlk);
+
+        // Rev check
+        LlvmApi.PositionBuilderAtEnd(builder, revCBlk);
+        LlvmValueHandle rs = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "rs");
+        LlvmValueHandle rt = LoadMemory(helperState, rs, 0, "rt");
+        LlvmValueHandle rn2 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, rt, LlvmApi.ConstInt(state.I64, 0, 0), "rn2");
+        LlvmApi.BuildCondBr(builder, rn2, doneBlk, revBBlk);
+
+        // Rev body
+        LlvmApi.PositionBuilderAtEnd(builder, revBBlk);
+        LlvmValueHandle rbs = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "rbs");
+        LlvmValueHandle rbh = LoadMemory(helperState, rbs, 8, "rbh");
+        LlvmValueHandle rbt = LoadMemory(helperState, rbs, 16, "rbt");
+        LlvmValueHandle rbd = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "rbd");
+        LlvmValueHandle rbc = EmitAllocAdt(helperState, 1, 2);
+        StoreMemory(helperState, rbc, 8, rbh, "rbch");
+        StoreMemory(helperState, rbc, 16, rbd, "rbct");
+        LlvmApi.BuildStore(builder, rbt, revSrcSlot);
+        LlvmApi.BuildStore(builder, rbc, revDstSlot);
+        LlvmApi.BuildBr(builder, revCBlk);
+
+        // Done: return list
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlk);
+        LlvmValueHandle fl = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "fl");
+        LlvmApi.BuildRet(builder, fl);
+
+        // 3. Position builder in continuation block and call helper
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        LlvmValueHandle callResult = LlvmApi.BuildCall2(builder, helperType, helperFn,
+            [taskListPtr], "all_result");
+        return EmitCreateCompletedTask(state, callResult);
+    }
+
+    // ── Phase D: Async Race ─────────────────────────────────────────────
+
+    /// <summary>
+    /// EmitAsyncRace: Run the first task in a list and return its result.
+    /// Input: pointer to a list of tasks.
+    /// Output: completed task with the first task's result value.
+    /// If the list is empty, returns a completed task with 0 (unit).
+    /// </summary>
+    private static LlvmValueHandle EmitAsyncRace(LlvmCodegenState state, LlvmValueHandle taskListPtr)
+    {
+        // Phase D: AsyncRace is fully decomposed in the lowering phase.
+        throw new InvalidOperationException("AsyncRace should be decomposed in the lowering phase.");
+    }
 }

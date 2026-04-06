@@ -28,7 +28,9 @@ public static class BuiltinRegistry
         NetTcpClose,
         AsyncRun,
         AsyncFromResult,
-        AsyncSleep
+        AsyncSleep,
+        AsyncAll,
+        AsyncRace
     }
 
     public sealed record BuiltinModuleMember(
@@ -122,7 +124,9 @@ public static class BuiltinRegistry
                 {
                     ["run"] = new("run", BuiltinValueKind.AsyncRun, IsCallable: true, Arity: 1),
                     ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
-                    ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1)
+                    ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
+                    ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
+                    ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
                 })
         };
 

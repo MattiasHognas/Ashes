@@ -86,7 +86,9 @@ public sealed class Lowering
         Panic,
         AsyncRun,
         AsyncFromResult,
-        AsyncSleep
+        AsyncSleep,
+        AsyncAll,
+        AsyncRace
     }
 
     private enum PreludeValueKind
@@ -773,6 +775,8 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -2135,6 +2139,71 @@ public sealed class Lowering
         return (taskTemp, new TypeRef.TNamedType(taskSymbol, [strType, intType]));
     }
 
+    /// <summary>
+    /// Ashes.Async.all(tasks) — Phase D: runs all tasks and collects results.
+    /// Returns Task(E, List(A)) — a task containing a list of all results.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncAll(Expr taskListArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskListArg);
+        _usesAsync = true;
+
+        var (listTemp, listType) = LowerExpr(taskListArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskListArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Unify input type: List(Task(E, A))
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        var expectedListType = new TypeRef.TList(innerTaskType);
+        Unify(listType, expectedListType);
+
+        // Emit AsyncAll IR instruction
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncAll(taskTemp, listTemp));
+
+        // Return type: Task(E, List(A))
+        var resultListType = new TypeRef.TList(Prune(successType));
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), resultListType]));
+    }
+
+    /// <summary>
+    /// Ashes.Async.race(tasks) — Phase D: runs the first task to completion.
+    /// Returns Task(E, A) — a task with the first task's result.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncRace(Expr taskListArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskListArg);
+        _usesAsync = true;
+
+        var (listTemp, listType) = LowerExpr(taskListArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskListArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Unify input type: List(Task(E, A))
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        var expectedListType = new TypeRef.TList(innerTaskType);
+        Unify(listType, expectedListType);
+
+        // Emit AsyncRace IR instruction
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncRace(taskTemp, listTemp));
+
+        // Return type: Task(E, A)
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+    }
+
     private (int, TypeRef) LowerIf(Expr.If iff)
     {
         using var diagnosticSpan = PushDiagnosticSpan(iff);
@@ -2630,6 +2699,8 @@ public sealed class Lowering
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+                IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -2669,6 +2740,8 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                 _ => StdMemberNotFound(qv.Module, qv.Name)
             };
         }
@@ -5196,6 +5269,44 @@ public sealed class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.AsyncSleep,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), taskType))
+        );
+    }
+
+    // Ashes.Async.all : List(Task(E, A)) -> Task(E, List(A))
+    private Binding.Intrinsic CreateAsyncAllBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var inputType = new TypeRef.TList(innerTaskType);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, new TypeRef.TList(a)]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncAll,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
+        );
+    }
+
+    // Ashes.Async.race : List(Task(E, A)) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncRaceBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var inputType = new TypeRef.TList(innerTaskType);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncRace,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
         );
     }
 }

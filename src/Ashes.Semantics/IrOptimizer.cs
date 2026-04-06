@@ -326,6 +326,8 @@ public static class IrOptimizer
             case IrInst.AwaitTask at: usedTemps.Add(at.TaskTemp); break;
             case IrInst.RunTask rt: usedTemps.Add(rt.TaskTemp); break;
             case IrInst.AsyncSleep sl: usedTemps.Add(sl.MillisecondsTemp); break;
+            case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
+            case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
             case IrInst.Suspend s:
                 usedTemps.Add(s.StateStructTemp);
                 usedTemps.Add(s.AwaitedTaskTemp);

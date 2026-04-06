@@ -166,6 +166,20 @@ public abstract record IrInst
     /// </summary>
     public sealed record AsyncSleep(int Target, int MillisecondsTemp) : IrInst;
 
+    /// <summary>
+    /// Runs all tasks in a list to completion and collects results into a list.
+    /// Returns a completed Task(E, List(A)) containing all result values.
+    /// Used by Ashes.Async.all.
+    /// </summary>
+    public sealed record AsyncAll(int Target, int TaskListTemp) : IrInst;
+
+    /// <summary>
+    /// Runs the first task in a list to completion and returns its result.
+    /// Returns a completed Task(E, A) with the first task's result value.
+    /// Used by Ashes.Async.race.
+    /// </summary>
+    public sealed record AsyncRace(int Target, int TaskListTemp) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;

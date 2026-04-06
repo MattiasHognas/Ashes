@@ -676,6 +676,12 @@ internal static partial class LlvmCodegen
             // AsyncSleep: Phase C — create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
+            // AsyncAll: Phase D — run all tasks in a list, collect results.
+            IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
+                EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
+            // AsyncRace: Phase D — run the first task in a list, return its result.
+            IrInst.AsyncRace asyncRace => StoreTemp(state, asyncRace.Target,
+                EmitAsyncRace(state, LoadTemp(state, asyncRace.TaskListTemp))),
             // Suspend/Resume: state machine annotations — no-ops in codegen.
             // The actual save/restore is done by StoreMemOffset/LoadMemOffset around them.
             IrInst.Suspend => false,
