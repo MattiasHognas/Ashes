@@ -661,7 +661,7 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
-            // CreateTask: Phase B — allocate task struct with coroutine function + captures.
+            // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
                     createTask.StateStructSize, createTask.CaptureCount)),
@@ -670,16 +670,16 @@ internal static partial class LlvmCodegen
                 EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),
             // AwaitTask: should not appear after state machine transform. Pass-through for safety.
             IrInst.AwaitTask awaitTask => StoreTemp(state, awaitTask.Target, LoadTemp(state, awaitTask.TaskTemp)),
-            // RunTask: Phase C — drive task to completion via event loop.
+            // RunTask: drive task to completion via event loop.
             IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
                 EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
-            // AsyncSleep: Phase C — create a sleep task with a timer deadline.
+            // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
-            // AsyncAll: Phase D — run all tasks in a list, collect results.
+            // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
-            // AsyncRace: Phase D — run the first task in a list, return its result.
+            // AsyncRace: run the first task in a list, return its result.
             IrInst.AsyncRace asyncRace => StoreTemp(state, asyncRace.Target,
                 EmitAsyncRace(state, LoadTemp(state, asyncRace.TaskListTemp))),
             // Suspend/Resume: state machine annotations — no-ops in codegen.

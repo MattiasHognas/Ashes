@@ -118,7 +118,7 @@ public abstract record IrInst
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
     /// the coroutine function pointer and captured environment.
-    /// Phase B: the task struct holds [state_index, coroutine_fn, result, awaited_task, captures...].
+    /// The task struct holds [state_index, coroutine_fn, result, awaited_task, captures...].
     /// StateStructSize includes the header, captures, and live variable slots.
     /// CaptureCount is the number of captured environment variables to copy.
     /// </summary>
@@ -210,8 +210,8 @@ public static class TaskStructLayout
     public const int CoroutineFn = 8;      // pointer to coroutine function (i64)
     public const int ResultSlot = 16;      // result value / awaited task result (i64)
     public const int AwaitedTask = 24;     // pointer to sub-task being awaited (i64)
-    public const int NextTask = 32;        // queue linked list pointer (i64) — Phase C event loop
-    public const int SleepDurationMs = 40; // sleep duration in milliseconds (i64) — Phase C
+    public const int NextTask = 32;        // queue linked list pointer (i64)
+    public const int SleepDurationMs = 40; // sleep duration in milliseconds (i64)
     public const int HeaderSize = 48;      // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures

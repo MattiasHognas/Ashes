@@ -145,7 +145,7 @@ internal static partial class LlvmCodegen
         return false;
     }
 
-    // ── Async / Task support (Phase B) ──────────────────────────────────
+    // ── Async / Task support ──────────────────────────────────────────
 
     /// <summary>
     /// CreateTask: allocate a task/state struct and initialize it.
@@ -323,7 +323,7 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Helper: recursively run a task to completion. This is the same logic as EmitRunTask
     /// but implemented as a recursive call to a shared runtime function.
-    /// For simplicity in Phase B, we inline the same pattern.
+    /// For simplicity, we inline the same pattern.
     /// </summary>
     private static LlvmValueHandle EmitRunTaskRecursive(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
@@ -441,7 +441,7 @@ internal static partial class LlvmCodegen
         return LoadMemory(state, taskPtr, TaskStructLayout.ResultSlot, "sub_task_result");
     }
 
-    // ── Phase C: Async Sleep ────────────────────────────────────────────
+    // ── Async Sleep ────────────────────────────────────────────
 
     /// <summary>
     /// EmitAsyncSleep: Create a sleep task.
@@ -578,7 +578,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
 
-    // ── Phase D: Async All ──────────────────────────────────────────────
+    // ── Async All ──────────────────────────────────────────────
 
     /// <summary>
     /// EmitAsyncAll: Run all tasks in a list and collect results into a list.
@@ -679,7 +679,7 @@ internal static partial class LlvmCodegen
         return EmitCreateCompletedTask(state, finalList);
     }
 
-    // ── Phase D: Async Race ─────────────────────────────────────────────
+    // ── Async Race ─────────────────────────────────────────────
 
     /// <summary>
     /// EmitAsyncRace: Run the first task in a list and return its result.

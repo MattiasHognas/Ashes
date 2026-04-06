@@ -2013,7 +2013,7 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.run(task) — Phase B: synchronous execution.
+    /// Ashes.Async.run(task) — synchronous execution.
     /// Drives the task's coroutine to completion using RunTask,
     /// then wraps the result in Result(E, A).
     /// </summary>
@@ -2036,7 +2036,7 @@ public sealed class Lowering
         var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedTaskType);
 
-        // Phase B: RunTask synchronously drives the coroutine to completion
+        // RunTask synchronously drives the coroutine to completion
         int bodyTemp = NewTemp();
         Emit(new IrInst.RunTask(bodyTemp, taskTemp));
 
@@ -2054,7 +2054,7 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.fromResult(result) — Phase B: creates a pre-completed task.
+    /// Ashes.Async.fromResult(result) — creates a pre-completed task.
     /// Wraps a Result(E, A) into a Task(E, A) that is already completed.
     /// </summary>
     private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
@@ -2111,7 +2111,7 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.sleep(ms) — Phase C: creates a sleep task.
+    /// Ashes.Async.sleep(ms) — creates a sleep task.
     /// Returns Task(Str, Int) — a task that completes after the given milliseconds
     /// and returns 0 (Unit placeholder).
     /// </summary>
@@ -2140,7 +2140,7 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.all(tasks) — Phase D: runs all tasks and collects results.
+    /// Ashes.Async.all(tasks) — runs all tasks and collects results.
     /// Returns Task(E, List(A)) — a task containing a list of all results.
     /// </summary>
     private (int, TypeRef) LowerAsyncAll(Expr taskListArg)
@@ -2173,7 +2173,7 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.race(tasks) — Phase D: runs the first task to completion.
+    /// Ashes.Async.race(tasks) — runs the first task to completion.
     /// Returns Task(E, A) — a task with the first task's result.
     /// </summary>
     private (int, TypeRef) LowerAsyncRace(Expr taskListArg)
@@ -3099,7 +3099,7 @@ public sealed class Lowering
     {
         _usesAsync = true;
 
-        // Phase B: lift the async body into a separate coroutine function,
+        // Lift the async body into a separate coroutine function,
         // then create a task struct pointing to the coroutine.
 
         var savedInsideAsync = _insideAsync;
@@ -3259,7 +3259,7 @@ public sealed class Lowering
         var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedType);
 
-        // Phase A: AwaitTask synchronously extracts the result
+        // AwaitTask synchronously extracts the result
         int resultTemp = NewTemp();
         Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
         return (resultTemp, Prune(successType));
