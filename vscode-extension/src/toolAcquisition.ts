@@ -113,6 +113,7 @@ export function downloadToFile(url: string, destPath: string): Promise<void> {
             reject(new Error(`HTTP ${statusCode ?? "?"} fetching ${u}`));
             return;
           }
+          fs.mkdirSync(path.dirname(destPath), { recursive: true });
           const file = fs.createWriteStream(destPath);
           res.on("error", (err) => {
             file.close(() => {
