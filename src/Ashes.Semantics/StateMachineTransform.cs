@@ -3,6 +3,10 @@ namespace Ashes.Semantics;
 /// <summary>
 /// Result of the state machine transform applied to a coroutine's instruction list.
 /// </summary>
+/// <param name="Instructions">The transformed instruction list with state dispatch and save/restore sequences.</param>
+/// <param name="StateCount">Number of states (N await points produce N+1 states).</param>
+/// <param name="StateStructSize">Total size of the task/state struct in bytes (header + captures + live vars).</param>
+/// <param name="MaxTemp">Highest temp index used (including temps added by the transform).</param>
 public sealed record StateMachineResult(
     List<IrInst> Instructions,
     int StateCount,

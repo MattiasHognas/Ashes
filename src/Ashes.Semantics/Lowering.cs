@@ -83,7 +83,9 @@ public sealed class Lowering
     private enum IntrinsicKind
     {
         Print,
-        Panic
+        Panic,
+        AsyncRun,
+        AsyncFromResult
     }
 
     private enum PreludeValueKind
@@ -2594,6 +2596,8 @@ public sealed class Lowering
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
+                IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -5123,7 +5127,7 @@ public sealed class Lowering
         var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
         var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.AsyncRun,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, resultType))
         );
     }
@@ -5142,7 +5146,7 @@ public sealed class Lowering
         var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
         var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.AsyncFromResult,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(resultType, taskType))
         );
     }
