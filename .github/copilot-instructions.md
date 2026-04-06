@@ -246,5 +246,5 @@ Ashes explicitly plans:
 - deterministic destruction
 - ownership + borrowing
 
-See docs/ROADMAP.md for milestone definitions.
+See docs/FUTURE_FEATURES.md for planned features.
 
