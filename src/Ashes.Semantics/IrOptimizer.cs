@@ -321,6 +321,21 @@ public static class IrOptimizer
             case IrInst.NetTcpClose n: usedTemps.Add(n.SocketTemp); break;
             case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
+            case IrInst.CreateTask ct: usedTemps.Add(ct.ClosureTemp); break;
+            case IrInst.CreateCompletedTask ct: usedTemps.Add(ct.ResultTemp); break;
+            case IrInst.AwaitTask at: usedTemps.Add(at.TaskTemp); break;
+            case IrInst.RunTask rt: usedTemps.Add(rt.TaskTemp); break;
+            case IrInst.AsyncSleep sl: usedTemps.Add(sl.MillisecondsTemp); break;
+            case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
+            case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
+            case IrInst.Suspend s:
+                usedTemps.Add(s.StateStructTemp);
+                usedTemps.Add(s.AwaitedTaskTemp);
+                foreach (var (_, sourceTemp) in s.SaveVars) usedTemps.Add(sourceTemp);
+                break;
+            case IrInst.Resume r:
+                usedTemps.Add(r.StateStructTemp);
+                break;
             case IrInst.PanicStr p: usedTemps.Add(p.Source); break;
             case IrInst.JumpIfFalse j: usedTemps.Add(j.CondTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;

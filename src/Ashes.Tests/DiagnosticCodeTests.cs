@@ -54,6 +54,22 @@ public sealed class DiagnosticCodeTests
         diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.ListElementTypeMismatch);
     }
 
+    [Test]
+    public void Await_outside_async_should_emit_ash010()
+    {
+        var diag = LowerExpression("await 42");
+
+        diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
+    }
+
+    [Test]
+    public void Await_inside_async_should_not_emit_ash010()
+    {
+        var diag = LowerExpression("async await (async 42)");
+
+        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
+    }
+
     private static Diagnostics LowerExpression(string source)
     {
         var diag = new Diagnostics();

@@ -25,7 +25,12 @@ public static class BuiltinRegistry
         NetTcpConnect,
         NetTcpSend,
         NetTcpReceive,
-        NetTcpClose
+        NetTcpClose,
+        AsyncRun,
+        AsyncFromResult,
+        AsyncSleep,
+        AsyncAll,
+        AsyncRace
     }
 
     public sealed record BuiltinModuleMember(
@@ -111,6 +116,17 @@ public static class BuiltinRegistry
                     ["send"] = new("send", BuiltinValueKind.NetTcpSend, IsCallable: true, Arity: 2),
                     ["receive"] = new("receive", BuiltinValueKind.NetTcpReceive, IsCallable: true, Arity: 2),
                     ["close"] = new("close", BuiltinValueKind.NetTcpClose, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Async"] = new(
+                "Ashes.Async",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["run"] = new("run", BuiltinValueKind.AsyncRun, IsCallable: true, Arity: 1),
+                    ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
+                    ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
+                    ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
+                    ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
                 })
         };
 
@@ -251,6 +267,16 @@ public static class BuiltinRegistry
             [],
             []);
 
+        var taskTypeParameters = new[]
+        {
+            new TypeParameterSymbol("E"),
+            new TypeParameterSymbol("A")
+        };
+        var taskDecl = new TypeDecl(
+            "Task",
+            [new TypeParameter("E"), new TypeParameter("A")],
+            []);
+
         return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
         {
             ["Unit"] = new(
@@ -300,7 +326,12 @@ public static class BuiltinRegistry
                 "Socket",
                 socketTypeParameters,
                 [],
-                socketDecl)
+                socketDecl),
+            ["Task"] = new(
+                "Task",
+                taskTypeParameters,
+                [],
+                taskDecl)
         };
     }
 }

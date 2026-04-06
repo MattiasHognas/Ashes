@@ -277,6 +277,12 @@ public sealed class Lexer
             return new Token(TokenKind.LetQuestion, "let?", 0, start, _pos - start);
         }
 
+        if (string.Equals(text, "let", StringComparison.Ordinal) && _pos < _text.Length && _text[_pos] == '!')
+        {
+            _pos++;
+            return new Token(TokenKind.LetBang, "let!", 0, start, _pos - start);
+        }
+
         return new Token(GetIdentifierTokenKind(text), text, 0, start, _pos - start);
     }
 
@@ -296,6 +302,8 @@ public sealed class Lexer
             "true" => TokenKind.True,
             "false" => TokenKind.False,
             "type" => TokenKind.Type,
+            "async" => TokenKind.Async,
+            "await" => TokenKind.Await,
             _ => TokenKind.Ident
         };
     }

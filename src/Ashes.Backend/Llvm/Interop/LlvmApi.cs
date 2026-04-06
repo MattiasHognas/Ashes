@@ -330,6 +330,10 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildUnreachable")]
     public static partial LlvmValueHandle BuildUnreachable(LlvmBuilderHandle b);
 
+    // ── Debugging ───────────────────────────────────────────────────────
+    [LibraryImport(Lib, EntryPoint = "LLVMPrintModuleToString")]
+    public static partial nint PrintModuleToString(LlvmModuleHandle module);
+
     // ── Verification ────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMVerifyModule")]
     public static partial int VerifyModule(LlvmModuleHandle module, LlvmVerifierFailureAction action, out nint outMessage);

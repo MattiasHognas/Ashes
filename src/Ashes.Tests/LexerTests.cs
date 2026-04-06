@@ -8,12 +8,13 @@ public sealed class LexerTests
     [Test]
     public void Next_should_tokenize_keywords_operators_and_literals()
     {
-        var tokens = LexAll("let let? rec in print if then else match with fun true false type foo >= <= == != -> :: |> |?> |!> + - * / = , | ( ) [ ] 123 1.5");
+        var tokens = LexAll("let let? let! rec in print if then else match with fun true false type async await foo >= <= == != -> :: |> |?> |!> + - * / = , | ( ) [ ] 123 1.5");
 
         tokens.Select(t => t.Kind).ShouldBe(
         [
             TokenKind.Let,
             TokenKind.LetQuestion,
+            TokenKind.LetBang,
             TokenKind.Rec,
             TokenKind.In,
             TokenKind.Ident,
@@ -26,6 +27,8 @@ public sealed class LexerTests
             TokenKind.True,
             TokenKind.False,
             TokenKind.Type,
+            TokenKind.Async,
+            TokenKind.Await,
             TokenKind.Ident,
             TokenKind.GreaterEquals,
             TokenKind.LessEquals,
@@ -125,6 +128,40 @@ public sealed class LexerTests
             TokenKind.Int,
             TokenKind.EOF
         ]);
+    }
+
+    [Test]
+    public void Next_should_tokenize_async_keyword()
+    {
+        var tokens = LexAll("async");
+        tokens[0].Kind.ShouldBe(TokenKind.Async);
+        tokens[0].Text.ShouldBe("async");
+    }
+
+    [Test]
+    public void Next_should_tokenize_await_keyword()
+    {
+        var tokens = LexAll("await");
+        tokens[0].Kind.ShouldBe(TokenKind.Await);
+        tokens[0].Text.ShouldBe("await");
+    }
+
+    [Test]
+    public void Next_should_tokenize_let_bang()
+    {
+        var tokens = LexAll("let! x = 1 in x");
+        tokens[0].Kind.ShouldBe(TokenKind.LetBang);
+        tokens[0].Text.ShouldBe("let!");
+        tokens[1].Kind.ShouldBe(TokenKind.Ident);
+        tokens[1].Text.ShouldBe("x");
+    }
+
+    [Test]
+    public void Next_should_treat_async_prefix_identifier_as_ident()
+    {
+        var tokens = LexAll("asyncFoo");
+        tokens[0].Kind.ShouldBe(TokenKind.Ident);
+        tokens[0].Text.ShouldBe("asyncFoo");
     }
 
     private static List<Token> LexAll(string source)

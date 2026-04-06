@@ -142,6 +142,7 @@ public static class Formatter
             Expr.ListLit list => list.Elements.All(x => IsSingleLine(x, preferPipelines)),
             Expr.Cons cons => IsSingleLine(cons.Head, preferPipelines) && IsSingleLine(cons.Tail, preferPipelines),
             Expr.Call c => (!preferPipelines || !TryCollectPipeline(c, out _, out _)) && IsSingleLine(c.Func, preferPipelines) && IsSingleLine(c.Arg, preferPipelines),
+            Expr.Await awaitExpr => IsSingleLine(awaitExpr.Task, preferPipelines),
             _ => false
         };
     }
@@ -172,6 +173,10 @@ public static class Formatter
 
             case Expr.Match match:
                 WriteMatch(sb, match, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.Async asyncExpr:
+                WriteAsync(sb, asyncExpr, indent, parentPrec, preferPipelines, options);
                 return;
 
             default:
@@ -352,6 +357,24 @@ public static class Formatter
             WriteIndent(sb, indent + options.IndentSize, options);
             WriteExpr(sb, l.Body, indent + options.IndentSize, 0, preferPipelines, options);
         }
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    private static void WriteAsync(StringBuilder sb, Expr.Async asyncExpr, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        var needsParens = parentPrec > PrecLetIfLambda;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        sb.Append("async\n");
+        WriteIndent(sb, indent + options.IndentSize, options);
+        WriteExpr(sb, asyncExpr.Body, indent + options.IndentSize, 0, preferPipelines, options);
 
         if (needsParens)
         {
@@ -853,7 +876,7 @@ public static class Formatter
                     }
 
                     // Function position: if it's a lambda/let/if/add, parenthesize
-                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual;
+                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Async or Expr.Await;
                     if (funcNeedsParens)
                     {
                         sb.Append('(');
@@ -888,6 +911,13 @@ public static class Formatter
             case Expr.Match match:
                 WriteMatch(sb, match, indent, parentPrec, preferPipelines, options);
                 return;
+
+            case Expr.Await awaitExpr:
+                {
+                    sb.Append("await ");
+                    WriteExprInline(sb, awaitExpr.Task, indent, PrecCall, preferPipelines, options);
+                    return;
+                }
 
             // Fallback to multiline writer (rare)
             default:

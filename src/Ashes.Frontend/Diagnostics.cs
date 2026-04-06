@@ -28,6 +28,8 @@ public static class DiagnosticCodes
     public const string ListElementTypeMismatch = "ASH005";
     public const string UseAfterDrop = "ASH006";
     public const string DoubleDrop = "ASH007";
+    public const string AwaitOutsideAsync = "ASH010";
+    public const string AsyncErrorTypeConflict = "ASH011";
 }
 
 public sealed record DiagnosticEntry(TextSpan Span, string Message, string? Code = null)

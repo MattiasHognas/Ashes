@@ -51,6 +51,9 @@ public abstract record Expr
     public sealed record Cons(Expr Head, Expr Tail) : Expr;
     public sealed record Match(Expr Value, IReadOnlyList<MatchCase> Cases, int? Pos = null) : Expr;
 
+    public sealed record Async(Expr Body) : Expr;
+    public sealed record Await(Expr Task) : Expr;
+
 }
 
 public readonly record struct MatchCase(Pattern Pattern, Expr Body);

@@ -24,6 +24,7 @@ public sealed class Lowering
     private bool _usesPrintBool;
     private bool _usesConcatStr;
     private bool _usesClosures;
+    private bool _usesAsync;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
     // Source location tracking for debug info (Phase 0c)
@@ -76,10 +77,21 @@ public sealed class Lowering
 
     private TcoContext? _tcoCtx;
 
+    // Async context tracking — true when lowering inside an async block body
+    private bool _insideAsync;
+    // The error type variable for the current async block; unified from each await's E.
+    // Uses save/restore pattern to support nested async blocks.
+    private TypeRef? _currentAsyncErrorType;
+
     private enum IntrinsicKind
     {
         Print,
-        Panic
+        Panic,
+        AsyncRun,
+        AsyncFromResult,
+        AsyncSleep,
+        AsyncAll,
+        AsyncRace
     }
 
     private enum PreludeValueKind
@@ -527,7 +539,8 @@ public sealed class Lowering
             UsesPrintStr: _usesPrintStr,
             UsesPrintBool: _usesPrintBool,
             UsesConcatStr: _usesConcatStr,
-            UsesClosures: _usesClosures
+            UsesClosures: _usesClosures,
+            UsesAsync: _usesAsync
         );
     }
 
@@ -564,6 +577,8 @@ public sealed class Lowering
             Expr.ListLit list => LowerListLit(list),
             Expr.Cons cons => LowerCons(cons),
             Expr.Match match => LowerMatch(match),
+            Expr.Async asyncExpr => LowerAsync(asyncExpr),
+            Expr.Await awaitExpr => LowerAwait(awaitExpr),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -760,6 +775,11 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -1995,6 +2015,198 @@ public sealed class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
+    /// <summary>
+    /// Ashes.Async.run(task) — synchronous execution.
+    /// Drives the task's coroutine to completion using RunTask,
+    /// then wraps the result in Result(E, A).
+    /// </summary>
+    private (int, TypeRef) LowerAsyncRun(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+
+        var (taskTemp, taskType) = LowerExpr(taskArg);
+
+        // Verify the argument is a Task(E, A)
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task or Result type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedTaskType);
+
+        // RunTask synchronously drives the coroutine to completion
+        int bodyTemp = NewTemp();
+        Emit(new IrInst.RunTask(bodyTemp, taskTemp));
+
+        // Wrap in Ok(value) — returns Result(E, A)
+        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
+        int adtTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(adtTemp, GetConstructorTag(okConstructor), 1));
+        Emit(new IrInst.SetAdtField(adtTemp, 0, bodyTemp));
+        return (adtTemp, resultType);
+    }
+
+    /// <summary>
+    /// Ashes.Async.fromResult(result) — creates a pre-completed task.
+    /// Wraps a Result(E, A) into a Task(E, A) that is already completed.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(resultArg);
+
+        var (resultTemp, resultType) = LowerExpr(resultArg);
+
+        if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
+            || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
+        Unify(resultType, expectedResultType);
+
+        // Extract the Ok payload from the Result and wrap in a completed task.
+        // Check tag to determine Ok vs Error: Ok → extract field[0], Error → pass through.
+        var tagTemp = NewTemp();
+        var expectedOkTagTemp = NewTemp();
+        var isOkTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+
+        var errorLabel = NewLabel("from_result_error");
+        var endLabel = NewLabel("from_result_end");
+        var resultSlot = NewLocal();
+
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+
+        // Ok path: extract payload, create completed task
+        var payloadTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
+        int okTaskTemp = NewTemp();
+        Emit(new IrInst.CreateCompletedTask(okTaskTemp, payloadTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        // Error path: pass through the result value as the task (error propagation placeholder)
+        Emit(new IrInst.Label(errorLabel));
+        int errTaskTemp = NewTemp();
+        Emit(new IrInst.CreateCompletedTask(errTaskTemp, resultTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        Emit(new IrInst.Label(endLabel));
+        int finalTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(finalTemp, resultSlot));
+        return (finalTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+    }
+
+    /// <summary>
+    /// Ashes.Async.sleep(ms) — creates a sleep task.
+    /// Returns Task(Str, Int) — a task that completes after the given milliseconds
+    /// and returns 0 (Unit placeholder).
+    /// </summary>
+    private (int, TypeRef) LowerAsyncSleep(Expr msArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(msArg);
+        _usesAsync = true;
+
+        var (msTemp, msType) = LowerExpr(msArg);
+        Unify(msType, new TypeRef.TInt());
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(msArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // AsyncSleep creates a pre-configured sleep task
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncSleep(taskTemp, msTemp));
+
+        // Return type: Task(Str, Int) — sleep returns 0 on completion
+        var strType = new TypeRef.TStr();
+        var intType = new TypeRef.TInt();
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [strType, intType]));
+    }
+
+    /// <summary>
+    /// Ashes.Async.all(tasks) — runs all tasks and collects results.
+    /// Returns Task(E, List(A)) — a task containing a list of all results.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncAll(Expr taskListArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskListArg);
+        _usesAsync = true;
+
+        var (listTemp, listType) = LowerExpr(taskListArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskListArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Unify input type: List(Task(E, A))
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        var expectedListType = new TypeRef.TList(innerTaskType);
+        Unify(listType, expectedListType);
+
+        // Emit AsyncAll IR instruction
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncAll(taskTemp, listTemp));
+
+        // Return type: Task(E, List(A))
+        var resultListType = new TypeRef.TList(Prune(successType));
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), resultListType]));
+    }
+
+    /// <summary>
+    /// Ashes.Async.race(tasks) — runs the first task to completion.
+    /// Returns Task(E, A) — a task with the first task's result.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncRace(Expr taskListArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskListArg);
+        _usesAsync = true;
+
+        var (listTemp, listType) = LowerExpr(taskListArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskListArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Unify input type: List(Task(E, A))
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        var expectedListType = new TypeRef.TList(innerTaskType);
+        Unify(listType, expectedListType);
+
+        // Emit AsyncRace IR instruction
+        int taskTemp = NewTemp();
+        Emit(new IrInst.AsyncRace(taskTemp, listTemp));
+
+        // Return type: Task(E, A)
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+    }
+
     private (int, TypeRef) LowerIf(Expr.If iff)
     {
         using var diagnosticSpan = PushDiagnosticSpan(iff);
@@ -2487,6 +2699,11 @@ public sealed class Lowering
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
+                IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+                IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+                IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -2523,6 +2740,11 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                 _ => StdMemberNotFound(qv.Module, qv.Name)
             };
         }
@@ -2874,6 +3096,187 @@ public sealed class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
+    }
+
+    private (int, TypeRef) LowerAsync(Expr.Async asyncExpr)
+    {
+        _usesAsync = true;
+
+        // Lift the async body into a separate coroutine function,
+        // then create a task struct pointing to the coroutine.
+
+        var savedInsideAsync = _insideAsync;
+        var savedAsyncErrorType = _currentAsyncErrorType;
+        _insideAsync = true;
+
+        // The error type variable for this async block — unified from awaits.
+        // Each await inside this block unifies its Task(E, A)'s E with this variable.
+        var errorTypeVar = NewTypeVar();
+        _currentAsyncErrorType = errorTypeVar;
+
+        // --- Capture computation (same as lambda lifting) ---
+        var bound = new HashSet<string>(StringComparer.Ordinal);
+        var free = FreeVars(asyncExpr.Body, bound);
+        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme)
+                           .Distinct().ToList();
+
+        // --- Allocate environment for captured variables (in outer context) ---
+        int envPtrTemp;
+        if (captures.Count == 0)
+        {
+            envPtrTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(envPtrTemp, 0));
+        }
+        else
+        {
+            envPtrTemp = NewTemp();
+            Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+            for (int i = 0; i < captures.Count; i++)
+            {
+                var (capTemp, _) = LowerVar(new Expr.Var(captures[i]));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
+            }
+        }
+
+        // --- Generate coroutine function label ---
+        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
+
+        // --- Save outer lowering state ---
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTemp;
+        var savedLocal = _nextLocal;
+        var savedScopes = _scopes.ToArray();
+        var savedOwnershipScopes = _ownershipScopes.ToArray();
+        var savedTcoCtx = _tcoCtx;
+        _tcoCtx = null;
+
+        // --- Reset state for coroutine function ---
+        _inst.Clear();
+        _nextTemp = 0;
+        _nextLocal = 0;
+
+        // Coroutine function prologue: local[0] = state struct pointer, local[1] = dummy arg
+        int stateStructSlot = NewLocal(); // → local 0
+        int dummyArgSlot = NewLocal();    // → local 1
+        System.Diagnostics.Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
+
+        // --- Set up scope for coroutine body ---
+        var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        if (_hasAshesIO) AddStdIOBindings(scope);
+
+        // Captured variables are accessed via env (state struct captures section)
+        for (int i = 0; i < captures.Count; i++)
+        {
+            var capBinding = Lookup(captures[i])!;
+            if (capBinding is Binding.Scheme capScheme)
+            {
+                scope[captures[i]] = new Binding.EnvScheme(i, capScheme.S, capScheme.DefinitionSpan);
+            }
+            else
+            {
+                scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
+            }
+        }
+
+        _scopes.Clear();
+        _scopes.Push(scope);
+        _ownershipScopes.Clear();
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+
+        // --- Lower the async body ---
+        var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
+        Emit(new IrInst.Return(bodyTemp));
+
+        // --- Apply state machine transform ---
+        var transformResult = StateMachineTransform.Transform(_inst, captures.Count);
+
+        // --- Create coroutine IrFunction ---
+        var coroutineFunc = new IrFunction(
+            Label: coroutineLabel,
+            Instructions: new List<IrInst>(transformResult.Instructions),
+            LocalCount: _nextLocal,
+            TempCount: Math.Max(_nextTemp, transformResult.MaxTemp + 1),
+            HasEnvAndArgParams: true,
+            Coroutine: new CoroutineInfo(
+                StateCount: transformResult.StateCount,
+                StateStructSize: transformResult.StateStructSize,
+                CaptureCount: captures.Count
+            )
+        );
+        _funcs.Add(coroutineFunc);
+
+        // --- Restore outer state ---
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTemp = savedTemp;
+        _nextLocal = savedLocal;
+        _scopes.Clear();
+        foreach (var s in savedScopes.Reverse())
+        {
+            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
+        }
+        _ownershipScopes.Clear();
+        foreach (var s in savedOwnershipScopes.Reverse())
+        {
+            _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(s, StringComparer.Ordinal));
+        }
+        _tcoCtx = savedTcoCtx;
+        _insideAsync = savedInsideAsync;
+        _currentAsyncErrorType = savedAsyncErrorType;
+
+        // --- Build Task(E, A) type ---
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(asyncExpr), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var taskType = new TypeRef.TNamedType(taskSymbol, [errorTypeVar, bodyType]);
+
+        // --- Emit CreateTask in outer context ---
+        // Build a closure pairing the coroutine function with its captured env,
+        // then wrap it in a task struct via CreateTask.
+        _usesClosures = true;
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp));
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captures.Count));
+        return (taskTemp, taskType);
+    }
+
+    private (int, TypeRef) LowerAwait(Expr.Await awaitExpr)
+    {
+        if (!_insideAsync)
+        {
+            ReportDiagnostic(GetSpan(awaitExpr), "'await' can only be used inside an 'async' block.", DiagnosticCodes.AwaitOutsideAsync);
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
+
+        // Verify the operand is a Task(E, A)
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedType);
+
+        // Unify the awaited task's error type with the enclosing async block's error type.
+        // This ensures all awaits within the same async block share a consistent error type.
+        if (_currentAsyncErrorType is not null)
+        {
+            Unify(errorType, _currentAsyncErrorType);
+        }
+
+        // AwaitTask synchronously extracts the result
+        int resultTemp = NewTemp();
+        Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
+        return (resultTemp, Prune(successType));
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -3906,6 +4309,12 @@ public sealed class Lowering
                     var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
                     Visit(lam.Body, boundWithParam);
                     return;
+                case Expr.Async asyncExpr:
+                    Visit(asyncExpr.Body, bnd);
+                    return;
+                case Expr.Await awaitExpr:
+                    Visit(awaitExpr.Task, bnd);
+                    return;
                 default:
                     throw new NotSupportedException(ex.GetType().Name);
             }
@@ -4821,6 +5230,97 @@ public sealed class Lowering
         return new Binding.PreludeValue(
             PreludeValueKind.Args,
             new TypeScheme([], new TypeRef.TList(new TypeRef.TStr()))
+        );
+    }
+
+    // Ashes.Async.run : Task(E, A) -> Result(E, A)
+    private Binding.Intrinsic CreateAsyncRunBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task or Result type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncRun,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, resultType))
+        );
+    }
+
+    // Ashes.Async.fromResult : Result(E, A) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncFromResultBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task or Result type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncFromResult,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(resultType, taskType))
+        );
+    }
+
+    // Ashes.Async.sleep : Int -> Task(Str, Int)
+    private Binding.Intrinsic CreateAsyncSleepBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var taskType = new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), new TypeRef.TInt()]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncSleep,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), taskType))
+        );
+    }
+
+    // Ashes.Async.all : List(Task(E, A)) -> Task(E, List(A))
+    private Binding.Intrinsic CreateAsyncAllBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var inputType = new TypeRef.TList(innerTaskType);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, new TypeRef.TList(a)]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncAll,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
+        );
+    }
+
+    // Ashes.Async.race : List(Task(E, A)) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncRaceBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var inputType = new TypeRef.TList(innerTaskType);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncRace,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
         );
     }
 }

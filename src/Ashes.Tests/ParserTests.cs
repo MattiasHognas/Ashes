@@ -435,6 +435,73 @@ public sealed class ParserTests
         diag.Errors.ShouldContain(x => x.Contains("Unexpected token after end of expression: Dot.", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Parse_should_support_async_expression()
+    {
+        var asyncExpr = Parse("async 42").ShouldBeOfType<Expr.Async>();
+        asyncExpr.Body.ShouldBe(new Expr.IntLit(42));
+    }
+
+    [Test]
+    public void Parse_should_support_async_with_nested_body()
+    {
+        var asyncExpr = Parse("async let x = 1 in x").ShouldBeOfType<Expr.Async>();
+        var letExpr = asyncExpr.Body.ShouldBeOfType<Expr.Let>();
+        letExpr.Name.ShouldBe("x");
+    }
+
+    [Test]
+    public void Parse_should_support_await_expression()
+    {
+        var asyncExpr = Parse("async await x").ShouldBeOfType<Expr.Async>();
+        var awaitExpr = asyncExpr.Body.ShouldBeOfType<Expr.Await>();
+        awaitExpr.Task.ShouldBe(new Expr.Var("x"));
+    }
+
+    [Test]
+    public void Parse_should_support_await_with_function_call()
+    {
+        var asyncExpr = Parse("async await f(x)").ShouldBeOfType<Expr.Async>();
+        var awaitExpr = asyncExpr.Body.ShouldBeOfType<Expr.Await>();
+        var call = awaitExpr.Task.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBe(new Expr.Var("f"));
+        call.Arg.ShouldBe(new Expr.Var("x"));
+    }
+
+    [Test]
+    public void Parse_should_support_let_bang_desugaring_to_let_await()
+    {
+        // let! x = expr in body  ⟶  let x = await expr in body
+        var asyncExpr = Parse("async let! x = f(1) in x").ShouldBeOfType<Expr.Async>();
+        var letExpr = asyncExpr.Body.ShouldBeOfType<Expr.Let>();
+        letExpr.Name.ShouldBe("x");
+        var awaitExpr = letExpr.Value.ShouldBeOfType<Expr.Await>();
+        awaitExpr.Task.ShouldBeOfType<Expr.Call>();
+        letExpr.Body.ShouldBe(new Expr.Var("x"));
+    }
+
+    [Test]
+    public void Parse_should_support_multiple_let_bang_bindings()
+    {
+        // Multiple let! chain: each desugars to let ... = await ... in ...
+        var asyncExpr = Parse("async let! a = x in let! b = y in a").ShouldBeOfType<Expr.Async>();
+        var letA = asyncExpr.Body.ShouldBeOfType<Expr.Let>();
+        letA.Name.ShouldBe("a");
+        letA.Value.ShouldBeOfType<Expr.Await>();
+        var letB = letA.Body.ShouldBeOfType<Expr.Let>();
+        letB.Name.ShouldBe("b");
+        letB.Value.ShouldBeOfType<Expr.Await>();
+    }
+
+    [Test]
+    public void Parse_should_support_let_with_await_on_rhs()
+    {
+        var asyncExpr = Parse("async let x = await task in x").ShouldBeOfType<Expr.Async>();
+        var letExpr = asyncExpr.Body.ShouldBeOfType<Expr.Let>();
+        letExpr.Name.ShouldBe("x");
+        letExpr.Value.ShouldBeOfType<Expr.Await>();
+    }
+
     private static Expr Parse(string source)
     {
         var diag = new Diagnostics();

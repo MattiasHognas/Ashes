@@ -164,7 +164,8 @@
     UsesPrintStr: false,
     UsesPrintBool: false,
     UsesConcatStr: false,
-    UsesClosures: false
+    UsesClosures: false,
+    UsesAsync: false
   },
   ElfSha256: ACF37C5475F2F784D509EED87F67800A5A0A0485FA512C97184540A56BFB54CA
 }

@@ -96,6 +96,11 @@ public sealed class Parser
 
     private Expr ParseMatch()
     {
+        if (_current.Kind == TokenKind.Async)
+        {
+            return ParseAsync();
+        }
+
         if (_current.Kind != TokenKind.Match)
         {
             return ParseIf();
@@ -127,6 +132,14 @@ public sealed class Parser
         }
 
         return RegisterExpr(new Expr.Match(value, cases, matchPos), matchPos, LastConsumedEnd);
+    }
+
+    private Expr ParseAsync()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Async);
+        var body = ParseExpressionCore();
+        return RegisterExpr(new Expr.Async(body), start, LastConsumedEnd);
     }
 
     private Expr ParseIf()
@@ -221,7 +234,46 @@ public sealed class Parser
             return letResultExpr;
         }
 
+        if (_current.Kind == TokenKind.LetBang)
+        {
+            // let! x = expr in body  ⟶  let x = await expr in body
+            // let! x = expr1 let! y = expr2 in body  ⟶  let x = await expr1 in let y = await expr2 in body
+            return ParseLetBangChain();
+        }
+
         return ParseLambda();
+    }
+
+    /// <summary>
+    /// Parses a chain of <c>let!</c> bindings, desugaring each into
+    /// <c>let name = await value in body</c>. Consecutive <c>let!</c>
+    /// bindings chain without explicit <c>in</c> between them — only the
+    /// final binding requires <c>in</c> before the result expression.
+    /// </summary>
+    private Expr ParseLetBangChain()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.LetBang);
+        var nameToken = Consume(TokenKind.Ident);
+        Consume(TokenKind.Equals);
+        var value = ParseExpressionCore();
+        var awaitValue = RegisterExpr(new Expr.Await(value), AstSpans.GetOrDefault(value).Start, AstSpans.GetOrDefault(value).End);
+
+        Expr body;
+        if (_current.Kind == TokenKind.LetBang)
+        {
+            // Chain: the body is the next let! binding (no 'in' required between them)
+            body = ParseLetBangChain();
+        }
+        else
+        {
+            Consume(TokenKind.In);
+            body = ParseExpressionCore();
+        }
+
+        var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body), start, LastConsumedEnd);
+        AstSpans.SetLetName(letExpr, nameToken.Span);
+        return letExpr;
     }
 
     /// <summary>
@@ -455,6 +507,14 @@ public sealed class Parser
             var zero = RegisterExpr(new Expr.IntLit(0), start, start + 1);
             var right = ParseUnary();
             return RegisterExpr(new Expr.Subtract(zero, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        if (_current.Kind == TokenKind.Await)
+        {
+            var start = _current.Position;
+            Consume(TokenKind.Await);
+            var operand = ParseCall();
+            return RegisterExpr(new Expr.Await(operand), start, AstSpans.GetOrDefault(operand).End);
         }
 
         return ParseCall();

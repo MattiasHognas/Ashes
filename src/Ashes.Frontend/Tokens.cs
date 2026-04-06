@@ -47,6 +47,9 @@ public enum TokenKind
     RBracket,
     Arrow, // ->
     Dot, // .
+    Async,
+    Await,
+    LetBang,
 }
 
 public readonly record struct Token(

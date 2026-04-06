@@ -53,6 +53,8 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.send(socket)(text)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)`
 - `Ashes.Net.Tcp.close(socket)`
+- `Ashes.Async.run(task)`
+- `Ashes.Async.fromResult(result)`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
@@ -1425,7 +1427,162 @@ internal operations as long as the observable result is identical.
 
 ---
 
-# 19. Unsupported (Future)
+# 19. Async/Await
+
+Ashes supports structured concurrency via `async` and `await` expressions.
+
+## 19.1 Task Type
+
+    Task(E, A)
+
+`Task(E, A)` is a built-in parametric type representing an asynchronous
+computation that may fail with error type `E` or succeed with value type `A`.
+
+- `Task` is an **owned type** (like `String`, `List`, closures).
+- `Task` values are **not resource types** — they do not have use-after-close
+  or double-close restrictions.
+- The compiler inserts `Drop` for `Task` at scope exit like any other owned type.
+
+## 19.2 Async Expressions
+
+`async <expr>` wraps an expression into a `Task(E, A)` value:
+
+    let task = async
+        let response = await Ashes.Http.get("http://example.com")
+        in response
+    in Ashes.Async.run(task)
+
+- `async` is an expression, not a declaration modifier.
+- `async <expr>` where `<expr> : A` produces `Task(E, A)`.
+- The error type `E` is unified from any `await` sub-expressions.
+- `async` blocks may be nested. Inner blocks create independent tasks.
+
+## 19.3 Await Expressions
+
+`await <expr>` unwraps a `Task(E, A)` inside an `async` block:
+
+    async
+        let a = await taskA
+        in
+            let b = await taskB
+            in a + b
+
+- `await <expr>` where `<expr> : Task(E, A)` produces `A`.
+- `await` may only appear inside an `async` block. Using `await` outside
+  `async` is a compile-time error (`ASH010`).
+- Tasks are currently infallible: `Ashes.Async.run` always returns `Ok(value)`.
+  Task failure/error propagation semantics are reserved for a future release.
+
+## 19.4 Async Let (let!)
+
+`let!` is sugar for `await` in a binding position:
+
+    async
+        let! response = Ashes.Http.get("http://example.com")
+        in response
+
+This desugars to:
+
+    async
+        let response = await Ashes.Http.get("http://example.com")
+        in response
+
+`let!` flattens binding chains — no additional nesting per await point.
+Multiple `let!` bindings chain sequentially:
+
+    async
+        let! a = Ashes.Http.get("http://a.com")
+        let! b = Ashes.Http.get("http://b.com")
+        in a + b
+
+Desugars to:
+
+    async
+        let a = await Ashes.Http.get("http://a.com")
+        in
+            let b = await Ashes.Http.get("http://b.com")
+            in a + b
+
+## 19.5 Type Inference Rules
+
+- `async <expr>` where `<expr> : A` produces `Task(E, A)`.
+  `E` is unified from any `await` sub-expression.
+- `await <expr>` where `<expr> : Task(E, A)` produces `A`.
+- Functions returning `Task` are regular functions; there is no `async fun`
+  modifier.
+
+## 19.6 Result Interop
+
+`Task(E, A)` and `Result(E, A)` share the same error-propagation model:
+
+- `Ashes.Async.fromResult(result)` — wraps a `Result(E, A)` into a
+  `Task(E, A)` that completes immediately.
+- `Ashes.Async.run(task)` — runs a task to completion and returns
+  `Result(E, A)`.
+
+## 19.7 Ashes.Async Module
+
+| Function | Type |
+|----------|------|
+| `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
+| `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
+| `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
+| `Ashes.Async.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
+| `Ashes.Async.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
+
+### 19.7.1 Ashes.Async.sleep
+
+`Ashes.Async.sleep(ms)` creates a task that suspends for the given
+number of milliseconds, then completes with `0`:
+
+    async
+        let _ = await Ashes.Async.sleep(100)
+        in 42
+
+- The argument is an `Int` representing milliseconds.
+- The returned task has type `Task(Str, Int)`.
+- On completion, the result is `0` (unit placeholder).
+- `sleep` must be used inside an `async` block via `await`.
+- On Linux, `sleep` uses the `nanosleep` syscall.
+- On Windows, `sleep` uses the `Sleep` kernel32 function.
+
+### 19.7.2 Ashes.Async.all
+
+`Ashes.Async.all(tasks)` takes a list of tasks and runs them all,
+collecting results into a list in the original order:
+
+    async
+        let results = await Ashes.Async.all([async 1, async 2, async 3])
+        in results
+
+- The argument is a `List(Task(E, A))`.
+- The returned task has type `Task(E, List(A))`.
+- All tasks are run sequentially (left to right).
+- Results are collected in the same order as the input list.
+- An empty input list produces an empty result list.
+
+### 19.7.3 Ashes.Async.race
+
+`Ashes.Async.race(tasks)` takes a list of tasks and returns the result
+of the first task:
+
+    async
+        let result = await Ashes.Async.race([async 42, async 99])
+        in result
+
+- The argument is a `List(Task(E, A))`.
+- The returned task has type `Task(E, A)`.
+- Only the first task in the list is run.
+- An empty input list produces `0` (unit placeholder).
+
+## 19.8 Diagnostics
+
+- `ASH010` — `await` used outside an `async` block.
+- `ASH011` — `async` block has incompatible error types across await points.
+
+---
+
+# 20. Unsupported (Future)
 
 See `FUTURE_FEATURES.md` for the list of planned but not yet supported features.
 
