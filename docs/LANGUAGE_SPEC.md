@@ -1525,6 +1525,23 @@ Desugars to:
 |----------|------|
 | `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
 | `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
+| `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
+
+### 19.7.1 Ashes.Async.sleep
+
+`Ashes.Async.sleep(ms)` creates a task that suspends for the given
+number of milliseconds, then completes with `0`:
+
+    async
+        let _ = await Ashes.Async.sleep(100)
+        in 42
+
+- The argument is an `Int` representing milliseconds.
+- The returned task has type `Task(Str, Int)`.
+- On completion, the result is `0` (unit placeholder).
+- `sleep` must be used inside an `async` block via `await`.
+- On Linux, `sleep` uses the `nanosleep` syscall.
+- On Windows, `sleep` uses the `Sleep` kernel32 function.
 
 ## 19.8 Diagnostics
 

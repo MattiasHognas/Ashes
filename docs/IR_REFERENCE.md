@@ -243,6 +243,7 @@ All file operations return `Result` ADTs: `Ok(value)` on success,
 | `CreateCompletedTask` | `Target`, `ResultTemp` | Allocate pre-completed task (state = -1) |
 | `AwaitTask` | `Target`, `TaskTemp` | Await a sub-task inside a coroutine |
 | `RunTask` | `Target`, `TaskTemp` | Synchronously drive a task to completion |
+| `AsyncSleep` | `Target`, `MillisecondsTemp` | Create a sleep task (state = -2) |
 | `Suspend` | `StateStructTemp`, `NextState`, `AwaitedTaskTemp`, `SaveVars` | State machine suspend point |
 | `Resume` | `StateStructTemp`, `ResultTemp`, `RestoreVars` | State machine resume point |
 
@@ -254,12 +255,14 @@ live temps and locals across the await point.
 
 | Offset | Field | Description |
 |--------|-------|-------------|
-| 0 | `StateIndex` | Current state number (-1 = completed) |
+| 0 | `StateIndex` | Current state number (-1 = completed, -2 = sleeping) |
 | 8 | `CoroutineFn` | Pointer to coroutine function |
 | 16 | `ResultSlot` | Result value / awaited task result |
 | 24 | `AwaitedTask` | Pointer to sub-task being awaited |
-| 32+ | Captures | Captured environment variables |
-| 32+N*8+ | Live vars | Live variable slots across await points |
+| 32 | `NextTask` | Queue linked list pointer (Phase C event loop) |
+| 40 | `SleepDeadlineNs` | Sleep duration in milliseconds (Phase C) |
+| 48+ | Captures | Captured environment variables |
+| 48+N*8+ | Live vars | Live variable slots across await points |
 
 ------------------------------------------------------------------------
 

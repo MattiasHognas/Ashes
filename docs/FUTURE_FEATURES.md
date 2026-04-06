@@ -554,18 +554,22 @@ Deliverables:
 - Tests: multi-await coroutines, captured variables across awaits,
   nested tasks, state machine C# unit tests
 
-### Phase C — Event Loop Runtime
+### Phase C — Event Loop Runtime ✅
 
-Implement the async runtime: task queue, event loop, platform
-I/O readiness (`epoll` on Linux, `WSAPoll` on Windows).
+Implement the async runtime: sleep task primitive, platform-specific
+timer support, sleep-aware event loop in the task runner.
 
 Deliverables:
-- `__ashes_runtime_run` event loop
-- `__ashes_task_create`, `__ashes_task_await` runtime functions
-- `epoll`-based I/O registration (Linux x64 + ARM64)
-- `WSAPoll`-based I/O registration (Windows)
-- `Ashes.Async.run` built-in
-- Tests: async sleep, async TCP echo, concurrent tasks
+- `IrInst.AsyncSleep` — creates a sleep task (state=-2, SLEEPING)
+- `TaskStructLayout` extended: `NextTask`, `SleepDeadlineNs`,
+  `StateCompleted` (-1), `StateSleeping` (-2), HeaderSize 32→48
+- `Ashes.Async.sleep(ms)` — `Int -> Task(Str, Int)` builtin
+- `EmitNanosleep` — Linux `nanosleep` syscall (x64 + ARM64)
+- `EmitWindowsSleep` — Windows `Sleep()` kernel32 import
+- Sleep-aware `EmitRunTask` and `EmitRunTaskRecursive`: detect
+  sleeping sub-tasks, perform platform sleep, mark complete
+- Tests: async_sleep, async_sleep_sequential,
+  async_sleep_with_computation
 
 ### Phase D — Async Networking
 
