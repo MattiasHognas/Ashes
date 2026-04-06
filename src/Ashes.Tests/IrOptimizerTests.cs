@@ -294,14 +294,7 @@ public sealed class IrOptimizerTests
         Directory.CreateDirectory(tmpDir);
 
         var exePath = Path.Combine(tmpDir, $"opt_{Guid.NewGuid():N}");
-        await File.WriteAllBytesAsync(exePath, elfBytes);
-
-#pragma warning disable CA1416
-        File.SetUnixFileMode(exePath,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
+        TestProcessHelper.WriteExecutable(exePath, elfBytes);
 
         var psi = new System.Diagnostics.ProcessStartInfo(exePath)
         {
@@ -310,7 +303,7 @@ public sealed class IrOptimizerTests
             UseShellExecute = false
         };
 
-        using var proc = System.Diagnostics.Process.Start(psi)!;
+        using var proc = await TestProcessHelper.StartProcessAsync(psi);
         string stdout = await proc.StandardOutput.ReadToEndAsync();
         await proc.WaitForExitAsync();
         return stdout;

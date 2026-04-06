@@ -123,19 +123,13 @@ public sealed class ProjectFixtureTests
         {
             var exeBytes = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"project_{Guid.NewGuid():N}.exe");
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            TestProcessHelper.WriteExecutable(exePath, exeBytes);
         }
         else
         {
             var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"project_{Guid.NewGuid():N}");
-            await File.WriteAllBytesAsync(exePath, elfBytes);
-#pragma warning disable CA1416
-            File.SetUnixFileMode(exePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
         }
 
         try
@@ -147,7 +141,7 @@ public sealed class ProjectFixtureTests
                 UseShellExecute = false
             };
 
-            using var proc = Process.Start(psi)!;
+            using var proc = await TestProcessHelper.StartProcessAsync(psi);;
             var stdout = await proc.StandardOutput.ReadToEndAsync();
             var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();

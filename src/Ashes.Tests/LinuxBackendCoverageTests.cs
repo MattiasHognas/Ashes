@@ -621,14 +621,7 @@ public sealed class LinuxBackendCoverageTests
         var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}");
         try
         {
-            await File.WriteAllBytesAsync(exePath, elfBytes);
-
-#pragma warning disable CA1416
-            File.SetUnixFileMode(exePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
 
             var psi = new ProcessStartInfo(exePath)
             {
@@ -649,7 +642,7 @@ public sealed class LinuxBackendCoverageTests
                 }
             }
 
-            using var proc = await StartProcessWithRetryAsync(psi);
+            using var proc = await TestProcessHelper.StartProcessAsync(psi);
             if (stdin is not null)
             {
                 await proc.StandardInput.WriteAsync(stdin);
@@ -680,26 +673,6 @@ public sealed class LinuxBackendCoverageTests
         var serverException = await serverTask;
         serverException.ShouldBeNull(serverException?.ToString());
         return result;
-    }
-
-    private static async Task<Process> StartProcessWithRetryAsync(ProcessStartInfo psi)
-    {
-        const int textFileBusyError = 26;
-        const int maxAttempts = 5;
-
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                return Process.Start(psi)!;
-            }
-            catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < maxAttempts - 1)
-            {
-                await Task.Delay(20 * (attempt + 1));
-            }
-        }
-
-        throw new InvalidOperationException("Failed to start process after retrying transient ETXTBSY errors.");
     }
 
     private static async Task<Exception?> RunLoopbackServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
