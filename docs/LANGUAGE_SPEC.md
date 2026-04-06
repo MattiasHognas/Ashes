@@ -53,6 +53,8 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.send(socket)(text)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)`
 - `Ashes.Net.Tcp.close(socket)`
+- `Ashes.Async.run(task)`
+- `Ashes.Async.fromResult(result)`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
@@ -1425,7 +1427,113 @@ internal operations as long as the observable result is identical.
 
 ---
 
-# 19. Unsupported (Future)
+# 19. Async/Await
+
+Ashes supports structured concurrency via `async` and `await` expressions.
+
+## 19.1 Task Type
+
+    Task(E, A)
+
+`Task(E, A)` is a built-in parametric type representing an asynchronous
+computation that may fail with error type `E` or succeed with value type `A`.
+
+- `Task` is an **owned type** (like `String`, `List`, closures).
+- `Task` values are **not resource types** — they do not have use-after-close
+  or double-close restrictions.
+- The compiler inserts `Drop` for `Task` at scope exit like any other owned type.
+
+## 19.2 Async Expressions
+
+`async <expr>` wraps an expression into a `Task(E, A)` value:
+
+    let task = async
+        let response = await Ashes.Http.get("http://example.com")
+        in response
+    in Ashes.Async.run(task)
+
+- `async` is an expression, not a declaration modifier.
+- `async <expr>` where `<expr> : A` produces `Task(E, A)`.
+- The error type `E` is unified from any `await` sub-expressions.
+- `async` blocks may be nested. Inner blocks create independent tasks.
+
+## 19.3 Await Expressions
+
+`await <expr>` unwraps a `Task(E, A)` inside an `async` block:
+
+    async
+        let a = await taskA
+        in
+            let b = await taskB
+            in a + b
+
+- `await <expr>` where `<expr> : Task(E, A)` produces `A`.
+- `await` may only appear inside an `async` block. Using `await` outside
+  `async` is a compile-time error (`ASH010`).
+- If the awaited task fails, the error propagates immediately.
+
+## 19.4 Async Let (let!)
+
+`let!` is sugar for `await` in a binding position:
+
+    async
+        let! response = Ashes.Http.get("http://example.com")
+        in response
+
+This desugars to:
+
+    async
+        let response = await Ashes.Http.get("http://example.com")
+        in response
+
+`let!` flattens binding chains — no additional nesting per await point.
+Multiple `let!` bindings chain sequentially:
+
+    async
+        let! a = Ashes.Http.get("http://a.com")
+        let! b = Ashes.Http.get("http://b.com")
+        in a + b
+
+Desugars to:
+
+    async
+        let a = await Ashes.Http.get("http://a.com")
+        in
+            let b = await Ashes.Http.get("http://b.com")
+            in a + b
+
+## 19.5 Type Inference Rules
+
+- `async <expr>` where `<expr> : A` produces `Task(E, A)`.
+  `E` is unified from any `await` sub-expression.
+- `await <expr>` where `<expr> : Task(E, A)` produces `A`.
+- Functions returning `Task` are regular functions; there is no `async fun`
+  modifier.
+
+## 19.6 Result Interop
+
+`Task(E, A)` and `Result(E, A)` share the same error-propagation model:
+
+- `Ashes.Async.fromResult(result)` — wraps a `Result(E, A)` into a
+  `Task(E, A)` that completes immediately.
+- `Ashes.Async.run(task)` — runs a task to completion and returns
+  `Result(E, A)`.
+
+## 19.7 Ashes.Async Module
+
+| Function | Type |
+|----------|------|
+| `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
+| `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
+
+## 19.8 Diagnostics
+
+- `ASH010` — `await` used outside an `async` block.
+- `ASH011` — `async` block has incompatible error types across await points.
+
+---
+
+# 20. Unsupported (Future)
 
 See `FUTURE_FEATURES.md` for the list of planned but not yet supported features.
 

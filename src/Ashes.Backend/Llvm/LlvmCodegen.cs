@@ -644,6 +644,10 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
+            // CreateTask: Phase A synchronous stub — task value is the body result passed through.
+            IrInst.CreateTask createTask => StoreTemp(state, createTask.Target, LoadTemp(state, createTask.ClosureTemp)),
+            // AwaitTask: Phase A synchronous stub — extract value directly (no suspension).
+            IrInst.AwaitTask awaitTask => StoreTemp(state, awaitTask.Target, LoadTemp(state, awaitTask.TaskTemp)),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),

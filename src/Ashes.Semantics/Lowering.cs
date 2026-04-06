@@ -76,6 +76,9 @@ public sealed class Lowering
 
     private TcoContext? _tcoCtx;
 
+    // Async context tracking — true when lowering inside an async block body
+    private bool _insideAsync;
+
     private enum IntrinsicKind
     {
         Print,
@@ -564,6 +567,8 @@ public sealed class Lowering
             Expr.ListLit list => LowerListLit(list),
             Expr.Cons cons => LowerCons(cons),
             Expr.Match match => LowerMatch(match),
+            Expr.Async asyncExpr => LowerAsync(asyncExpr),
+            Expr.Await awaitExpr => LowerAwait(awaitExpr),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -760,6 +765,8 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -1995,6 +2002,77 @@ public sealed class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
+    /// <summary>
+    /// Ashes.Async.run(task) — Phase A: synchronous stub.
+    /// Extracts the result value from the task and wraps it in Result(E, A).
+    /// In Phase A, tasks are synchronously evaluated, so AwaitTask returns
+    /// the body value, which we wrap in Ok(...).
+    /// </summary>
+    private (int, TypeRef) LowerAsyncRun(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+
+        var (taskTemp, taskType) = LowerExpr(taskArg);
+
+        // Verify the argument is a Task(E, A)
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task or Result type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedTaskType);
+
+        // Phase A: AwaitTask synchronously extracts the body value
+        int bodyTemp = NewTemp();
+        Emit(new IrInst.AwaitTask(bodyTemp, taskTemp));
+
+        // Wrap in Ok(value) — returns Result(E, A)
+        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
+        int adtTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(adtTemp, GetConstructorTag(okConstructor), 1));
+        Emit(new IrInst.SetAdtField(adtTemp, 0, bodyTemp));
+        return (adtTemp, resultType);
+    }
+
+    /// <summary>
+    /// Ashes.Async.fromResult(result) — Phase A: synchronous stub.
+    /// Wraps a Result(E, A) into a Task(E, A).
+    /// In Phase A, extracts the Ok value from the result and wraps it
+    /// in a task (CreateTask). If the result is Error, the task holds the error.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(resultArg);
+
+        var (resultTemp, resultType) = LowerExpr(resultArg);
+
+        if (!TryGetStandardResultParts(out var resultSymbol, out _, out _)
+            || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
+        Unify(resultType, expectedResultType);
+
+        // Phase A: CreateTask wraps the result value directly
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(taskTemp, resultTemp));
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+    }
+
     private (int, TypeRef) LowerIf(Expr.If iff)
     {
         using var diagnosticSpan = PushDiagnosticSpan(iff);
@@ -2523,6 +2601,8 @@ public sealed class Lowering
                 BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                 BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 _ => StdMemberNotFound(qv.Module, qv.Name)
             };
         }
@@ -2874,6 +2954,66 @@ public sealed class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, Prune(resultType));
+    }
+
+    private (int, TypeRef) LowerAsync(Expr.Async asyncExpr)
+    {
+        // Phase A: synchronous stub.
+        // Lower the body inside an async context. The body is wrapped
+        // into a closure, and CreateTask emits a task value. At runtime
+        // (Phase A) the task stores the already-evaluated result.
+
+        var savedInsideAsync = _insideAsync;
+        _insideAsync = true;
+
+        // The error type variable for this async block — unified from awaits
+        var errorTypeVar = NewTypeVar();
+
+        var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
+
+        _insideAsync = savedInsideAsync;
+
+        // Build Task(E, A) type using the Task type symbol
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(asyncExpr), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var taskType = new TypeRef.TNamedType(taskSymbol, [errorTypeVar, bodyType]);
+
+        // Phase A: CreateTask wraps the body result directly (synchronous)
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(taskTemp, bodyTemp));
+        return (taskTemp, taskType);
+    }
+
+    private (int, TypeRef) LowerAwait(Expr.Await awaitExpr)
+    {
+        if (!_insideAsync)
+        {
+            ReportDiagnostic(GetSpan(awaitExpr), "'await' can only be used inside an 'async' block.", DiagnosticCodes.AwaitOutsideAsync);
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
+
+        // Verify the operand is a Task(E, A)
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedType);
+
+        // Phase A: AwaitTask synchronously extracts the result
+        int resultTemp = NewTemp();
+        Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
+        return (resultTemp, Prune(successType));
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -3906,6 +4046,12 @@ public sealed class Lowering
                     var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
                     Visit(lam.Body, boundWithParam);
                     return;
+                case Expr.Async asyncExpr:
+                    Visit(asyncExpr.Body, bnd);
+                    return;
+                case Expr.Await awaitExpr:
+                    Visit(awaitExpr.Task, bnd);
+                    return;
                 default:
                     throw new NotSupportedException(ex.GetType().Name);
             }
@@ -4821,6 +4967,44 @@ public sealed class Lowering
         return new Binding.PreludeValue(
             PreludeValueKind.Args,
             new TypeScheme([], new TypeRef.TList(new TypeRef.TStr()))
+        );
+    }
+
+    // Ashes.Async.run : Task(E, A) -> Result(E, A)
+    private Binding.Intrinsic CreateAsyncRunBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task or Result type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, resultType))
+        );
+    }
+
+    // Ashes.Async.fromResult : Result(E, A) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncFromResultBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task or Result type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [e, a]);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.Print,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(resultType, taskType))
         );
     }
 }

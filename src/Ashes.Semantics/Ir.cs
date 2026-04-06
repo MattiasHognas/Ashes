@@ -115,6 +115,18 @@ public abstract record IrInst
     /// </summary>
     public sealed record Borrow(int Target, int SourceTemp) : IrInst;
 
+    /// <summary>
+    /// Creates a Task value wrapping a closure that produces the async body's result.
+    /// Phase A: the task is immediately evaluated (synchronous stub).
+    /// </summary>
+    public sealed record CreateTask(int Target, int ClosureTemp) : IrInst;
+
+    /// <summary>
+    /// Awaits a Task value, extracting the success value.
+    /// Phase A: synchronous — calls the task closure immediately.
+    /// </summary>
+    public sealed record AwaitTask(int Target, int TaskTemp) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;

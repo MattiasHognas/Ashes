@@ -96,6 +96,11 @@ public sealed class Parser
 
     private Expr ParseMatch()
     {
+        if (_current.Kind == TokenKind.Async)
+        {
+            return ParseAsync();
+        }
+
         if (_current.Kind != TokenKind.Match)
         {
             return ParseIf();
@@ -127,6 +132,14 @@ public sealed class Parser
         }
 
         return RegisterExpr(new Expr.Match(value, cases, matchPos), matchPos, LastConsumedEnd);
+    }
+
+    private Expr ParseAsync()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Async);
+        var body = ParseExpressionCore();
+        return RegisterExpr(new Expr.Async(body), start, LastConsumedEnd);
     }
 
     private Expr ParseIf()
@@ -219,6 +232,23 @@ public sealed class Parser
             var letResultExpr = RegisterExpr(new Expr.LetResult(nameToken.Text, value, body), start, LastConsumedEnd);
             AstSpans.SetLetResultName(letResultExpr, nameToken.Span);
             return letResultExpr;
+        }
+
+        if (_current.Kind == TokenKind.LetBang)
+        {
+            // let! x = expr in body  ⟶  let x = await expr in body
+            var start = _current.Position;
+            Consume(TokenKind.LetBang);
+            var nameToken = Consume(TokenKind.Ident);
+            Consume(TokenKind.Equals);
+            var value = ParseExpressionCore();
+            var awaitValue = RegisterExpr(new Expr.Await(value), AstSpans.GetOrDefault(value).Start, AstSpans.GetOrDefault(value).End);
+            Consume(TokenKind.In);
+            var body = ParseExpressionCore();
+
+            var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body), start, LastConsumedEnd);
+            AstSpans.SetLetName(letExpr, nameToken.Span);
+            return letExpr;
         }
 
         return ParseLambda();
@@ -455,6 +485,14 @@ public sealed class Parser
             var zero = RegisterExpr(new Expr.IntLit(0), start, start + 1);
             var right = ParseUnary();
             return RegisterExpr(new Expr.Subtract(zero, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        if (_current.Kind == TokenKind.Await)
+        {
+            var start = _current.Position;
+            Consume(TokenKind.Await);
+            var operand = ParseCall();
+            return RegisterExpr(new Expr.Await(operand), start, AstSpans.GetOrDefault(operand).End);
         }
 
         return ParseCall();
