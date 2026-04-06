@@ -22,6 +22,7 @@ const LSP_CONFIG: ToolConfig = {
   executableBaseName: "Ashes.Lsp",
   cacheSubdir: "lsp",
   bundledSubdir: "lsp-server",
+  settingKey: "ashes.lspServerPath",
 };
 
 const DAP_CONFIG: ToolConfig = {
@@ -30,6 +31,7 @@ const DAP_CONFIG: ToolConfig = {
   executableBaseName: "ashes-dap",
   cacheSubdir: "dap",
   bundledSubdir: "dap-server",
+  settingKey: "ashes.dapServerPath",
 };
 
 function getRequiredVersion(context: vscode.ExtensionContext): string {

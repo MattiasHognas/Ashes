@@ -29,7 +29,6 @@ internal static class Program
             return 0;
         }
 
-
         using var input = Console.OpenStandardInput();
         using var output = Console.OpenStandardOutput();
 

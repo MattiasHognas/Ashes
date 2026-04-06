@@ -58,6 +58,21 @@
           ],
           "default": "gdb",
           "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on Linux."
+        },
+        "ashes.lspServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes language server executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.dapServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes DAP server executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes compiler executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
         }
       }
     },

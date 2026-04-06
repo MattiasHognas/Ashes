@@ -42,6 +42,8 @@ export interface ToolConfig {
   cacheSubdir: string;
   /** Subdirectory under extensionPath for locally-bundled binaries. */
   bundledSubdir: string;
+  /** VS Code setting key that overrides the tool path (e.g. "ashes.lspServerPath"). */
+  settingKey: string;
 }
 
 /** Return the executable filename for a given base name and RID. */
@@ -194,6 +196,7 @@ export function verifyToolVersion(
  * Acquire a tool for the current platform.
  *
  * Resolution order:
+ * 0. User-configured setting override (e.g. `ashes.lspServerPath`).
  * 1. Bundled binary inside the extension directory (local dev / offline).
  * 2. Cached binary in globalStorage from a previous download.
  * 3. Download from GitHub Releases, extract, verify, and cache.
@@ -205,6 +208,20 @@ export async function acquireTool(
   config: ToolConfig,
   requiredVersion: string,
 ): Promise<string> {
+  // 0. Check user-configured setting override.
+  const overridePath = vscode.workspace
+    .getConfiguration()
+    .get<string>(config.settingKey, "")
+    .trim();
+  if (overridePath) {
+    if (!fs.existsSync(overridePath)) {
+      throw new Error(
+        `${config.displayName} override path does not exist: ${overridePath}`,
+      );
+    }
+    return overridePath;
+  }
+
   const rid = getRid();
   const bundledPath = getBundledToolPath(context, config, rid);
   const cachedPath = getToolCachePath(context, config, requiredVersion, rid);
@@ -255,7 +272,7 @@ export async function acquireTool(
         await downloadToFile(downloadUrl, tmpZip).catch((err: unknown) => {
           const msg = (err as Error).message ?? String(err);
           throw new Error(
-            `Failed to download ${asset} for v${requiredVersion}: ${msg}`,
+            `Failed to download ${asset} for v${requiredVersion} from ${downloadUrl}: ${msg}`,
           );
         });
         extractZip(tmpZip, destDir);
