@@ -171,8 +171,16 @@ public sealed class IsIrrefutableLetPatternTests
     public void Let_tuple_pattern_parses_without_error()
     {
         var diag = new Diagnostics();
-        new Parser("let (a, b) = (1, 2) in a + b", diag).ParseExpression();
+        var expr = new Parser("let (a, b) = (1, 2) in a + b", diag).ParseExpression();
         diag.Errors.Count.ShouldBe(0);
+
+        // Desugars to: match (1, 2) with | (a, b) -> a + b
+        var match = expr.ShouldBeOfType<Expr.Match>();
+        match.Cases.Count.ShouldBe(1);
+        var tuple = match.Cases[0].Pattern.ShouldBeOfType<Pattern.Tuple>();
+        tuple.Elements.Count.ShouldBe(2);
+        tuple.Elements[0].ShouldBeOfType<Pattern.Var>().Name.ShouldBe("a");
+        tuple.Elements[1].ShouldBeOfType<Pattern.Var>().Name.ShouldBe("b");
     }
 
     [Test]
@@ -214,7 +222,16 @@ public sealed class IsIrrefutableLetPatternTests
     public void Let_nested_tuple_parses_without_error()
     {
         var diag = new Diagnostics();
-        new Parser("let ((a, b), c) = ((1, 2), 3) in a + b + c", diag).ParseExpression();
+        var expr = new Parser("let ((a, b), c) = ((1, 2), 3) in a + b + c", diag).ParseExpression();
         diag.Errors.Count.ShouldBe(0);
+
+        // Desugars to: match ((1, 2), 3) with | ((a, b), c) -> a + b + c
+        var match = expr.ShouldBeOfType<Expr.Match>();
+        match.Cases.Count.ShouldBe(1);
+        var outer = match.Cases[0].Pattern.ShouldBeOfType<Pattern.Tuple>();
+        outer.Elements.Count.ShouldBe(2);
+        var inner = outer.Elements[0].ShouldBeOfType<Pattern.Tuple>();
+        inner.Elements.Count.ShouldBe(2);
+        outer.Elements[1].ShouldBeOfType<Pattern.Var>().Name.ShouldBe("c");
     }
 }
