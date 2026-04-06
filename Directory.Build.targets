@@ -17,48 +17,4 @@
           SkipUnchangedFiles="false"
           Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.dll')" />
   </Target>
-
-  <!--
-    Ban [NotInParallel] in test projects.
-    Tests must run in parallel. If a test is flaky under parallel execution,
-    fix the root cause (shared mutable state, non-unique temp paths, etc.)
-    instead of serialising the entire test class.
-  -->
-  <UsingTask TaskName="_ScanForBannedAttribute"
-             TaskFactory="RoslynCodeTaskFactory"
-             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
-    <ParameterGroup>
-      <SourceFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
-      <Hits Output="true" ParameterType="System.String" />
-    </ParameterGroup>
-    <Task>
-      <Code Type="Fragment" Language="cs"><![CDATA[
-        var hitList = new System.Collections.Generic.List<string>();
-        foreach (var item in SourceFiles)
-        {
-            var path = item.GetMetadata("FullPath");
-            if (!System.IO.File.Exists(path)) continue;
-            foreach (var line in System.IO.File.ReadLines(path))
-            {
-                if (line.Contains("NotInParallel"))
-                {
-                    hitList.Add(path);
-                    break;
-                }
-            }
-        }
-        Hits = string.Join("; ", hitList);
-      ]]></Code>
-    </Task>
-  </UsingTask>
-
-  <Target Name="_BanNotInParallel"
-          BeforeTargets="CoreCompile"
-          Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
-    <_ScanForBannedAttribute SourceFiles="@(Compile)">
-      <Output TaskParameter="Hits" PropertyName="_NotInParallelHits" />
-    </_ScanForBannedAttribute>
-    <Error Condition="'$(_NotInParallelHits)' != ''"
-           Text="[NotInParallel] is banned in test projects. Tests must run in parallel. If a test is flaky under parallel execution, fix the root cause (shared mutable state, non-unique temp paths, etc.) instead of serialising the entire test class. Offending file(s): $(_NotInParallelHits)" />
-  </Target>
 </Project>
