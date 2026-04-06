@@ -1273,15 +1273,21 @@ public sealed class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
 
-        // Store body result before emitting drops so drops don't clobber the value
-        int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-        PopResourceScope();
-        int resultTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        // Only emit result preservation when there are alive resources to drop
+        if (HasAliveResourcesInCurrentScope())
+        {
+            int resultSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+            PopResourceScope();
+            int resultTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+            _scopes.Pop();
+            return (resultTemp, bodyType);
+        }
 
+        PopResourceScope();
         _scopes.Pop();
-        return (resultTemp, bodyType);
+        return (bodyTemp, bodyType);
     }
 
     private (int, TypeRef) LowerLetResult(Expr.LetResult letResult)
@@ -3549,6 +3555,28 @@ public sealed class Lowering
     {
         EmitDropsForCurrentScope();
         _resourceScopes.Pop();
+    }
+
+    /// <summary>
+    /// Returns true if the current resource scope contains any alive (not yet dropped) resources.
+    /// </summary>
+    private bool HasAliveResourcesInCurrentScope()
+    {
+        if (_resourceScopes.Count == 0)
+        {
+            return false;
+        }
+
+        var scope = _resourceScopes.Peek();
+        foreach (var (_, info) in scope)
+        {
+            if (!info.IsDropped)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

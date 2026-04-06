@@ -637,6 +637,7 @@ internal static partial class LlvmCodegen
     /// Emits a Drop operation for deterministic resource cleanup.
     /// Routes to the appropriate runtime close function based on resource type.
     /// The result of the close call is discarded (Drop is fire-and-forget).
+    /// Returns false because Drop does not terminate the current basic block.
     /// </summary>
     private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle resourceValue, string resourceTypeName)
     {
@@ -647,7 +648,7 @@ internal static partial class LlvmCodegen
                 // The result (Result[Unit, Str]) is discarded — the compiler
                 // guarantees exactly-once semantics.
                 EmitTcpClose(state, resourceValue);
-                return true;
+                return false;
 
             default:
                 throw new InvalidOperationException(
