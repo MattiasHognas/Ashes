@@ -300,47 +300,38 @@ export async function acquireTool(
   );
   const destDir = path.dirname(cachedPath);
 
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Downloading ${config.displayName} v${requiredVersion}…`,
-      cancellable: false,
-    },
-    async () => {
-      try {
-        await downloadToFile(downloadUrl, tmpZip).catch((err: unknown) => {
-          const msg = (err as Error).message ?? String(err);
-          throw new Error(
-            `Failed to download ${asset} for v${requiredVersion} from ${downloadUrl}: ${msg}`,
-          );
-        });
-        extractZip(tmpZip, destDir);
-        if (process.platform !== "win32") {
-          fs.chmodSync(cachedPath, 0o755);
-        }
-        verifyToolVersion(cachedPath, requiredVersion, config.displayName);
-      } catch (err) {
-        // Remove partial artifacts so a future attempt retries cleanly.
-        try {
-          fs.unlinkSync(tmpZip);
-        } catch {
-          // ignore
-        }
-        try {
-          fs.rmSync(destDir, { recursive: true, force: true });
-        } catch {
-          // ignore
-        }
-        throw err;
-      } finally {
-        try {
-          fs.unlinkSync(tmpZip);
-        } catch {
-          // ignore
-        }
-      }
-    },
-  );
+  try {
+    await downloadToFile(downloadUrl, tmpZip).catch((err: unknown) => {
+      const msg = (err as Error).message ?? String(err);
+      throw new Error(
+        `Failed to download ${asset} for v${requiredVersion} from ${downloadUrl}: ${msg}`,
+      );
+    });
+    extractZip(tmpZip, destDir);
+    if (process.platform !== "win32") {
+      fs.chmodSync(cachedPath, 0o755);
+    }
+    verifyToolVersion(cachedPath, requiredVersion, config.displayName);
+  } catch (err) {
+    // Remove partial artifacts so a future attempt retries cleanly.
+    try {
+      fs.unlinkSync(tmpZip);
+    } catch {
+      // ignore
+    }
+    try {
+      fs.rmSync(destDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    throw err;
+  } finally {
+    try {
+      fs.unlinkSync(tmpZip);
+    } catch {
+      // ignore
+    }
+  }
 
   return cachedPath;
 }
