@@ -137,8 +137,9 @@ public sealed class Lowering
         public bool IsDropped { get; set; }
         /// <summary>
         /// Number of live borrows of this value. The compiler infers borrows when
-        /// an owned value is used without consuming ownership. Drops are only emitted
-        /// when ActiveBorrows == 0 (always true by scope structure in Phase 3).
+        /// an owned value is used without consuming ownership. By scope structure,
+        /// all borrows are consumed before the owning scope exits and emits Drop —
+        /// this count is informational for future optimisation passes (Phase 4).
         /// </summary>
         public int ActiveBorrows { get; set; }
     }
@@ -3548,7 +3549,7 @@ public sealed class Lowering
         var info = LookupOwnedValue(name);
         if (info is null)
         {
-            return true; // not a tracked owned value — treating as success (no-op)
+            return true; // not a tracked owned value — no action needed, returns true to indicate no error
         }
 
         if (info.IsDropped)
