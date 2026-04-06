@@ -7,7 +7,6 @@ using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class ImportTests
 {
     private static string GetImportTestsRoot([CallerFilePath] string? callerFile = null)

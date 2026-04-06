@@ -7,7 +7,6 @@ using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class ProjectFixtureTests
 {
     private static string GetProjectsRoot([CallerFilePath] string? callerFile = null)

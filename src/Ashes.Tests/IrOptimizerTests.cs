@@ -4,7 +4,6 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class IrOptimizerTests
 {
     // ── Constant folding tests ──────────────────────────────────────────

@@ -17,4 +17,22 @@
           SkipUnchangedFiles="false"
           Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.dll')" />
   </Target>
+
+  <!--
+    Ban [NotInParallel] in test projects.
+    Tests must run in parallel. If a test is flaky under parallel execution,
+    fix the root cause (shared mutable state, non-unique temp paths, etc.)
+    instead of serialising the entire test class.
+  -->
+  <Target Name="_BanNotInParallel"
+          BeforeTargets="CoreCompile"
+          Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <Exec Command="grep -rl 'NotInParallel' '$(MSBuildProjectDirectory)' --include='*.cs' || true"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_NotInParallelHits" />
+    </Exec>
+    <Error Condition="'$(_NotInParallelHits)' != ''"
+           Text="[NotInParallel] is banned in test projects. Tests must run in parallel. If a test is flaky under parallel execution, fix the root cause (shared mutable state, non-unique temp paths, etc.) instead of serialising the entire test class. Offending file(s): $(_NotInParallelHits)" />
+  </Target>
 </Project>
