@@ -1526,6 +1526,8 @@ Desugars to:
 | `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
 | `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
 | `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
+| `Ashes.Async.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
+| `Ashes.Async.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
 
 ### 19.7.1 Ashes.Async.sleep
 
@@ -1542,6 +1544,35 @@ number of milliseconds, then completes with `0`:
 - `sleep` must be used inside an `async` block via `await`.
 - On Linux, `sleep` uses the `nanosleep` syscall.
 - On Windows, `sleep` uses the `Sleep` kernel32 function.
+
+### 19.7.2 Ashes.Async.all
+
+`Ashes.Async.all(tasks)` takes a list of tasks and runs them all,
+collecting results into a list in the original order:
+
+    async
+        let results = await Ashes.Async.all([async 1, async 2, async 3])
+        in results
+
+- The argument is a `List(Task(E, A))`.
+- The returned task has type `Task(E, List(A))`.
+- All tasks are run sequentially (left to right).
+- Results are collected in the same order as the input list.
+- An empty input list produces an empty result list.
+
+### 19.7.3 Ashes.Async.race
+
+`Ashes.Async.race(tasks)` takes a list of tasks and returns the result
+of the first task:
+
+    async
+        let result = await Ashes.Async.race([async 42, async 99])
+        in result
+
+- The argument is a `List(Task(E, A))`.
+- The returned task has type `Task(E, A)`.
+- Only the first task in the list is run.
+- An empty input list produces `0` (unit placeholder).
 
 ## 19.8 Diagnostics
 

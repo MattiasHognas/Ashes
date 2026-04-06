@@ -571,18 +571,20 @@ Deliverables:
 - Tests: async_sleep, async_sleep_sequential,
   async_sleep_with_computation
 
-### Phase D — Async Networking
+### Phase D — Async Combinators ✅
 
-Convert existing blocking TCP/HTTP operations to non-blocking
-variants inside `async` blocks. Add `Ashes.Async.all`,
-`Ashes.Async.race`, `Ashes.Async.sleep`.
+Add `Ashes.Async.all` and `Ashes.Async.race` combinators for
+working with lists of tasks.
 
 Deliverables:
-- Non-blocking TCP connect/send/receive
-- Async HTTP get/post atop async TCP
-- `Ashes.Async.all`, `Ashes.Async.race`, `Ashes.Async.sleep`
-- Tests: concurrent HTTP requests, parallel TCP connections,
-  async resource cleanup, error propagation across awaits
+- `IrInst.AsyncAll` — runs all tasks in a list, collects results
+- `IrInst.AsyncRace` — runs the first task in a list, returns result
+- `Ashes.Async.all(tasks)` — `List(Task(E, A)) -> Task(E, List(A))`
+- `Ashes.Async.race(tasks)` — `List(Task(E, A)) -> Task(E, A)`
+- Backend: inlined LLVM basic blocks using null-pointer list
+  representation (null=Nil, [head@0, tail@8]=Cons)
+- Tests: async_all_basic, async_all_empty, async_all_three,
+  async_all_with_sleep, async_race_basic
 
 ------------------------------------------------------------------------
 
