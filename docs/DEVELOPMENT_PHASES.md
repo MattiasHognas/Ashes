@@ -144,18 +144,25 @@ reused without moves.
 
 ------------------------------------------------------------------------
 
-## Phase 4 — Pure Performance Optimizations
+## Phase 4 — Performance & Persistent Data Structures
 
 **Prerequisite:** Phase 3 complete
 
-**Goal:** improve runtime performance using guarantees from ownership and
-borrowing. No new syntax, no semantic changes. Optimizations are
-invisible to the user.
+**Goal:** make the immutable-by-default model viable at scale. Without
+mutation, every value transformation is a new allocation unless the
+compiler and runtime are smart about sharing structure, eliding copies,
+and reusing memory. This phase is not optional — it is core to the
+language's viability.
+
+No new user-facing syntax. Optimizations are invisible to the user.
 
 ### What changes
 
 | Layer | Work |
 |-------|------|
+| Runtime | Persistent data structures — lists, maps, and sets that share unchanged structure across versions (e.g. hash-array mapped tries, finger trees). |
+| Runtime | Avoid unnecessary allocations — pool or arena-allocate short-lived intermediates; fuse chained transformations where possible. |
+| Runtime | Reuse memory where safe — when the compiler can prove a value has a single owner and no outstanding borrows, update in place instead of copying. |
 | IR | Optimization pass pipeline (multiple passes, explicit ordering, runs after semantic lowering, before backend). |
 | Optimization | Dead code elimination. |
 | Optimization | Constant folding. |
@@ -166,8 +173,8 @@ invisible to the user.
 | Optimization | Remove redundant allocations (short-lived ADTs, temporary closures). |
 | Optimization | Borrow-based optimizations (avoid copies when references suffice). |
 | Backend | Integrate LLVM optimization passes. |
-| Tests | Before-vs-after output identical, edge cases with ownership/drops, tail recursion correctness. |
-| Docs | Optimization catalogue, invisibility guarantee, zero-cost abstraction philosophy. |
+| Tests | Before-vs-after output identical, persistent structure sharing correctness, edge cases with ownership/drops, tail recursion correctness. |
+| Docs | Persistent data structure guarantees, optimization catalogue, invisibility guarantee, zero-cost abstraction philosophy. |
 
 ### What does NOT change
 
@@ -177,18 +184,21 @@ invisible to the user.
 
 ### Suggested order
 
-1. Create optimization pass pipeline.
-2. Dead code elimination.
-3. Constant folding.
-4. Copy elision.
-5. Drop elision.
-6. Function inlining.
-7. Tail-call optimization.
-8. Redundant allocation removal.
-9. Borrow-based optimizations.
-10. LLVM optimization integration.
-11. Tests.
-12. Docs.
+1. Persistent data structures (lists, maps, sets).
+2. Allocation avoidance (arenas, fusion).
+3. Safe in-place reuse (single-owner optimisation).
+4. Create optimization pass pipeline.
+5. Dead code elimination.
+6. Constant folding.
+7. Copy elision.
+8. Drop elision.
+9. Function inlining.
+10. Tail-call optimization.
+11. Redundant allocation removal.
+12. Borrow-based optimizations.
+13. LLVM optimization integration.
+14. Tests.
+15. Docs.
 
 ------------------------------------------------------------------------
 
@@ -246,7 +256,7 @@ Phase 2: Ownership Core
 Phase 3: Borrowing (Shared References)
     │
     ▼
-Phase 4: Pure Performance Optimizations
+Phase 4: Performance & Persistent Data Structures
     │
     ▼
 Phase 5: Pattern Matching + Ergonomics
@@ -257,7 +267,7 @@ After Phase 5 the core safety model is complete. The language has:
 - deterministic destruction
 - ownership and move semantics
 - shared borrowing
-- optimizations that leverage safety guarantees
+- persistent data structures and performance optimizations
 - expressive, ownership-aware pattern matching
 
 ------------------------------------------------------------------------
