@@ -650,9 +650,9 @@ internal static partial class LlvmCodegen
                 return true;
 
             default:
-                // Unknown resource type — should not happen if the compiler
-                // is correctly classifying resource types.
-                return true;
+                throw new InvalidOperationException(
+                    $"Unhandled resource type '{resourceTypeName}' in Drop instruction. " +
+                    "Add a case to EmitDrop when introducing new resource types.");
         }
     }
 

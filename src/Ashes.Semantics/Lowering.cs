@@ -3489,7 +3489,9 @@ public sealed class Lowering
 
     /// <summary>
     /// Marks a resource as dropped (explicitly closed).
-    /// Returns false if the resource was already dropped (double-drop).
+    /// Returns true if the operation succeeded (resource was alive and is now marked dropped)
+    /// or if the name is not a tracked resource (no-op — safe to call on any binding).
+    /// Returns false if the resource was already dropped (double-drop detected).
     /// </summary>
     private bool TryMarkResourceDropped(string name)
     {
