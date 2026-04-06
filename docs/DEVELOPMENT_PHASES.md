@@ -2,9 +2,9 @@
 
 This document defines the ordered phases for evolving Ashes from its
 current pure-functional compiler into a memory-safe, high-performance
-language with ownership, borrowing, and ergonomic pattern matching.
+language with ownership, shared borrowing, and ergonomic pattern matching.
 
-All 6 phases will probably ship under a single version (`1.1.0`). The phase numbers
+All 5 phases will probably ship under a single version (`1.1.0`). The phase numbers
 exist only to communicate dependency order and guide development
 sequencing.
 
@@ -90,7 +90,6 @@ owned value is dropped exactly once.
 
 - No borrowing.
 - No lifetimes.
-- No mutable references.
 
 ### Suggested order
 
@@ -125,13 +124,11 @@ reused without moves.
 | IR | Represent borrowed values (tagged reference / raw pointer). |
 | Backend | Borrow representation in LLVM (no ownership transfer, no drop responsibility). |
 | Tests | Shared borrows, multiple borrows, invalid move during borrow, lifetime violations. |
-| Docs | Shared references, borrowing rules, lifetime basics, limitations (no mutation yet). |
+| Docs | Shared references, borrowing rules, lifetime basics. |
 
 ### What does NOT change
 
-- No mutable references.
 - No lifetime annotations.
-- No mutation through references.
 
 ### Suggested order
 
@@ -195,52 +192,9 @@ invisible to the user.
 
 ------------------------------------------------------------------------
 
-## Phase 5 — Mutable Borrows
+## Phase 5 — Pattern Matching + Ergonomics
 
-**Prerequisite:** Phase 4 complete (optimizations stabilized)
-
-**Goal:** enable controlled in-place mutation through exclusive mutable
-references while preserving memory safety.
-
-### What changes
-
-| Layer | Work |
-|-------|------|
-| Syntax | Mutable borrow operator `&mut x`. |
-| Semantics | Mutable borrow rules: one `&mut` at a time, no `&` while `&mut` exists, no move of the value. |
-| Semantics | Prevent aliasing violations (no `&mut` + `&`, no `&mut` + `&mut`). |
-| Semantics | Mutation only through `&mut` (owned values remain immutable unless mutably borrowed). |
-| Semantics | Lifetime tracking for mutable borrows (borrow must end before reuse). |
-| Semantics | Ensure values are not dropped while mutably borrowed. |
-| IR | Distinguish owned values, shared references, and mutable references. |
-| Backend | LLVM representation of mutable borrows (pointer-like, no drop responsibility). |
-| Tests | Single mutable borrow, aliasing violations, mutation correctness, lifetime enforcement. |
-| Docs | Mutable reference rules, aliasing restrictions, mutation model, differences from shared borrowing. |
-
-### What does NOT change
-
-- No new safety concepts beyond exclusive mutability.
-- Owned values remain immutable by default.
-- No GC, no runtime checks.
-
-### Suggested order
-
-1. Mutable borrow operator syntax.
-2. Mutable borrow rules.
-3. Aliasing violation checks.
-4. Mutation through `&mut`.
-5. Lifetime tracking for mutable borrows.
-6. Drop interaction with mutable borrows.
-7. IR representation.
-8. Backend representation.
-9. Tests.
-10. Docs.
-
-------------------------------------------------------------------------
-
-## Phase 6 — Pattern Matching + Ergonomics
-
-**Prerequisite:** Phase 5 complete
+**Prerequisite:** Phase 4 complete
 
 **Goal:** make the language feel great to write by improving pattern
 matching expressiveness and integrating it with ownership and borrowing.
@@ -263,7 +217,7 @@ matching expressiveness and integrating it with ownership and borrowing.
 ### What does NOT change
 
 - No major new safety concepts.
-- Everything respects ownership/borrow rules established in Phases 2–5.
+- Everything respects ownership/borrow rules established in Phases 2–3.
 
 ### Suggested order
 
@@ -295,17 +249,14 @@ Phase 3: Borrowing (Shared References)
 Phase 4: Pure Performance Optimizations
     │
     ▼
-Phase 5: Mutable Borrows
-    │
-    ▼
-Phase 6: Pattern Matching + Ergonomics
+Phase 5: Pattern Matching + Ergonomics
 ```
 
-After Phase 6 the core safety model is complete. The language has:
+After Phase 5 the core safety model is complete. The language has:
 
 - deterministic destruction
 - ownership and move semantics
-- shared and mutable borrowing
+- shared borrowing
 - optimizations that leverage safety guarantees
 - expressive, ownership-aware pattern matching
 
@@ -336,7 +287,6 @@ runtime and ecosystem:
    the new guarantees (no double drop, no use-after-move, etc.).
 4. **No user-visible `Drop`.** `Drop` is a compiler concept. Users see
    automatic cleanup.
-5. **Purity preserved.** Mutation is only allowed through `&mut`
-   (Phase 5+). All other values remain immutable.
+5. **Purity preserved.** All values are immutable. There is no mutation.
 6. **No GC.** All resource and memory management is deterministic and
    compile-time verified.
