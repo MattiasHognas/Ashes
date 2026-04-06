@@ -6,7 +6,7 @@ complete. Subsequent work focuses on runtime and ecosystem.
 
 | Feature | Status |
 |---------|--------|
-| Async/Await | ✅ Complete (Phases A–D) |
+| Async/Await | ✅ Complete |
 | Async Networking | Planned — non-blocking TCP/HTTP inside `async` |
 | Package Manager | Planned — ecosystem and dependency management |
 | HTTPS/TLS | Planned — TLS, encryption, certificates |
