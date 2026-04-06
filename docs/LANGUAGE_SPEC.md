@@ -1121,13 +1121,8 @@ namespace. User projects cannot override them with project-local modules.
 
 ## 13.6 Future Standard Library Modules
 
-The module system supports nested module paths. Future modules will also live
-under `Ashes`:
-
-    Ashes.String
-    Ashes.Bytes
-    Ashes.Net.Http
-    Ashes.Math
+The module system supports nested module paths. Future modules are tracked in
+`FUTURE_FEATURES.md`.
 
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
@@ -1432,14 +1427,7 @@ internal operations as long as the observable result is identical.
 
 # 19. Unsupported (Future)
 
-Not currently supported:
-
-- pattern guards
-- inline module declarations in source files
-- effects / IO types
-- type annotations
-- import aliasing (`import Ashes.IO as IO`)
-- selective imports (`import Ashes.IO (print)`)
+See `FUTURE_FEATURES.md` for the list of planned but not yet supported features.
 
 Note: project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
 (`ashes.json` + `PROJECT_SPEC.md`) and are resolved before expression parsing. Built-in
