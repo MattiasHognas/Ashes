@@ -1271,7 +1271,58 @@ current implementation), and no finalizers.
 
 ---
 
-# 18. Unsupported (Future)
+# 18. Optimization
+
+The Ashes compiler performs multiple levels of optimization, all invisible
+to user code. Observable behaviour is always preserved — optimizations
+never change what a program prints, returns, or does.
+
+## 18.1 IR-Level Optimizations
+
+After semantic lowering and before backend code generation, the compiler
+runs an IR optimization pass pipeline:
+
+- **Constant folding** — Arithmetic on known constant operands is
+  evaluated at compile time. `10 + 32` becomes `42` in the IR with no
+  runtime addition.
+- **Dead code elimination** — Instructions whose results are never used
+  (e.g. constants left over after folding) are removed.
+- **Drop elision** — Redundant `Drop` instructions for values that were
+  never initialized are candidates for removal.
+- **Borrow elision** — `Borrow` instructions on copy-type constants are
+  candidates for removal since copy types have no ownership semantics.
+
+## 18.2 Backend Optimizations
+
+The LLVM backend applies instruction-level optimizations during code
+generation via the target machine's optimization level (O0 through O3).
+This includes register allocation, instruction scheduling, and
+peephole optimizations performed by LLVM's code generator.
+
+## 18.3 Tail-Call Optimization
+
+Tail-recursive functions are optimized into constant-stack loops by the
+compiler. When the compiler detects that a recursive call is in tail
+position, it rewrites the call as a jump back to the function entry,
+reusing the current stack frame. This means recursive functions like:
+
+    let rec sum = fun (n) -> fun (acc) ->
+        if n == 0 then acc
+        else sum(n - 1)(acc + n)
+    in sum(1000000)(0)
+
+run in constant stack space, without risk of stack overflow.
+
+## 18.4 Zero-Cost Abstraction Philosophy
+
+Values are immutable and freely shared; the compiler handles ownership
+and memory safely behind the scenes. Optimizations are never visible to
+user code. The compiler is free to reorder, eliminate, or restructure
+internal operations as long as the observable result is identical.
+
+---
+
+# 19. Unsupported (Future)
 
 Not currently supported:
 
