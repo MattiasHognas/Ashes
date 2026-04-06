@@ -265,7 +265,7 @@ public sealed class OwnershipTests
     public void Drop_instruction_has_type_name_field()
     {
         var drop = new IrInst.Drop(5, "String");
-        drop.SourceSlot.ShouldBe(5);
+        drop.SourceTemp.ShouldBe(5);
         drop.TypeName.ShouldBe("String");
     }
 

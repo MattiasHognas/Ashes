@@ -50,7 +50,7 @@ public sealed class ResourceLifecycleTests
     public void Drop_ir_instruction_carries_type_name()
     {
         var drop = new IrInst.Drop(0, "Socket");
-        drop.SourceSlot.ShouldBe(0);
+        drop.SourceTemp.ShouldBe(0);
         drop.TypeName.ShouldBe("Socket");
     }
 

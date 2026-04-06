@@ -218,7 +218,7 @@
         },
         {
           Target: 3,
-          SourceSlot: 2
+          SourceTemp: 2
         },
         {
           Target: 4,
@@ -249,7 +249,7 @@
           Target: 8
         },
         {
-          SourceSlot: 8,
+          SourceTemp: 8,
           TypeName: Function
         },
         {

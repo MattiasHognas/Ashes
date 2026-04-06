@@ -319,8 +319,8 @@ public static class IrOptimizer
             case IrInst.NetTcpSend n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.TextTemp); break;
             case IrInst.NetTcpReceive n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.MaxBytesTemp); break;
             case IrInst.NetTcpClose n: usedTemps.Add(n.SocketTemp); break;
-            case IrInst.Drop d: usedTemps.Add(d.SourceSlot); break;
-            case IrInst.Borrow b: usedTemps.Add(b.SourceSlot); break;
+            case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
+            case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
             case IrInst.PanicStr p: usedTemps.Add(p.Source); break;
             case IrInst.JumpIfFalse j: usedTemps.Add(j.CondTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;

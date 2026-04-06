@@ -174,7 +174,7 @@ public sealed class BorrowAnalysisTests
     {
         var borrow = new IrInst.Borrow(5, 3);
         borrow.Target.ShouldBe(5);
-        borrow.SourceSlot.ShouldBe(3);
+        borrow.SourceTemp.ShouldBe(3);
     }
 
     // --- Helpers ---

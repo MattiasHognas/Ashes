@@ -255,11 +255,19 @@ public sealed class Parser
     /// <summary>
     /// Parses <c>let pattern = expr in body</c> and desugars to
     /// <c>match expr with | pattern -> body</c>.
+    /// Reports a parse error if the pattern is refutable (see §11.8).
     /// </summary>
     private Expr ParseLetPattern(int start)
     {
         Consume(TokenKind.Let);
         var pattern = ParsePattern();
+
+        if (!IsIrrefutableLetPattern(pattern))
+        {
+            var span = AstSpans.GetOrDefault(pattern);
+            _diag.Error(span, "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.", DiagnosticCodes.ParseError);
+        }
+
         Consume(TokenKind.Equals);
         var value = ParseExpressionCore();
         Consume(TokenKind.In);
@@ -269,6 +277,28 @@ public sealed class Parser
         var cases = new List<MatchCase> { new MatchCase(pattern, body) };
         return RegisterExpr(new Expr.Match(value, cases, start), start, LastConsumedEnd);
     }
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="pattern"/> is irrefutable —
+    /// that is, it will always match regardless of the value.
+    /// Per LANGUAGE_SPEC.md §11.8 the irrefutable patterns are:
+    /// <list type="bullet">
+    ///   <item><see cref="Pattern.Var"/> — always matches and binds.</item>
+    ///   <item><see cref="Pattern.Wildcard"/> — always matches.</item>
+    ///   <item><see cref="Pattern.Tuple"/> — irrefutable when every element is irrefutable.</item>
+    ///   <item><see cref="Pattern.Cons"/> — allowed (may fail at runtime on empty list).</item>
+    /// </list>
+    /// All other patterns (Constructor, IntLit, StrLit, BoolLit, EmptyList)
+    /// are refutable and must not appear in let-pattern bindings.
+    /// </summary>
+    internal static bool IsIrrefutableLetPattern(Pattern pattern) => pattern switch
+    {
+        Pattern.Var => true,
+        Pattern.Wildcard => true,
+        Pattern.Tuple t => t.Elements.All(IsIrrefutableLetPattern),
+        Pattern.Cons c => IsIrrefutableLetPattern(c.Head) && IsIrrefutableLetPattern(c.Tail),
+        _ => false,
+    };
 
     private Expr ParseLambda()
     {

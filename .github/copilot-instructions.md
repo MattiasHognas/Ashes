@@ -112,6 +112,18 @@ Formatting is considered part of correctness, not style.
 
 ---
 
+# Runtime Prerequisites
+
+Before running backend or end-to-end tests, download all LLVM native runtimes:
+
+```bash
+bash scripts/download-llvm-native.sh --all
+```
+
+This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries.
+
+---
+
 # Tests
 
 There are two test layers:
