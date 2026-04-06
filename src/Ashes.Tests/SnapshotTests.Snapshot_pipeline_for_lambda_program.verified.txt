@@ -218,46 +218,50 @@
         },
         {
           Target: 3,
-          Value: 10
+          SourceSlot: 2
         },
         {
           Target: 4,
-          ClosureTemp: 2,
-          ArgTemp: 3
+          Value: 10
         },
         {
           Target: 5,
-          Value: 32
+          ClosureTemp: 3,
+          ArgTemp: 4
         },
         {
           Target: 6,
-          ClosureTemp: 4,
-          ArgTemp: 5
+          Value: 32
         },
         {
-          Source: 6
+          Target: 7,
+          ClosureTemp: 5,
+          ArgTemp: 6
+        },
+        {
+          Source: 7
         },
         {
           Slot: 1,
-          Source: 6
+          Source: 7
         },
         {
-          Target: 7
+          Target: 8
         },
         {
-          SourceSlot: 7,
+          SourceSlot: 8,
           TypeName: Function
         },
         {
-          Target: 8,
+          Target: 9,
           Slot: 1
         },
         {
-          Source: 8
+          Source: 9
         }
       ],
       LocalCount: 2,
-      TempCount: 9,
+      TempCount: 10,
       HasEnvAndArgParams: false
     },
     Functions: [
@@ -313,5 +317,5 @@
     UsesConcatStr: false,
     UsesClosures: true
   },
-  ElfSha256: C698F39FAAB83C40EB89E1560C293E11B879FE714C563669F8140C22F1E55F24
+  ElfSha256: FF7357D0F9B4461A8C4ACA2CD49CA1293125E996B30135B6750549C25CEC0DDE
 }

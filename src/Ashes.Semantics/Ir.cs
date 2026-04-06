@@ -105,6 +105,14 @@ public abstract record IrInst
     /// </summary>
     public sealed record Drop(int SourceSlot, string TypeName) : IrInst;
 
+    /// <summary>
+    /// Borrow instruction for compiler-inferred borrowing (Phase 3).
+    /// Produces a non-owning reference to an owned value. The borrowed reference
+    /// carries no drop responsibility — the owning scope still drops the original.
+    /// In the current linear allocator this is a simple value copy (pointer pass-through).
+    /// </summary>
+    public sealed record Borrow(int Target, int SourceSlot) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;

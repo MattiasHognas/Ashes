@@ -123,9 +123,9 @@ public sealed class Lowering
 
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
-    // --- Ownership tracking (Phase 1: resources, Phase 2: all owned types) ---
-    // Tracks owned bindings and their drop state.
-    // Key: binding name, Value: ownership info (slot, type name, whether dropped).
+    // --- Ownership tracking (Phase 1: resources, Phase 2: all owned types, Phase 3: borrowing) ---
+    // Tracks owned bindings and their drop/borrow state.
+    // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
     // Owned types (String, List, ADTs, Closures, resource types) are tracked.
     private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan)
@@ -135,6 +135,12 @@ public sealed class Lowering
         public bool IsResource { get; } = isResource;
         public TextSpan? DefinitionSpan { get; } = definitionSpan;
         public bool IsDropped { get; set; }
+        /// <summary>
+        /// Number of live borrows of this value. The compiler infers borrows when
+        /// an owned value is used without consuming ownership. Drops are only emitted
+        /// when ActiveBorrows == 0 (always true by scope structure in Phase 3).
+        /// </summary>
+        public int ActiveBorrows { get; set; }
     }
 
     // Stack of ownership scopes, parallel to _scopes.
@@ -667,6 +673,20 @@ public sealed class Lowering
         }
 
         RecordHoverType(GetSpan(v), v.Name, result.Type);
+
+        // Phase 3: Compiler-inferred borrowing.
+        // When an owned binding is accessed, emit a Borrow instruction.
+        // This tells the IR that we're taking a non-owning reference — the
+        // owning scope is still responsible for the Drop.
+        var ownerInfo = LookupOwnedValue(v.Name);
+        if (ownerInfo is not null && !ownerInfo.IsDropped)
+        {
+            int borrowTemp = NewTemp();
+            Emit(new IrInst.Borrow(borrowTemp, result.Temp));
+            ownerInfo.ActiveBorrows++;
+            result = (borrowTemp, result.Type);
+        }
+
         return result;
     }
 
