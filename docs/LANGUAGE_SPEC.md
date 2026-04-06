@@ -1115,8 +1115,8 @@ is pure in the following sense:
   a value, it builds one via expression — the original remains available
   until it goes out of scope.
 
-The compiler and runtime may optimise representation internally (structure
-sharing, in-place reuse when safe), but these optimisations are invisible
+The compiler and runtime may optimize representation internally (structure
+sharing, in-place reuse when safe), but these optimizations are invisible
 to user code. From the programmer's perspective, every value is immutable
 once created.
 
