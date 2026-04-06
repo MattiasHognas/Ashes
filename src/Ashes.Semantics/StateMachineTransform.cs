@@ -173,24 +173,28 @@ public static class StateMachineTransform
             stateLabels[i] = $"__state_{i}";
         }
 
-        // Dispatch: check state index against each state and jump
+        var invalidStateLabel = "__state_invalid";
+
+        // Dispatch: check state index against each state and jump.
         // We use a chain of comparisons since IR doesn't have a switch instruction.
-        for (int i = 1; i < stateCount; i++)
+        // Invalid state indices must not fall back to state 0, because that would
+        // incorrectly re-enter the coroutine from the beginning.
+        for (int i = 0; i < stateCount; i++)
         {
             int cmpTemp = ++maxTemp;
             int constTemp = ++maxTemp;
             result.Add(new IrInst.LoadConstInt(constTemp, i));
             result.Add(new IrInst.CmpIntEq(cmpTemp, stateIdxTemp, constTemp));
-            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateCount ? $"__dispatch_{i + 1}" : stateLabels[0]));
+            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateCount ? $"__dispatch_{i + 1}" : invalidStateLabel));
             result.Add(new IrInst.Jump(stateLabels[i]));
             if (i + 1 < stateCount)
             {
                 result.Add(new IrInst.Label($"__dispatch_{i + 1}"));
             }
         }
-        // Default: state 0
-        result.Add(new IrInst.Jump(stateLabels[0]));
 
+        result.Add(new IrInst.Label(invalidStateLabel));
+        result.Add(new IrInst.Unreachable());
         // Split original instructions into segments at await points
         var segments = SplitAtAwaits(instructions, awaitPositions);
 
