@@ -3258,6 +3258,7 @@ public sealed class Lowering
         var successType = NewTypeVar();
         var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedType);
+        Unify(errorType, _currentAsyncErrorType);
 
         // AwaitTask synchronously extracts the result
         int resultTemp = NewTemp();
