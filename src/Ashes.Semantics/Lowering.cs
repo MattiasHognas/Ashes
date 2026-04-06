@@ -3123,7 +3123,7 @@ public sealed class Lowering
         int closureTemp = NewTemp();
         Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp));
         int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, closureTemp));
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captures.Count));
         return (taskTemp, taskType);
     }
 

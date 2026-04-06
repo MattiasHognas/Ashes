@@ -118,9 +118,11 @@ public abstract record IrInst
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
     /// the coroutine function pointer and captured environment.
-    /// Phase B: the task struct holds [state_index, coroutine_fn, result, awaited_task, env...].
+    /// Phase B: the task struct holds [state_index, coroutine_fn, result, awaited_task, captures...].
+    /// StateStructSize includes the header, captures, and live variable slots.
+    /// CaptureCount is the number of captured environment variables to copy.
     /// </summary>
-    public sealed record CreateTask(int Target, int ClosureTemp) : IrInst;
+    public sealed record CreateTask(int Target, int ClosureTemp, int StateStructSize, int CaptureCount) : IrInst;
 
     /// <summary>
     /// Creates an already-completed Task value. Used by Ashes.Async.fromResult

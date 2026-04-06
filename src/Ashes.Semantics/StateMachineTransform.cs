@@ -58,11 +58,21 @@ public static class StateMachineTransform
         // Compute live temps across each await point
         var liveAcross = ComputeLiveTempsAcrossAwaits(instructions, awaitPositions);
 
+        // Compute local slots that are written before and read after each await point
+        var liveLocalsAcross = ComputeLiveLocalsAcrossAwaits(instructions, awaitPositions);
+
         // Build the union of all live temps (each gets a unique slot in the state struct)
         var allLiveTemps = new SortedSet<int>();
         foreach (var set in liveAcross)
         {
             allLiveTemps.UnionWith(set);
+        }
+
+        // Build the union of all live locals
+        var allLiveLocals = new SortedSet<int>();
+        foreach (var set in liveLocalsAcross)
+        {
+            allLiveLocals.UnionWith(set);
         }
 
         // Assign state struct offsets for live temps
@@ -75,13 +85,19 @@ public static class StateMachineTransform
             slotIndex++;
         }
 
-        int stateStructSize = liveVarBaseOffset + allLiveTemps.Count * 8;
+        // Assign state struct offsets for live locals (after temps)
+        int localSaveBaseOffset = liveVarBaseOffset + allLiveTemps.Count * 8;
+        var localToSlotOffset = new Dictionary<int, int>();
+        int localSlotIndex = 0;
+        foreach (int local in allLiveLocals)
+        {
+            localToSlotOffset[local] = localSaveBaseOffset + localSlotIndex * 8;
+            localSlotIndex++;
+        }
+
+        int stateStructSize = localSaveBaseOffset + allLiveLocals.Count * 8;
 
         // Build the transformed instruction list
-        // The coroutine function receives the state struct pointer in local[0] (env slot).
-        // We use temp 0 to hold the state struct pointer loaded from local[0].
-        const int stateStructTemp = 0;
-
         var result = new List<IrInst>();
         int maxTemp = 0;
 
@@ -94,15 +110,14 @@ public static class StateMachineTransform
             }
         }
 
-        // Reserve temp for state struct pointer and state index
-        int stateIdxTemp = maxTemp + 1;
-        // Reserve temp for return status values
-        int statusTemp = maxTemp + 2;
-        // Reserve temp for loading awaited task result
-        int awaitResultTemp = maxTemp + 3;
-        maxTemp = maxTemp + 3;
+        // Reserve temps that don't conflict with body temps
+        int stateStructTemp = maxTemp + 1;
+        int stateIdxTemp = maxTemp + 2;
+        int statusTemp = maxTemp + 3;
+        int awaitResultTemp = maxTemp + 4;
+        maxTemp = maxTemp + 4;
 
-        // Emit: load state struct pointer from local[0]
+        // Emit: load state struct pointer from local[0] into a dedicated temp
         result.Add(new IrInst.LoadLocal(stateStructTemp, 0));
 
         if (awaitPositions.Count == 0)
@@ -132,7 +147,7 @@ public static class StateMachineTransform
                 }
                 else
                 {
-                    result.Add(AdjustLoadEnvForStateStruct(inst, captureCount));
+                    result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
                 }
             }
 
@@ -181,14 +196,26 @@ public static class StateMachineTransform
             if (stateIdx > 0)
             {
                 // Resume: restore live temps from state struct
-                var liveAtThisPoint = liveAcross[stateIdx - 1];
+                var liveTempsAtThisPoint = liveAcross[stateIdx - 1];
                 var restoreVars = new List<(int SlotOffset, int TargetTemp)>();
-                foreach (int temp in liveAtThisPoint)
+                foreach (int temp in liveTempsAtThisPoint)
                 {
                     if (tempToSlotOffset.TryGetValue(temp, out int offset))
                     {
                         result.Add(new IrInst.LoadMemOffset(temp, stateStructTemp, offset));
                         restoreVars.Add((offset, temp));
+                    }
+                }
+
+                // Resume: restore live locals from state struct
+                var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx - 1];
+                foreach (int local in liveLocalsAtThisPoint)
+                {
+                    if (localToSlotOffset.TryGetValue(local, out int offset))
+                    {
+                        int loadTemp = ++maxTemp;
+                        result.Add(new IrInst.LoadMemOffset(loadTemp, stateStructTemp, offset));
+                        result.Add(new IrInst.StoreLocal(local, loadTemp));
                     }
                 }
 
@@ -208,14 +235,26 @@ public static class StateMachineTransform
                 if (inst is IrInst.AwaitTask awaitTask)
                 {
                     // Suspend: save live temps to state struct
-                    var liveAtThisPoint = liveAcross[stateIdx];
+                    var liveTempsAtThisPoint = liveAcross[stateIdx];
                     var saveVars = new List<(int SlotOffset, int SourceTemp)>();
-                    foreach (int temp in liveAtThisPoint)
+                    foreach (int temp in liveTempsAtThisPoint)
                     {
                         if (tempToSlotOffset.TryGetValue(temp, out int offset))
                         {
                             result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, temp));
                             saveVars.Add((offset, temp));
+                        }
+                    }
+
+                    // Suspend: save live locals to state struct
+                    var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx];
+                    foreach (int local in liveLocalsAtThisPoint)
+                    {
+                        if (localToSlotOffset.TryGetValue(local, out int offset))
+                        {
+                            int loadTemp = ++maxTemp;
+                            result.Add(new IrInst.LoadLocal(loadTemp, local));
+                            result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, loadTemp));
                         }
                     }
 
@@ -245,7 +284,7 @@ public static class StateMachineTransform
                 }
                 else
                 {
-                    result.Add(AdjustLoadEnvForStateStruct(inst, captureCount));
+                    result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
                 }
             }
         }
@@ -256,21 +295,16 @@ public static class StateMachineTransform
     /// <summary>
     /// LoadEnv instructions in lambdas load from env_ptr at offset index*8.
     /// In a coroutine, captures are in the state struct at HeaderSize + index*8.
-    /// This adjusts LoadEnv to LoadMemOffset with the correct offset.
+    /// This adjusts LoadEnv to LoadMemOffset with the correct base temp and offset.
     /// </summary>
-    private static IrInst AdjustLoadEnvForStateStruct(IrInst inst, int captureCount)
+    private static IrInst AdjustLoadEnvForStateStruct(IrInst inst, int stateStructTemp, int captureCount)
     {
         if (inst is IrInst.LoadEnv loadEnv)
         {
-            // Captures are stored at HeaderSize + index*8 in the state struct.
-            // LoadEnv loads from local[0] (the state struct ptr) at Index*8.
-            // We replace it with LoadMemOffset from the state struct.
-            // Note: the state struct pointer is in local[0], same as env in lambdas.
-            // But LoadEnv uses implicit env, while we need explicit offset from header.
-            // Since the coroutine's local[0] is the state struct ptr, and LoadEnv
-            // reads from (local[0] + Index*8), we need to adjust the offset to
-            // (HeaderSize + Index*8).
-            return new IrInst.LoadMemOffset(loadEnv.Target, 0, TaskStructLayout.HeaderSize + loadEnv.Index * 8)
+            // Replace LoadEnv with LoadMemOffset from the state struct temp.
+            // Captures are at HeaderSize + index*8 in the state struct.
+            return new IrInst.LoadMemOffset(loadEnv.Target, stateStructTemp,
+                TaskStructLayout.HeaderSize + loadEnv.Index * 8)
             {
                 Location = inst.Location
             };
@@ -354,8 +388,50 @@ public static class StateMachineTransform
     }
 
     /// <summary>
-    /// Returns all temps defined (written) by an instruction.
+    /// For each await point, computes which local slots are live across that point
+    /// (written before and read after the await). Local slot 0 (state struct) and
+    /// slot 1 (dummy arg) are excluded since they're function parameters.
     /// </summary>
+    private static List<HashSet<int>> ComputeLiveLocalsAcrossAwaits(
+        List<IrInst> instructions, List<int> awaitPositions)
+    {
+        var result = new List<HashSet<int>>();
+
+        foreach (int awaitPos in awaitPositions)
+        {
+            // Collect locals written before the await point
+            var writtenBefore = new HashSet<int>();
+            for (int i = 0; i < awaitPos; i++)
+            {
+                if (instructions[i] is IrInst.StoreLocal store)
+                {
+                    writtenBefore.Add(store.Slot);
+                }
+            }
+
+            // Collect locals read after the await point
+            var readAfter = new HashSet<int>();
+            for (int i = awaitPos + 1; i < instructions.Count; i++)
+            {
+                if (instructions[i] is IrInst.LoadLocal load)
+                {
+                    readAfter.Add(load.Slot);
+                }
+            }
+
+            // Live across = written before AND read after
+            var live = new HashSet<int>(writtenBefore);
+            live.IntersectWith(readAfter);
+
+            // Exclude slots 0 and 1 (function parameters)
+            live.Remove(0);
+            live.Remove(1);
+
+            result.Add(live);
+        }
+
+        return result;
+    }
     private static IEnumerable<int> GetDefinedTemps(IrInst inst)
     {
         return inst switch

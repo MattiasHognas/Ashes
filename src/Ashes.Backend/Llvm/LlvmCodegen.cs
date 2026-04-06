@@ -644,10 +644,22 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
-            // CreateTask: Phase A synchronous stub — task value is the body result passed through.
-            IrInst.CreateTask createTask => StoreTemp(state, createTask.Target, LoadTemp(state, createTask.ClosureTemp)),
-            // AwaitTask: Phase A synchronous stub — extract value directly (no suspension).
+            // CreateTask: Phase B — allocate task struct with coroutine function + captures.
+            IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
+                EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
+                    createTask.StateStructSize, createTask.CaptureCount)),
+            // CreateCompletedTask: pre-completed task with result already available.
+            IrInst.CreateCompletedTask cct => StoreTemp(state, cct.Target,
+                EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),
+            // AwaitTask: should not appear after state machine transform. Pass-through for safety.
             IrInst.AwaitTask awaitTask => StoreTemp(state, awaitTask.Target, LoadTemp(state, awaitTask.TaskTemp)),
+            // RunTask: Phase B — synchronously drive the task to completion.
+            IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
+                EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
+            // Suspend/Resume: state machine annotations — no-ops in codegen.
+            // The actual save/restore is done by StoreMemOffset/LoadMemOffset around them.
+            IrInst.Suspend => false,
+            IrInst.Resume => false,
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
