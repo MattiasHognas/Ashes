@@ -230,7 +230,10 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
                 || ProgramUsesInstruction<IrInst.Drop>(program));
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
-            && ProgramUsesInstruction<IrInst.AsyncSleep>(program);
+            && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+                || ProgramUsesInstruction<IrInst.RunTask>(program)
+                || ProgramUsesInstruction<IrInst.AsyncAll>(program)
+                || ProgramUsesInstruction<IrInst.AsyncRace>(program));
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
