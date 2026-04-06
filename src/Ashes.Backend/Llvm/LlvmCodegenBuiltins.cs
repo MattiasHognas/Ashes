@@ -633,6 +633,29 @@ internal static partial class LlvmCodegen
             : EmitWindowsTcpClose(state, socket);
     }
 
+    /// <summary>
+    /// Emits a Drop operation for deterministic resource cleanup.
+    /// Routes to the appropriate runtime close function based on resource type.
+    /// The result of the close call is discarded (Drop is fire-and-forget).
+    /// </summary>
+    private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle resourceValue, string resourceTypeName)
+    {
+        switch (resourceTypeName)
+        {
+            case "Socket":
+                // Drop a socket by calling the platform-specific TCP close.
+                // The result (Result[Unit, Str]) is discarded — the compiler
+                // guarantees exactly-once semantics.
+                EmitTcpClose(state, resourceValue);
+                return true;
+
+            default:
+                // Unknown resource type — should not happen if the compiler
+                // is correctly classifying resource types.
+                return true;
+        }
+    }
+
     private static LlvmValueHandle EmitHttpRequest(LlvmCodegenState state, LlvmValueHandle urlRef, LlvmValueHandle bodyRef, bool hasBody)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

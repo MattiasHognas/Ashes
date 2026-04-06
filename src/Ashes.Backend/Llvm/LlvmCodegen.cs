@@ -177,7 +177,8 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpClose>(program));
+                || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+                || ProgramUsesInstruction<IrInst.Drop>(program));
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -593,6 +594,7 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
             IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceSlot), drop.ResourceTypeName),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),

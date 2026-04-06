@@ -123,6 +123,21 @@ public sealed class Lowering
 
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
+    // --- Resource tracking for Phase 1: Deterministic Resources ---
+    // Tracks resource bindings and their drop state.
+    // Key: binding name, Value: resource info (slot, type name, whether dropped).
+    private sealed class ResourceInfo(int slot, string resourceTypeName, TextSpan? definitionSpan)
+    {
+        public int Slot { get; } = slot;
+        public string ResourceTypeName { get; } = resourceTypeName;
+        public TextSpan? DefinitionSpan { get; } = definitionSpan;
+        public bool IsDropped { get; set; }
+    }
+
+    // Stack of resource scopes, parallel to _scopes.
+    // Each scope level tracks resources introduced at that level.
+    private readonly Stack<Dictionary<string, ResourceInfo>> _resourceScopes = new();
+
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
 
@@ -172,6 +187,7 @@ public sealed class Lowering
             AddStdIOBindings(rootScope);
         }
         _scopes.Push(rootScope);
+        _resourceScopes.Push(new Dictionary<string, ResourceInfo>(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -1245,12 +1261,27 @@ public sealed class Lowering
         };
         _scopes.Push(child);
 
+        // Track resource bindings for deterministic cleanup
+        PushResourceScope();
+        var resourceTypeName = GetResourceTypeName(Prune(valType));
+        if (resourceTypeName is not null)
+        {
+            TrackResource(let.Name, slot, resourceTypeName, AstSpans.GetLetNameOrDefault(let));
+        }
+
         // Body IS in tail position (if the let itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
 
+        // Store body result before emitting drops so drops don't clobber the value
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        PopResourceScope();
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+
         _scopes.Pop();
-        return (bodyTemp, bodyType);
+        return (resultTemp, bodyType);
     }
 
     private (int, TypeRef) LowerLetResult(Expr.LetResult letResult)
@@ -1795,6 +1826,7 @@ public sealed class Lowering
     private (int, TypeRef) LowerNetTcpSend(Expr socketArg, Expr textArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
         var (socketTemp, socketType) = LowerExpr(socketArg);
         var prunedSocketType = Prune(socketType);
         if (prunedSocketType is TypeRef.TNever)
@@ -1835,6 +1867,7 @@ public sealed class Lowering
     private (int, TypeRef) LowerNetTcpReceive(Expr socketArg, Expr maxBytesArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
         var (socketTemp, socketType) = LowerExpr(socketArg);
         var prunedSocketType = Prune(socketType);
         if (prunedSocketType is TypeRef.TNever)
@@ -1875,6 +1908,19 @@ public sealed class Lowering
     private (int, TypeRef) LowerNetTcpClose(Expr socketArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
+
+        // Check for double-drop before lowering the argument
+        if (socketArg is Expr.Var v)
+        {
+            var resourceInfo = LookupResource(v.Name);
+            if (resourceInfo is not null && resourceInfo.IsDropped)
+            {
+                ReportDiagnostic(GetSpan(socketArg),
+                    $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
+                    DiagnosticCodes.DoubleDrop);
+            }
+        }
+
         var (socketTemp, socketType) = LowerExpr(socketArg);
         var prunedSocketType = Prune(socketType);
         if (prunedSocketType is TypeRef.TNever)
@@ -1885,6 +1931,12 @@ public sealed class Lowering
         if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.close() expects Socket."))
         {
             return (socketTemp, prunedSocketType);
+        }
+
+        // Mark the resource as dropped (explicitly closed)
+        if (socketArg is Expr.Var varExpr)
+        {
+            TryMarkResourceDropped(varExpr.Name);
         }
 
         var target = NewTemp();
@@ -2678,6 +2730,7 @@ public sealed class Lowering
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
             var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
             _scopes.Push(caseScope);
+            PushResourceScope();
 
             var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
             var patternType = InferPatternType(match.Cases[i].Pattern, patternBindings);
@@ -2692,6 +2745,9 @@ public sealed class Lowering
                 EmitPattern(match.Cases[i].Pattern, valueTemp, caseFailLabel, patternBindings);
             }
 
+            // Track resource bindings created by pattern matching
+            TrackResourceBindingsInPattern(patternBindings);
+
             // Each case body IS in tail position (if the match itself is)
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
             var (bodyTemp, bodyType) = LowerExpr(match.Cases[i].Body);
@@ -2705,6 +2761,7 @@ public sealed class Lowering
                 }
             }
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+            PopResourceScope();
             Emit(new IrInst.Jump(endLabel));
 
             _scopes.Pop();
@@ -3380,6 +3437,154 @@ public sealed class Lowering
     private Binding? Lookup(string name)
     {
         return _scopes.Peek().TryGetValue(name, out var b) ? b : null;
+    }
+
+    // --- Resource tracking helpers ---
+
+    /// <summary>
+    /// Returns true if the given pruned type is a resource type requiring deterministic cleanup.
+    /// </summary>
+    private static bool IsResourceType(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+    }
+
+    /// <summary>
+    /// Returns the resource type name if the type is a resource type, otherwise null.
+    /// </summary>
+    private static string? GetResourceTypeName(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+            ? named.Symbol.Name
+            : null;
+    }
+
+    /// <summary>
+    /// Registers a resource binding in the current resource scope.
+    /// Called when a let binding or pattern binding creates a resource-typed variable.
+    /// </summary>
+    private void TrackResource(string name, int slot, string resourceTypeName, TextSpan? definitionSpan)
+    {
+        if (_resourceScopes.Count > 0)
+        {
+            _resourceScopes.Peek()[name] = new ResourceInfo(slot, resourceTypeName, definitionSpan);
+        }
+    }
+
+    /// <summary>
+    /// Looks up a resource binding across all resource scopes.
+    /// </summary>
+    private ResourceInfo? LookupResource(string name)
+    {
+        foreach (var scope in _resourceScopes)
+        {
+            if (scope.TryGetValue(name, out var info))
+            {
+                return info;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Marks a resource as dropped (explicitly closed).
+    /// Returns false if the resource was already dropped (double-drop).
+    /// </summary>
+    private bool TryMarkResourceDropped(string name)
+    {
+        var info = LookupResource(name);
+        if (info is null)
+        {
+            return true; // not a tracked resource — no-op
+        }
+
+        if (info.IsDropped)
+        {
+            return false; // already dropped — double-drop
+        }
+
+        info.IsDropped = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Emits Drop instructions for all alive (not yet dropped) resources in the current resource scope.
+    /// Called at scope exit.
+    /// </summary>
+    private void EmitDropsForCurrentScope()
+    {
+        if (_resourceScopes.Count == 0)
+        {
+            return;
+        }
+
+        var scope = _resourceScopes.Peek();
+        foreach (var (_, info) in scope)
+        {
+            if (!info.IsDropped)
+            {
+                int loadTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
+                Emit(new IrInst.Drop(loadTemp, info.ResourceTypeName));
+                info.IsDropped = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pushes a new resource scope. Must be matched with PopResourceScope().
+    /// </summary>
+    private void PushResourceScope()
+    {
+        _resourceScopes.Push(new Dictionary<string, ResourceInfo>(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Pops a resource scope, emitting Drop instructions for any remaining alive resources.
+    /// </summary>
+    private void PopResourceScope()
+    {
+        EmitDropsForCurrentScope();
+        _resourceScopes.Pop();
+    }
+
+    /// <summary>
+    /// Tracks resource bindings created by pattern matching.
+    /// Scans pattern bindings for resource types and registers them for tracking.
+    /// </summary>
+    private void TrackResourceBindingsInPattern(IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        foreach (var (name, type) in patternBindings)
+        {
+            var prunedType = Prune(type);
+            var resourceTypeName = GetResourceTypeName(prunedType);
+            if (resourceTypeName is not null)
+            {
+                // Look up the slot from the current scope
+                if (Lookup(name) is Binding.Local local)
+                {
+                    TrackResource(name, local.Slot, resourceTypeName, local.DefinitionSpan);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks if a resource expression refers to a dropped resource and reports use-after-drop.
+    /// </summary>
+    private void CheckUseAfterDrop(Expr expr)
+    {
+        if (expr is Expr.Var v)
+        {
+            var resourceInfo = LookupResource(v.Name);
+            if (resourceInfo is not null && resourceInfo.IsDropped)
+            {
+                ReportDiagnostic(GetSpan(expr),
+                    $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
+                    DiagnosticCodes.UseAfterDrop);
+            }
+        }
     }
 
     private int NewTemp()

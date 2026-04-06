@@ -95,6 +95,14 @@ public abstract record IrInst
     public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
     public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
+
+    /// <summary>
+    /// Drop instruction for deterministic resource cleanup.
+    /// Emitted by the compiler at scope exit for resource bindings.
+    /// ResourceTypeName identifies which runtime drop function to call.
+    /// </summary>
+    public sealed record Drop(int SourceSlot, string ResourceTypeName) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;
