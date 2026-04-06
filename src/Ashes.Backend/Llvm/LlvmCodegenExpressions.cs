@@ -149,8 +149,8 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// CreateTask: allocate a task/state struct and initialize it.
-    /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), captures...]
-    /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures.
+    /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), next_task(0), sleep_duration_ms(0), captures...]
+    /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures starting at <see cref="TaskStructLayout.HeaderSize"/>.
     /// </summary>
     private static LlvmValueHandle EmitCreateTask(LlvmCodegenState state, LlvmValueHandle closurePtr,
         int stateStructSize, int captureCount)
