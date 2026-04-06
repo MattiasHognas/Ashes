@@ -1164,8 +1164,8 @@ resource is skipped (no double close).
 The compiler enforces resource safety with two rules:
 
 1. **No use-after-close.** Using a resource after it has been closed
-   (passing it to `send`, `receive`, or calling `close` again) is a
-   compile-time error (diagnostic `ASH006`).
+   (passing it to `send` or `receive`) is a compile-time error
+   (diagnostic `ASH006`).
 
 2. **No double-close.** Calling `close` on an already-closed resource
    is a compile-time error (diagnostic `ASH007`).

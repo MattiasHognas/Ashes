@@ -3504,7 +3504,7 @@ public sealed class Lowering
         var info = LookupResource(name);
         if (info is null)
         {
-            return true; // not a tracked resource — no-op
+            return true; // not a tracked resource — treating as success (no-op)
         }
 
         if (info.IsDropped)

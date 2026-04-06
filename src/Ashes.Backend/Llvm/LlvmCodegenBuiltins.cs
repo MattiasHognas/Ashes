@@ -645,8 +645,8 @@ internal static partial class LlvmCodegen
         {
             case "Socket":
                 // Drop a socket by calling the platform-specific TCP close.
-                // The result (Result[Unit, Str]) is discarded — the compiler
-                // guarantees exactly-once semantics.
+                // The result (Result[Unit, Str]) is discarded — Drop is
+                // fire-and-forget; runtime errors during cleanup are ignored.
                 EmitTcpClose(state, resourceValue);
                 return false;
 
