@@ -186,7 +186,7 @@ No new user-facing syntax. Optimizations are invisible to the user.
 
 1. Persistent data structures (lists, maps, sets).
 2. Allocation avoidance (arenas, fusion).
-3. Safe in-place reuse (single-owner optimisation).
+3. Safe in-place reuse (single-owner optimization).
 4. Create optimization pass pipeline.
 5. Dead code elimination.
 6. Constant folding.
