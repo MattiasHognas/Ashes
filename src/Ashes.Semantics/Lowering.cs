@@ -2099,10 +2099,12 @@ public sealed class Lowering
         Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
-        // Error path: pass through the result value as the task (error propagation placeholder)
+        // Error path: extract the error payload and create a failed task.
         Emit(new IrInst.Label(errorLabel));
+        var errorPayloadTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(errorPayloadTemp, resultTemp, 0));
         int errTaskTemp = NewTemp();
-        Emit(new IrInst.CreateCompletedTask(errTaskTemp, resultTemp));
+        Emit(new IrInst.CreateFailedTask(errTaskTemp, errorPayloadTemp));
         Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
