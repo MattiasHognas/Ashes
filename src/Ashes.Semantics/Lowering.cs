@@ -4176,6 +4176,13 @@ public sealed class Lowering
             return true;
         }
 
+        // Int and string literal patterns have infinite domains — if there are only
+        // literal patterns and no catch-all, the match is non-exhaustive.
+        if (TryGetMissingLiteralPattern(patterns, out missingPattern))
+        {
+            return true;
+        }
+
         return false;
     }
 
@@ -4363,6 +4370,24 @@ public sealed class Lowering
         if (!hasFalse)
         {
             missingPattern = new Pattern.BoolLit(false);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Detects non-exhaustive matches over integer or string literal patterns.
+    /// Since int and string domains are infinite, any set of literal patterns
+    /// without a catch-all is non-exhaustive. Reports a wildcard as the missing case.
+    /// </summary>
+    private static bool TryGetMissingLiteralPattern(IReadOnlyList<Pattern> patterns, out Pattern missingPattern)
+    {
+        missingPattern = new Pattern.Wildcard();
+        if (patterns.Any(p => p is Pattern.IntLit or Pattern.StrLit))
+        {
+            // Already checked for catch-all in the caller — reaching here means
+            // there are literal patterns without a catch-all, which is non-exhaustive.
             return true;
         }
 
