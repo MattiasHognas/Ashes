@@ -168,6 +168,51 @@ public sealed class OwnershipTests
         intDropCount.ShouldBe(0, "Int (copy type) should not produce Drop.");
     }
 
+    // --- Alias tracking: rebinding an owned value should NOT produce duplicate Drop ---
+
+    [Test]
+    public void Alias_of_owned_string_emits_single_drop()
+    {
+        var ir = LowerProgram(
+            """
+            let s = "hello" in
+            let a = s in
+            Ashes.IO.print(a)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        dropCount.ShouldBe(1, "Aliasing an owned value should produce exactly one Drop (on the original owner).");
+    }
+
+    [Test]
+    public void Chained_alias_of_owned_string_emits_single_drop()
+    {
+        var ir = LowerProgram(
+            """
+            let s = "hello" in
+            let a = s in
+            let b = a in
+            Ashes.IO.print(b)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        dropCount.ShouldBe(1, "Chained aliases should still produce exactly one Drop.");
+    }
+
+    [Test]
+    public void Non_alias_fresh_values_still_get_separate_drops()
+    {
+        var ir = LowerProgram(
+            """
+            let s1 = "hello" in
+            let s2 = "world" in
+            Ashes.IO.print(s1)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        dropCount.ShouldBe(2, "Non-alias fresh values should each get their own Drop.");
+    }
+
     // --- Drop in match arms ---
 
     [Test]

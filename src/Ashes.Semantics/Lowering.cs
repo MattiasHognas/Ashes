@@ -148,6 +148,11 @@ public sealed class Lowering
     // Each scope level tracks owned values introduced at that level.
     private readonly Stack<Dictionary<string, OwnershipInfo>> _ownershipScopes = new();
 
+    // Alias map for ownership: when `let y = x` and x is owned, y → x.
+    // This prevents double-Drop and propagates diagnostics through aliases.
+    // Aliases are resolved transitively (y → x → z chains are followed).
+    private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
+
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
 
@@ -1291,8 +1296,19 @@ public sealed class Lowering
         var ownedTypeName = GetOwnedTypeName(prunedValType);
         if (ownedTypeName is not null)
         {
-            var isResource = GetResourceTypeName(prunedValType) is not null;
-            TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
+            // Alias detection: when `let y = x` and x is already tracked as owned,
+            // record y as an alias of x instead of tracking it independently.
+            // This prevents double-Drop: only the original owner emits Drop.
+            if (let.Value is Expr.Var aliasSource && LookupOwnedValue(aliasSource.Name) is not null)
+            {
+                var resolvedSource = ResolveOwnershipAlias(aliasSource.Name);
+                _ownershipAliases[let.Name] = resolvedSource;
+            }
+            else
+            {
+                var isResource = GetResourceTypeName(prunedValType) is not null;
+                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
+            }
         }
 
         // Body IS in tail position (if the let itself is)
@@ -3560,6 +3576,20 @@ public sealed class Lowering
     }
 
     /// <summary>
+    /// Resolves an ownership alias chain to the original owner name.
+    /// If the name is not an alias, returns itself.
+    /// </summary>
+    private string ResolveOwnershipAlias(string name)
+    {
+        while (_ownershipAliases.TryGetValue(name, out var target))
+        {
+            name = target;
+        }
+
+        return name;
+    }
+
+    /// <summary>
     /// Registers an owned binding in the current ownership scope.
     /// Called when a let binding or pattern binding creates an owned-type variable.
     /// </summary>
@@ -3573,13 +3603,15 @@ public sealed class Lowering
 
     /// <summary>
     /// Looks up an owned binding across all ownership scopes.
-    /// Returns the ownership info for resource-type values (used by use-after-drop / double-drop checks).
+    /// Resolves ownership aliases so that accessing an alias (e.g. y when `let y = x`)
+    /// returns the original owner's info.
     /// </summary>
     private OwnershipInfo? LookupOwnedValue(string name)
     {
+        var resolved = ResolveOwnershipAlias(name);
         foreach (var scope in _ownershipScopes)
         {
-            if (scope.TryGetValue(name, out var info))
+            if (scope.TryGetValue(resolved, out var info))
             {
                 return info;
             }
@@ -3590,13 +3622,14 @@ public sealed class Lowering
 
     /// <summary>
     /// Marks an owned value as dropped (explicitly closed / released).
+    /// Resolves aliases so that closing an alias marks the original owner as dropped.
     /// Returns true if the operation succeeded (value was alive and is now marked dropped)
     /// or if the name is not a tracked owned value (no-op — safe to call on any binding).
     /// Returns false if the value was already dropped (double-drop detected).
     /// </summary>
     private bool TryMarkDropped(string name)
     {
-        var info = LookupOwnedValue(name);
+        var info = LookupOwnedValue(name); // already resolves aliases
         if (info is null)
         {
             return true; // not a tracked owned value — no action needed, returns true to indicate no error

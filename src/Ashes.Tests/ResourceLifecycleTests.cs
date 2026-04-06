@@ -268,6 +268,83 @@ public sealed class ResourceLifecycleTests
         DiagnosticCodes.DoubleDrop.ShouldBe("ASH007");
     }
 
+    // --- Alias tracking: use-after-drop and double-drop via aliases ---
+
+    [Test]
+    public void Use_after_close_via_alias_reports_ash006()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            match Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> Ashes.IO.print("fail")
+                | Ok(sock) ->
+                    let alias = sock in
+                    match Ashes.Net.Tcp.close(sock) with
+                        | Ok(_) ->
+                            match Ashes.Net.Tcp.send(alias)("hello") with
+                                | Ok(_) -> Ashes.IO.print("ok")
+                                | Error(_) -> Ashes.IO.print("fail")
+                        | Error(_) -> Ashes.IO.print("fail")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterDrop,
+            "Expected ASH006 for using an alias of a closed resource.");
+    }
+
+    [Test]
+    public void Double_close_via_alias_reports_ash007()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            match Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> Ashes.IO.print("fail")
+                | Ok(sock) ->
+                    let alias = sock in
+                    match Ashes.Net.Tcp.close(sock) with
+                        | Ok(_) ->
+                            match Ashes.Net.Tcp.close(alias) with
+                                | Ok(_) -> Ashes.IO.print("ok")
+                                | Error(_) -> Ashes.IO.print("fail")
+                        | Error(_) -> Ashes.IO.print("fail")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.DoubleDrop,
+            "Expected ASH007 for closing an alias of an already-closed resource.");
+    }
+
+    [Test]
+    public void Close_via_alias_marks_original_as_dropped()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            match Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> Ashes.IO.print("fail")
+                | Ok(sock) ->
+                    let alias = sock in
+                    match Ashes.Net.Tcp.close(alias) with
+                        | Ok(_) ->
+                            match Ashes.Net.Tcp.send(sock)("hello") with
+                                | Ok(_) -> Ashes.IO.print("ok")
+                                | Error(_) -> Ashes.IO.print("fail")
+                        | Error(_) -> Ashes.IO.print("fail")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterDrop,
+            "Expected ASH006 for using original name after alias was closed.");
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
