@@ -10,6 +10,16 @@ is complete. Subsequent work focuses on runtime and ecosystem.
 | Networking | HTTP and TCP layers with async |
 | Package Manager | Ecosystem and dependency management |
 | HTTPS/TLS | TLS, encryption, certificates and security concerns |
+| Pattern Guards | Pattern matching enhancements |
+| Type Annotations | User-written type annotations |
+| Import Aliasing | `import Ashes.IO as IO` |
+| Selective Imports | `import Ashes.IO (print)` |
+| Effects / IO Types | Effect system or IO types |
+| Inline Modules | Inline module declarations in source files |
+| Ashes.String | Standard library string utilities |
+| Ashes.Bytes | Standard library byte utilities |
+| Ashes.Net.Http | Standard library HTTP module |
+| Ashes.Math | Standard library math utilities |
 
 ------------------------------------------------------------------------
 
