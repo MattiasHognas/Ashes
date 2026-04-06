@@ -1,11 +1,30 @@
 import * as fs from "fs";
-import * as http from "http";
 import * as https from "https";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 
 import * as vscode from "vscode";
+
+/**
+ * Hosts allowed as download targets.
+ * Only HTTPS requests to these hosts (and their subdomains) are permitted.
+ */
+const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
+  "github.com",
+  "objects.githubusercontent.com",
+]);
+
+/** Return true when `hostname` is in (or is a subdomain of) an allowed host. */
+function isAllowedHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  for (const allowed of ALLOWED_HOSTS) {
+    if (lower === allowed || lower.endsWith(`.${allowed}`)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const GITHUB_OWNER = "MattiasHognas";
 const GITHUB_REPO = "Ashes";
@@ -87,12 +106,30 @@ export function getBundledToolPath(
   );
 }
 
-/** Follow redirects and download a URL to a local file. */
+/** Follow redirects and download a URL to a local file.
+ *  Only HTTPS URLs targeting {@link ALLOWED_HOSTS} are permitted.
+ */
 export function downloadToFile(url: string, destPath: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const follow = (u: string): void => {
-      const lib = u.startsWith("https") ? https : http;
-      lib
+      const parsed = new URL(u);
+      if (parsed.protocol !== "https:") {
+        reject(
+          new Error(
+            `Refusing to download over insecure protocol: ${parsed.protocol}`,
+          ),
+        );
+        return;
+      }
+      if (!isAllowedHost(parsed.hostname)) {
+        reject(
+          new Error(
+            `Refusing to download from untrusted host: ${parsed.hostname}`,
+          ),
+        );
+        return;
+      }
+      https
         .get(u, { headers: { "User-Agent": "vscode-ashes" } }, (res) => {
           const { statusCode, headers } = res;
           if (
