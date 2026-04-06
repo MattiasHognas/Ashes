@@ -3,6 +3,9 @@
 Ashes is a pure, statically typed, expression-based functional programming language
 compiled directly to native code.
 
+Values are immutable and freely shared; the compiler handles ownership
+and memory safely behind the scenes.
+
 This document describes the **surface syntax** and **semantic behavior** of the
 currently supported language features.
 
@@ -1238,10 +1241,27 @@ of whether a move or share occurs.
 ## 17.5 Borrowing Is Inferred
 
 Borrowing is **compiler-inferred**, not user-annotated. There is no
-`&x` syntax. When a value is passed to a function or used in an
-expression, the compiler automatically infers a borrow if the value
-will still be needed after the call. Since Ashes values are immutable,
-inferred borrowing is always safe and requires no lifetime annotations.
+`&x` syntax, no borrow operator, and no lifetime annotations.
+
+When an owned value is accessed — passed to a function, used in an
+expression, or bound to another name — the compiler automatically
+emits a borrow. A borrowed reference is a non-owning access: it
+carries no responsibility for cleanup. The owning scope still drops
+the value when it exits.
+
+Since Ashes values are immutable, inferred borrowing is always safe:
+
+- Multiple borrows of the same value can coexist without conflict.
+- Borrows cannot outlive the owning scope (enforced by scope structure).
+- There are no data races because there is no mutation.
+
+Copy types (`Int`, `Float`, `Bool`) are never borrowed — they are
+trivially duplicated on the stack.
+
+Internally the compiler represents a borrow as a `Borrow` IR
+instruction: `Borrow(target, source)`. In the current backend this
+is a simple pointer pass-through. Future phases may use borrow
+information for copy elision and in-place reuse optimizations.
 
 ## 17.6 No Garbage Collection
 

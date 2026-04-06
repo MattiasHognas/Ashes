@@ -4,6 +4,9 @@ This document defines the ordered phases for evolving Ashes from its
 current pure-functional compiler into a memory-safe, high-performance
 language with ownership, shared borrowing, and ergonomic pattern matching.
 
+Values are immutable and freely shared; the compiler handles ownership
+and memory safely behind the scenes.
+
 All 5 phases will probably ship under a single version (`1.1.0`). The phase numbers
 exist only to communicate dependency order and guide development
 sequencing.
@@ -13,7 +16,9 @@ until its predecessor is complete and tested.
 
 ------------------------------------------------------------------------
 
-## Phase 1 — Deterministic Resources
+## Phase 1 — Deterministic Resources ✅
+
+**Status:** Complete
 
 **Prerequisite:** stable LLVM backend (current state)
 
@@ -65,7 +70,9 @@ Not yet like Rust.
 
 ------------------------------------------------------------------------
 
-## Phase 2 — Ownership Core (Implicit Sharing)
+## Phase 2 — Ownership Core (Implicit Sharing) ✅
+
+**Status:** Complete
 
 **Prerequisite:** Phase 1 complete
 
@@ -119,7 +126,9 @@ Rust's affine types.
 
 ------------------------------------------------------------------------
 
-## Phase 3 — Compiler-Inferred Borrowing
+## Phase 3 — Compiler-Inferred Borrowing ✅
+
+**Status:** Complete
 
 **Prerequisite:** Phase 2 complete
 
