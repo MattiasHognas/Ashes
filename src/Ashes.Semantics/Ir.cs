@@ -197,7 +197,7 @@ public static class TaskStructLayout
     public const int ResultSlot = 16;      // result value / awaited task result (i64)
     public const int AwaitedTask = 24;     // pointer to sub-task being awaited (i64)
     public const int NextTask = 32;        // queue linked list pointer (i64) — Phase C event loop
-    public const int SleepDeadlineNs = 40; // absolute nanosecond deadline for sleep (i64) — Phase C
+    public const int SleepDurationMs = 40; // sleep duration in milliseconds (i64) — Phase C
     public const int HeaderSize = 48;      // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures

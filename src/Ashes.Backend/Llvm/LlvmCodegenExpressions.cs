@@ -293,7 +293,7 @@ internal static partial class LlvmCodegen
 
         // --- Sleep handle: perform nanosleep, mark sub-task complete ---
         LlvmApi.PositionBuilderAtEnd(builder, sleepHandleBlock);
-        LlvmValueHandle sleepMs = LoadMemory(state, awaitedTask, TaskStructLayout.SleepDeadlineNs, "run_sleep_ms");
+        LlvmValueHandle sleepMs = LoadMemory(state, awaitedTask, TaskStructLayout.SleepDurationMs, "run_sleep_ms");
         EmitNanosleep(state, sleepMs);
         // Mark sleep task as completed
         StoreMemory(state, awaitedTask, TaskStructLayout.StateIndex,
@@ -366,7 +366,7 @@ internal static partial class LlvmCodegen
 
         // --- Sleep handling ---
         LlvmApi.PositionBuilderAtEnd(builder, subSleepBlock);
-        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs, "sub_sleep_ms");
+        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, "sub_sleep_ms");
         EmitNanosleep(state, sleepMs);
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "sub_sleep_mark_done");
@@ -446,7 +446,7 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// EmitAsyncSleep: Create a sleep task.
     /// The task struct has state_index = -2 (SLEEPING) and the sleep duration
-    /// stored in SleepDeadlineNs as milliseconds (the runtime converts to nanoseconds).
+    /// stored in SleepDurationMs as milliseconds (the runtime converts to nanoseconds).
     /// Layout: [state=-2, fn=0, result=0, awaited=0, next=0, sleep_ms=ms]
     /// </summary>
     private static LlvmValueHandle EmitAsyncSleep(LlvmCodegenState state, LlvmValueHandle millisecondsValue)
@@ -474,7 +474,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_next_null");
 
         // sleep_deadline_ns = milliseconds (runtime interprets as ms)
-        StoreMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs,
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
             millisecondsValue, "sleep_ms");
 
         return taskPtr;
@@ -549,7 +549,7 @@ internal static partial class LlvmCodegen
 
         // --- Sleep handling block ---
         LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
-        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDeadlineNs, "sleep_ms_val");
+        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, "sleep_ms_val");
         EmitNanosleep(state, sleepMs);
 
         // Mark the sleep task as completed with result = 0 (Unit)

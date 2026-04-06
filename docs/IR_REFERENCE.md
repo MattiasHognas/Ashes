@@ -260,7 +260,7 @@ live temps and locals across the await point.
 | 16 | `ResultSlot` | Result value / awaited task result |
 | 24 | `AwaitedTask` | Pointer to sub-task being awaited |
 | 32 | `NextTask` | Queue linked list pointer (Phase C event loop) |
-| 40 | `SleepDeadlineNs` | Sleep duration in milliseconds (Phase C) |
+| 40 | `SleepDurationMs` | Sleep duration in milliseconds (Phase C) |
 | 48+ | Captures | Captured environment variables |
 | 48+N*8+ | Live vars | Live variable slots across await points |
 

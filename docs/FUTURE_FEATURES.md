@@ -561,7 +561,7 @@ timer support, sleep-aware event loop in the task runner.
 
 Deliverables:
 - `IrInst.AsyncSleep` — creates a sleep task (state=-2, SLEEPING)
-- `TaskStructLayout` extended: `NextTask`, `SleepDeadlineNs`,
+- `TaskStructLayout` extended: `NextTask`, `SleepDurationMs`,
   `StateCompleted` (-1), `StateSleeping` (-2), HeaderSize 32→48
 - `Ashes.Async.sleep(ms)` — `Int -> Task(Str, Int)` builtin
 - `EmitNanosleep` — Linux `nanosleep` syscall (x64 + ARM64)

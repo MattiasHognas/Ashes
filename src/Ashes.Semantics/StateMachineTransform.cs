@@ -436,6 +436,11 @@ public static class StateMachineTransform
 
         return result;
     }
+    /// <summary>
+    /// Returns all temps defined (written to) by an instruction.
+    /// IMPORTANT: When adding new IrInst types, you MUST add a case here
+    /// and in GetUsedTemps to ensure correct liveness analysis across await points.
+    /// </summary>
     private static IEnumerable<int> GetDefinedTemps(IrInst inst)
     {
         return inst switch
@@ -495,6 +500,8 @@ public static class StateMachineTransform
 
     /// <summary>
     /// Returns all temps used (read) by an instruction.
+    /// IMPORTANT: When adding new IrInst types, you MUST add a case here
+    /// and in GetDefinedTemps to ensure correct liveness analysis across await points.
     /// </summary>
     private static IEnumerable<int> GetUsedTemps(IrInst inst)
     {
