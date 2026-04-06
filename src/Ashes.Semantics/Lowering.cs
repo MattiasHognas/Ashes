@@ -2023,30 +2023,32 @@ public sealed class Lowering
 
         var (taskTemp, taskType) = LowerExpr(taskArg);
 
-        // Verify the argument is a Task(E, A)
+        // Verify the argument is a Task(Never, A). The current lowered task/runtime
+        // representation only produces a completed value, so Async.run is infallible.
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol)
+            || !_typeSymbols.TryGetValue("Never", out var neverSymbol))
         {
-            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task or Result type not registered.");
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task, Result, or Never type not registered.");
             return ReturnNeverWithDummyTemp();
         }
 
-        var errorType = NewTypeVar();
+        var neverType = new TypeRef.TNamedType(neverSymbol, []);
         var successType = NewTypeVar();
-        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [neverType, successType]);
         Unify(taskType, expectedTaskType);
 
-        // RunTask synchronously drives the coroutine to completion
+        // RunTask synchronously drives the coroutine to completion.
         int bodyTemp = NewTemp();
         Emit(new IrInst.RunTask(bodyTemp, taskTemp));
 
-        // Wrap in Ok(value) — returns Result(E, A)
+        // Wrap in Ok(value) — returns Result(Never, A).
         if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
         {
             return ReturnNeverWithDummyTemp();
         }
 
-        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [neverType, Prune(successType)]);
         int adtTemp = NewTemp();
         Emit(new IrInst.AllocAdt(adtTemp, GetConstructorTag(okConstructor), 1));
         Emit(new IrInst.SetAdtField(adtTemp, 0, bodyTemp));
