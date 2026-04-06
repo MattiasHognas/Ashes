@@ -24,6 +24,7 @@ public sealed class Lowering
     private bool _usesPrintBool;
     private bool _usesConcatStr;
     private bool _usesClosures;
+    private bool _usesAsync;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
     // Source location tracking for debug info (Phase 0c)
@@ -530,7 +531,8 @@ public sealed class Lowering
             UsesPrintStr: _usesPrintStr,
             UsesPrintBool: _usesPrintBool,
             UsesConcatStr: _usesConcatStr,
-            UsesClosures: _usesClosures
+            UsesClosures: _usesClosures,
+            UsesAsync: _usesAsync
         );
     }
 
@@ -2003,10 +2005,9 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.run(task) — Phase A: synchronous stub.
-    /// Extracts the result value from the task and wraps it in Result(E, A).
-    /// In Phase A, tasks are synchronously evaluated, so AwaitTask returns
-    /// the body value, which we wrap in Ok(...).
+    /// Ashes.Async.run(task) — Phase B: synchronous execution.
+    /// Drives the task's coroutine to completion using RunTask,
+    /// then wraps the result in Result(E, A).
     /// </summary>
     private (int, TypeRef) LowerAsyncRun(Expr taskArg)
     {
@@ -2027,9 +2028,9 @@ public sealed class Lowering
         var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedTaskType);
 
-        // Phase A: AwaitTask synchronously extracts the body value
+        // Phase B: RunTask synchronously drives the coroutine to completion
         int bodyTemp = NewTemp();
-        Emit(new IrInst.AwaitTask(bodyTemp, taskTemp));
+        Emit(new IrInst.RunTask(bodyTemp, taskTemp));
 
         // Wrap in Ok(value) — returns Result(E, A)
         if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
@@ -2045,10 +2046,8 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.fromResult(result) — Phase A: synchronous stub.
-    /// Wraps a Result(E, A) into a Task(E, A).
-    /// In Phase A, extracts the Ok value from the result and wraps it
-    /// in a task (CreateTask). If the result is Error, the error is preserved.
+    /// Ashes.Async.fromResult(result) — Phase B: creates a pre-completed task.
+    /// Wraps a Result(E, A) into a Task(E, A) that is already completed.
     /// </summary>
     private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
     {
@@ -2067,7 +2066,7 @@ public sealed class Lowering
         var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
         Unify(resultType, expectedResultType);
 
-        // Phase A: extract the Ok payload from the Result and wrap in CreateTask.
+        // Extract the Ok payload from the Result and wrap in a completed task.
         // Check tag to determine Ok vs Error: Ok → extract field[0], Error → pass through.
         var tagTemp = NewTemp();
         var expectedOkTagTemp = NewTemp();
@@ -2082,18 +2081,18 @@ public sealed class Lowering
 
         Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
 
-        // Ok path: extract payload
+        // Ok path: extract payload, create completed task
         var payloadTemp = NewTemp();
         Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
         int okTaskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(okTaskTemp, payloadTemp));
+        Emit(new IrInst.CreateCompletedTask(okTaskTemp, payloadTemp));
         Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
         // Error path: pass through the result value as the task (error propagation placeholder)
         Emit(new IrInst.Label(errorLabel));
         int errTaskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(errTaskTemp, resultTemp));
+        Emit(new IrInst.CreateCompletedTask(errTaskTemp, resultTemp));
         Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
@@ -2988,10 +2987,10 @@ public sealed class Lowering
 
     private (int, TypeRef) LowerAsync(Expr.Async asyncExpr)
     {
-        // Phase A: synchronous stub.
-        // Lower the body inside an async context. The body is wrapped
-        // into a closure, and CreateTask emits a task value. At runtime
-        // (Phase A) the task stores the already-evaluated result.
+        _usesAsync = true;
+
+        // Phase B: lift the async body into a separate coroutine function,
+        // then create a task struct pointing to the coroutine.
 
         var savedInsideAsync = _insideAsync;
         _insideAsync = true;
@@ -2999,11 +2998,116 @@ public sealed class Lowering
         // The error type variable for this async block — unified from awaits
         var errorTypeVar = NewTypeVar();
 
-        var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
+        // --- Capture computation (same as lambda lifting) ---
+        var bound = new HashSet<string>(StringComparer.Ordinal);
+        var free = FreeVars(asyncExpr.Body, bound);
+        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme)
+                           .Distinct().ToList();
 
+        // --- Allocate environment for captured variables (in outer context) ---
+        int envPtrTemp;
+        if (captures.Count == 0)
+        {
+            envPtrTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(envPtrTemp, 0));
+        }
+        else
+        {
+            envPtrTemp = NewTemp();
+            Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+            for (int i = 0; i < captures.Count; i++)
+            {
+                var (capTemp, _) = LowerVar(new Expr.Var(captures[i]));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
+            }
+        }
+
+        // --- Generate coroutine function label ---
+        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
+
+        // --- Save outer lowering state ---
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTemp;
+        var savedLocal = _nextLocal;
+        var savedScopes = _scopes.ToArray();
+        var savedOwnershipScopes = _ownershipScopes.ToArray();
+        var savedTcoCtx = _tcoCtx;
+        _tcoCtx = null;
+
+        // --- Reset state for coroutine function ---
+        _inst.Clear();
+        _nextTemp = 0;
+        _nextLocal = 0;
+
+        // Coroutine function prologue: local[0] = state struct pointer, local[1] = dummy arg
+        int stateStructSlot = NewLocal(); // → local 0
+        int dummyArgSlot = NewLocal();    // → local 1
+        System.Diagnostics.Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
+
+        // --- Set up scope for coroutine body ---
+        var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        if (_hasAshesIO) AddStdIOBindings(scope);
+
+        // Captured variables are accessed via env (state struct captures section)
+        for (int i = 0; i < captures.Count; i++)
+        {
+            var capBinding = Lookup(captures[i])!;
+            if (capBinding is Binding.Scheme capScheme)
+            {
+                scope[captures[i]] = new Binding.EnvScheme(i, capScheme.S, capScheme.DefinitionSpan);
+            }
+            else
+            {
+                scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
+            }
+        }
+
+        _scopes.Clear();
+        _scopes.Push(scope);
+        _ownershipScopes.Clear();
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+
+        // --- Lower the async body ---
+        var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
+        Emit(new IrInst.Return(bodyTemp));
+
+        // --- Apply state machine transform ---
+        var transformResult = StateMachineTransform.Transform(_inst, captures.Count);
+
+        // --- Create coroutine IrFunction ---
+        var coroutineFunc = new IrFunction(
+            Label: coroutineLabel,
+            Instructions: new List<IrInst>(transformResult.Instructions),
+            LocalCount: _nextLocal,
+            TempCount: Math.Max(_nextTemp, transformResult.MaxTemp + 1),
+            HasEnvAndArgParams: true,
+            Coroutine: new CoroutineInfo(
+                StateCount: transformResult.StateCount,
+                StateStructSize: transformResult.StateStructSize,
+                CaptureCount: captures.Count
+            )
+        );
+        _funcs.Add(coroutineFunc);
+
+        // --- Restore outer state ---
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTemp = savedTemp;
+        _nextLocal = savedLocal;
+        _scopes.Clear();
+        foreach (var s in savedScopes.Reverse())
+        {
+            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
+        }
+        _ownershipScopes.Clear();
+        foreach (var s in savedOwnershipScopes.Reverse())
+        {
+            _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(s, StringComparer.Ordinal));
+        }
+        _tcoCtx = savedTcoCtx;
         _insideAsync = savedInsideAsync;
 
-        // Build Task(E, A) type using the Task type symbol
+        // --- Build Task(E, A) type ---
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
         {
             ReportDiagnostic(GetSpan(asyncExpr), "Internal error: Task type not registered.");
@@ -3012,9 +3116,14 @@ public sealed class Lowering
 
         var taskType = new TypeRef.TNamedType(taskSymbol, [errorTypeVar, bodyType]);
 
-        // Phase A: CreateTask wraps the body result directly (synchronous)
+        // --- Emit CreateTask in outer context ---
+        // Build a closure pairing the coroutine function with its captured env,
+        // then wrap it in a task struct via CreateTask.
+        _usesClosures = true;
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp));
         int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, bodyTemp));
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp));
         return (taskTemp, taskType);
     }
 
