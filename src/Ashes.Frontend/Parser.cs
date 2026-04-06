@@ -248,10 +248,9 @@ public sealed class Parser
         var isPattern = _current.Kind == TokenKind.LParen;
 
         // Also detect cons patterns: let x :: xs = ...
-        // After 'let', if we see an identifier (or _) followed by ::, it's a cons pattern.
+        // After 'let', if we see an identifier (including _) followed by ::, it's a cons pattern.
         if (!isPattern && _current.Kind == TokenKind.Ident)
         {
-            var afterIdent = _current;
             Advance(); // consume the identifier
             isPattern = _current.Kind == TokenKind.ColonColon;
         }
