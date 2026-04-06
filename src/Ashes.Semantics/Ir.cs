@@ -161,7 +161,7 @@ public abstract record IrInst
 
     /// <summary>
     /// Creates a sleep task that completes after the given number of milliseconds.
-    /// Returns a Task(Str, Unit) that suspends and resumes after the timeout.
+    /// Returns a Task(Str, Int) that suspends and resumes after the timeout.
     /// Used by Ashes.Async.sleep.
     /// </summary>
     public sealed record AsyncSleep(int Target, int MillisecondsTemp) : IrInst;
