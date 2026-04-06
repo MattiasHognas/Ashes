@@ -15,6 +15,8 @@ Current codes:
 | `ASH003` | Parse error |
 | `ASH004` | Match branch type mismatch |
 | `ASH005` | List element type mismatch |
+| `ASH006` | Use-after-drop (using a resource after it has been closed) |
+| `ASH007` | Double-drop (closing a resource that has already been closed) |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 

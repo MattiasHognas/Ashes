@@ -129,6 +129,12 @@ Networking rules:
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
 - `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
+- **Automatic cleanup**: `Socket` is a **resource type**. The compiler automatically
+  releases unclosed sockets when their binding goes out of scope. If a socket is
+  closed explicitly via `Ashes.Net.Tcp.close`, the automatic cleanup is skipped.
+- **Use-after-close**: using a socket after it has been closed (via `send`, `receive`,
+  or a second `close`) is a compile-time error.
+- **Double-close**: calling `close` on an already-closed socket is a compile-time error.
 
 Basic HTTP client APIs live under `Ashes.Http`:
 
@@ -1122,7 +1128,65 @@ once created.
 
 ---
 
-# 16. Unsupported (Future)
+# 16. Resource Types and Deterministic Cleanup
+
+Certain built-in types represent external system resources (file handles,
+sockets). These are called **resource types**.
+
+Currently classified resource types:
+
+- `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
+
+## 16.1 Automatic Cleanup
+
+Resource bindings are automatically cleaned up when they go out of scope.
+The compiler inserts cleanup calls at the end of every scope that contains
+a live resource binding. This includes:
+
+- `let` binding scopes
+- `match` case branches
+- The program's top-level scope
+
+Users do not write cleanup calls manually unless they want explicit control
+over when a resource is released.
+
+## 16.2 Explicit Close
+
+Resources may be closed explicitly using the appropriate API:
+
+- `Ashes.Net.Tcp.close(socket)` — closes a socket
+
+When a resource is closed explicitly, the automatic cleanup for that
+resource is skipped (no double close).
+
+## 16.3 Compile-Time Safety
+
+The compiler enforces resource safety with two rules:
+
+1. **No use-after-close.** Using a resource after it has been closed
+   (passing it to `send`, `receive`, or calling `close` again) is a
+   compile-time error (diagnostic `ASH006`).
+
+2. **No double-close.** Calling `close` on an already-closed resource
+   is a compile-time error (diagnostic `ASH007`).
+
+These checks are performed at compile time during semantic analysis.
+
+## 16.4 What Is Not Affected
+
+Resource management applies only to resource types. Pure values (Int, Bool,
+Str, List, ADTs, closures) are not affected by these rules. They have no
+cleanup requirements and no restrictions on reuse.
+
+## 16.5 No Garbage Collection
+
+All resource cleanup is deterministic and compile-time verified. There is
+no garbage collector. The compiler guarantees exactly-once cleanup for every
+resource binding.
+
+---
+
+# 17. Unsupported (Future)
 
 Not currently supported:
 
