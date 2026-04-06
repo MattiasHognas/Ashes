@@ -1,0 +1,8 @@
+# Banned symbols for test projects.
+#
+# Tests must run in parallel. If a test is flaky under parallel execution,
+# fix the root cause (shared mutable state, non-unique temp paths, etc.)
+# instead of serialising the entire test class with [NotInParallel].
+#
+# Format: T:Namespace.TypeName;Reason message
+T:TUnit.Core.NotInParallelAttribute;[NotInParallel] is banned — fix the root cause of parallelism issues instead

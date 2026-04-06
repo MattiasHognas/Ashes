@@ -2,11 +2,9 @@ using Ashes.Semantics;
 using Ashes.Frontend;
 using Shouldly;
 using System.Diagnostics;
-using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class ProjectSupportTests
 {
     [Test]
@@ -603,25 +601,18 @@ public sealed class ProjectSupportTests
         var ir = new Lowering(diag, importedStdModules).Lower(ast);
         diag.ThrowIfAny();
 
-        byte[] image;
         string exePath;
         if (OperatingSystem.IsWindows())
         {
-            image = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
+            var image = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}.exe");
-            await File.WriteAllBytesAsync(exePath, image);
+            TestProcessHelper.WriteExecutable(exePath, image);
         }
         else
         {
-            image = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
+            var image = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}");
-            await File.WriteAllBytesAsync(exePath, image);
-#pragma warning disable CA1416
-            File.SetUnixFileMode(exePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
+            TestProcessHelper.WriteExecutable(exePath, image);
         }
         try
         {
@@ -632,7 +623,7 @@ public sealed class ProjectSupportTests
                 UseShellExecute = false
             };
 
-            using var proc = Process.Start(psi)!;
+            using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
             var stdout = await proc.StandardOutput.ReadToEndAsync();
             var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();

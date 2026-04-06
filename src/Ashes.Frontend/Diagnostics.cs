@@ -26,6 +26,8 @@ public static class DiagnosticCodes
     public const string ParseError = "ASH003";
     public const string MatchBranchTypeMismatch = "ASH004";
     public const string ListElementTypeMismatch = "ASH005";
+    public const string UseAfterDrop = "ASH006";
+    public const string DoubleDrop = "ASH007";
 }
 
 public sealed record DiagnosticEntry(TextSpan Span, string Message, string? Code = null)

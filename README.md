@@ -297,6 +297,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 
 | Document | Contents |
 |---|---|
+| [Development Guide](docs/DEVELOPMENT.md) | Building, testing, and developing locally |
 | [Language Specification](docs/LANGUAGE_SPEC.md) | Authoritative syntax and semantics |
 | [Project Specification](docs/PROJECT_SPEC.md) | Multi-file project format |
 | [Compiler Architecture](docs/ARCHITECTURE.md) | Pipeline, backend, memory model, linking |
@@ -307,6 +308,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | [Diagnostics Reference](docs/DIAGNOSTICS.md) | Error codes and messages |
 | [Testing Reference](docs/TESTING.md) | Test directives and conventions |
 | [Standard Library](docs/STANDARD_LIBRARY.md) | Module-by-module API reference |
+| [Future Features](docs/FUTURE_FEATURES.md) | Planned future work |
 
 ------------------------------------------------------------------------
 

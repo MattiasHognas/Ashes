@@ -2,11 +2,9 @@ using System.Diagnostics;
 using Ashes.Semantics;
 using Shouldly;
 using Ashes.Frontend;
-using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class EndToEndNativeBackendTests
 {
     [Test]
@@ -355,15 +353,7 @@ public sealed class EndToEndNativeBackendTests
         Directory.CreateDirectory(tmpDir);
 
         var exePath = Path.Combine(tmpDir, $"mf_{Guid.NewGuid():N}");
-        await File.WriteAllBytesAsync(exePath, elfBytes);
-
-#pragma warning disable CA1416 // Validate platform compatibility
-        File.SetUnixFileMode(exePath,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416 // Validate platform compatibility
-
+        TestProcessHelper.WriteExecutable(exePath, elfBytes);
 
         var psi = new ProcessStartInfo(exePath)
         {
@@ -377,7 +367,7 @@ public sealed class EndToEndNativeBackendTests
             psi.ArgumentList.Add(arg);
         }
 
-        using var proc = Process.Start(psi)!;
+        using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
         if (stdin is not null)
         {
             await proc.StandardInput.WriteAsync(stdin);

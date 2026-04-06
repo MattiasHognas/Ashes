@@ -95,6 +95,26 @@ public abstract record IrInst
     public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
     public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
+
+    /// <summary>
+    /// Drop instruction for deterministic cleanup of owned values.
+    /// Emitted by the compiler at scope exit for owned bindings.
+    /// SourceTemp is the temp holding the owned value to clean up.
+    /// For resource types (Socket), routes to platform-specific cleanup.
+    /// For other owned types (String, List, ADTs, Closures), a no-op in
+    /// the current linear allocator — placeholder for future free().
+    /// </summary>
+    public sealed record Drop(int SourceTemp, string TypeName) : IrInst;
+
+    /// <summary>
+    /// Borrow instruction for compiler-inferred borrowing (Phase 3).
+    /// Produces a non-owning reference to the owned value held in SourceTemp.
+    /// The borrowed reference carries no drop responsibility — the owning scope
+    /// still drops the original.
+    /// In the current linear allocator this is a simple value copy (pointer pass-through).
+    /// </summary>
+    public sealed record Borrow(int Target, int SourceTemp) : IrInst;
+
     public sealed record PanicStr(int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;

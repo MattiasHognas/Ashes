@@ -14,6 +14,7 @@ public readonly record struct LlvmTargetMachineHandle(nint Ptr);
 public readonly record struct LlvmTargetDataHandle(nint Ptr);
 public readonly record struct LlvmDIBuilderHandle(nint Ptr);
 public readonly record struct LlvmMetadataHandle(nint Ptr);
+public readonly record struct LlvmPassBuilderOptionsHandle(nint Ptr);
 
 // ── Enums ───────────────────────────────────────────────────────────────
 public enum LlvmIntPredicate
@@ -600,6 +601,30 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMMetadataAsValue")]
     public static partial LlvmValueHandle MetadataAsValue(LlvmContextHandle context, LlvmMetadataHandle md);
+
+    // ── LLVM New Pass Manager (Phase 4: optimization pipeline) ────────
+
+    /// <summary>
+    /// Run a pipeline of LLVM passes on the module.
+    /// <paramref name="passes"/> is a comma-separated list of pass names,
+    /// e.g. "default&lt;O2&gt;" or "instcombine,simplifycfg,mem2reg".
+    /// Returns 0 on success, non-zero on error (error message in <paramref name="errorMessage"/>).
+    /// </summary>
+    [LibraryImport(Lib, EntryPoint = "LLVMRunPasses", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int RunPasses(
+        LlvmModuleHandle module,
+        string passes,
+        LlvmTargetMachineHandle targetMachine,
+        LlvmPassBuilderOptionsHandle options);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMCreatePassBuilderOptions")]
+    public static partial LlvmPassBuilderOptionsHandle CreatePassBuilderOptions();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDisposePassBuilderOptions")]
+    public static partial void DisposePassBuilderOptions(LlvmPassBuilderOptionsHandle options);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMPassBuilderOptionsSetDebugLogging")]
+    public static partial void PassBuilderOptionsSetDebugLogging(LlvmPassBuilderOptionsHandle options, int debugLogging);
 
     // ── Constants for debug info ────────────────────────────────────────
 

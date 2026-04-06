@@ -63,6 +63,9 @@ public abstract record Pattern
     public sealed record Cons(Pattern Head, Pattern Tail) : Pattern;
     public sealed record Tuple(IReadOnlyList<Pattern> Elements) : Pattern;
     public sealed record Constructor(string Name, IReadOnlyList<Pattern> Patterns) : Pattern;
+    public sealed record IntLit(long Value) : Pattern;
+    public sealed record StrLit(string Value) : Pattern;
+    public sealed record BoolLit(bool Value) : Pattern;
 }
 
 public sealed record TypeParameter(string Name);

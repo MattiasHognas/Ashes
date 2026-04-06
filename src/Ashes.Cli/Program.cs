@@ -119,6 +119,9 @@ static byte[] CompileToImage(string source, string targetId, BackendCompileOptio
     var ir = new Lowering(diag, importedStdModules).Lower(program);
     diag.ThrowIfAny();
 
+    // Phase 4: Run IR-level optimization passes before backend codegen
+    ir = IrOptimizer.Optimize(ir);
+
     var effectiveOptions = backendOptions ?? BackendCompileOptions.Default;
     var backend = BackendFactory.Create(targetId);
     return backend.Compile(ir, effectiveOptions);

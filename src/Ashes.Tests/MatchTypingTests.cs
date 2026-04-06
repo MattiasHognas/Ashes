@@ -263,6 +263,35 @@ public sealed class MatchTypingTests
         diag.Errors.ShouldBeEmpty();
     }
 
+    [Test]
+    public void Match_tuple_with_literal_subpattern_reports_non_exhaustive()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            let classify pair =
+                match pair with
+                | (0, x) -> x
+            in Ashes.IO.print(classify((1, 42)))
+            """);
+
+        diag.Errors.Count.ShouldBeGreaterThan(0);
+        diag.Errors.ShouldContain(e => e.Contains("Non-exhaustive"));
+    }
+
+    [Test]
+    public void Match_tuple_with_irrefutable_subpatterns_does_not_report_non_exhaustive()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            let swap pair =
+                match pair with
+                | (a, b) -> (b, a)
+            in Ashes.IO.print(swap((1, 2)))
+            """);
+
+        diag.Errors.ShouldNotContain(e => e.Contains("Non-exhaustive"));
+    }
+
     private static (Lowering Lowering, Diagnostics Diag) LowerProgram(string source)
     {
         var diag = new Diagnostics();

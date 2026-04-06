@@ -529,6 +529,17 @@ public static class Formatter
                     sb.Append(')');
                 }
                 return;
+            case Pattern.IntLit intLit:
+                sb.Append(intLit.Value);
+                return;
+            case Pattern.StrLit strLit:
+                sb.Append('"');
+                sb.Append(EscapeString(strLit.Value));
+                sb.Append('"');
+                return;
+            case Pattern.BoolLit boolLit:
+                sb.Append(boolLit.Value ? "true" : "false");
+                return;
         }
     }
 
