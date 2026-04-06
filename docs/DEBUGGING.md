@@ -102,11 +102,19 @@ code --install-extension mattiashognas.ashes-vscode
 
 **Local development build:**
 
+```powershell
+.\scripts\install-vscode-extension-local.ps1
+```
+
+This script publishes the LSP server, DAP server, and compiler locally,
+builds the extension, packages a VSIX, and installs it into VS Code.
+
+Alternatively, build the extension without bundled servers (they will be
+downloaded from GitHub Releases on first activation):
+
 ```bash
 cd vscode-extension
 npm install
-npm run build-lsp-server  # Build the LSP server
-npm run build-dap-server  # Build the DAP server
 npm run compile           # Build the extension
 ```
 
@@ -471,12 +479,14 @@ binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 
 ### "ashes-dap not found" or "DAP server not found"
 
-The DAP server is bundled with the Ashes VS Code extension. If you see this
-error, the extension was not built with the DAP server:
+The DAP server is downloaded automatically by the extension on first
+activation. If you see this error, verify your internet connection and check
+the VS Code notifications for download errors.
 
-```bash
-cd vscode-extension
-npm run build-dap-server
+For local development, use the install script which bundles the DAP server:
+
+```powershell
+.\scripts\install-vscode-extension-local.ps1
 ```
 
 If you installed from the marketplace, try reinstalling the extension.

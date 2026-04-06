@@ -83,8 +83,6 @@ jobs:
           pnpm run lint
           pnpm run format:check
           pnpm run compile
-          pnpm run build-lsp-server
-          pnpm run build-dap-server
           pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
 
       - name: Upload VS Code extension bundle

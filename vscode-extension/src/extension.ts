@@ -1,5 +1,3 @@
-import * as path from "path";
-import * as fs from "fs";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -7,6 +5,7 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+import { type ToolConfig, acquireTool } from "./toolAcquisition";
 import { acquireCompiler } from "./compilerAcquisition";
 import {
   compileCommand,
@@ -17,49 +16,23 @@ import {
 
 let client: LanguageClient | undefined;
 
-function getServerExecutable(context: vscode.ExtensionContext): string {
-  if (process.platform === "win32") {
-    return path.join(
-      context.extensionPath,
-      "server",
-      "win-x64",
-      "Ashes.Lsp.exe",
-    );
-  }
+const LSP_CONFIG: ToolConfig = {
+  displayName: "Ashes language server",
+  assetPrefix: "ashes-lsp",
+  executableBaseName: "Ashes.Lsp",
+  cacheSubdir: "lsp",
+  bundledSubdir: "lsp-server",
+};
 
-  if (process.platform === "linux") {
-    if (process.arch !== "x64" && process.arch !== "arm64") {
-      throw new Error(`Unsupported Linux architecture: ${process.arch}`);
-    }
-    const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
-    return path.join(context.extensionPath, "server", rid, "Ashes.Lsp");
-  }
+const DAP_CONFIG: ToolConfig = {
+  displayName: "Ashes DAP server",
+  assetPrefix: "ashes-dap",
+  executableBaseName: "ashes-dap",
+  cacheSubdir: "dap",
+  bundledSubdir: "dap-server",
+};
 
-  throw new Error(`Unsupported platform: ${process.platform}`);
-}
-
-function getDapServerExecutable(context: vscode.ExtensionContext): string {
-  if (process.platform === "win32") {
-    return path.join(
-      context.extensionPath,
-      "dap-server",
-      "win-x64",
-      "ashes-dap.exe",
-    );
-  }
-
-  if (process.platform === "linux") {
-    if (process.arch !== "x64" && process.arch !== "arm64") {
-      throw new Error(`Unsupported Linux architecture: ${process.arch}`);
-    }
-    const rid = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
-    return path.join(context.extensionPath, "dap-server", rid, "ashes-dap");
-  }
-
-  throw new Error(`Unsupported platform: ${process.platform}`);
-}
-
-function getRequiredCompilerVersion(context: vscode.ExtensionContext): string {
+function getRequiredVersion(context: vscode.ExtensionContext): string {
   return (
     (context.extension.packageJSON as { version?: string }).version ?? "0.0.1"
   );
@@ -68,21 +41,32 @@ function getRequiredCompilerVersion(context: vscode.ExtensionContext): string {
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const executable = getServerExecutable(context);
+  const requiredVersion = getRequiredVersion(context);
 
-  if (!fs.existsSync(executable)) {
+  // Acquire LSP server — blocks activation behind a progress bar.
+  let lspPath: string;
+  try {
+    lspPath = await acquireTool(context, LSP_CONFIG, requiredVersion);
+  } catch (err) {
     vscode.window.showErrorMessage(
-      `Ashes language server not found at ${executable}. Run \"pnpm run build-lsp-server\" in vscode-extension.`,
+      `Failed to acquire ${LSP_CONFIG.displayName} v${requiredVersion}: ${(err as Error).message}`,
     );
     return;
   }
 
-  // Acquire the Ashes CLI compiler in the background.
+  // Acquire DAP server and compiler eagerly in the background.
   // Failures show a notification but do not block the language server.
-  const requiredVersion = getRequiredCompilerVersion(context);
+  const dapReady = acquireTool(context, DAP_CONFIG, requiredVersion).catch(
+    (err: unknown) => {
+      vscode.window.showErrorMessage(
+        `Failed to acquire ${DAP_CONFIG.displayName} v${requiredVersion}: ${(err as Error).message}`,
+      );
+      return undefined;
+    },
+  );
+
   acquireCompiler(context, requiredVersion)
     .then((compilerPath: string) => {
-      // Store the acquired compiler path so it can be used by other extension features.
       void context.workspaceState.update("ashes.compilerPath", compilerPath);
     })
     .catch((err: unknown) => {
@@ -92,7 +76,7 @@ export async function activate(
     });
 
   const serverOptions: ServerOptions = {
-    command: executable,
+    command: lspPath,
     transport: TransportKind.stdio,
   };
 
@@ -122,8 +106,8 @@ export async function activate(
     vscode.commands.registerCommand("ashes.test", () => testCommand(context)),
   );
 
-  // Register debug adapter — uses the bundled DAP server binary
-  const dapFactory = new AshesDebugAdapterFactory(context);
+  // Register debug adapter — acquires the DAP server binary on demand
+  const dapFactory = new AshesDebugAdapterFactory(context, dapReady);
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory("ashes", dapFactory),
   );
@@ -146,27 +130,28 @@ export async function deactivate(): Promise<void> {
 }
 
 class AshesDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
-  private readonly context: vscode.ExtensionContext;
+  private readonly dapReady: Promise<string | undefined>;
 
-  constructor(context: vscode.ExtensionContext) {
-    this.context = context;
+  constructor(
+    _context: vscode.ExtensionContext,
+    dapReady: Promise<string | undefined>,
+  ) {
+    this.dapReady = dapReady;
   }
 
-  createDebugAdapterDescriptor(
+  async createDebugAdapterDescriptor(
     _session: vscode.DebugSession,
     _executable: vscode.DebugAdapterExecutable | undefined,
-  ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-    const dapExecutable = getDapServerExecutable(this.context);
-
-    if (!fs.existsSync(dapExecutable)) {
+  ): Promise<vscode.DebugAdapterDescriptor | undefined> {
+    const dapPath = await this.dapReady;
+    if (!dapPath) {
       vscode.window.showErrorMessage(
-        `Ashes DAP server not found at ${dapExecutable}. ` +
-          'Run "pnpm run build-dap-server" in the vscode-extension directory.',
+        "Ashes DAP server is not available. Check earlier error notifications for details.",
       );
       return undefined;
     }
 
-    return new vscode.DebugAdapterExecutable(dapExecutable, []);
+    return new vscode.DebugAdapterExecutable(dapPath, []);
   }
 }
 
