@@ -47,11 +47,11 @@ public sealed class ResourceLifecycleTests
     // --- Drop IR instruction ---
 
     [Test]
-    public void Drop_ir_instruction_carries_resource_type_name()
+    public void Drop_ir_instruction_carries_type_name()
     {
         var drop = new IrInst.Drop(0, "Socket");
         drop.SourceSlot.ShouldBe(0);
-        drop.ResourceTypeName.ShouldBe("Socket");
+        drop.TypeName.ShouldBe("Socket");
     }
 
     // --- Scope drop: socket bound via pattern match gets Drop at scope exit ---
@@ -190,36 +190,36 @@ public sealed class ResourceLifecycleTests
             x => x.Message.Contains("already been closed", StringComparison.Ordinal));
     }
 
-    // --- Non-resource bindings are unaffected ---
+    // --- Ownership: owned types get Drop, copy types don't ---
 
     [Test]
-    public void Non_resource_let_binding_does_not_emit_drop()
+    public void Non_resource_let_binding_int_does_not_emit_drop()
     {
         var ir = LowerProgram("let x = 42 in Ashes.IO.print(x)");
 
         var allInstructions = ir.EntryFunction.Instructions;
         HasAnyDropInstruction(allInstructions)
-            .ShouldBeFalse("Non-resource bindings should not emit Drop instructions.");
+            .ShouldBeFalse("Int (copy type) bindings should not emit Drop instructions.");
     }
 
     [Test]
-    public void String_let_binding_does_not_emit_drop()
+    public void String_let_binding_emits_drop()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");
 
         var allInstructions = ir.EntryFunction.Instructions;
-        HasAnyDropInstruction(allInstructions)
-            .ShouldBeFalse("String bindings should not emit Drop instructions.");
+        HasDropInstruction(allInstructions, "String")
+            .ShouldBeTrue("String (owned type) bindings should emit Drop instructions.");
     }
 
     [Test]
-    public void List_binding_does_not_emit_drop()
+    public void List_binding_emits_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");
 
         var allInstructions = ir.EntryFunction.Instructions;
-        HasAnyDropInstruction(allInstructions)
-            .ShouldBeFalse("List bindings should not emit Drop instructions.");
+        HasDropInstruction(allInstructions, "List")
+            .ShouldBeTrue("List (owned type) bindings should emit Drop instructions.");
     }
 
     [Test]
@@ -229,7 +229,7 @@ public sealed class ResourceLifecycleTests
 
         var allInstructions = ir.EntryFunction.Instructions;
         HasAnyDropInstruction(allInstructions)
-            .ShouldBeFalse("Bool bindings should not emit Drop instructions.");
+            .ShouldBeFalse("Bool (copy type) bindings should not emit Drop instructions.");
     }
 
     // --- Control-flow path drops ---
@@ -281,11 +281,11 @@ public sealed class ResourceLifecycleTests
         return ir;
     }
 
-    private static bool HasDropInstruction(List<IrInst> instructions, string resourceTypeName)
+    private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && drop.ResourceTypeName == resourceTypeName)
+            if (inst is IrInst.Drop drop && drop.TypeName == typeName)
                 return true;
         }
         return false;

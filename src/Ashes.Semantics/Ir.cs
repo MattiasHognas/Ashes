@@ -97,11 +97,13 @@ public abstract record IrInst
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
 
     /// <summary>
-    /// Drop instruction for deterministic resource cleanup.
-    /// Emitted by the compiler at scope exit for resource bindings.
-    /// ResourceTypeName identifies which runtime drop function to call.
+    /// Drop instruction for deterministic cleanup of owned values.
+    /// Emitted by the compiler at scope exit for owned bindings.
+    /// For resource types (Socket), routes to platform-specific cleanup.
+    /// For other owned types (String, List, ADTs, Closures), a no-op in
+    /// the current linear allocator — placeholder for future free().
     /// </summary>
-    public sealed record Drop(int SourceSlot, string ResourceTypeName) : IrInst;
+    public sealed record Drop(int SourceSlot, string TypeName) : IrInst;
 
     public sealed record PanicStr(int Source) : IrInst;
 

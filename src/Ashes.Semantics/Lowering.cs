@@ -123,20 +123,23 @@ public sealed class Lowering
 
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
-    // --- Resource tracking for Phase 1: Deterministic Resources ---
-    // Tracks resource bindings and their drop state.
-    // Key: binding name, Value: resource info (slot, type name, whether dropped).
-    private sealed class ResourceInfo(int slot, string resourceTypeName, TextSpan? definitionSpan)
+    // --- Ownership tracking (Phase 1: resources, Phase 2: all owned types) ---
+    // Tracks owned bindings and their drop state.
+    // Key: binding name, Value: ownership info (slot, type name, whether dropped).
+    // Copy types (Int, Float, Bool) are never tracked.
+    // Owned types (String, List, ADTs, Closures, resource types) are tracked.
+    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan)
     {
         public int Slot { get; } = slot;
-        public string ResourceTypeName { get; } = resourceTypeName;
+        public string TypeName { get; } = typeName;
+        public bool IsResource { get; } = isResource;
         public TextSpan? DefinitionSpan { get; } = definitionSpan;
         public bool IsDropped { get; set; }
     }
 
-    // Stack of resource scopes, parallel to _scopes.
-    // Each scope level tracks resources introduced at that level.
-    private readonly Stack<Dictionary<string, ResourceInfo>> _resourceScopes = new();
+    // Stack of ownership scopes, parallel to _scopes.
+    // Each scope level tracks owned values introduced at that level.
+    private readonly Stack<Dictionary<string, OwnershipInfo>> _ownershipScopes = new();
 
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
@@ -187,7 +190,7 @@ public sealed class Lowering
             AddStdIOBindings(rootScope);
         }
         _scopes.Push(rootScope);
-        _resourceScopes.Push(new Dictionary<string, ResourceInfo>(StringComparer.Ordinal));
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -1261,31 +1264,33 @@ public sealed class Lowering
         };
         _scopes.Push(child);
 
-        // Track resource bindings for deterministic cleanup
-        PushResourceScope();
-        var resourceTypeName = GetResourceTypeName(Prune(valType));
-        if (resourceTypeName is not null)
+        // Track owned bindings for deterministic cleanup (Phase 2: all owned types)
+        PushOwnershipScope();
+        var prunedValType = Prune(valType);
+        var ownedTypeName = GetOwnedTypeName(prunedValType);
+        if (ownedTypeName is not null)
         {
-            TrackResource(let.Name, slot, resourceTypeName, AstSpans.GetLetNameOrDefault(let));
+            var isResource = GetResourceTypeName(prunedValType) is not null;
+            TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
         }
 
         // Body IS in tail position (if the let itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
 
-        // Only emit result preservation when there are alive resources to drop
-        if (HasAliveResourcesInCurrentScope())
+        // Only emit result preservation when there are alive owned values to drop
+        if (HasAliveOwnedValuesInCurrentScope())
         {
             int resultSlot = NewLocal();
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopResourceScope();
+            PopOwnershipScope();
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
             _scopes.Pop();
             return (resultTemp, bodyType);
         }
 
-        PopResourceScope();
+        PopOwnershipScope();
         _scopes.Pop();
         return (bodyTemp, bodyType);
     }
@@ -1918,8 +1923,8 @@ public sealed class Lowering
         // Check for double-drop before lowering the argument
         if (socketArg is Expr.Var v)
         {
-            var resourceInfo = LookupResource(v.Name);
-            if (resourceInfo is not null && resourceInfo.IsDropped)
+            var info = LookupOwnedValue(v.Name);
+            if (info is not null && info.IsDropped)
             {
                 ReportDiagnostic(GetSpan(socketArg),
                     $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
@@ -1942,7 +1947,7 @@ public sealed class Lowering
         // Mark the resource as dropped (explicitly closed)
         if (socketArg is Expr.Var varExpr)
         {
-            TryMarkResourceDropped(varExpr.Name);
+            TryMarkDropped(varExpr.Name);
         }
 
         var target = NewTemp();
@@ -2736,7 +2741,7 @@ public sealed class Lowering
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
             var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
             _scopes.Push(caseScope);
-            PushResourceScope();
+            PushOwnershipScope();
 
             var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
             var patternType = InferPatternType(match.Cases[i].Pattern, patternBindings);
@@ -2751,8 +2756,8 @@ public sealed class Lowering
                 EmitPattern(match.Cases[i].Pattern, valueTemp, caseFailLabel, patternBindings);
             }
 
-            // Track resource bindings created by pattern matching
-            TrackResourceBindingsInPattern(patternBindings);
+            // Track owned bindings created by pattern matching
+            TrackOwnedBindingsInPattern(patternBindings);
 
             // Each case body IS in tail position (if the match itself is)
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -2767,7 +2772,7 @@ public sealed class Lowering
                 }
             }
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopResourceScope();
+            PopOwnershipScope();
             Emit(new IrInst.Jump(endLabel));
 
             _scopes.Pop();
@@ -3456,7 +3461,25 @@ public sealed class Lowering
     }
 
     /// <summary>
+    /// Returns the owned type name if the type is an owned type (heap-allocated),
+    /// otherwise null. Copy types (Int, Float, Bool) return null.
+    /// </summary>
+    private static string? GetOwnedTypeName(TypeRef prunedType)
+    {
+        return prunedType switch
+        {
+            TypeRef.TStr => "String",
+            TypeRef.TList => "List",
+            TypeRef.TTuple => "Tuple",
+            TypeRef.TFun => "Function",
+            TypeRef.TNamedType named => named.Symbol.Name,
+            _ => null // Copy types (Int, Float, Bool), TNever, TVar, TTypeParam
+        };
+    }
+
+    /// <summary>
     /// Returns the resource type name if the type is a resource type, otherwise null.
+    /// Resource types are a subset of owned types with special cleanup behavior.
     /// </summary>
     private static string? GetResourceTypeName(TypeRef prunedType)
     {
@@ -3466,23 +3489,24 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Registers a resource binding in the current resource scope.
-    /// Called when a let binding or pattern binding creates a resource-typed variable.
+    /// Registers an owned binding in the current ownership scope.
+    /// Called when a let binding or pattern binding creates an owned-type variable.
     /// </summary>
-    private void TrackResource(string name, int slot, string resourceTypeName, TextSpan? definitionSpan)
+    private void TrackOwnedValue(string name, int slot, string typeName, bool isResource, TextSpan? definitionSpan)
     {
-        if (_resourceScopes.Count > 0)
+        if (_ownershipScopes.Count > 0)
         {
-            _resourceScopes.Peek()[name] = new ResourceInfo(slot, resourceTypeName, definitionSpan);
+            _ownershipScopes.Peek()[name] = new OwnershipInfo(slot, typeName, isResource, definitionSpan);
         }
     }
 
     /// <summary>
-    /// Looks up a resource binding across all resource scopes.
+    /// Looks up an owned binding across all ownership scopes.
+    /// Returns the ownership info for resource-type values (used by use-after-drop / double-drop checks).
     /// </summary>
-    private ResourceInfo? LookupResource(string name)
+    private OwnershipInfo? LookupOwnedValue(string name)
     {
-        foreach (var scope in _resourceScopes)
+        foreach (var scope in _ownershipScopes)
         {
             if (scope.TryGetValue(name, out var info))
             {
@@ -3494,17 +3518,17 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Marks a resource as dropped (explicitly closed).
-    /// Returns true if the operation succeeded (resource was alive and is now marked dropped)
-    /// or if the name is not a tracked resource (no-op — safe to call on any binding).
-    /// Returns false if the resource was already dropped (double-drop detected).
+    /// Marks an owned value as dropped (explicitly closed / released).
+    /// Returns true if the operation succeeded (value was alive and is now marked dropped)
+    /// or if the name is not a tracked owned value (no-op — safe to call on any binding).
+    /// Returns false if the value was already dropped (double-drop detected).
     /// </summary>
-    private bool TryMarkResourceDropped(string name)
+    private bool TryMarkDropped(string name)
     {
-        var info = LookupResource(name);
+        var info = LookupOwnedValue(name);
         if (info is null)
         {
-            return true; // not a tracked resource — treating as success (no-op)
+            return true; // not a tracked owned value — treating as success (no-op)
         }
 
         if (info.IsDropped)
@@ -3517,57 +3541,57 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Emits Drop instructions for all alive (not yet dropped) resources in the current resource scope.
+    /// Emits Drop instructions for all alive (not yet dropped) owned values in the current scope.
     /// Called at scope exit.
     /// </summary>
     private void EmitDropsForCurrentScope()
     {
-        if (_resourceScopes.Count == 0)
+        if (_ownershipScopes.Count == 0)
         {
             return;
         }
 
-        var scope = _resourceScopes.Peek();
+        var scope = _ownershipScopes.Peek();
         foreach (var (_, info) in scope)
         {
             if (!info.IsDropped)
             {
                 int loadTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
-                Emit(new IrInst.Drop(loadTemp, info.ResourceTypeName));
+                Emit(new IrInst.Drop(loadTemp, info.TypeName));
                 info.IsDropped = true;
             }
         }
     }
 
     /// <summary>
-    /// Pushes a new resource scope. Must be matched with PopResourceScope().
+    /// Pushes a new ownership scope. Must be matched with PopOwnershipScope().
     /// </summary>
-    private void PushResourceScope()
+    private void PushOwnershipScope()
     {
-        _resourceScopes.Push(new Dictionary<string, ResourceInfo>(StringComparer.Ordinal));
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
     }
 
     /// <summary>
-    /// Pops a resource scope, emitting Drop instructions for any remaining alive resources.
+    /// Pops an ownership scope, emitting Drop instructions for any remaining alive owned values.
     /// </summary>
-    private void PopResourceScope()
+    private void PopOwnershipScope()
     {
         EmitDropsForCurrentScope();
-        _resourceScopes.Pop();
+        _ownershipScopes.Pop();
     }
 
     /// <summary>
-    /// Returns true if the current resource scope contains any alive (not yet dropped) resources.
+    /// Returns true if the current ownership scope contains any alive (not yet dropped) owned values.
     /// </summary>
-    private bool HasAliveResourcesInCurrentScope()
+    private bool HasAliveOwnedValuesInCurrentScope()
     {
-        if (_resourceScopes.Count == 0)
+        if (_ownershipScopes.Count == 0)
         {
             return false;
         }
 
-        var scope = _resourceScopes.Peek();
+        var scope = _ownershipScopes.Peek();
         foreach (var (_, info) in scope)
         {
             if (!info.IsDropped)
@@ -3580,21 +3604,22 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Tracks resource bindings created by pattern matching.
-    /// Scans pattern bindings for resource types and registers them for tracking.
+    /// Tracks owned bindings created by pattern matching.
+    /// Scans pattern bindings for owned types and registers them for tracking.
     /// </summary>
-    private void TrackResourceBindingsInPattern(IReadOnlyDictionary<string, TypeRef> patternBindings)
+    private void TrackOwnedBindingsInPattern(IReadOnlyDictionary<string, TypeRef> patternBindings)
     {
         foreach (var (name, type) in patternBindings)
         {
             var prunedType = Prune(type);
-            var resourceTypeName = GetResourceTypeName(prunedType);
-            if (resourceTypeName is not null)
+            var ownedTypeName = GetOwnedTypeName(prunedType);
+            if (ownedTypeName is not null)
             {
                 // Look up the slot from the current scope
                 if (Lookup(name) is Binding.Local local)
                 {
-                    TrackResource(name, local.Slot, resourceTypeName, local.DefinitionSpan);
+                    var isResource = GetResourceTypeName(prunedType) is not null;
+                    TrackOwnedValue(name, local.Slot, ownedTypeName, isResource, local.DefinitionSpan);
                 }
             }
         }
@@ -3602,13 +3627,14 @@ public sealed class Lowering
 
     /// <summary>
     /// Checks if a resource expression refers to a dropped resource and reports use-after-drop.
+    /// Only applies to resource types (Socket), not general owned types.
     /// </summary>
     private void CheckUseAfterDrop(Expr expr)
     {
         if (expr is Expr.Var v)
         {
-            var resourceInfo = LookupResource(v.Name);
-            if (resourceInfo is not null && resourceInfo.IsDropped)
+            var info = LookupOwnedValue(v.Name);
+            if (info is not null && info.IsResource && info.IsDropped)
             {
                 ReportDiagnostic(GetSpan(expr),
                     $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",

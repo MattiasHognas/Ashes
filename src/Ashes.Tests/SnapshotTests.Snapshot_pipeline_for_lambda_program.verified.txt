@@ -238,11 +238,26 @@
           Source: 6
         },
         {
+          Slot: 1,
           Source: 6
+        },
+        {
+          Target: 7
+        },
+        {
+          SourceSlot: 7,
+          TypeName: Function
+        },
+        {
+          Target: 8,
+          Slot: 1
+        },
+        {
+          Source: 8
         }
       ],
-      LocalCount: 1,
-      TempCount: 7,
+      LocalCount: 2,
+      TempCount: 9,
       HasEnvAndArgParams: false
     },
     Functions: [
@@ -298,5 +313,5 @@
     UsesConcatStr: false,
     UsesClosures: true
   },
-  ElfSha256: 048A00888B54044F495E5281ADAD89BFE14959FC01065CC6355AD7D0F4F36D7A
+  ElfSha256: C698F39FAAB83C40EB89E1560C293E11B879FE714C563669F8140C22F1E55F24
 }

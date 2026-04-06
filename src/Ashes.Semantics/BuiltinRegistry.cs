@@ -139,6 +139,30 @@ public static class BuiltinRegistry
         return ResourceTypeNames.Contains(typeName);
     }
 
+    /// <summary>
+    /// Returns true if the given type is a copy type (stack-allocated, trivially duplicated).
+    /// Copy types: Int, Float, Bool.
+    /// Copy types do NOT get Drop instructions.
+    /// </summary>
+    public static bool IsCopyType(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
+    }
+
+    /// <summary>
+    /// Returns true if the given type is an owned type (heap-allocated, requires cleanup).
+    /// Owned types: String, List, Tuple, Function (closures), named types (ADTs incl. resources).
+    /// Owned types get Drop instructions at scope exit.
+    /// </summary>
+    public static bool IsOwnedType(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TStr
+            or TypeRef.TList
+            or TypeRef.TTuple
+            or TypeRef.TFun
+            or TypeRef.TNamedType;
+    }
+
     public static bool TryGetModule(string moduleName, out BuiltinModule module)
     {
         return ModulesByName.TryGetValue(moduleName, out module!);

@@ -634,26 +634,30 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Emits a Drop operation for deterministic resource cleanup.
-    /// Routes to the appropriate runtime close function based on resource type.
-    /// The result of the close call is discarded (Drop is fire-and-forget).
+    /// Emits a Drop operation for deterministic cleanup of owned values.
+    /// Resource types (Socket) route to platform-specific close functions.
+    /// Other owned types (String, List, ADTs, Closures) are no-ops in the
+    /// current linear allocator — the IR records the drop for correctness;
+    /// actual deallocation will be added in Phase 4.
     /// Returns false because Drop does not terminate the current basic block.
     /// </summary>
-    private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle resourceValue, string resourceTypeName)
+    private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle value, string typeName)
     {
-        switch (resourceTypeName)
+        switch (typeName)
         {
             case "Socket":
                 // Drop a socket by calling the platform-specific TCP close.
                 // The result (Result[Unit, Str]) is discarded — Drop is
                 // fire-and-forget; runtime errors during cleanup are ignored.
-                EmitTcpClose(state, resourceValue);
+                EmitTcpClose(state, value);
                 return false;
 
             default:
-                throw new InvalidOperationException(
-                    $"Unhandled resource type '{resourceTypeName}' in Drop instruction. " +
-                    "Add a case to EmitDrop when introducing new resource types.");
+                // Owned heap types (String, List, ADTs, Closures, etc.):
+                // No-op in the current linear allocator. The Drop instruction
+                // is recorded in IR for semantic correctness. Phase 4 will
+                // replace the linear allocator and emit actual free() calls.
+                return false;
         }
     }
 
