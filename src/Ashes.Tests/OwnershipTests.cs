@@ -241,10 +241,10 @@ public sealed class OwnershipTests
     public void Named_adt_type_is_owned()
     {
         // TNamedType is always owned (covers Result, Maybe, Socket, etc.)
-        // Verified via the BuiltinRegistry.IsOwnedType check on the TypeRef variant
-        BuiltinRegistry.IsOwnedType(new TypeRef.TStr()).ShouldBeTrue();
-        // Functions are owned
-        BuiltinRegistry.IsOwnedType(new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TInt())).ShouldBeTrue();
+        var dummyDecl = new TypeDecl("Maybe", [new TypeParameter("a")], []);
+        var typeSymbol = new TypeSymbol("Maybe", [new TypeParameterSymbol("a")], [], dummyDecl);
+        var namedType = new TypeRef.TNamedType(typeSymbol, [new TypeRef.TInt()]);
+        BuiltinRegistry.IsOwnedType(namedType).ShouldBeTrue();
     }
 
     [Test]

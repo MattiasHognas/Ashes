@@ -226,23 +226,35 @@ public sealed class Parser
 
     /// <summary>
     /// Detects whether the current position is a let-pattern binding.
-    /// Returns true for <c>let (</c> which indicates a tuple destructuring let.
+    /// Returns true for <c>let (</c> (tuple patterns) or <c>let ident ::</c>
+    /// / <c>let _ ::</c> (cons patterns).
     /// </summary>
     private bool IsLetPatternBinding()
     {
         // The Lexer has already consumed tokens up to _current.
         // We need to peek past 'let' to see if a pattern follows.
-        // 'let (' → tuple pattern. 'let rec' or 'let ident' → normal let.
+        // 'let (' → tuple pattern.
+        // 'let ident ::' or 'let _ ::' → cons pattern.
+        // 'let rec' or 'let ident =' → normal let.
         if (_current.Kind != TokenKind.Let) return false;
 
-        // Save state — the lexer is forward-only, so we use a simple
-        // single-token lookahead by examining the lexer's next output.
+        // Save state — the lexer is forward-only, so we use lookahead
+        // by examining the lexer's next output.
         var savedCurrent = _current;
         var savedPrevious = _previous;
         var savedLexer = _lexer.SavePosition();
         Advance(); // consume 'let'
 
         var isPattern = _current.Kind == TokenKind.LParen;
+
+        // Also detect cons patterns: let x :: xs = ...
+        // After 'let', if we see an identifier (or _) followed by ::, it's a cons pattern.
+        if (!isPattern && _current.Kind == TokenKind.Ident)
+        {
+            var afterIdent = _current;
+            Advance(); // consume the identifier
+            isPattern = _current.Kind == TokenKind.ColonColon;
+        }
 
         // Restore state
         _current = savedCurrent;

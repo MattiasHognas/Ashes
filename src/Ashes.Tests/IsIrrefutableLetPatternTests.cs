@@ -234,4 +234,27 @@ public sealed class IsIrrefutableLetPatternTests
         inner.Elements.Count.ShouldBe(2);
         outer.Elements[1].ShouldBeOfType<Pattern.Var>().Name.ShouldBe("c");
     }
+
+    [Test]
+    public void Let_cons_pattern_parses_without_error()
+    {
+        var diag = new Diagnostics();
+        var expr = new Parser("let x :: xs = [1, 2, 3] in x", diag).ParseExpression();
+        diag.Errors.Count.ShouldBe(0);
+
+        // Desugars to: match [1, 2, 3] with | x :: xs -> x
+        var match = expr.ShouldBeOfType<Expr.Match>();
+        match.Cases.Count.ShouldBe(1);
+        var cons = match.Cases[0].Pattern.ShouldBeOfType<Pattern.Cons>();
+        cons.Head.ShouldBeOfType<Pattern.Var>().Name.ShouldBe("x");
+        cons.Tail.ShouldBeOfType<Pattern.Var>().Name.ShouldBe("xs");
+    }
+
+    [Test]
+    public void Let_cons_with_wildcard_tail_parses_without_error()
+    {
+        var diag = new Diagnostics();
+        new Parser("let h :: _ = [1, 2] in h", diag).ParseExpression();
+        diag.Errors.Count.ShouldBe(0);
+    }
 }
