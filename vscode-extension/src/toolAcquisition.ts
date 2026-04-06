@@ -105,7 +105,8 @@ export function downloadToFile(url: string, destPath: string): Promise<void> {
               reject(new Error("Redirect with no Location header"));
               return;
             }
-            follow(headers.location);
+            const redirectUrl = new URL(headers.location, u).toString();
+            follow(redirectUrl);
             return;
           }
           if (statusCode !== 200) {
