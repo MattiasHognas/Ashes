@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -663,7 +664,7 @@ public static class Runner
                 WorkingDirectory = workDir
             };
 
-            using var p = Process.Start(psi)!;
+            using var p = StartProcessWithRetry(psi);
             if (stdin is not null)
             {
                 p.StandardInput.Write(stdin);
@@ -866,5 +867,31 @@ public static class Runner
         }
 
         return (bytes / (1024.0 * 1024.0)).ToString("F1", CultureInfo.InvariantCulture) + " MB";
+    }
+
+    /// <summary>
+    /// Starts a process, retrying on transient ETXTBSY ("Text file busy") errors.
+    /// On Linux, a freshly-written executable can briefly fail to exec while the
+    /// kernel page cache is still finishing writeback.
+    /// </summary>
+    private static Process StartProcessWithRetry(ProcessStartInfo psi)
+    {
+        // ETXTBSY is errno 26 on Linux.
+        const int textFileBusyError = 26;
+        const int maxAttempts = 5;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                return Process.Start(psi)!;
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+        }
+
+        throw new InvalidOperationException("Failed to start process after retrying transient ETXTBSY errors.");
     }
 }

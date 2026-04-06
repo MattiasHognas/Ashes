@@ -114,11 +114,54 @@ public static class BuiltinRegistry
                 })
         };
 
+    /// <summary>
+    /// Resource type names. Resources are types that represent external handles
+    /// (files, sockets) and require deterministic cleanup via Drop.
+    /// Internal compiler concept — not exposed to user code.
+    /// </summary>
+    private static readonly HashSet<string> ResourceTypeNames = new(StringComparer.Ordinal)
+    {
+        "Socket"
+    };
+
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
 
     public static IReadOnlyCollection<string> StandardModuleNames => ModulesByName.Keys.ToArray();
 
     public static IReadOnlyCollection<BuiltinType> Types => TypesByName.Values.ToArray();
+
+    /// <summary>
+    /// Returns true if the given type name is classified as a resource type.
+    /// Resource types require deterministic cleanup (Drop) at scope exit.
+    /// </summary>
+    public static bool IsResourceTypeName(string typeName)
+    {
+        return ResourceTypeNames.Contains(typeName);
+    }
+
+    /// <summary>
+    /// Returns true if the given type is a copy type (stack-allocated, trivially duplicated).
+    /// Copy types: Int, Float, Bool.
+    /// Copy types do NOT get Drop instructions.
+    /// </summary>
+    public static bool IsCopyType(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
+    }
+
+    /// <summary>
+    /// Returns true if the given type is an owned type (heap-allocated, requires cleanup).
+    /// Owned types: String, List, Tuple, Function (closures), named types (ADTs incl. resources).
+    /// Owned types get Drop instructions at scope exit.
+    /// </summary>
+    public static bool IsOwnedType(TypeRef prunedType)
+    {
+        return prunedType is TypeRef.TStr
+            or TypeRef.TList
+            or TypeRef.TTuple
+            or TypeRef.TFun
+            or TypeRef.TNamedType;
+    }
 
     public static bool TryGetModule(string moduleName, out BuiltinModule module)
     {

@@ -7,7 +7,6 @@ using TUnit.Core;
 
 namespace Ashes.Tests;
 
-[NotInParallel]
 public sealed class ImportTests
 {
     private static string GetImportTestsRoot([CallerFilePath] string? callerFile = null)
@@ -123,19 +122,13 @@ public sealed class ImportTests
         {
             var exeBytes = new Ashes.Backend.Backends.WindowsX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"import_{Guid.NewGuid():N}.exe");
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            TestProcessHelper.WriteExecutable(exePath, exeBytes);
         }
         else
         {
             var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
             exePath = Path.Combine(tmpDir, $"import_{Guid.NewGuid():N}");
-            await File.WriteAllBytesAsync(exePath, elfBytes);
-#pragma warning disable CA1416
-            File.SetUnixFileMode(exePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
         }
 
         var psi = new ProcessStartInfo(exePath)
@@ -145,7 +138,7 @@ public sealed class ImportTests
             UseShellExecute = false
         };
 
-        using var proc = Process.Start(psi)!;
+        using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
         var stdout = await proc.StandardOutput.ReadToEndAsync();
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();

@@ -107,6 +107,52 @@ internal static partial class LlvmCodegen
         }
     }
 
+    /// <summary>
+    /// Runs the LLVM new pass manager optimization pipeline on the module.
+    /// Uses the standard "default&lt;ON&gt;" pipeline string which includes:
+    /// instcombine, simplifycfg, mem2reg, dead-code elimination, inlining,
+    /// loop optimizations, and other standard LLVM passes.
+    /// At O0 no passes are run — codegen output is used as-is.
+    ///
+    /// NOTE: Currently not wired into the compilation pipeline because the
+    /// custom ELF/PE linkers do not yet handle the additional relocation
+    /// types and sections that module-level optimization passes produce.
+    /// The codegen optimization level (set via LlvmCodeGenOptLevel in
+    /// LlvmTargetSetup) still applies LLVM optimizations during instruction
+    /// selection and register allocation. Full pass manager integration
+    /// will be enabled when the linker supports a broader relocation set.
+    /// </summary>
+    internal static void RunLlvmOptimizationPasses(LlvmTargetContext target, Backends.BackendOptimizationLevel level)
+    {
+        if (level == Backends.BackendOptimizationLevel.O0)
+        {
+            return; // No optimization at O0
+        }
+
+        string passString = level switch
+        {
+            Backends.BackendOptimizationLevel.O1 => "default<O1>",
+            Backends.BackendOptimizationLevel.O2 => "default<O2>",
+            Backends.BackendOptimizationLevel.O3 => "default<O3>",
+            _ => "default<O2>",
+        };
+
+        LlvmPassBuilderOptionsHandle passOptions = LlvmApi.CreatePassBuilderOptions();
+        try
+        {
+            int err = LlvmApi.RunPasses(target.Module, passString, target.TargetMachine, passOptions);
+            if (err != 0)
+            {
+                // Non-fatal: if passes fail, continue with unoptimized code.
+                // This can happen in edge cases; the code is still correct.
+            }
+        }
+        finally
+        {
+            LlvmApi.DisposePassBuilderOptions(passOptions);
+        }
+    }
+
     private static byte[] EmitObjectCode(LlvmTargetContext target)
     {
         int err = LlvmApi.TargetMachineEmitToMemoryBuffer(
@@ -177,7 +223,8 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpClose>(program));
+                || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+                || ProgramUsesInstruction<IrInst.Drop>(program));
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -593,6 +640,10 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
             IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
+            // Borrow: non-owning reference — simple value pass-through (pointer copy).
+            // No ownership transfer, no drop responsibility. The owning scope still drops.
+            IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),

@@ -3,6 +3,9 @@
 Ashes is a pure, statically typed, expression-based functional programming language
 compiled directly to native code.
 
+Values are immutable and freely shared; the compiler handles ownership
+and memory safely behind the scenes.
+
 This document describes the **surface syntax** and **semantic behavior** of the
 currently supported language features.
 
@@ -129,6 +132,12 @@ Networking rules:
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
 - `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
+- **Automatic cleanup**: `Socket` is a **resource type**. The compiler automatically
+  releases unclosed sockets when their binding goes out of scope. If a socket is
+  closed explicitly via `Ashes.Net.Tcp.close`, the automatic cleanup is skipped.
+- **Use-after-close**: using a socket after it has been closed (via `send`, `receive`,
+  or a second `close`) is a compile-time error.
+- **Double-close**: calling `close` on an already-closed socket is a compile-time error.
 
 Basic HTTP client APIs live under `Ashes.Http`:
 
@@ -764,6 +773,114 @@ Errors:
 > represented.
 >
 
+## 11.5 Integer Literal Patterns
+
+Integer literal patterns match values by equality.
+
+Syntax:
+
+| 0 -> expr0
+| 1 -> expr1
+| n -> exprDefault
+
+Rules:
+
+- An integer literal pattern matches when the matched value equals the literal.
+- Integer literal patterns may be mixed with variable and wildcard patterns.
+- Integer patterns alone are never exhaustive (integers are unbounded); a catch-all
+  arm (`_` or a variable) is required.
+
+Example:
+
+match n with
+| 0 -> "zero"
+| 1 -> "one"
+| _ -> "other"
+
+Negative integers are supported:
+
+match n with
+| -1 -> "negative one"
+| 0 -> "zero"
+| _ -> "positive"
+
+---
+
+## 11.6 String Literal Patterns
+
+String literal patterns match values by equality.
+
+Syntax:
+
+| "hello" -> expr1
+| "world" -> expr2
+| s -> exprDefault
+
+Rules:
+
+- A string literal pattern matches when the matched value equals the literal.
+- String patterns alone are never exhaustive; a catch-all arm is required.
+
+Example:
+
+match greeting with
+| "hello" -> "English"
+| "hola" -> "Spanish"
+| _ -> "unknown"
+
+---
+
+## 11.7 Boolean Literal Patterns
+
+Boolean literal patterns match `true` or `false`.
+
+Syntax:
+
+| true -> expr1
+| false -> expr2
+
+Rules:
+
+- Boolean literal patterns match when the value equals the literal.
+- A match covering both `true` and `false` is exhaustive.
+
+Example:
+
+match flag with
+| true -> "yes"
+| false -> "no"
+
+---
+
+## 11.8 Let Pattern Bindings
+
+Let expressions support destructuring patterns on the left side of `=`.
+
+Syntax:
+
+let (a, b) = expr in body
+let x :: xs = expr in body
+
+Rules:
+
+- Only irrefutable patterns (patterns that always match) are allowed.
+- Tuple patterns are irrefutable when the arity matches.
+- Variable patterns and wildcard patterns are irrefutable.
+- Constructor patterns (e.g. `Some(x)`) are not allowed in let bindings
+  because they are refutable — use `match` instead.
+- Integer, string, and boolean literal patterns are not allowed in let
+  bindings because they are refutable.
+- List cons patterns (`x :: xs`) are allowed but will fail at runtime
+  if the list is empty.
+
+Example:
+
+let (x, y) = (1, 2)
+in x + y
+
+let first :: rest = [1, 2, 3]
+in first
+
 ---
 
 # 12. Recursion over Lists
@@ -1122,7 +1239,198 @@ once created.
 
 ---
 
-# 16. Unsupported (Future)
+# 16. Resource Types and Deterministic Cleanup
+
+Certain built-in types represent external system resources (file handles,
+sockets). These are called **resource types**.
+
+Currently classified resource types:
+
+- `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
+
+## 16.1 Automatic Cleanup
+
+Resource bindings are automatically cleaned up when they go out of scope.
+The compiler inserts cleanup calls at the end of every scope that contains
+a live resource binding. This includes:
+
+- `let` binding scopes
+- `match` case branches
+- The program's top-level scope
+
+Users do not write cleanup calls manually unless they want explicit control
+over when a resource is released.
+
+## 16.2 Explicit Close
+
+Resources may be closed explicitly using the appropriate API:
+
+- `Ashes.Net.Tcp.close(socket)` — closes a socket
+
+When a resource is closed explicitly, the automatic cleanup for that
+resource is skipped (no double close).
+
+## 16.3 Compile-Time Safety
+
+The compiler enforces resource safety with two rules:
+
+1. **No use-after-close.** Using a resource after it has been closed
+   (passing it to `send` or `receive`) is a compile-time error
+   (diagnostic `ASH006`).
+
+2. **No double-close.** Calling `close` on an already-closed resource
+   is a compile-time error (diagnostic `ASH007`).
+
+These checks are performed at compile time during semantic analysis.
+
+## 16.4 What Is Not Affected
+
+Resource safety rules (use-after-close, double-close) apply only to resource
+types. General owned types (String, List, ADTs, closures) receive automatic
+Drop but have no restrictions on reuse — see §17.
+
+## 16.5 No Garbage Collection
+
+All resource cleanup is deterministic and compile-time verified. There is
+no garbage collector. The compiler guarantees exactly-once cleanup for every
+resource binding.
+
+---
+
+# 17. Ownership Model
+
+Ashes uses an **implicit sharing** model for memory management. Every
+value has a clear owner, but ownership is managed entirely by the
+compiler — users never write move, borrow, or drop operations.
+
+## 17.1 Copy vs Owned Types
+
+| Category | Types | Behaviour |
+|----------|-------|-----------|
+| **Copy** | `Int`, `Float`, `Bool` | Stack-allocated, trivially duplicated. No cleanup needed. |
+| **Owned** | `String`, `List`, `Tuple`, `Function` (closures), ADTs (`Result`, `Maybe`, user-defined), resource types (`Socket`) | Heap-allocated. The compiler inserts `Drop` at scope exit. |
+
+Copy types may be used any number of times without restriction.
+
+Owned types are tracked by the compiler for deterministic cleanup.
+
+## 17.2 Implicit Sharing
+
+Values in Ashes are **implicitly shared**. When a binding is used —
+passed to a function, stored in a data structure, or returned from a
+scope — the compiler shares it automatically. There is no explicit
+borrow syntax (`&x`), no move keyword, and no use-after-move errors.
+
+The compiler decides when to share (borrow) and when to copy. Since all
+values are immutable, sharing is always safe.
+
+## 17.3 Deterministic Drop
+
+Every owned binding receives a `Drop` at the end of its owning scope.
+This applies to:
+
+- `let` binding scopes
+- `match` case branches
+- The program's top-level scope
+
+For resource types (Socket), `Drop` invokes platform-specific cleanup
+(e.g. close the socket). For other owned types, `Drop` is currently a
+no-op in the linear allocator and will perform actual deallocation when
+a freeing allocator is introduced.
+
+## 17.4 Moves as Optimisation
+
+"Move" in Ashes is a **compiler optimisation**, not a user-visible
+operation. When the compiler can prove a value is used for the last
+time, it may transfer the underlying memory rather than sharing. This
+is invisible to user code — the program behaves identically regardless
+of whether a move or share occurs.
+
+## 17.5 Borrowing Is Inferred
+
+Borrowing is **compiler-inferred**, not user-annotated. There is no
+`&x` syntax, no borrow operator, and no lifetime annotations.
+
+When an owned value is accessed — passed to a function, used in an
+expression, or bound to another name — the compiler automatically
+emits a borrow. A borrowed reference is a non-owning access: it
+carries no responsibility for cleanup. The owning scope still drops
+the value when it exits.
+
+Since Ashes values are immutable, inferred borrowing is always safe:
+
+- Multiple borrows of the same value can coexist without conflict.
+- Borrows cannot outlive the owning scope (enforced by scope structure).
+- There are no data races because there is no mutation.
+
+Copy types (`Int`, `Float`, `Bool`) are never borrowed — they are
+trivially duplicated on the stack.
+
+Internally the compiler represents a borrow as a `Borrow` IR
+instruction: `Borrow(target, source)`. In the current backend this
+is a simple pointer pass-through. Future phases may use borrow
+information for copy elision and in-place reuse optimizations.
+
+## 17.6 No Garbage Collection
+
+All ownership and cleanup is deterministic and resolved at compile time.
+There is no garbage collector, no reference counting at runtime (in the
+current implementation), and no finalizers.
+
+---
+
+# 18. Optimization
+
+The Ashes compiler performs multiple levels of optimization, all invisible
+to user code. Observable behaviour is always preserved — optimizations
+never change what a program prints, returns, or does.
+
+## 18.1 IR-Level Optimizations
+
+After semantic lowering and before backend code generation, the compiler
+runs an IR optimization pass pipeline:
+
+- **Constant folding** — Arithmetic on known constant operands is
+  evaluated at compile time. `10 + 32` becomes `42` in the IR with no
+  runtime addition.
+- **Dead code elimination** — Instructions whose results are never used
+  (e.g. constants left over after folding) are removed.
+- **Drop elision** — Redundant `Drop` instructions for values that were
+  never initialized are candidates for removal.
+- **Borrow elision** — `Borrow` instructions on copy-type constants are
+  candidates for removal since copy types have no ownership semantics.
+
+## 18.2 Backend Optimizations
+
+The LLVM backend applies instruction-level optimizations during code
+generation via the target machine's optimization level (O0 through O3).
+This includes register allocation, instruction scheduling, and
+peephole optimizations performed by LLVM's code generator.
+
+## 18.3 Tail-Call Optimization
+
+Tail-recursive functions are optimized into constant-stack loops by the
+compiler. When the compiler detects that a recursive call is in tail
+position, it rewrites the call as a jump back to the function entry,
+reusing the current stack frame. This means recursive functions like:
+
+    let rec sum = fun (n) -> fun (acc) ->
+        if n == 0 then acc
+        else sum(n - 1)(acc + n)
+    in sum(1000000)(0)
+
+run in constant stack space, without risk of stack overflow.
+
+## 18.4 Zero-Cost Abstraction Philosophy
+
+Values are immutable and freely shared; the compiler handles ownership
+and memory safely behind the scenes. Optimizations are never visible to
+user code. The compiler is free to reorder, eliminate, or restructure
+internal operations as long as the observable result is identical.
+
+---
+
+# 19. Unsupported (Future)
 
 Not currently supported:
 

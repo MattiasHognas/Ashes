@@ -153,6 +153,14 @@ public sealed class Parser
         if (_current.Kind == TokenKind.Let)
         {
             var start = _current.Position;
+
+            // Check for let-pattern bindings: let (a, b) = expr in body
+            // Desugar to: match expr with | (a, b) -> body
+            if (IsLetPatternBinding())
+            {
+                return ParseLetPattern(start);
+            }
+
             Consume(TokenKind.Let);
             var isRec = _current.Kind == TokenKind.Rec;
             if (isRec)
@@ -215,6 +223,93 @@ public sealed class Parser
 
         return ParseLambda();
     }
+
+    /// <summary>
+    /// Detects whether the current position is a let-pattern binding.
+    /// Returns true for <c>let (</c> (tuple patterns) or <c>let ident ::</c>
+    /// / <c>let _ ::</c> (cons patterns).
+    /// </summary>
+    private bool IsLetPatternBinding()
+    {
+        // The Lexer has already consumed tokens up to _current.
+        // We need to peek past 'let' to see if a pattern follows.
+        // 'let (' → tuple pattern.
+        // 'let ident ::' or 'let _ ::' → cons pattern.
+        // 'let rec' or 'let ident =' → normal let.
+        if (_current.Kind != TokenKind.Let) return false;
+
+        // Save state — the lexer is forward-only, so we use lookahead
+        // by examining the lexer's next output.
+        var savedCurrent = _current;
+        var savedPrevious = _previous;
+        var savedLexer = _lexer.SavePosition();
+        Advance(); // consume 'let'
+
+        var isPattern = _current.Kind == TokenKind.LParen;
+
+        // Also detect cons patterns: let x :: xs = ...
+        // After 'let', if we see an identifier (including _) followed by ::, it's a cons pattern.
+        if (!isPattern && _current.Kind == TokenKind.Ident)
+        {
+            Advance(); // consume the identifier
+            isPattern = _current.Kind == TokenKind.ColonColon;
+        }
+
+        // Restore state
+        _current = savedCurrent;
+        _previous = savedPrevious;
+        _lexer.RestorePosition(savedLexer);
+
+        return isPattern;
+    }
+
+    /// <summary>
+    /// Parses <c>let pattern = expr in body</c> and desugars to
+    /// <c>match expr with | pattern -> body</c>.
+    /// Reports a parse error if the pattern is refutable (see §11.8).
+    /// </summary>
+    private Expr ParseLetPattern(int start)
+    {
+        Consume(TokenKind.Let);
+        var pattern = ParsePattern();
+
+        if (!IsIrrefutableLetPattern(pattern))
+        {
+            var span = AstSpans.GetOrDefault(pattern);
+            _diag.Error(span, "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.", DiagnosticCodes.ParseError);
+        }
+
+        Consume(TokenKind.Equals);
+        var value = ParseExpressionCore();
+        Consume(TokenKind.In);
+        var body = ParseExpressionCore();
+
+        // Desugar: let pattern = value in body → match value with | pattern -> body
+        var cases = new List<MatchCase> { new MatchCase(pattern, body) };
+        return RegisterExpr(new Expr.Match(value, cases, start), start, LastConsumedEnd);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="pattern"/> is irrefutable —
+    /// that is, it will always match regardless of the value.
+    /// Per LANGUAGE_SPEC.md §11.8 the irrefutable patterns are:
+    /// <list type="bullet">
+    ///   <item><see cref="Pattern.Var"/> — always matches and binds.</item>
+    ///   <item><see cref="Pattern.Wildcard"/> — always matches.</item>
+    ///   <item><see cref="Pattern.Tuple"/> — irrefutable when every element is irrefutable.</item>
+    ///   <item><see cref="Pattern.Cons"/> — allowed (may fail at runtime on empty list).</item>
+    /// </list>
+    /// All other patterns (Constructor, IntLit, StrLit, BoolLit, EmptyList)
+    /// are refutable and must not appear in let-pattern bindings.
+    /// </summary>
+    internal static bool IsIrrefutableLetPattern(Pattern pattern) => pattern switch
+    {
+        Pattern.Var => true,
+        Pattern.Wildcard => true,
+        Pattern.Tuple t => t.Elements.All(IsIrrefutableLetPattern),
+        Pattern.Cons c => IsIrrefutableLetPattern(c.Head) && IsIrrefutableLetPattern(c.Tail),
+        _ => false,
+    };
 
     private Expr ParseLambda()
     {
@@ -542,6 +637,11 @@ public sealed class Parser
             TokenKind.LBracket => ParseEmptyListPattern(),
             TokenKind.Ident => ParseVarPattern(),
             TokenKind.LParen => ParseParenPattern(),
+            TokenKind.Int => ParseIntLitPattern(),
+            TokenKind.String => ParseStrLitPattern(),
+            TokenKind.True => ParseBoolLitPattern(true),
+            TokenKind.False => ParseBoolLitPattern(false),
+            TokenKind.Minus => ParseNegativeIntLitPattern(),
             _ => BadPattern(),
         };
     }
@@ -601,6 +701,36 @@ public sealed class Parser
         }
         Consume(TokenKind.RParen);
         return p;
+    }
+
+    private Pattern ParseIntLitPattern()
+    {
+        var token = Consume(TokenKind.Int);
+        return RegisterPattern(new Pattern.IntLit(token.IntValue), token.Position, token.End);
+    }
+
+    private Pattern ParseNegativeIntLitPattern()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Minus);
+        if (_current.Kind != TokenKind.Int)
+        {
+            return BadPattern();
+        }
+        var token = Consume(TokenKind.Int);
+        return RegisterPattern(new Pattern.IntLit(-token.IntValue), start, token.End);
+    }
+
+    private Pattern ParseStrLitPattern()
+    {
+        var token = Consume(TokenKind.String);
+        return RegisterPattern(new Pattern.StrLit(token.Text), token.Position, token.End);
+    }
+
+    private Pattern ParseBoolLitPattern(bool value)
+    {
+        var token = Consume(value ? TokenKind.True : TokenKind.False);
+        return RegisterPattern(new Pattern.BoolLit(value), token.Position, token.End);
     }
 
     private Pattern BadPattern()
