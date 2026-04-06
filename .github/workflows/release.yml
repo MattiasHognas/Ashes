@@ -14,9 +14,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache Runtimes
+      - name: Restore Runtimes Cache
         id: cache-runtimes
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: runtimes
           key: runtimes-22
@@ -24,6 +24,13 @@ jobs:
       - name: Download all LLVM native libraries
         if: steps.cache-runtimes.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
+
+      - name: Save Runtimes Cache
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: runtimes
+          key: runtimes-22
 
   build-compiler:
     needs: prepare-llvm
@@ -50,16 +57,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache Runtimes
-        id: cache-runtimes
-        uses: actions/cache@v4
+      - name: Restore Runtimes Cache
+        uses: actions/cache/restore@v4
         with:
           path: runtimes
           key: runtimes-22
-
-      - name: Download all LLVM native libraries
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
-        run: bash scripts/download-llvm-native.sh --all
 
       - name: Get version
         id: version
@@ -145,16 +147,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache Runtimes
-        id: cache-runtimes
-        uses: actions/cache@v4
+      - name: Restore Runtimes Cache
+        uses: actions/cache/restore@v4
         with:
           path: runtimes
           key: runtimes-22
-
-      - name: Download all LLVM native libraries
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
-        run: bash scripts/download-llvm-native.sh --all
 
       - name: Get version
         id: version
