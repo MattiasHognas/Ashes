@@ -23,6 +23,7 @@ The root container for a compiled Ashes program:
 | `UsesPrintBool` | `bool` | Whether `PrintBool` is used |
 | `UsesConcatStr` | `bool` | Whether `ConcatStr` is used |
 | `UsesClosures` | `bool` | Whether closures are created |
+| `UsesAsync` | `bool` | Whether async/await is used |
 
 The `Uses*` flags allow the backend to omit unused runtime helpers.
 
@@ -37,6 +38,17 @@ A single function with a flat instruction list:
 | `LocalCount` | `int` | Number of local variable stack slots |
 | `TempCount` | `int` | Number of temporary registers |
 | `HasEnvAndArgParams` | `bool` | `true` for lambdas (implicit env+arg at slots 0, 1) |
+| `Coroutine` | `CoroutineInfo?` | Non-null for async coroutine functions |
+
+### CoroutineInfo
+
+Metadata for coroutine functions generated from `async` blocks:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `StateCount` | `int` | Number of states (N await points = N+1 states) |
+| `StateStructSize` | `int` | Total size of the task/state struct in bytes |
+| `CaptureCount` | `int` | Number of captured environment variables |
 
 The entry function has `HasEnvAndArgParams: false`. Lambda functions
 have `true`, meaning slot 0 holds the closure environment pointer and
@@ -222,6 +234,35 @@ All file operations return `Result` ADTs: `Ok(value)` on success,
 | `Jump` | `Target` | Unconditional jump to label |
 | `JumpIfFalse` | `CondTemp`, `Target` | Jump to label if `CondTemp == 0` |
 | `Return` | `Source` | Return value from function |
+
+### Async / Task
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `CreateTask` | `Target`, `ClosureTemp`, `StateStructSize`, `CaptureCount` | Allocate task/state struct from closure |
+| `CreateCompletedTask` | `Target`, `ResultTemp` | Allocate pre-completed task (state = -1) |
+| `AwaitTask` | `Target`, `TaskTemp` | Await a sub-task inside a coroutine |
+| `RunTask` | `Target`, `TaskTemp` | Synchronously drive a task to completion |
+| `AsyncSleep` | `Target`, `MillisecondsTemp` | Create a sleep task (state = -2) |
+| `Suspend` | `StateStructTemp`, `NextState`, `AwaitedTaskTemp`, `SaveVars` | State machine suspend point |
+| `Resume` | `StateStructTemp`, `ResultTemp`, `RestoreVars` | State machine resume point |
+
+`AwaitTask` appears in the IR before the state machine transform. The transform
+replaces each `AwaitTask` with a `Suspend`/`Resume` pair that saves and restores
+live temps and locals across the await point.
+
+**Task/state struct layout** (`TaskStructLayout`):
+
+| Offset | Field | Description |
+|--------|-------|-------------|
+| 0 | `StateIndex` | Current state number (-1 = completed, -2 = sleeping) |
+| 8 | `CoroutineFn` | Pointer to coroutine function |
+| 16 | `ResultSlot` | Result value / awaited task result |
+| 24 | `AwaitedTask` | Pointer to sub-task being awaited |
+| 32 | `NextTask` | Queue linked list pointer (Phase C event loop) |
+| 40 | `SleepDurationMs` | Sleep duration in milliseconds (Phase C) |
+| 48+ | Captures | Captured environment variables |
+| 48+N*8+ | Live vars | Live variable slots across await points |
 
 ------------------------------------------------------------------------
 

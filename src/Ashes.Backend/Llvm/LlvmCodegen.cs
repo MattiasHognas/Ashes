@@ -21,6 +21,8 @@ internal static partial class LlvmCodegen
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
+    private const long SyscallNanosleep = 35;
+    private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
 
     // AArch64 Linux syscall numbers
@@ -32,6 +34,8 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallExit = 93;
     private const long Arm64SyscallSocket = 198;
     private const long Arm64SyscallConnect = 203;
+    private const long Arm64SyscallNanosleep = 101;
+    private const long Arm64SyscallClockGettime = 113;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -225,6 +229,11 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
                 || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
                 || ProgramUsesInstruction<IrInst.Drop>(program));
+        bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
+            && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+                || ProgramUsesInstruction<IrInst.RunTask>(program)
+                || ProgramUsesInstruction<IrInst.AsyncAll>(program)
+                || ProgramUsesInstruction<IrInst.AsyncRace>(program));
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -242,6 +251,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsWideCharToMultiByteImport = default;
         LlvmValueHandle windowsLocalFreeImport = default;
         LlvmValueHandle windowsCommandLineToArgvImport = default;
+        LlvmValueHandle windowsSleepImport = default;
         LlvmValueHandle heapStorageGlobal = LlvmApi.AddGlobal(target.Module, heapType, "__ashes_heap_storage");
         LlvmApi.SetLinkage(heapStorageGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapStorageGlobal, LlvmApi.ConstNull(heapType));
@@ -309,6 +319,12 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle exitProcessType = LlvmApi.FunctionType(voidType, [i32]);
             windowsExitProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ExitProcess");
             LlvmApi.SetLinkage(windowsExitProcessImport, LlvmLinkage.External);
+        }
+
+        if (usesWindowsSleep)
+        {
+            windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
+            LlvmApi.SetLinkage(windowsSleepImport, LlvmLinkage.External);
         }
 
         if (usesWindowsProgramArgs)
@@ -386,6 +402,7 @@ internal static partial class LlvmCodegen
             windowsWideCharToMultiByteImport,
             windowsLocalFreeImport,
             windowsCommandLineToArgvImport,
+            windowsSleepImport,
             isEntry: true,
             debugContext: dbg);
 
@@ -420,6 +437,7 @@ internal static partial class LlvmCodegen
                 windowsWideCharToMultiByteImport,
                 windowsLocalFreeImport,
                 windowsCommandLineToArgvImport,
+                windowsSleepImport,
                 isEntry: false,
                 debugContext: dbg);
         }
@@ -468,6 +486,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsWideCharToMultiByteImport,
         LlvmValueHandle windowsLocalFreeImport,
         LlvmValueHandle windowsCommandLineToArgvImport,
+        LlvmValueHandle windowsSleepImport,
         bool isEntry,
         DebugInfoContext? debugContext = null)
     {
@@ -564,6 +583,7 @@ internal static partial class LlvmCodegen
             windowsWideCharToMultiByteImport,
             windowsLocalFreeImport,
             windowsCommandLineToArgvImport,
+            windowsSleepImport,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -644,6 +664,31 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
+            // CreateTask: allocate task struct with coroutine function + captures.
+            IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
+                EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
+                    createTask.StateStructSize, createTask.CaptureCount)),
+            // CreateCompletedTask: pre-completed task with result already available.
+            IrInst.CreateCompletedTask cct => StoreTemp(state, cct.Target,
+                EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),
+            // AwaitTask: should not appear after state machine transform. Pass-through for safety.
+            IrInst.AwaitTask awaitTask => StoreTemp(state, awaitTask.Target, LoadTemp(state, awaitTask.TaskTemp)),
+            // RunTask: drive task to completion via event loop.
+            IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
+                EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
+            // AsyncSleep: create a sleep task with a timer deadline.
+            IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
+                EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
+            // AsyncAll: run all tasks in a list, collect results.
+            IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
+                EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
+            // AsyncRace: run the first task in a list, return its result.
+            IrInst.AsyncRace asyncRace => StoreTemp(state, asyncRace.Target,
+                EmitAsyncRace(state, LoadTemp(state, asyncRace.TaskListTemp))),
+            // Suspend/Resume: state machine annotations — no-ops in codegen.
+            // The actual save/restore is done by StoreMemOffset/LoadMemOffset around them.
+            IrInst.Suspend => false,
+            IrInst.Resume => false,
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -757,6 +802,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsWideCharToMultiByteImport,
         LlvmValueHandle WindowsLocalFreeImport,
         LlvmValueHandle WindowsCommandLineToArgvImport,
+        LlvmValueHandle WindowsSleepImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -813,6 +859,8 @@ internal static partial class LlvmCodegen
             SyscallLseek => Arm64SyscallLseek,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,
+            SyscallNanosleep => Arm64SyscallNanosleep,
+            SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
