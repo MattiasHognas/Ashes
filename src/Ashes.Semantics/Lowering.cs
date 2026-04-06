@@ -79,6 +79,9 @@ public sealed class Lowering
 
     // Async context tracking — true when lowering inside an async block body
     private bool _insideAsync;
+    // The error type variable for the current async block; unified from each await's E.
+    // Uses save/restore pattern to support nested async blocks.
+    private TypeRef? _currentAsyncErrorType;
 
     private enum IntrinsicKind
     {
@@ -2023,32 +2026,30 @@ public sealed class Lowering
 
         var (taskTemp, taskType) = LowerExpr(taskArg);
 
-        // Verify the argument is a Task(Never, A). The current lowered task/runtime
-        // representation only produces a completed value, so Async.run is infallible.
+        // Verify the argument is a Task(E, A)
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-            || !_typeSymbols.TryGetValue("Result", out var resultSymbol)
-            || !_typeSymbols.TryGetValue("Never", out var neverSymbol))
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
         {
-            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task, Result, or Never type not registered.");
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task or Result type not registered.");
             return ReturnNeverWithDummyTemp();
         }
 
-        var neverType = new TypeRef.TNamedType(neverSymbol, []);
+        var errorType = NewTypeVar();
         var successType = NewTypeVar();
-        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [neverType, successType]);
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedTaskType);
 
-        // RunTask synchronously drives the coroutine to completion.
+        // RunTask synchronously drives the coroutine to completion
         int bodyTemp = NewTemp();
         Emit(new IrInst.RunTask(bodyTemp, taskTemp));
 
-        // Wrap in Ok(value) — returns Result(Never, A).
+        // Wrap in Ok(value) — returns Result(E, A)
         if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
         {
             return ReturnNeverWithDummyTemp();
         }
 
-        var resultType = new TypeRef.TNamedType(resultSymbol, [neverType, Prune(successType)]);
+        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
         int adtTemp = NewTemp();
         Emit(new IrInst.AllocAdt(adtTemp, GetConstructorTag(okConstructor), 1));
         Emit(new IrInst.SetAdtField(adtTemp, 0, bodyTemp));
@@ -2099,12 +2100,10 @@ public sealed class Lowering
         Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
-        // Error path: extract the error payload and create a failed task.
+        // Error path: pass through the result value as the task (error propagation placeholder)
         Emit(new IrInst.Label(errorLabel));
-        var errorPayloadTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(errorPayloadTemp, resultTemp, 0));
         int errTaskTemp = NewTemp();
-        Emit(new IrInst.CreateFailedTask(errTaskTemp, errorPayloadTemp));
+        Emit(new IrInst.CreateCompletedTask(errTaskTemp, resultTemp));
         Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
         Emit(new IrInst.Jump(endLabel));
 
@@ -3107,10 +3106,13 @@ public sealed class Lowering
         // then create a task struct pointing to the coroutine.
 
         var savedInsideAsync = _insideAsync;
+        var savedAsyncErrorType = _currentAsyncErrorType;
         _insideAsync = true;
 
-        // The error type variable for this async block — unified from awaits
+        // The error type variable for this async block — unified from awaits.
+        // Each await inside this block unifies its Task(E, A)'s E with this variable.
         var errorTypeVar = NewTypeVar();
+        _currentAsyncErrorType = errorTypeVar;
 
         // --- Capture computation (same as lambda lifting) ---
         var bound = new HashSet<string>(StringComparer.Ordinal);
@@ -3220,6 +3222,7 @@ public sealed class Lowering
         }
         _tcoCtx = savedTcoCtx;
         _insideAsync = savedInsideAsync;
+        _currentAsyncErrorType = savedAsyncErrorType;
 
         // --- Build Task(E, A) type ---
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3262,7 +3265,13 @@ public sealed class Lowering
         var successType = NewTypeVar();
         var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedType);
-        Unify(errorType, _currentAsyncErrorType);
+
+        // Unify the awaited task's error type with the enclosing async block's error type.
+        // This ensures all awaits within the same async block share a consistent error type.
+        if (_currentAsyncErrorType is not null)
+        {
+            Unify(errorType, _currentAsyncErrorType);
+        }
 
         // AwaitTask synchronously extracts the result
         int resultTemp = NewTemp();

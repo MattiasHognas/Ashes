@@ -28,13 +28,11 @@ public sealed record StateMachineResult(
 ///
 /// State struct layout:
 ///   [0]:  state_index (i64)
-///   [8]:  coroutine_fn (i64)      — set by CreateTask, not touched here
-///   [16]: result_slot (i64)       — awaited task result / final result
-///   [24]: awaited_task (i64)      — pointer to sub-task being awaited
-///   [32]: next_task (i64)         — linked-list pointer for scheduler/task chaining
-///   [40]: sleep_duration_ms (i64) — scheduler delay metadata
-///   [48]: capture_0 (i64)         — captured env variables
-///   [48 + captureCount*8]: live_var_0 (i64) — live variable slots
+///   [8]:  coroutine_fn (i64)   — set by CreateTask, not touched here
+///   [16]: result_slot (i64)    — awaited task result / final result
+///   [24]: awaited_task (i64)   — pointer to sub-task being awaited
+///   [32]: capture_0 (i64)      — captured env variables
+///   [32 + captureCount*8]: live_var_0 (i64) — live variable slots
 ///   ...
 /// </summary>
 public static class StateMachineTransform
@@ -173,28 +171,24 @@ public static class StateMachineTransform
             stateLabels[i] = $"__state_{i}";
         }
 
-        var invalidStateLabel = "__state_invalid";
-
-        // Dispatch: check state index against each state and jump.
+        // Dispatch: check state index against each state and jump
         // We use a chain of comparisons since IR doesn't have a switch instruction.
-        // Invalid state indices must not fall back to state 0, because that would
-        // incorrectly re-enter the coroutine from the beginning.
-        for (int i = 0; i < stateCount; i++)
+        for (int i = 1; i < stateCount; i++)
         {
             int cmpTemp = ++maxTemp;
             int constTemp = ++maxTemp;
             result.Add(new IrInst.LoadConstInt(constTemp, i));
             result.Add(new IrInst.CmpIntEq(cmpTemp, stateIdxTemp, constTemp));
-            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateCount ? $"__dispatch_{i + 1}" : invalidStateLabel));
+            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateCount ? $"__dispatch_{i + 1}" : stateLabels[0]));
             result.Add(new IrInst.Jump(stateLabels[i]));
             if (i + 1 < stateCount)
             {
                 result.Add(new IrInst.Label($"__dispatch_{i + 1}"));
             }
         }
+        // Default: state 0
+        result.Add(new IrInst.Jump(stateLabels[0]));
 
-        result.Add(new IrInst.Label(invalidStateLabel));
-        result.Add(new IrInst.Unreachable());
         // Split original instructions into segments at await points
         var segments = SplitAtAwaits(instructions, awaitPositions);
 
@@ -355,22 +349,40 @@ public static class StateMachineTransform
 
     /// <summary>
     /// For each await point, computes which temps are live across that point
-    /// using CFG-based liveness rather than a straight-line approximation.
+    /// (defined before and used after the await).
     /// </summary>
     private static List<HashSet<int>> ComputeLiveTempsAcrossAwaits(
         List<IrInst> instructions, List<int> awaitPositions)
     {
-        var successors = BuildControlFlowSuccessors(instructions);
-        var liveOut = ComputeLiveOutSets(instructions, successors);
-        var definitelyDefinedBefore = ComputeDefinitelyDefinedBefore(instructions, successors);
-        var result = new List<HashSet<int>>(awaitPositions.Count);
+        var result = new List<HashSet<int>>();
 
         foreach (int awaitPos in awaitPositions)
         {
-            var live = new HashSet<int>(liveOut[awaitPos]);
-            live.IntersectWith(definitelyDefinedBefore[awaitPos]);
+            // Collect temps defined before the await point
+            var definedBefore = new HashSet<int>();
+            for (int i = 0; i < awaitPos; i++)
+            {
+                foreach (int t in GetDefinedTemps(instructions[i]))
+                {
+                    definedBefore.Add(t);
+                }
+            }
 
-            // Don't save temp 0 (state struct pointer) — it's always available.
+            // Collect temps used after the await point (not including the AwaitTask itself)
+            var usedAfter = new HashSet<int>();
+            for (int i = awaitPos + 1; i < instructions.Count; i++)
+            {
+                foreach (int t in GetUsedTemps(instructions[i]))
+                {
+                    usedAfter.Add(t);
+                }
+            }
+
+            // Live across = defined before AND used after
+            var live = new HashSet<int>(definedBefore);
+            live.IntersectWith(usedAfter);
+
+            // Don't save temp 0 (state struct pointer) — it's always available
             live.Remove(0);
 
             result.Add(live);
@@ -379,245 +391,6 @@ public static class StateMachineTransform
         return result;
     }
 
-    private static List<List<int>> BuildControlFlowSuccessors(List<IrInst> instructions)
-    {
-        var labelToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            if (IsInstructionKind(instructions[i], "Label"))
-            {
-                var label = GetInstructionStringProperty(instructions[i], "Name", "Label");
-                if (!string.IsNullOrEmpty(label))
-                {
-                    labelToIndex[label] = i;
-                }
-            }
-        }
-
-        var successors = new List<List<int>>(instructions.Count);
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            successors.Add(new List<int>());
-        }
-
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            var inst = instructions[i];
-
-            if (IsInstructionKind(inst, "Jump"))
-            {
-                AddJumpSuccessor(successors[i], inst, labelToIndex);
-                continue;
-            }
-
-            if (IsInstructionKind(inst, "JumpIfFalse"))
-            {
-                AddJumpSuccessor(successors[i], inst, labelToIndex);
-                if (i + 1 < instructions.Count)
-                {
-                    successors[i].Add(i + 1);
-                }
-
-                continue;
-            }
-
-            if (i + 1 < instructions.Count)
-            {
-                successors[i].Add(i + 1);
-            }
-        }
-
-        return successors;
-    }
-
-    private static List<HashSet<int>> ComputeLiveOutSets(
-        List<IrInst> instructions,
-        List<List<int>> successors)
-    {
-        var liveIn = new List<HashSet<int>>(instructions.Count);
-        var liveOut = new List<HashSet<int>>(instructions.Count);
-
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            liveIn.Add(new HashSet<int>());
-            liveOut.Add(new HashSet<int>());
-        }
-
-        var changed = true;
-        while (changed)
-        {
-            changed = false;
-
-            for (int i = instructions.Count - 1; i >= 0; i--)
-            {
-                var newLiveOut = new HashSet<int>();
-                foreach (int successor in successors[i])
-                {
-                    newLiveOut.UnionWith(liveIn[successor]);
-                }
-
-                var newLiveIn = new HashSet<int>(GetUsedTemps(instructions[i]));
-                var liveAfterDefs = new HashSet<int>(newLiveOut);
-                liveAfterDefs.ExceptWith(GetDefinedTemps(instructions[i]));
-                newLiveIn.UnionWith(liveAfterDefs);
-
-                if (!liveOut[i].SetEquals(newLiveOut))
-                {
-                    liveOut[i] = newLiveOut;
-                    changed = true;
-                }
-
-                if (!liveIn[i].SetEquals(newLiveIn))
-                {
-                    liveIn[i] = newLiveIn;
-                    changed = true;
-                }
-            }
-        }
-
-        return liveOut;
-    }
-
-    private static List<HashSet<int>> ComputeDefinitelyDefinedBefore(
-        List<IrInst> instructions,
-        List<List<int>> successors)
-    {
-        var allTemps = new HashSet<int>();
-        foreach (var inst in instructions)
-        {
-            foreach (int temp in GetDefinedTemps(inst))
-            {
-                allTemps.Add(temp);
-            }
-
-            foreach (int temp in GetUsedTemps(inst))
-            {
-                allTemps.Add(temp);
-            }
-        }
-
-        var predecessors = new List<List<int>>(instructions.Count);
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            predecessors.Add(new List<int>());
-        }
-
-        for (int i = 0; i < successors.Count; i++)
-        {
-            foreach (int successor in successors[i])
-            {
-                predecessors[successor].Add(i);
-            }
-        }
-
-        var definitelyIn = new List<HashSet<int>>(instructions.Count);
-        var definitelyOut = new List<HashSet<int>>(instructions.Count);
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            definitelyIn.Add(i == 0 ? new HashSet<int>() : new HashSet<int>(allTemps));
-            definitelyOut.Add(new HashSet<int>());
-        }
-
-        var changed = true;
-        while (changed)
-        {
-            changed = false;
-
-            for (int i = 0; i < instructions.Count; i++)
-            {
-                HashSet<int> newDefinitelyIn;
-                if (i == 0)
-                {
-                    newDefinitelyIn = new HashSet<int>();
-                }
-                else if (predecessors[i].Count == 0)
-                {
-                    newDefinitelyIn = new HashSet<int>();
-                }
-                else
-                {
-                    newDefinitelyIn = new HashSet<int>(definitelyOut[predecessors[i][0]]);
-                    for (int p = 1; p < predecessors[i].Count; p++)
-                    {
-                        newDefinitelyIn.IntersectWith(definitelyOut[predecessors[i][p]]);
-                    }
-                }
-
-                var newDefinitelyOut = new HashSet<int>(newDefinitelyIn);
-                newDefinitelyOut.UnionWith(GetDefinedTemps(instructions[i]));
-
-                if (!definitelyIn[i].SetEquals(newDefinitelyIn))
-                {
-                    definitelyIn[i] = newDefinitelyIn;
-                    changed = true;
-                }
-
-                if (!definitelyOut[i].SetEquals(newDefinitelyOut))
-                {
-                    definitelyOut[i] = newDefinitelyOut;
-                    changed = true;
-                }
-            }
-        }
-
-        return definitelyIn;
-    }
-
-    private static void AddJumpSuccessor(
-        List<int> successors,
-        IrInst instruction,
-        Dictionary<string, int> labelToIndex)
-    {
-        var targetLabel = GetInstructionStringProperty(
-            instruction,
-            "Target",
-            "TargetLabel",
-            "Label",
-            "Name");
-
-        if (string.IsNullOrEmpty(targetLabel))
-        {
-            throw new InvalidOperationException("Jump instruction is missing a target label.");
-        }
-
-        if (!labelToIndex.TryGetValue(targetLabel, out int targetIndex))
-        {
-            throw new InvalidOperationException($"Jump target label '{targetLabel}' was not found.");
-        }
-
-        successors.Add(targetIndex);
-    }
-
-    private static bool IsInstructionKind(IrInst instruction, string kind)
-    {
-        var typeName = instruction.GetType().Name;
-        if (typeName.StartsWith("Ir", StringComparison.Ordinal))
-        {
-            typeName = typeName.Substring(2);
-        }
-
-        return string.Equals(typeName, kind, StringComparison.Ordinal);
-    }
-
-    private static string? GetInstructionStringProperty(IrInst instruction, params string[] propertyNames)
-    {
-        var type = instruction.GetType();
-        foreach (var propertyName in propertyNames)
-        {
-            var property = type.GetProperty(propertyName);
-            if (property is null)
-            {
-                continue;
-            }
-
-            if (property.PropertyType == typeof(string))
-            {
-                return (string?)property.GetValue(instruction);
-            }
-        }
-
-        return null;
-    }
     /// <summary>
     /// For each await point, computes which local slots are live across that point
     /// (written before and read after the await). Local slot 0 (state struct) and
