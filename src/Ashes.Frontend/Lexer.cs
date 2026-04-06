@@ -15,6 +15,9 @@ public sealed class Lexer
         _diag = diag;
     }
 
+    public int SavePosition() => _pos;
+    public void RestorePosition(int pos) => _pos = pos;
+
     public Token Next()
     {
         SkipWhite();

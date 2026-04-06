@@ -2835,7 +2835,7 @@ public sealed class Lowering
                 reportedNonExhaustive = true;
             }
         }
-        else if (!hasTuplePatternArm && !hasConstructorPatterns && !IsDefinitelyExhaustive(match.Cases))
+        else if (!hasTuplePatternArm && !hasConstructorPatterns && !IsDefinitelyExhaustive(match.Cases) && !IsBoolExhaustive(match.Cases))
         {
             _diag.Error(matchPos, "Non-exhaustive match expression.");
             reportedNonExhaustive = true;
@@ -2939,6 +2939,15 @@ public sealed class Lowering
             case Pattern.Constructor ctor:
                 return InferConstructorPatternType(ctor.Name, ctor.Patterns, bindings);
 
+            case Pattern.IntLit:
+                return new TypeRef.TInt();
+
+            case Pattern.StrLit:
+                return new TypeRef.TStr();
+
+            case Pattern.BoolLit:
+                return new TypeRef.TBool();
+
             default:
                 throw new NotSupportedException(pattern.GetType().Name);
         }
@@ -3030,6 +3039,18 @@ public sealed class Lowering
                 EmitConstructorPattern(ctor, valueTemp, failLabel, bindingTypes);
                 return;
 
+            case Pattern.IntLit intLit:
+                EmitRequireIntEqual(valueTemp, intLit.Value, failLabel);
+                return;
+
+            case Pattern.StrLit strLit:
+                EmitRequireStrEqual(valueTemp, strLit.Value, failLabel);
+                return;
+
+            case Pattern.BoolLit boolLit:
+                EmitRequireBoolEqual(valueTemp, boolLit.Value, failLabel);
+                return;
+
             default:
                 throw new NotSupportedException(pattern.GetType().Name);
         }
@@ -3097,6 +3118,34 @@ public sealed class Lowering
         Emit(new IrInst.JumpIfFalse(leTemp, passLabel));
         Emit(new IrInst.Jump(failLabel));
         Emit(new IrInst.Label(passLabel));
+    }
+
+    private void EmitRequireIntEqual(int valueTemp, long expected, string failLabel)
+    {
+        int expectedTemp = NewTemp();
+        int cmpTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(expectedTemp, expected));
+        Emit(new IrInst.CmpIntEq(cmpTemp, valueTemp, expectedTemp));
+        Emit(new IrInst.JumpIfFalse(cmpTemp, failLabel));
+    }
+
+    private void EmitRequireStrEqual(int valueTemp, string expected, string failLabel)
+    {
+        int expectedTemp = NewTemp();
+        int cmpTemp = NewTemp();
+        Emit(new IrInst.LoadConstStr(expectedTemp, expected));
+        Emit(new IrInst.CmpStrEq(cmpTemp, valueTemp, expectedTemp));
+        Emit(new IrInst.JumpIfFalse(cmpTemp, failLabel));
+    }
+
+    private void EmitRequireBoolEqual(int valueTemp, bool expected, string failLabel)
+    {
+        // Booleans are represented as integers (0 = false, 1 = true).
+        int expectedTemp = NewTemp();
+        int cmpTemp = NewTemp();
+        Emit(new IrInst.LoadConstBool(expectedTemp, expected));
+        Emit(new IrInst.CmpIntEq(cmpTemp, valueTemp, expectedTemp));
+        Emit(new IrInst.JumpIfFalse(cmpTemp, failLabel));
     }
 
     // ---------------- Type vars + unification ----------------
@@ -3903,6 +3952,30 @@ public sealed class Lowering
         return hasEmptyList && hasCons;
     }
 
+    /// <summary>
+    /// Checks whether boolean patterns cover both true and false.
+    /// </summary>
+    private static bool IsBoolExhaustive(IReadOnlyList<MatchCase> cases)
+    {
+        bool hasTrue = false;
+        bool hasFalse = false;
+
+        foreach (var matchCase in cases)
+        {
+            if (matchCase.Pattern is Pattern.BoolLit b)
+            {
+                if (b.Value) hasTrue = true;
+                else hasFalse = true;
+            }
+            else if (matchCase.Pattern is Pattern.Wildcard or Pattern.Var)
+            {
+                return true;
+            }
+        }
+
+        return hasTrue && hasFalse;
+    }
+
     private bool IsCatchAllPattern(Pattern p)
     {
         if (p is Pattern.Wildcard)
@@ -4061,6 +4134,11 @@ public sealed class Lowering
             return true;
         }
 
+        if (TryGetMissingBoolPattern(valueType, patterns, out missingPattern))
+        {
+            return true;
+        }
+
         return false;
     }
 
@@ -4214,6 +4292,46 @@ public sealed class Lowering
         return _typeSymbols[adtName].Constructors;
     }
 
+    private bool TryGetMissingBoolPattern(TypeRef? valueType, IReadOnlyList<Pattern> patterns, out Pattern missingPattern)
+    {
+        missingPattern = new Pattern.Wildcard();
+
+        // Only apply when value type is Bool or patterns contain boolean literals
+        bool isBoolType = valueType is TypeRef.TBool;
+        bool hasBoolPatterns = patterns.Any(p => p is Pattern.BoolLit);
+        if (!isBoolType && !hasBoolPatterns)
+        {
+            return false;
+        }
+
+        bool hasTrue = false;
+        bool hasFalse = false;
+
+        foreach (var p in patterns)
+        {
+            if (IsCatchAllPattern(p)) return false;
+            if (p is Pattern.BoolLit b)
+            {
+                if (b.Value) hasTrue = true;
+                else hasFalse = true;
+            }
+        }
+
+        if (!hasTrue)
+        {
+            missingPattern = new Pattern.BoolLit(true);
+            return true;
+        }
+
+        if (!hasFalse)
+        {
+            missingPattern = new Pattern.BoolLit(false);
+            return true;
+        }
+
+        return false;
+    }
+
     private bool IsPatternForConstructor(Pattern pattern, ConstructorSymbol ctor)
     {
         if (pattern is Pattern.Constructor ctorPattern)
@@ -4269,6 +4387,9 @@ public sealed class Lowering
             Pattern.Constructor ctor => ctor.Patterns.Count == 0
                 ? ctor.Name
                 : $"{ctor.Name}({string.Join(", ", ctor.Patterns.Select(FormatPattern))})",
+            Pattern.IntLit intLit => intLit.Value.ToString(),
+            Pattern.StrLit strLit => $"\"{strLit.Value}\"",
+            Pattern.BoolLit boolLit => boolLit.Value ? "true" : "false",
             _ => "_"
         };
     }
@@ -4300,6 +4421,10 @@ public sealed class Lowering
     private void ValidateReachableMatchArms(IReadOnlyList<MatchCase> cases)
     {
         var seenConstructors = new HashSet<string>(StringComparer.Ordinal);
+        var seenIntLiterals = new HashSet<long>();
+        var seenStrLiterals = new HashSet<string>(StringComparer.Ordinal);
+        var seenBoolTrue = false;
+        var seenBoolFalse = false;
         var hasCatchAll = false;
 
         foreach (var matchCase in cases)
@@ -4314,6 +4439,34 @@ public sealed class Lowering
             {
                 hasCatchAll = true;
                 continue;
+            }
+
+            switch (matchCase.Pattern)
+            {
+                case Pattern.IntLit intLit:
+                    if (!seenIntLiterals.Add(intLit.Value))
+                    {
+                        ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: integer literal {intLit.Value} is already matched earlier.");
+                    }
+                    continue;
+                case Pattern.StrLit strLit:
+                    if (!seenStrLiterals.Add(strLit.Value))
+                    {
+                        ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: string literal \"{strLit.Value}\" is already matched earlier.");
+                    }
+                    continue;
+                case Pattern.BoolLit boolLit:
+                    if (boolLit.Value && seenBoolTrue)
+                    {
+                        ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'true' is already matched earlier.");
+                    }
+                    else if (!boolLit.Value && seenBoolFalse)
+                    {
+                        ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'false' is already matched earlier.");
+                    }
+                    if (boolLit.Value) seenBoolTrue = true;
+                    else seenBoolFalse = true;
+                    continue;
             }
 
             if (!TryGetConstructorSymbol(matchCase.Pattern, out var ctor))

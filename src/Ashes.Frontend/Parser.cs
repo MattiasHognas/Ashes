@@ -153,6 +153,14 @@ public sealed class Parser
         if (_current.Kind == TokenKind.Let)
         {
             var start = _current.Position;
+
+            // Check for let-pattern bindings: let (a, b) = expr in body
+            // Desugar to: match expr with | (a, b) -> body
+            if (IsLetPatternBinding())
+            {
+                return ParseLetPattern(start);
+            }
+
             Consume(TokenKind.Let);
             var isRec = _current.Kind == TokenKind.Rec;
             if (isRec)
@@ -214,6 +222,52 @@ public sealed class Parser
         }
 
         return ParseLambda();
+    }
+
+    /// <summary>
+    /// Detects whether the current position is a let-pattern binding.
+    /// Returns true for <c>let (</c> which indicates a tuple destructuring let.
+    /// </summary>
+    private bool IsLetPatternBinding()
+    {
+        // The Lexer has already consumed tokens up to _current.
+        // We need to peek past 'let' to see if a pattern follows.
+        // 'let (' → tuple pattern. 'let rec' or 'let ident' → normal let.
+        if (_current.Kind != TokenKind.Let) return false;
+
+        // Save state — the lexer is forward-only, so we use a simple
+        // single-token lookahead by examining the lexer's next output.
+        var savedCurrent = _current;
+        var savedPrevious = _previous;
+        var savedLexer = _lexer.SavePosition();
+        Advance(); // consume 'let'
+
+        var isPattern = _current.Kind == TokenKind.LParen;
+
+        // Restore state
+        _current = savedCurrent;
+        _previous = savedPrevious;
+        _lexer.RestorePosition(savedLexer);
+
+        return isPattern;
+    }
+
+    /// <summary>
+    /// Parses <c>let pattern = expr in body</c> and desugars to
+    /// <c>match expr with | pattern -> body</c>.
+    /// </summary>
+    private Expr ParseLetPattern(int start)
+    {
+        Consume(TokenKind.Let);
+        var pattern = ParsePattern();
+        Consume(TokenKind.Equals);
+        var value = ParseExpressionCore();
+        Consume(TokenKind.In);
+        var body = ParseExpressionCore();
+
+        // Desugar: let pattern = value in body → match value with | pattern -> body
+        var cases = new List<MatchCase> { new MatchCase(pattern, body) };
+        return RegisterExpr(new Expr.Match(value, cases, start), start, LastConsumedEnd);
     }
 
     private Expr ParseLambda()
@@ -542,6 +596,11 @@ public sealed class Parser
             TokenKind.LBracket => ParseEmptyListPattern(),
             TokenKind.Ident => ParseVarPattern(),
             TokenKind.LParen => ParseParenPattern(),
+            TokenKind.Int => ParseIntLitPattern(),
+            TokenKind.String => ParseStrLitPattern(),
+            TokenKind.True => ParseBoolLitPattern(true),
+            TokenKind.False => ParseBoolLitPattern(false),
+            TokenKind.Minus => ParseNegativeIntLitPattern(),
             _ => BadPattern(),
         };
     }
@@ -601,6 +660,36 @@ public sealed class Parser
         }
         Consume(TokenKind.RParen);
         return p;
+    }
+
+    private Pattern ParseIntLitPattern()
+    {
+        var token = Consume(TokenKind.Int);
+        return RegisterPattern(new Pattern.IntLit(token.IntValue), token.Position, token.End);
+    }
+
+    private Pattern ParseNegativeIntLitPattern()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Minus);
+        if (_current.Kind != TokenKind.Int)
+        {
+            return BadPattern();
+        }
+        var token = Consume(TokenKind.Int);
+        return RegisterPattern(new Pattern.IntLit(-token.IntValue), start, token.End);
+    }
+
+    private Pattern ParseStrLitPattern()
+    {
+        var token = Consume(TokenKind.String);
+        return RegisterPattern(new Pattern.StrLit(token.Text), token.Position, token.End);
+    }
+
+    private Pattern ParseBoolLitPattern(bool value)
+    {
+        var token = Consume(value ? TokenKind.True : TokenKind.False);
+        return RegisterPattern(new Pattern.BoolLit(value), token.Position, token.End);
     }
 
     private Pattern BadPattern()
