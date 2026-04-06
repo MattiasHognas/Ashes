@@ -773,6 +773,114 @@ Errors:
 > represented.
 >
 
+## 11.5 Integer Literal Patterns
+
+Integer literal patterns match values by equality.
+
+Syntax:
+
+| 0 -> expr0
+| 1 -> expr1
+| n -> exprDefault
+
+Rules:
+
+- An integer literal pattern matches when the matched value equals the literal.
+- Integer literal patterns may be mixed with variable and wildcard patterns.
+- Integer patterns alone are never exhaustive (integers are unbounded); a catch-all
+  arm (`_` or a variable) is required.
+
+Example:
+
+match n with
+| 0 -> "zero"
+| 1 -> "one"
+| _ -> "other"
+
+Negative integers are supported:
+
+match n with
+| -1 -> "negative one"
+| 0 -> "zero"
+| _ -> "positive"
+
+---
+
+## 11.6 String Literal Patterns
+
+String literal patterns match values by equality.
+
+Syntax:
+
+| "hello" -> expr1
+| "world" -> expr2
+| s -> exprDefault
+
+Rules:
+
+- A string literal pattern matches when the matched value equals the literal.
+- String patterns alone are never exhaustive; a catch-all arm is required.
+
+Example:
+
+match greeting with
+| "hello" -> "English"
+| "hola" -> "Spanish"
+| _ -> "unknown"
+
+---
+
+## 11.7 Boolean Literal Patterns
+
+Boolean literal patterns match `true` or `false`.
+
+Syntax:
+
+| true -> expr1
+| false -> expr2
+
+Rules:
+
+- Boolean literal patterns match when the value equals the literal.
+- A match covering both `true` and `false` is exhaustive.
+
+Example:
+
+match flag with
+| true -> "yes"
+| false -> "no"
+
+---
+
+## 11.8 Let Pattern Bindings
+
+Let expressions support destructuring patterns on the left side of `=`.
+
+Syntax:
+
+let (a, b) = expr in body
+let x :: xs = expr in body
+
+Rules:
+
+- Only irrefutable patterns (patterns that always match) are allowed.
+- Tuple patterns are irrefutable when the arity matches.
+- Variable patterns and wildcard patterns are irrefutable.
+- Constructor patterns (e.g. `Some(x)`) are not allowed in let bindings
+  because they are refutable — use `match` instead.
+- Integer, string, and boolean literal patterns are not allowed in let
+  bindings because they are refutable.
+- List cons patterns (`x :: xs`) are allowed but will fail at runtime
+  if the list is empty.
+
+Example:
+
+let (x, y) = (1, 2)
+in x + y
+
+let first :: rest = [1, 2, 3]
+in first
+
 ---
 
 # 12. Recursion over Lists
