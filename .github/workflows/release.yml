@@ -108,11 +108,38 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
 
-  build-vscode-extension:
+  build-lsp-dap:
     needs: prepare-llvm
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+          - project: src/Ashes.Lsp/Ashes.Lsp.csproj
+            rid: linux-x64
+            binary: Ashes.Lsp
+            artifact: ashes-lsp-linux-x64
+          - project: src/Ashes.Lsp/Ashes.Lsp.csproj
+            rid: linux-arm64
+            binary: Ashes.Lsp
+            artifact: ashes-lsp-linux-arm64
+          - project: src/Ashes.Lsp/Ashes.Lsp.csproj
+            rid: win-x64
+            binary: Ashes.Lsp.exe
+            artifact: ashes-lsp-win-x64
+          - project: src/Ashes.Dap/Ashes.Dap.csproj
+            rid: linux-x64
+            binary: ashes-dap
+            artifact: ashes-dap-linux-x64
+          - project: src/Ashes.Dap/Ashes.Dap.csproj
+            rid: linux-arm64
+            binary: ashes-dap
+            artifact: ashes-dap-linux-arm64
+          - project: src/Ashes.Dap/Ashes.Dap.csproj
+            rid: win-x64
+            binary: ashes-dap.exe
+            artifact: ashes-dap-win-x64
 
     steps:
       - name: Checkout repository
@@ -129,6 +156,13 @@ jobs:
         if: steps.cache-runtimes.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -137,6 +171,35 @@ jobs:
           cache-dependency-path: |
             **/*.csproj
             global.json
+
+      - name: Restore
+        run: dotnet restore ${{ matrix.project }} --runtime ${{ matrix.rid }}
+
+      - name: Publish
+        run: dotnet publish ${{ matrix.project }} --configuration Release --runtime ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} --output publish/${{ matrix.rid }} --no-restore
+
+      - name: Stage and zip artifact
+        run: |
+          mkdir -p staging
+          cp publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
+          [ -f LICENSE ] && cp LICENSE staging/ || true
+          cp README.md staging/
+          (cd staging && zip ../${{ matrix.artifact }}.zip *)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  build-vscode-extension:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -154,12 +217,6 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Restore .NET
-        run: dotnet restore Ashes.slnx
-
-      - name: Build .NET
-        run: dotnet build Ashes.slnx --configuration Release --no-restore
-
       - name: Build and package VS Code extension
         run: |
           cd vscode-extension
@@ -167,8 +224,6 @@ jobs:
           pnpm install --frozen-lockfile --force
           pnpm version --no-git-tag-version ${{ steps.version.outputs.version }}
           pnpm run compile
-          pnpm run build-lsp-server
-          pnpm run build-dap-server
           pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-language-${{ steps.version.outputs.version }}.vsix
 
       - name: Upload artifact
@@ -178,7 +233,7 @@ jobs:
           path: ashes-language-${{ steps.version.outputs.version }}.vsix
 
   release:
-    needs: [build-compiler, build-vscode-extension]
+    needs: [build-compiler, build-lsp-dap, build-vscode-extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -208,4 +263,10 @@ jobs:
             artifacts/ashes-win-x64/ashes-win-x64.zip
             artifacts/ashes-linux-x64/ashes-linux-x64.zip
             artifacts/ashes-linux-arm64/ashes-linux-arm64.zip
+            artifacts/ashes-lsp-win-x64/ashes-lsp-win-x64.zip
+            artifacts/ashes-lsp-linux-x64/ashes-lsp-linux-x64.zip
+            artifacts/ashes-lsp-linux-arm64/ashes-lsp-linux-arm64.zip
+            artifacts/ashes-dap-win-x64/ashes-dap-win-x64.zip
+            artifacts/ashes-dap-linux-x64/ashes-dap-linux-x64.zip
+            artifacts/ashes-dap-linux-arm64/ashes-dap-linux-arm64.zip
             artifacts/ashes-vscode/ashes-language-${{ steps.version.outputs.version }}.vsix

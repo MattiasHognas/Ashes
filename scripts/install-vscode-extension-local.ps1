@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExtensionRoot = Join-Path $RepoRoot "vscode-extension"
 $CompilerRoot = Join-Path $ExtensionRoot "compiler"
-$ServerRoot = Join-Path $ExtensionRoot "server"
+$LspServerRoot = Join-Path $ExtensionRoot "lsp-server"
 $DapServerRoot = Join-Path $ExtensionRoot "dap-server"
 $VsixPath = Join-Path $RepoRoot "ashes-vscode-local.vsix"
 
@@ -102,9 +102,12 @@ function Publish-Compiler {
 }
 
 function Publish-LanguageServer {
-    param([string]$Rid)
+    param(
+        [string]$Rid,
+        [string]$Version
+    )
 
-    $outputDir = Join-Path $ServerRoot $Rid
+    $outputDir = Join-Path $LspServerRoot $Rid
     if (Test-Path $outputDir) {
         Remove-Item $outputDir -Recurse -Force
     }
@@ -119,6 +122,7 @@ function Publish-LanguageServer {
             "--runtime", $Rid,
             "-p:UseAppHost=true",
             "--self-contained", "false",
+            "-p:Version=$Version",
             "--output", $outputDir
         ) `
         -WorkingDirectory $RepoRoot `
@@ -126,7 +130,10 @@ function Publish-LanguageServer {
 }
 
 function Publish-DapServer {
-    param([string]$Rid)
+    param(
+        [string]$Rid,
+        [string]$Version
+    )
 
     $outputDir = Join-Path $DapServerRoot $Rid
     if (Test-Path $outputDir) {
@@ -143,6 +150,7 @@ function Publish-DapServer {
             "--runtime", $Rid,
             "-p:UseAppHost=true",
             "--self-contained", "false",
+            "-p:Version=$Version",
             "--output", $outputDir
         ) `
         -WorkingDirectory $RepoRoot `
@@ -154,18 +162,18 @@ $pnpmCommand = Resolve-PnpmCommand
 $resolvedCodeCommand = if ($SkipInstall) { $null } else { Resolve-CodeCommand -RequestedCommand $CodeCommand }
 
 New-Item -ItemType Directory -Force -Path $CompilerRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $ServerRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $LspServerRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $DapServerRoot | Out-Null
 
 Publish-Compiler -Rid "win-x64" -Version $version
 Publish-Compiler -Rid "linux-x64" -Version $version
 Publish-Compiler -Rid "linux-arm64" -Version $version
-Publish-LanguageServer -Rid "win-x64"
-Publish-LanguageServer -Rid "linux-x64"
-Publish-LanguageServer -Rid "linux-arm64"
-Publish-DapServer -Rid "win-x64"
-Publish-DapServer -Rid "linux-x64"
-Publish-DapServer -Rid "linux-arm64"
+Publish-LanguageServer -Rid "win-x64" -Version $version
+Publish-LanguageServer -Rid "linux-x64" -Version $version
+Publish-LanguageServer -Rid "linux-arm64" -Version $version
+Publish-DapServer -Rid "win-x64" -Version $version
+Publish-DapServer -Rid "linux-x64" -Version $version
+Publish-DapServer -Rid "linux-arm64" -Version $version
 
 Invoke-Step `
     -FilePath $pnpmCommand `
