@@ -28,11 +28,13 @@ public sealed record StateMachineResult(
 ///
 /// State struct layout:
 ///   [0]:  state_index (i64)
-///   [8]:  coroutine_fn (i64)   — set by CreateTask, not touched here
-///   [16]: result_slot (i64)    — awaited task result / final result
-///   [24]: awaited_task (i64)   — pointer to sub-task being awaited
-///   [32]: capture_0 (i64)      — captured env variables
-///   [32 + captureCount*8]: live_var_0 (i64) — live variable slots
+///   [8]:  coroutine_fn (i64)      — set by CreateTask, not touched here
+///   [16]: result_slot (i64)       — awaited task result / final result
+///   [24]: awaited_task (i64)      — pointer to sub-task being awaited
+///   [32]: next_task (i64)         — linked-list pointer for scheduler/task chaining
+///   [40]: sleep_duration_ms (i64) — scheduler delay metadata
+///   [48]: capture_0 (i64)         — captured env variables
+///   [48 + captureCount*8]: live_var_0 (i64) — live variable slots
 ///   ...
 /// </summary>
 public static class StateMachineTransform
