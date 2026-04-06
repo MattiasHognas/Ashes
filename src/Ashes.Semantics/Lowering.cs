@@ -1299,6 +1299,9 @@ public sealed class Lowering
             // Alias detection: when `let y = x` and x is already tracked as owned,
             // record y as an alias of x instead of tracking it independently.
             // This prevents double-Drop: only the original owner emits Drop.
+            // Only simple Expr.Var references are recognized as aliases. More complex
+            // expressions (function calls, constructors, if/match) produce fresh
+            // values that are tracked as new owners.
             if (let.Value is Expr.Var aliasSource && LookupOwnedValue(aliasSource.Name) is not null)
             {
                 var resolvedSource = ResolveOwnershipAlias(aliasSource.Name);
