@@ -94,7 +94,7 @@ invoke_step() {
 get_extension_version() {
   local packageJsonPath="${extensionRoot}/package.json"
   local version
-  version="$(grep '"version"' "$packageJsonPath" | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+  version="$(node -p "require('${packageJsonPath}').version" 2>/dev/null)" || true
   if [[ -z "$version" ]]; then
     echo "Unable to determine VS Code extension version from ${packageJsonPath}" >&2
     exit 1
