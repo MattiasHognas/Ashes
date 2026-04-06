@@ -1174,9 +1174,9 @@ These checks are performed at compile time during semantic analysis.
 
 ## 16.4 What Is Not Affected
 
-Resource management applies only to resource types. Pure values (Int, Bool,
-Str, List, ADTs, closures) are not affected by these rules. They have no
-cleanup requirements and no restrictions on reuse.
+Resource safety rules (use-after-close, double-close) apply only to resource
+types. General owned types (String, List, ADTs, closures) receive automatic
+Drop but have no restrictions on reuse — see §17.
 
 ## 16.5 No Garbage Collection
 
@@ -1186,7 +1186,72 @@ resource binding.
 
 ---
 
-# 17. Unsupported (Future)
+# 17. Ownership Model
+
+Ashes uses an **implicit sharing** model for memory management. Every
+value has a clear owner, but ownership is managed entirely by the
+compiler — users never write move, borrow, or drop operations.
+
+## 17.1 Copy vs Owned Types
+
+| Category | Types | Behaviour |
+|----------|-------|-----------|
+| **Copy** | `Int`, `Float`, `Bool` | Stack-allocated, trivially duplicated. No cleanup needed. |
+| **Owned** | `String`, `List`, `Tuple`, `Function` (closures), ADTs (`Result`, `Maybe`, user-defined), resource types (`Socket`) | Heap-allocated. The compiler inserts `Drop` at scope exit. |
+
+Copy types may be used any number of times without restriction.
+
+Owned types are tracked by the compiler for deterministic cleanup.
+
+## 17.2 Implicit Sharing
+
+Values in Ashes are **implicitly shared**. When a binding is used —
+passed to a function, stored in a data structure, or returned from a
+scope — the compiler shares it automatically. There is no explicit
+borrow syntax (`&x`), no move keyword, and no use-after-move errors.
+
+The compiler decides when to share (borrow) and when to copy. Since all
+values are immutable, sharing is always safe.
+
+## 17.3 Deterministic Drop
+
+Every owned binding receives a `Drop` at the end of its owning scope.
+This applies to:
+
+- `let` binding scopes
+- `match` case branches
+- The program's top-level scope
+
+For resource types (Socket), `Drop` invokes platform-specific cleanup
+(e.g. close the socket). For other owned types, `Drop` is currently a
+no-op in the linear allocator and will perform actual deallocation when
+a freeing allocator is introduced.
+
+## 17.4 Moves as Optimisation
+
+"Move" in Ashes is a **compiler optimisation**, not a user-visible
+operation. When the compiler can prove a value is used for the last
+time, it may transfer the underlying memory rather than sharing. This
+is invisible to user code — the program behaves identically regardless
+of whether a move or share occurs.
+
+## 17.5 Borrowing Is Inferred
+
+Borrowing is **compiler-inferred**, not user-annotated. There is no
+`&x` syntax. When a value is passed to a function or used in an
+expression, the compiler automatically infers a borrow if the value
+will still be needed after the call. Since Ashes values are immutable,
+inferred borrowing is always safe and requires no lifetime annotations.
+
+## 17.6 No Garbage Collection
+
+All ownership and cleanup is deterministic and resolved at compile time.
+There is no garbage collector, no reference counting at runtime (in the
+current implementation), and no finalizers.
+
+---
+
+# 18. Unsupported (Future)
 
 Not currently supported:
 

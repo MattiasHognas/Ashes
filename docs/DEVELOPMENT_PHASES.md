@@ -65,82 +65,97 @@ Not yet like Rust.
 
 ------------------------------------------------------------------------
 
-## Phase 2 — Ownership Core
+## Phase 2 — Ownership Core (Implicit Sharing)
 
 **Prerequisite:** Phase 1 complete
 
-**Goal:** introduce move semantics for heap-allocated values so every
-owned value is dropped exactly once.
+**Goal:** classify all types as either *copy* or *owned* so the compiler
+can insert deterministic cleanup for every heap-allocated value — not
+just resources.
+
+Ashes uses an **implicit sharing** model: values are shared by default,
+the compiler infers when to borrow or copy, and "move" is an
+optimisation detail invisible to user code.  There is no borrow
+operator, no move syntax, and no use-after-move errors.
 
 ### What changes
 
 | Layer | Work |
 |-------|------|
-| Semantics | Classify owned vs copy types. Owned: String, List, ADTs, Closures. Copy: Int, Bool. |
-| Semantics | Move semantics — assigning an owned value moves it; original binding becomes invalid. |
-| Semantics | Use-after-move errors. |
-| Semantics | Extend `Drop` to all owned values (insert at scope end, for intermediates, respect moves). |
-| Semantics | Function ownership rules: passing owned → moves; returning owned → transfers ownership; copy types unchanged. |
-| IR | Ownership-aware drop insertion (do not drop moved values). |
-| Backend | Extend drop lowering for String, List, ADTs, Closures. |
-| Tests | Move semantics, use-after-move, correct drop insertion, function ownership. |
-| Docs | Owned vs copy types, move semantics, drop behavior. No borrowing yet. |
+| Semantics | Classify owned vs copy types. Owned: String, List, Tuples, ADTs, Closures. Copy: Int, Float, Bool. |
+| Semantics | Extend `Drop` to all owned values (insert at scope end for let bindings and match branches). |
+| Semantics | Generalise resource tracking into ownership tracking (OwnershipInfo replaces ResourceInfo). |
+| IR | `Drop` instruction carries a `TypeName` (was `ResourceTypeName`). |
+| Backend | Extend drop lowering: resource types invoke platform cleanup; other owned types are no-ops in the linear allocator (placeholder for Phase 4 `free`). |
+| Tests | Type classification, correct drop insertion for every owned type, no drops for copy types. |
+| Docs | Owned vs copy types, implicit sharing model, deterministic cleanup scope. |
 
 ### What does NOT change
 
-- No borrowing.
+- No borrow syntax — borrowing is inferred by the compiler.
+- No move syntax — moves are a compiler optimisation, not user-visible.
+- No use-after-move errors — values can be used freely; the compiler
+  handles sharing transparently.
 - No lifetimes.
+- Backend allocator unchanged (linear/bump); actual `free` deferred to
+  Phase 4.
+
+### Mental model
+
+After this phase every heap-allocated value has a single owning scope
+that will emit a `Drop` when the scope exits.  Users never write
+cleanup, never think about moves, and never see ownership errors for
+non-resource types.  The model is closer to Swift's value semantics than
+Rust's affine types.
 
 ### Suggested order
 
 1. Classify owned vs copy types.
-2. Implement move semantics.
-3. Use-after-move errors.
-4. Extend `Drop` insertion.
-5. Function ownership rules.
-6. Ownership-aware IR drop insertion.
-7. Backend drop lowering for all owned types.
-8. Tests.
-9. Docs.
+2. Generalise resource tracking → ownership tracking.
+3. Extend `Drop` insertion to all owned types.
+4. Backend: handle new type names (no-op for non-resource).
+5. Tests.
+6. Docs.
 
 ------------------------------------------------------------------------
 
-## Phase 3 — Borrowing (Shared References)
+## Phase 3 — Compiler-Inferred Borrowing
 
 **Prerequisite:** Phase 2 complete
 
-**Goal:** allow non-owning, immutable access to values so they can be
-reused without moves.
+**Goal:** allow the compiler to infer non-owning, immutable access to
+values so they can be shared efficiently without user annotation.
+
+Borrowing is **compiler-inferred** — there is no `&x` syntax.  The
+compiler analyses usage and automatically borrows where safe.
 
 ### What changes
 
 | Layer | Work |
 |-------|------|
-| Syntax | Borrow operator `&x`. |
-| Semantics | Shared borrow rules: no move, multiple borrows allowed, borrow must not outlive owner. |
-| Semantics | Prevent move while borrowed. |
-| Semantics | Basic lifetime tracking (scope-based, no annotations). |
-| Semantics | Ensure values are not dropped while borrowed. |
-| IR | Represent borrowed values (tagged reference / raw pointer). |
+| Semantics | Inferred borrow analysis: detect when a binding is only read, not consumed. |
+| Semantics | Scope-based lifetime tracking (no annotations). |
+| Semantics | Ensure values are not dropped while a borrow is live. |
+| IR | Represent borrowed values (tagged reference / raw pointer — internal). |
 | Backend | Borrow representation in LLVM (no ownership transfer, no drop responsibility). |
-| Tests | Shared borrows, multiple borrows, invalid move during borrow, lifetime violations. |
-| Docs | Shared references, borrowing rules, lifetime basics. |
+| Tests | Inferred borrows, multiple borrows, borrow lifetime correctness. |
+| Docs | Inferred borrowing model, lifetime basics, no user syntax. |
 
 ### What does NOT change
 
+- No borrow syntax (`&x`) — borrowing is always inferred.
 - No lifetime annotations.
+- No user-visible borrow errors for pure values.
 
 ### Suggested order
 
-1. Borrow operator syntax.
-2. Shared borrow rules in Semantics.
-3. Prevent move while borrowed.
-4. Basic lifetime tracking.
-5. Drop interaction with borrows.
-6. IR representation.
-7. Backend representation.
-8. Tests.
-9. Docs.
+1. Inferred borrow analysis in Semantics.
+2. Scope-based lifetime tracking.
+3. Drop interaction with borrows.
+4. IR representation.
+5. Backend representation.
+6. Tests.
+7. Docs.
 
 ------------------------------------------------------------------------
 
@@ -217,24 +232,25 @@ matching expressiveness and integrating it with ownership and borrowing.
 | Syntax | Let pattern bindings (`let Some(x) = expr`). |
 | Syntax | Match ergonomics improvements (optional parentheses, cleaner syntax, formatting rules). |
 | Semantics | Ownership in patterns (binding moves by default, prevent unsafe partial moves). |
-| Semantics | Pattern matching with borrowing (match on `&value` without moving). |
+| Semantics | Pattern matching with inferred borrowing (match on value without moving; compiler infers borrows). |
 | Semantics | Exhaustiveness checking (compiler enforces full coverage). |
 | Semantics | Result/Option ergonomics (integrate with `|?>` pipeline, reduce nested matches). |
 | IR | Improved pattern matching lowering (efficient branching, no redundant checks). |
-| Tests | Destructuring, ownership in patterns, borrowing in patterns, exhaustiveness. |
+| Tests | Destructuring, ownership in patterns, inferred borrowing in patterns, exhaustiveness. |
 | Docs | Pattern syntax, ownership behavior, match ergonomics, Result/Option workflows. |
 
 ### What does NOT change
 
 - No major new safety concepts.
-- Everything respects ownership/borrow rules established in Phases 2–3.
+- Everything respects ownership/borrowing rules established in Phases 2–3.
+- Borrowing remains compiler-inferred (no explicit borrow syntax).
 
 ### Suggested order
 
 1. Destructuring patterns.
 2. Let pattern bindings.
 3. Ownership in patterns.
-4. Pattern matching with borrowing.
+4. Pattern matching with inferred borrowing.
 5. Match ergonomics improvements.
 6. Exhaustiveness checking.
 7. Result/Option ergonomics.
@@ -250,10 +266,10 @@ matching expressiveness and integrating it with ownership and borrowing.
 Phase 1: Deterministic Resources
     │
     ▼
-Phase 2: Ownership Core
+Phase 2: Ownership Core (Implicit Sharing)
     │
     ▼
-Phase 3: Borrowing (Shared References)
+Phase 3: Compiler-Inferred Borrowing
     │
     ▼
 Phase 4: Performance & Persistent Data Structures
@@ -265,8 +281,8 @@ Phase 5: Pattern Matching + Ergonomics
 After Phase 5 the core safety model is complete. The language has:
 
 - deterministic destruction
-- ownership and move semantics
-- shared borrowing
+- implicit ownership (compiler-managed, no user-visible moves)
+- compiler-inferred borrowing (no `&x` syntax)
 - persistent data structures and performance optimizations
 - expressive, ownership-aware pattern matching
 
