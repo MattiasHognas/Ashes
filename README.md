@@ -318,12 +318,12 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | 1.0.5 | LLVM |
 | 1.0.6 | Debugger |
 | 1.1.0 | Memory safety |
+| 1.2.0 | Async/Await |
 
 ### Future plans
 
 | Version | Main feature |
 |---|---|
-| 1.2.0 | Async/Await | 
 | 1.3.0 | Improved import and syntax |
 | 1.4.0 | Package manager and more std libs |
 | 1.5.0 | HTTPS/TLS |
