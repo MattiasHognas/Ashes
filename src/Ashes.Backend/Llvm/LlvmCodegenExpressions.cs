@@ -409,24 +409,46 @@ internal static partial class LlvmCodegen
             state.Target.Context, state.Function, "nested_done");
         LlvmBasicBlockHandle nestedStepBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "nested_step");
+        LlvmBasicBlockHandle nestedCallBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "nested_call");
+        LlvmBasicBlockHandle nestedSuspendBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "nested_suspend");
 
         LlvmApi.BuildCondBr(builder, nestedIsDone, nestedDoneBlock, nestedStepBlock);
 
-        // --- Nested step: call nested coroutine in a loop ---
+        // --- Nested step: only step runnable nested coroutines ---
         LlvmApi.PositionBuilderAtEnd(builder, nestedStepBlock);
+        LlvmValueHandle minusTwo = LlvmApi.ConstInt(state.I64, unchecked((ulong)-2), 1);
+        LlvmValueHandle nestedStepStateIdx = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "nested_step_state_idx");
+        LlvmValueHandle nestedStepIsDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            nestedStepStateIdx, minusOne, "nested_step_is_done");
+        LlvmValueHandle nestedIsSleep = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            nestedStepStateIdx, minusTwo, "nested_is_sleep");
+        LlvmValueHandle nestedNeedsSuspend = LlvmApi.BuildOr(builder, nestedStepIsDone, nestedIsSleep, "nested_needs_suspend_check");
+        LlvmApi.BuildCondBr(builder, nestedNeedsSuspend, nestedDoneBlock, nestedCallBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nestedCallBlock);
         LlvmValueHandle nestedFn = LoadMemory(state, awaitedTask, TaskStructLayout.CoroutineFn, "nested_fn");
+        LlvmValueHandle nestedFnIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            nestedFn, zero, "nested_fn_is_null");
+        LlvmBasicBlockHandle nestedInvokeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "nested_invoke");
+        LlvmApi.BuildCondBr(builder, nestedFnIsNull, nestedSuspendBlock, nestedInvokeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nestedInvokeBlock);
         LlvmValueHandle nestedFnPtr = LlvmApi.BuildIntToPtr(builder, nestedFn, coroutineFnPtrType, "nested_fn_ptr");
-        LlvmValueHandle nestedStatus = LlvmApi.BuildCall2(builder,
+        LlvmApi.BuildCall2(builder,
             coroutineFnType,
             nestedFnPtr,
             new[] { awaitedTask, LlvmApi.ConstInt(state.I64, 0, 0) },
             "nested_status");
+        LlvmValueHandle nestedPostStepStateIdx = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "nested_post_step_state_idx");
+        LlvmValueHandle nestedPostStepIsDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            nestedPostStepStateIdx, minusOne, "nested_post_step_is_done");
+        LlvmApi.BuildCondBr(builder, nestedPostStepIsDone, nestedDoneBlock, nestedSuspendBlock);
 
-        // If nested task completed, fall through to nestedDone.
-        // If suspended, the nested task has its own awaited sub-task; loop.
-        LlvmValueHandle nestedSuspended = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            nestedStatus, zero, "nested_suspended");
-        LlvmApi.BuildCondBr(builder, nestedSuspended, nestedStepBlock, nestedDoneBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, nestedSuspendBlock);
+        LlvmApi.BuildRet(builder, zero);
 
         // --- Nested done: get result ---
         LlvmApi.PositionBuilderAtEnd(builder, nestedDoneBlock);
