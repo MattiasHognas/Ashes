@@ -519,7 +519,7 @@ Outside `async`, these functions retain their current synchronous
 
 ## 6. Implementation Phases
 
-### Phase A — Syntax and Type Checking
+### Phase A — Syntax and Type Checking ✅
 
 Add `async`/`await` tokens, AST nodes, parser rules, and type
 inference for `Task(E, A)`. Async blocks lower to regular closures
@@ -535,7 +535,7 @@ Deliverables:
 - LSP support (syntax highlighting, diagnostics)
 - Tests: parse round-trips, type inference, error diagnostics
 
-### Phase B — State Machine Transform
+### Phase B — State Machine Transform ✅
 
 Implement the coroutine state machine transform in Semantics.
 Async bodies are split at await points. State structs are
@@ -543,12 +543,16 @@ allocated. Ownership tracking extended across suspend points.
 
 Deliverables:
 - `IrInst.CreateTask`, `IrInst.AwaitTask`, `IrInst.Suspend`,
-  `IrInst.Resume`
-- State machine splitter pass in Lowering
-- State struct layout computation
-- Ownership/Drop across suspend points
-- Tests: multi-await coroutines, owned values across awaits,
-  resource safety across awaits
+  `IrInst.Resume`, `IrInst.RunTask`, `IrInst.CreateCompletedTask`
+- `StateMachineTransform` pass: splits coroutines at await points
+  into numbered states with save/restore of temps and locals
+- `CoroutineInfo` and `TaskStructLayout` for state struct layout
+- `LowerAsync` lifts async bodies into separate coroutine IrFunctions
+- LLVM codegen: `EmitCreateTask`, `EmitRunTask` with synchronous
+  coroutine driver loop, state dispatch via comparisons
+- Local variable and temp save/restore across suspend points
+- Tests: multi-await coroutines, captured variables across awaits,
+  nested tasks, state machine C# unit tests
 
 ### Phase C — Event Loop Runtime
 
