@@ -198,9 +198,23 @@ export function extractZip(zipPath: string, destDir: string): void {
       { stdio: "pipe" },
     );
   } else {
-    execFileSync("unzip", ["-j", "-o", zipPath, "-d", destDir], {
-      stdio: "pipe",
-    });
+    try {
+      execFileSync("unzip", ["-j", "-o", zipPath, "-d", destDir], {
+        stdio: "pipe",
+      });
+    } catch (err) {
+      const processError = err as NodeJS.ErrnoException;
+      if (processError.code === "ENOENT") {
+        throw new Error(
+          "Failed to extract the downloaded tool because the 'unzip' command is not installed or not available on PATH. " +
+            "Install it and try again. Examples: Debian/Ubuntu: 'sudo apt install unzip', Fedora: 'sudo dnf install unzip', macOS (Homebrew): 'brew install unzip'.",
+        );
+      }
+
+      throw new Error(
+        `Failed to extract zip archive with 'unzip': ${processError.message}`,
+      );
+    }
   }
 }
 
