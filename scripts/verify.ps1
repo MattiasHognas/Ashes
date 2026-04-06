@@ -22,7 +22,19 @@ function Invoke-Step {
 
 ## Determine the current OS and architecture
 
-$osName = if ($IsWindows -or $env:OS -eq "Windows_NT") { "win" } else { "linux" }
+$isWindowsHost = $IsWindows -or $env:OS -eq "Windows_NT"
+$isLinuxHost = $IsLinux -or [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+$isMacOSHost = $IsMacOS -or [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+
+$osName = if ($isWindowsHost) {
+    "win"
+} elseif ($isLinuxHost) {
+    "linux"
+} elseif ($isMacOSHost) {
+    throw "Unsupported OS: macOS. verify.ps1 supports Windows and Linux only."
+} else {
+    throw "Unsupported OS. verify.ps1 supports Windows and Linux only."
+}
 $executableName = if ($osName -eq "win") { "ashes.exe" } else { "ashes" }
 
 $archRaw = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
