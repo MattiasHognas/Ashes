@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace Ashes.Dap;
 
 /// <summary>
@@ -8,6 +10,17 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && args[0] is "--version")
+        {
+            var version = typeof(Program).Assembly
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion ?? "0.0.0";
+            var plusIndex = version.IndexOf('+');
+            if (plusIndex >= 0) version = version[..plusIndex];
+            Console.WriteLine(version);
+            return 0;
+        }
+
         if (args.Length > 0 && args[0] is "--help" or "-h")
         {
             Console.Error.WriteLine("Usage: ashes-dap");

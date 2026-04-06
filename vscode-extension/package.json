@@ -58,6 +58,21 @@
           ],
           "default": "gdb",
           "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on Linux."
+        },
+        "ashes.lspServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes language server executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.dapServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes DAP server executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override the path to the Ashes compiler executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
         }
       }
     },
@@ -170,9 +185,7 @@
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
-    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
-    "build-lsp-server": "dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./server/win-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./server/linux-x64 && dotnet publish ../src/Ashes.Lsp/Ashes.Lsp.csproj -c Release -r linux-arm64 -p:UseAppHost=true --self-contained false -o ./server/linux-arm64",
-    "build-dap-server": "dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r win-x64 -p:UseAppHost=true --self-contained false -o ./dap-server/win-x64 && dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r linux-x64 -p:UseAppHost=true --self-contained false -o ./dap-server/linux-x64 && dotnet publish ../src/Ashes.Dap/Ashes.Dap.csproj -c Release -r linux-arm64 -p:UseAppHost=true --self-contained false -o ./dap-server/linux-arm64"
+    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

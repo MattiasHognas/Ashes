@@ -227,11 +227,6 @@ ashes fmt examples -w                 # auto-format in place
 Full editor support with diagnostics, formatting, hover, go-to-definition,
 semantic tokens, and completions.
 
-```sh
-cd vscode-extension && npm run build-lsp-server
-code --install-extension ashes-vscode.vsix
-```
-
 For local development:
 
 ```powershell

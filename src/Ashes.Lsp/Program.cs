@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,8 +16,19 @@ internal static class Program
 
     private static readonly Dictionary<string, string> Documents = new(StringComparer.OrdinalIgnoreCase);
 
-    public static int Main()
+    public static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] is "--version")
+        {
+            var version = typeof(Program).Assembly
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion ?? "0.0.0";
+            var plusIndex = version.IndexOf('+');
+            if (plusIndex >= 0) version = version[..plusIndex];
+            Console.WriteLine(version);
+            return 0;
+        }
+
         using var input = Console.OpenStandardInput();
         using var output = Console.OpenStandardOutput();
 
