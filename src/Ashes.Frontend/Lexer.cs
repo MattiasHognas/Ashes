@@ -290,6 +290,7 @@ public sealed class Lexer
     {
         return text switch
         {
+            "as" => TokenKind.As,
             "let" => TokenKind.Let,
             "rec" => TokenKind.Rec,
             "in" => TokenKind.In,

@@ -29,6 +29,11 @@ Line comments are supported:
 - `// ...` starts a comment that runs to the end of the current line.
 - Comments are ignored by lexing/parsing and do not affect evaluation or typing.
 
+The following words are **reserved keywords** and cannot be used as identifiers:
+
+`let`, `rec`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
+`true`, `false`, `type`, `as`, `async`, `await`
+
 Programs are composed using nested expressions such as:
 
 let x = 10
@@ -555,7 +560,7 @@ Complex expressions must be parenthesized:
 f (1 + 2)
 Ashes.IO.print (add 3 4)
 
-Keywords such as `then`, `else`, `in`, `with`, `|` are never treated as
+Keywords such as `then`, `else`, `in`, `with`, `as`, `|` are never treated as
 whitespace arguments.
 
 ### Examples
