@@ -27,9 +27,9 @@ public static partial class DocumentService
 
     public readonly record struct SemanticTokenItem(int Line, int Character, int Length, int TokenType, int TokenModifiers);
 
-    private readonly record struct ImportItem(TextSpan Span, string ModuleName);
+    private readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Alias);
 
-    private readonly record struct HeaderLineItem(string Text, string? ModuleName);
+    private readonly record struct HeaderLineItem(string Text, string? ModuleName, string? Alias);
 
     private readonly record struct LineAnchor(string Signature, int Occurrence);
 
@@ -49,6 +49,7 @@ public static partial class DocumentService
         int EntryOffset,
         int BodyStart,
         IReadOnlySet<string>? ImportedStdModules,
+        IReadOnlyDictionary<string, string>? ModuleAliases,
         IReadOnlyList<DiagnosticItem> Diagnostics);
 
     private readonly record struct ProjectAnalysisContext(
@@ -103,8 +104,9 @@ public static partial class DocumentService
             var match = ImportLineRegex.Match(lineContent);
             if (match.Success)
             {
-                imports.Add(new ImportItem(TextSpan.FromBounds(lineStart, lineStart + lineContent.Length), match.Groups[1].Value));
-                headerLines.Add(new HeaderLineItem(lineContent, match.Groups[1].Value));
+                var alias = match.Groups[2].Success ? match.Groups[2].Value : null;
+                imports.Add(new ImportItem(TextSpan.FromBounds(lineStart, lineStart + lineContent.Length), match.Groups[1].Value, alias));
+                headerLines.Add(new HeaderLineItem(lineContent, match.Groups[1].Value, alias));
                 pos = nextPos;
                 continue;
             }
@@ -114,14 +116,14 @@ public static partial class DocumentService
                 diagnostics.Add(new DiagnosticItem(
                     lineStart,
                     lineStart + lineContent.Length,
-                    "Invalid import syntax. Expected 'import Foo' or 'import Foo.Bar'.",
+                    "Invalid import syntax. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.",
                     DiagnosticCodes.ParseError));
                 return new ImportHeaderInfo(source[nextPos..], nextPos, headerLines, imports, diagnostics);
             }
 
             if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal))
             {
-                headerLines.Add(new HeaderLineItem(lineContent, null));
+                headerLines.Add(new HeaderLineItem(lineContent, null, null));
                 pos = nextPos;
                 continue;
             }
@@ -436,7 +438,7 @@ public static partial class DocumentService
         var header = StripImportHeader(source);
         if (header.Diagnostics.Count > 0)
         {
-            return new AnalysisContext(header.StrippedSource, header.StrippedSource, header.HeaderOffset, 0, 0, null, header.Diagnostics);
+            return new AnalysisContext(header.StrippedSource, header.StrippedSource, header.HeaderOffset, 0, 0, null, null, header.Diagnostics);
         }
 
         if (filePath is not null)
@@ -453,6 +455,7 @@ public static partial class DocumentService
                         combined.Value.EntryOffset,
                         combined.Value.BodyStart,
                         combined.Value.ImportedStdModules,
+                        null,
                         []);
                 }
             }
@@ -464,6 +467,7 @@ public static partial class DocumentService
                     header.HeaderOffset,
                     0,
                     0,
+                    null,
                     null,
                     [CreateProjectDiagnostic(ex, header.Imports)]);
             }
@@ -494,7 +498,22 @@ public static partial class DocumentService
             entryOffset,
             bodyStart,
             importedStdModules,
+            BuildModuleAliases(header.Imports),
             standaloneImportDiagnostics);
+    }
+
+    private static IReadOnlyDictionary<string, string>? BuildModuleAliases(IReadOnlyList<ImportItem> imports)
+    {
+        Dictionary<string, string>? aliases = null;
+        foreach (var import in imports)
+        {
+            if (import.Alias is not null)
+            {
+                aliases ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                aliases[import.Alias] = import.ModuleName;
+            }
+        }
+        return aliases;
     }
 
     private static IReadOnlyList<DiagnosticItem> ValidateStandaloneImports(IReadOnlyList<ImportItem> imports)
@@ -561,7 +580,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        _ = new Lowering(diag, context.ImportedStdModules).Lower(program);
+        _ = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases).Lower(program);
 
         return diag.StructuredErrors
             .Select(d => (Diagnostic: d, MappedSpan: MapToOriginalSpan(d.Start, d.End, context.EntryOffset, context.BodyStart, context.StrippedSource.Length)))
@@ -611,7 +630,11 @@ public static partial class DocumentService
 
         var headerLines = string.Join(
             formattingOptions.NewLine,
-            header.HeaderLines.Select(line => line.ModuleName is null ? line.Text : $"import {line.ModuleName}"));
+            header.HeaderLines.Select(line => line.ModuleName is null
+                ? line.Text
+                : line.Alias is not null
+                    ? $"import {line.ModuleName} as {line.Alias}"
+                    : $"import {line.ModuleName}"));
 
         return headerLines + formattingOptions.NewLine + formattedBody;
     }
@@ -629,7 +652,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
         lowering.Lower(program);
 
         var typeNames = lowering.TypeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
@@ -708,7 +731,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
         lowering.Lower(program);
 
         var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
@@ -972,6 +995,15 @@ public static partial class DocumentService
 
     private static string? ResolveCompletionModuleName(string qualifier, IReadOnlyList<ImportItem> imports)
     {
+        // Check alias matches first
+        foreach (var import in imports)
+        {
+            if (import.Alias is not null && string.Equals(import.Alias, qualifier, StringComparison.Ordinal))
+            {
+                return import.ModuleName;
+            }
+        }
+
         if (qualifier == "Ashes")
         {
             return "Ashes";
@@ -1033,7 +1065,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
         lowering.Lower(program);
 
         var hover = lowering.GetTypeAtPosition(analysisPosition.Value);
@@ -1491,6 +1523,15 @@ public static partial class DocumentService
         string? currentFilePath,
         IReadOnlyList<ImportItem> imports)
     {
+        // Check alias matches first
+        foreach (var import in imports)
+        {
+            if (import.Alias is not null && string.Equals(import.Alias, moduleName, StringComparison.Ordinal))
+            {
+                return ResolveModuleExportDefinition(import.ModuleName, exportName, currentFilePath);
+            }
+        }
+
         var exactMatch = ResolveModuleExportDefinition(moduleName, exportName, currentFilePath);
         if (exactMatch is not null)
         {

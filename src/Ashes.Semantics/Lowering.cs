@@ -36,6 +36,7 @@ public sealed class Lowering
     private int[][]? _moduleLineStarts;
 
     private readonly bool _hasAshesIO;
+    private readonly IReadOnlyDictionary<string, string> _moduleAliases;
     private readonly List<string> _diagnosticContext = [];
     private readonly Stack<TextSpan> _diagnosticSpans = new();
     private readonly Stack<string> _diagnosticCodes = new();
@@ -203,10 +204,11 @@ public sealed class Lowering
         return Pretty(type);
     }
 
-    public Lowering(Diagnostics diag, IReadOnlySet<string>? importedStdModules = null)
+    public Lowering(Diagnostics diag, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         _diag = diag;
         _hasAshesIO = importedStdModules?.Contains("Ashes.IO") == true;
+        _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
         if (_hasAshesIO)
@@ -717,34 +719,41 @@ public sealed class Lowering
         return (target, type);
     }
 
+    private string ResolveModuleAlias(string moduleName)
+    {
+        return _moduleAliases.TryGetValue(moduleName, out var resolved) ? resolved : moduleName;
+    }
+
     private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
     {
-        if (BuiltinRegistry.TryGetModule(qv.Module, out var builtinModule))
+        var resolvedModule = ResolveModuleAlias(qv.Module);
+
+        if (BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule))
         {
             if (builtinModule.Members.ContainsKey(qv.Name))
             {
                 var resolvedStdMember = ResolveBuiltinModuleMember(builtinModule, qv.Name);
-                RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", resolvedStdMember.Item2);
+                RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedStdMember.Item2);
                 return resolvedStdMember;
             }
 
             if (builtinModule.ResourceName is null)
             {
-                return StdMemberNotFound(qv.Module, qv.Name, GetSpan(qv));
+                return StdMemberNotFound(resolvedModule, qv.Name, GetSpan(qv));
             }
         }
 
-        var sanitizedModuleName = ProjectSupport.SanitizeModuleBindingName(qv.Module);
+        var sanitizedModuleName = ProjectSupport.SanitizeModuleBindingName(resolvedModule);
         var exportedBindingName = $"{sanitizedModuleName}_{qv.Name}";
         if (Lookup(exportedBindingName) is not null)
         {
             var resolvedQualifiedBinding = LowerVar(new Expr.Var(exportedBindingName));
-            RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", resolvedQualifiedBinding.Item2);
+            RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedQualifiedBinding.Item2);
             return resolvedQualifiedBinding;
         }
 
         // User module: resolve to the sanitized module binding if it exists.
-        var binding = Lookup(qv.Module) ?? Lookup(sanitizedModuleName);
+        var binding = Lookup(resolvedModule) ?? Lookup(sanitizedModuleName);
         if (binding is null)
         {
             ReportDiagnostic(GetSpan(qv), $"Unknown module '{qv.Module}'.");
@@ -2709,44 +2718,47 @@ public sealed class Lowering
         }
 
         // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
-        if (rootExpr is Expr.QualifiedVar qv
-            && BuiltinRegistry.TryGetModule(qv.Module, out var builtinModule)
-            && builtinModule.Members.TryGetValue(qv.Name, out var builtinMember))
+        if (rootExpr is Expr.QualifiedVar qv)
         {
-            if (!builtinMember.IsCallable)
+            var resolvedModule = ResolveModuleAlias(qv.Module);
+            if (BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule)
+                && builtinModule.Members.TryGetValue(qv.Name, out var builtinMember))
             {
-                ReportDiagnostic(GetSpan(qv), $"'{qv.Module}.{qv.Name}' is not callable.");
-                return ReturnNeverWithDummyTemp();
-            }
+                if (!builtinMember.IsCallable)
+                {
+                    ReportDiagnostic(GetSpan(qv), $"'{resolvedModule}.{qv.Name}' is not callable.");
+                    return ReturnNeverWithDummyTemp();
+                }
 
-            if (collectedArgs.Count != builtinMember.Arity)
-            {
-                return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
-            }
+                if (collectedArgs.Count != builtinMember.Arity)
+                {
+                    return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
+                }
 
-            return builtinMember.Kind switch
-            {
-                BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
-                BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
-                BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
-                BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
-                BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
-                _ => StdMemberNotFound(qv.Module, qv.Name)
-            };
+                return builtinMember.Kind switch
+                {
+                    BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                    BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+                    BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+                    _ => StdMemberNotFound(resolvedModule, qv.Name)
+                };
+            }
         }
 
         // For non-TCO calls, sub-expressions are NOT in tail position
@@ -3119,6 +3131,26 @@ public sealed class Lowering
         var free = FreeVars(asyncExpr.Body, bound);
         var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme)
                            .Distinct().ToList();
+
+        // Module-aliased qualified vars (e.g., list.map where list → Ashes.List)
+        // resolve to inlined bindings like Ashes_List_map. These must also be captured
+        // because the coroutine scope is isolated from the outer let-binding chain.
+        var qualifiedRefs = CollectQualifiedVars(asyncExpr.Body);
+        foreach (var qv in qualifiedRefs)
+        {
+            var resolvedModule = ResolveModuleAlias(qv.Module);
+            var isInlinedStdModule = BuiltinRegistry.TryGetModule(resolvedModule, out var bm)
+                && bm.ResourceName is not null
+                && !bm.Members.ContainsKey(qv.Name);
+            if (isInlinedStdModule)
+            {
+                var exportedBindingName = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{qv.Name}";
+                if (Lookup(exportedBindingName) is not null && !captures.Contains(exportedBindingName))
+                {
+                    captures.Add(exportedBindingName);
+                }
+            }
+        }
 
         // --- Allocate environment for captured variables (in outer context) ---
         int envPtrTemp;
@@ -4322,6 +4354,118 @@ public sealed class Lowering
 
         Visit(e, bound);
         return res;
+    }
+
+    /// <summary>
+    /// Collects all <see cref="Expr.QualifiedVar"/> references from an expression tree.
+    /// Used by <see cref="LowerAsync"/> to discover module-aliased references
+    /// (e.g., <c>list.map</c>) that resolve to inlined std library bindings.
+    /// </summary>
+    private static List<Expr.QualifiedVar> CollectQualifiedVars(Expr e)
+    {
+        var result = new List<Expr.QualifiedVar>();
+        CollectQualifiedVarsVisit(e, result);
+        return result;
+    }
+
+    private static void CollectQualifiedVarsVisit(Expr e, List<Expr.QualifiedVar> result)
+    {
+        switch (e)
+        {
+            case Expr.QualifiedVar qv:
+                result.Add(qv);
+                break;
+            case Expr.Call c:
+                CollectQualifiedVarsVisit(c.Func, result);
+                CollectQualifiedVarsVisit(c.Arg, result);
+                break;
+            case Expr.Let l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.LetResult l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.LetRec l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.If iff:
+                CollectQualifiedVarsVisit(iff.Cond, result);
+                CollectQualifiedVarsVisit(iff.Then, result);
+                CollectQualifiedVarsVisit(iff.Else, result);
+                break;
+            case Expr.Lambda lam:
+                CollectQualifiedVarsVisit(lam.Body, result);
+                break;
+            case Expr.Match m:
+                CollectQualifiedVarsVisit(m.Value, result);
+                foreach (var mc in m.Cases)
+                    CollectQualifiedVarsVisit(mc.Body, result);
+                break;
+            case Expr.Add a:
+                CollectQualifiedVarsVisit(a.Left, result);
+                CollectQualifiedVarsVisit(a.Right, result);
+                break;
+            case Expr.Subtract s:
+                CollectQualifiedVarsVisit(s.Left, result);
+                CollectQualifiedVarsVisit(s.Right, result);
+                break;
+            case Expr.Multiply m:
+                CollectQualifiedVarsVisit(m.Left, result);
+                CollectQualifiedVarsVisit(m.Right, result);
+                break;
+            case Expr.Divide d:
+                CollectQualifiedVarsVisit(d.Left, result);
+                CollectQualifiedVarsVisit(d.Right, result);
+                break;
+            case Expr.GreaterOrEqual ge:
+                CollectQualifiedVarsVisit(ge.Left, result);
+                CollectQualifiedVarsVisit(ge.Right, result);
+                break;
+            case Expr.LessOrEqual le:
+                CollectQualifiedVarsVisit(le.Left, result);
+                CollectQualifiedVarsVisit(le.Right, result);
+                break;
+            case Expr.Equal eq:
+                CollectQualifiedVarsVisit(eq.Left, result);
+                CollectQualifiedVarsVisit(eq.Right, result);
+                break;
+            case Expr.NotEqual ne:
+                CollectQualifiedVarsVisit(ne.Left, result);
+                CollectQualifiedVarsVisit(ne.Right, result);
+                break;
+            case Expr.ResultPipe pipe:
+                CollectQualifiedVarsVisit(pipe.Left, result);
+                CollectQualifiedVarsVisit(pipe.Right, result);
+                break;
+            case Expr.ResultMapErrorPipe pipe:
+                CollectQualifiedVarsVisit(pipe.Left, result);
+                CollectQualifiedVarsVisit(pipe.Right, result);
+                break;
+            case Expr.TupleLit tuple:
+                foreach (var elem in tuple.Elements)
+                    CollectQualifiedVarsVisit(elem, result);
+                break;
+            case Expr.ListLit list:
+                foreach (var elem in list.Elements)
+                    CollectQualifiedVarsVisit(elem, result);
+                break;
+            case Expr.Cons cons:
+                CollectQualifiedVarsVisit(cons.Head, result);
+                CollectQualifiedVarsVisit(cons.Tail, result);
+                break;
+            case Expr.Async asyncExpr:
+                CollectQualifiedVarsVisit(asyncExpr.Body, result);
+                break;
+            case Expr.Await awaitExpr:
+                CollectQualifiedVarsVisit(awaitExpr.Task, result);
+                break;
+            default:
+                // Literals, Var, etc. - no qualified vars to collect
+                break;
+        }
     }
 
     private static IEnumerable<string> PatternBindings(Pattern p)

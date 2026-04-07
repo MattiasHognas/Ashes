@@ -110,13 +110,13 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
     return await File.ReadAllTextAsync(inputFile);
 }
 
-static byte[] CompileToImage(string source, string targetId, BackendCompileOptions? backendOptions = null, IReadOnlySet<string>? importedStdModules = null)
+static byte[] CompileToImage(string source, string targetId, BackendCompileOptions? backendOptions = null, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
     diag.ThrowIfAny();
 
-    var ir = new Lowering(diag, importedStdModules).Lower(program);
+    var ir = new Lowering(diag, importedStdModules, moduleAliases).Lower(program);
     diag.ThrowIfAny();
 
     // Phase 4: Run IR-level optimization passes before backend codegen
@@ -127,7 +127,7 @@ static byte[] CompileToImage(string source, string targetId, BackendCompileOptio
     return backend.Compile(ir, effectiveOptions);
 }
 
-static (string Source, IReadOnlySet<string>? ImportedStdModules) PrepareStandaloneCompilationSource(string source, string displayPath)
+static (string Source, IReadOnlySet<string>? ImportedStdModules, IReadOnlyDictionary<string, string>? ModuleAliases) PrepareStandaloneCompilationSource(string source, string displayPath)
 {
     var parsed = ProjectSupport.ParseImportHeader(source, displayPath);
     var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -135,7 +135,7 @@ static (string Source, IReadOnlySet<string>? ImportedStdModules) PrepareStandalo
         .Where(ProjectSupport.IsStdModule)
         .ToHashSet(StringComparer.Ordinal);
 
-    return (layout.Source, importedStdModules.Count == 0 ? null : importedStdModules);
+    return (layout.Source, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
 }
 
 static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null)
@@ -143,7 +143,7 @@ static byte[] CompileProjectToImage(AshesProject project, string targetId, Backe
     var plan = ProjectSupport.BuildCompilationPlan(project);
 
     var projectSource = ProjectSupport.BuildCompilationSource(plan);
-    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules);
+    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
@@ -539,7 +539,7 @@ async Task<int> RunCompileAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules);
+            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -656,7 +656,7 @@ async Task<int> RunRunAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules);
+            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -1038,14 +1038,16 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
         var match = importLine.Match(line);
         if (match.Success)
         {
-            imports.Add($"import {match.Groups[1].Value}");
+            imports.Add(match.Groups[2].Success
+                ? $"import {match.Groups[1].Value} as {match.Groups[2].Value}"
+                : $"import {match.Groups[1].Value}");
             continue;
         }
 
         if (line.TrimStart().StartsWith("import ", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Invalid import syntax in {filePath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar'.");
+                $"Invalid import syntax in {filePath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.");
         }
 
         sourceLines.Add(line);

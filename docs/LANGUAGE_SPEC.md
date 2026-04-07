@@ -29,6 +29,11 @@ Line comments are supported:
 - `// ...` starts a comment that runs to the end of the current line.
 - Comments are ignored by lexing/parsing and do not affect evaluation or typing.
 
+The following words are **reserved keywords** and cannot be used as identifiers:
+
+`let`, `rec`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
+`true`, `false`, `type`, `async`, `await`
+
 Programs are composed using nested expressions such as:
 
 let x = 10
@@ -947,11 +952,27 @@ There are two common ways to use standard library functions:
 `import Module` brings the module's exported names into local scope. The import
 must appear at the top of the source file, before any expressions.
 
+### Import Aliasing
+
+An import may include an alias using `as`:
+
+    import Ashes.IO as IO
+
+    IO.print "hello"
+
+The alias is a short name that can be used in place of the full module path for
+qualified access.  Unqualified access to the module's exported names is still
+available (e.g. `print "hello"` still works after `import Ashes.IO as IO`).
+
+The alias must be a valid identifier (letter followed by alphanumerics/underscores).
+Aliases may be lowercase (e.g. `import Ashes.List as list`).
+
 For multi-segment module imports, both full and short qualification are supported:
 
 - `import Foo.Bar` allows `Foo.Bar.value`.
 - `import Foo.Bar` also allows `Bar.value` when `Bar` is the unique imported leaf
     module qualifier.
+- `import Foo.Bar as FB` also allows `FB.value`.
 - If two imported modules share the same exported name, unqualified access is a
     compile-time error.
 - If two imported modules share the same leaf qualifier, short qualification is a
