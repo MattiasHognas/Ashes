@@ -337,18 +337,11 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | Version | Main feature |
 |---|---|
 | 1.0.0 | Base |
-| 1.0.5 | LLVM |
-| 1.0.6 | Debugger |
-| 1.1.0 | Memory safety |
-| 1.2.0 | Async/Await |
-
-### Future plans
-
-| Version | Main feature |
-|---|---|
-| 1.3.0 | Improved import and syntax |
-| 1.4.0 | Package manager and more std libs |
-| 1.5.0 | HTTPS/TLS |
+| 1.0.5 | Add LLVM |
+| 1.0.6 | Add debugger |
+| 1.1.0 | Add memory safety |
+| 1.2.0 | Add async/await |
+| 1.2.1 | Add import aliasing |
 
 ------------------------------------------------------------------------
 
