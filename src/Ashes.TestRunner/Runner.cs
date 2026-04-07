@@ -535,8 +535,7 @@ public static class Runner
             if (sourceOverride is null)
             {
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                var parsedAliases = ProjectSupport.ParseImportHeader(source, filePath);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, parsedAliases.ImportAliases.Count == 0 ? null : parsedAliases.ImportAliases);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -544,7 +543,12 @@ public static class Runner
             var importedStdModules = plan.ImportedStdModules
                 .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
                 .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+            var mergedAliases = new Dictionary<string, string>(plan.MergedAliases, StringComparer.Ordinal);
+            foreach (var (alias, moduleName) in parsed.ImportAliases)
+            {
+                mergedAliases.TryAdd(alias, moduleName);
+            }
+            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases);
         }
 
         if (HasImports(source))
@@ -566,8 +570,7 @@ public static class Runner
                 );
                 var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                var parsedAliases = ProjectSupport.ParseImportHeader(source, filePath);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, parsedAliases.ImportAliases.Count == 0 ? null : parsedAliases.ImportAliases);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);

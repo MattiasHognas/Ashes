@@ -143,9 +143,7 @@ static byte[] CompileProjectToImage(AshesProject project, string targetId, Backe
     var plan = ProjectSupport.BuildCompilationPlan(project);
 
     var projectSource = ProjectSupport.BuildCompilationSource(plan);
-    var entrySource = File.ReadAllText(project.EntryPath);
-    var parsedAliases = ProjectSupport.ParseImportHeader(entrySource, project.EntryPath);
-    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules, parsedAliases.ImportAliases.Count == 0 ? null : parsedAliases.ImportAliases);
+    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)

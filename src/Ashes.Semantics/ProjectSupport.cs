@@ -21,14 +21,16 @@ public sealed record ProjectModule(
     string ModuleName,
     string FilePath,
     string Source,
-    IReadOnlyList<string> Imports
+    IReadOnlyList<string> Imports,
+    IReadOnlyDictionary<string, string> Aliases
 );
 
 public sealed record ProjectCompilationPlan(
     AshesProject Project,
     IReadOnlyList<ProjectModule> OrderedModules,
     ProjectModule EntryModule,
-    IReadOnlySet<string> ImportedStdModules
+    IReadOnlySet<string> ImportedStdModules,
+    IReadOnlyDictionary<string, string> MergedAliases
 );
 
 public readonly record struct ParsedImportHeader(
@@ -84,6 +86,12 @@ public static class ProjectSupport
     private static readonly Lazy<string?> ShippedLibraryRoot = new(DiscoverShippedLibraryRoot);
 
     private static readonly HashSet<string> KnownStdModules = [.. StdModules.Keys];
+
+    private static readonly HashSet<string> ReservedKeywords = new(StringComparer.Ordinal)
+    {
+        "let", "rec", "in", "if", "then", "else", "match", "with",
+        "fun", "true", "false", "type", "async", "await"
+    };
 
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;
 
@@ -183,7 +191,20 @@ public static class ProjectSupport
                 imports.Add(moduleName);
                 if (match.Groups[2].Success)
                 {
-                    aliases[match.Groups[2].Value] = moduleName;
+                    var alias = match.Groups[2].Value;
+                    if (ReservedKeywords.Contains(alias))
+                    {
+                        throw new InvalidOperationException(
+                            $"Invalid alias '{alias}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
+                    }
+
+                    if (aliases.ContainsKey(alias))
+                    {
+                        throw new InvalidOperationException(
+                            $"Duplicate alias '{alias}' in {displayPath}:{lineIndex}. The alias '{alias}' is already mapped to '{aliases[alias]}'.");
+                    }
+
+                    aliases[alias] = moduleName;
                 }
                 continue;
             }
@@ -225,7 +246,16 @@ public static class ProjectSupport
         var entryModule = LoadModule(project.EntryModuleName, project.EntryPath);
         Visit(entryModule);
 
-        return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules);
+        var mergedAliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var module in ordered)
+        {
+            foreach (var (alias, moduleName) in module.Aliases)
+            {
+                mergedAliases.TryAdd(alias, moduleName);
+            }
+        }
+
+        return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules, mergedAliases);
 
         void Visit(ProjectModule module)
         {
@@ -329,8 +359,8 @@ public static class ProjectSupport
                 return existing;
             }
 
-            var (imports, source) = ParseImports(fullPath);
-            var module = new ProjectModule(moduleName, fullPath, source, imports);
+            var (imports, source, aliases) = ParseImports(fullPath);
+            var module = new ProjectModule(moduleName, fullPath, source, imports, aliases);
             resolvedByPath[fullPath] = module;
             if (!resolvedByModuleName.ContainsKey(moduleName))
             {
@@ -363,7 +393,7 @@ public static class ProjectSupport
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var traversal = new Stack<ProjectModule>();
 
-        var entryModule = new ProjectModule("Main", "<memory>", sourceWithoutImports, importNames.ToList());
+        var entryModule = new ProjectModule("Main", "<memory>", sourceWithoutImports, importNames.ToList(), new Dictionary<string, string>());
         orderedModules.Add(entryModule);
 
         foreach (var importName in importNames)
@@ -902,7 +932,7 @@ public static class ProjectSupport
         }
 
         var parsed = ParseImportHeader(source, moduleName);
-        module = new ProjectModule(moduleName, $"<std:{moduleName}>", parsed.SourceWithoutImports, parsed.ImportNames);
+        module = new ProjectModule(moduleName, $"<std:{moduleName}>", parsed.SourceWithoutImports, parsed.ImportNames, parsed.ImportAliases);
         return true;
     }
 
@@ -1135,10 +1165,10 @@ public static class ProjectSupport
         }
     }
 
-    private static (IReadOnlyList<string> Imports, string SourceWithoutImports) ParseImports(string filePath)
+    private static (IReadOnlyList<string> Imports, string SourceWithoutImports, IReadOnlyDictionary<string, string> Aliases) ParseImports(string filePath)
     {
         var parsed = ParseImportHeader(File.ReadAllText(filePath), filePath);
-        return (parsed.ImportNames, parsed.SourceWithoutImports);
+        return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases);
     }
 
     private static string? ReadString(JsonElement root, string name)
