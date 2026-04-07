@@ -8,7 +8,7 @@ public sealed class LexerTests
     [Test]
     public void Next_should_tokenize_keywords_operators_and_literals()
     {
-        var tokens = LexAll("let let? let! rec in print if then else match with fun true false type as async await foo >= <= == != -> :: |> |?> |!> + - * / = , | ( ) [ ] 123 1.5");
+        var tokens = LexAll("let let? let! rec in print if then else match with fun true false type async await foo >= <= == != -> :: |> |?> |!> + - * / = , | ( ) [ ] 123 1.5");
 
         tokens.Select(t => t.Kind).ShouldBe(
         [
@@ -27,7 +27,6 @@ public sealed class LexerTests
             TokenKind.True,
             TokenKind.False,
             TokenKind.Type,
-            TokenKind.Ident,
             TokenKind.Async,
             TokenKind.Await,
             TokenKind.Ident,

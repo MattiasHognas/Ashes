@@ -32,7 +32,7 @@ Line comments are supported:
 The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `rec`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
-`true`, `false`, `type`, `as`, `async`, `await`
+`true`, `false`, `type`, `async`, `await`
 
 Programs are composed using nested expressions such as:
 
@@ -560,7 +560,7 @@ Complex expressions must be parenthesized:
 f (1 + 2)
 Ashes.IO.print (add 3 4)
 
-Keywords such as `then`, `else`, `in`, `with`, `as`, `|` are never treated as
+Keywords such as `then`, `else`, `in`, `with`, `|` are never treated as
 whitespace arguments.
 
 ### Examples
