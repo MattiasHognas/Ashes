@@ -3132,6 +3132,23 @@ public sealed class Lowering
         var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme)
                            .Distinct().ToList();
 
+        // Module-aliased qualified vars (e.g., list.map where list → Ashes.List)
+        // resolve to inlined bindings like Ashes_List_map. These must also be captured
+        // because the coroutine scope is isolated from the outer let-binding chain.
+        var qualifiedRefs = CollectQualifiedVars(asyncExpr.Body);
+        foreach (var qv in qualifiedRefs)
+        {
+            var resolvedModule = ResolveModuleAlias(qv.Module);
+            if (BuiltinRegistry.TryGetModule(resolvedModule, out var bm) && bm.ResourceName is not null && !bm.Members.ContainsKey(qv.Name))
+            {
+                var exportedBindingName = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{qv.Name}";
+                if (Lookup(exportedBindingName) is not null && !captures.Contains(exportedBindingName))
+                {
+                    captures.Add(exportedBindingName);
+                }
+            }
+        }
+
         // --- Allocate environment for captured variables (in outer context) ---
         int envPtrTemp;
         if (captures.Count == 0)
@@ -4334,6 +4351,118 @@ public sealed class Lowering
 
         Visit(e, bound);
         return res;
+    }
+
+    /// <summary>
+    /// Collects all <see cref="Expr.QualifiedVar"/> references from an expression tree.
+    /// Used by <see cref="LowerAsync"/> to discover module-aliased references
+    /// (e.g., <c>list.map</c>) that resolve to inlined std library bindings.
+    /// </summary>
+    private static List<Expr.QualifiedVar> CollectQualifiedVars(Expr e)
+    {
+        var result = new List<Expr.QualifiedVar>();
+        CollectQualifiedVarsVisit(e, result);
+        return result;
+    }
+
+    private static void CollectQualifiedVarsVisit(Expr e, List<Expr.QualifiedVar> result)
+    {
+        switch (e)
+        {
+            case Expr.QualifiedVar qv:
+                result.Add(qv);
+                break;
+            case Expr.Call c:
+                CollectQualifiedVarsVisit(c.Func, result);
+                CollectQualifiedVarsVisit(c.Arg, result);
+                break;
+            case Expr.Let l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.LetResult l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.LetRec l:
+                CollectQualifiedVarsVisit(l.Value, result);
+                CollectQualifiedVarsVisit(l.Body, result);
+                break;
+            case Expr.If iff:
+                CollectQualifiedVarsVisit(iff.Cond, result);
+                CollectQualifiedVarsVisit(iff.Then, result);
+                CollectQualifiedVarsVisit(iff.Else, result);
+                break;
+            case Expr.Lambda lam:
+                CollectQualifiedVarsVisit(lam.Body, result);
+                break;
+            case Expr.Match m:
+                CollectQualifiedVarsVisit(m.Value, result);
+                foreach (var mc in m.Cases)
+                    CollectQualifiedVarsVisit(mc.Body, result);
+                break;
+            case Expr.Add a:
+                CollectQualifiedVarsVisit(a.Left, result);
+                CollectQualifiedVarsVisit(a.Right, result);
+                break;
+            case Expr.Subtract s:
+                CollectQualifiedVarsVisit(s.Left, result);
+                CollectQualifiedVarsVisit(s.Right, result);
+                break;
+            case Expr.Multiply m:
+                CollectQualifiedVarsVisit(m.Left, result);
+                CollectQualifiedVarsVisit(m.Right, result);
+                break;
+            case Expr.Divide d:
+                CollectQualifiedVarsVisit(d.Left, result);
+                CollectQualifiedVarsVisit(d.Right, result);
+                break;
+            case Expr.GreaterOrEqual ge:
+                CollectQualifiedVarsVisit(ge.Left, result);
+                CollectQualifiedVarsVisit(ge.Right, result);
+                break;
+            case Expr.LessOrEqual le:
+                CollectQualifiedVarsVisit(le.Left, result);
+                CollectQualifiedVarsVisit(le.Right, result);
+                break;
+            case Expr.Equal eq:
+                CollectQualifiedVarsVisit(eq.Left, result);
+                CollectQualifiedVarsVisit(eq.Right, result);
+                break;
+            case Expr.NotEqual ne:
+                CollectQualifiedVarsVisit(ne.Left, result);
+                CollectQualifiedVarsVisit(ne.Right, result);
+                break;
+            case Expr.ResultPipe pipe:
+                CollectQualifiedVarsVisit(pipe.Left, result);
+                CollectQualifiedVarsVisit(pipe.Right, result);
+                break;
+            case Expr.ResultMapErrorPipe pipe:
+                CollectQualifiedVarsVisit(pipe.Left, result);
+                CollectQualifiedVarsVisit(pipe.Right, result);
+                break;
+            case Expr.TupleLit tuple:
+                foreach (var elem in tuple.Elements)
+                    CollectQualifiedVarsVisit(elem, result);
+                break;
+            case Expr.ListLit list:
+                foreach (var elem in list.Elements)
+                    CollectQualifiedVarsVisit(elem, result);
+                break;
+            case Expr.Cons cons:
+                CollectQualifiedVarsVisit(cons.Head, result);
+                CollectQualifiedVarsVisit(cons.Tail, result);
+                break;
+            case Expr.Async asyncExpr:
+                CollectQualifiedVarsVisit(asyncExpr.Body, result);
+                break;
+            case Expr.Await awaitExpr:
+                CollectQualifiedVarsVisit(awaitExpr.Task, result);
+                break;
+            default:
+                // Literals, Var, etc. - no qualified vars to collect
+                break;
+        }
     }
 
     private static IEnumerable<string> PatternBindings(Pattern p)
