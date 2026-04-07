@@ -21,19 +21,22 @@ public sealed record ProjectModule(
     string ModuleName,
     string FilePath,
     string Source,
-    IReadOnlyList<string> Imports
+    IReadOnlyList<string> Imports,
+    IReadOnlyDictionary<string, string> Aliases
 );
 
 public sealed record ProjectCompilationPlan(
     AshesProject Project,
     IReadOnlyList<ProjectModule> OrderedModules,
     ProjectModule EntryModule,
-    IReadOnlySet<string> ImportedStdModules
+    IReadOnlySet<string> ImportedStdModules,
+    IReadOnlyDictionary<string, string> MergedAliases
 );
 
 public readonly record struct ParsedImportHeader(
     IReadOnlyList<string> ImportNames,
-    string SourceWithoutImports
+    string SourceWithoutImports,
+    IReadOnlyDictionary<string, string> ImportAliases
 );
 
 public readonly record struct CombinedCompilationLayout(
@@ -62,7 +65,7 @@ public static class ProjectSupport
         IReadOnlyList<ModuleBindingFragment> TopLevelBindings,
         string? LegacyExportName);
 
-    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\s*$";
+    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
     private static readonly Regex ImportLine = new(
         ImportModulePattern,
@@ -83,6 +86,12 @@ public static class ProjectSupport
     private static readonly Lazy<string?> ShippedLibraryRoot = new(DiscoverShippedLibraryRoot);
 
     private static readonly HashSet<string> KnownStdModules = [.. StdModules.Keys];
+
+    private static readonly HashSet<string> ReservedKeywords = new(StringComparer.Ordinal)
+    {
+        "let", "rec", "in", "if", "then", "else", "match", "with",
+        "fun", "true", "false", "type", "async", "await"
+    };
 
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;
 
@@ -164,6 +173,7 @@ public static class ProjectSupport
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)
     {
         var imports = new List<string>();
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
         var sourceLines = new List<string>();
         using var reader = new StringReader(source);
         string? line;
@@ -177,14 +187,32 @@ public static class ProjectSupport
             var match = ImportLine.Match(line);
             if (inHeader && match.Success)
             {
-                imports.Add(match.Groups[1].Value);
+                var moduleName = match.Groups[1].Value;
+                imports.Add(moduleName);
+                if (match.Groups[2].Success)
+                {
+                    var alias = match.Groups[2].Value;
+                    if (ReservedKeywords.Contains(alias))
+                    {
+                        throw new InvalidOperationException(
+                            $"Invalid alias '{alias}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
+                    }
+
+                    if (aliases.ContainsKey(alias))
+                    {
+                        throw new InvalidOperationException(
+                            $"Duplicate alias '{alias}' in {displayPath}:{lineIndex}. The alias '{alias}' is already mapped to '{aliases[alias]}'.");
+                    }
+
+                    aliases[alias] = moduleName;
+                }
                 continue;
             }
 
             if (inHeader && trimmed.StartsWith("import ", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar'.");
+                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.");
             }
 
             if (inHeader && (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal)))
@@ -196,7 +224,7 @@ public static class ProjectSupport
             sourceLines.Add(line);
         }
 
-        return new ParsedImportHeader(imports, string.Join('\n', sourceLines));
+        return new ParsedImportHeader(imports, string.Join('\n', sourceLines), aliases);
     }
 
     public static ProjectCompilationPlan BuildCompilationPlan(AshesProject project)
@@ -218,7 +246,22 @@ public static class ProjectSupport
         var entryModule = LoadModule(project.EntryModuleName, project.EntryPath);
         Visit(entryModule);
 
-        return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules);
+        var mergedAliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var module in ordered)
+        {
+            foreach (var (alias, moduleName) in module.Aliases)
+            {
+                if (mergedAliases.TryGetValue(alias, out var existing) && !string.Equals(existing, moduleName, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Conflicting alias '{alias}' in module '{module.ModuleName}': maps to '{moduleName}', but already mapped to '{existing}'.");
+                }
+
+                mergedAliases.TryAdd(alias, moduleName);
+            }
+        }
+
+        return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules, mergedAliases);
 
         void Visit(ProjectModule module)
         {
@@ -322,8 +365,8 @@ public static class ProjectSupport
                 return existing;
             }
 
-            var (imports, source) = ParseImports(fullPath);
-            var module = new ProjectModule(moduleName, fullPath, source, imports);
+            var (imports, source, aliases) = ParseImports(fullPath);
+            var module = new ProjectModule(moduleName, fullPath, source, imports, aliases);
             resolvedByPath[fullPath] = module;
             if (!resolvedByModuleName.ContainsKey(moduleName))
             {
@@ -356,7 +399,7 @@ public static class ProjectSupport
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var traversal = new Stack<ProjectModule>();
 
-        var entryModule = new ProjectModule("Main", "<memory>", sourceWithoutImports, importNames.ToList());
+        var entryModule = new ProjectModule("Main", "<memory>", sourceWithoutImports, importNames.ToList(), new Dictionary<string, string>());
         orderedModules.Add(entryModule);
 
         foreach (var importName in importNames)
@@ -895,7 +938,7 @@ public static class ProjectSupport
         }
 
         var parsed = ParseImportHeader(source, moduleName);
-        module = new ProjectModule(moduleName, $"<std:{moduleName}>", parsed.SourceWithoutImports, parsed.ImportNames);
+        module = new ProjectModule(moduleName, $"<std:{moduleName}>", parsed.SourceWithoutImports, parsed.ImportNames, parsed.ImportAliases);
         return true;
     }
 
@@ -1116,16 +1159,22 @@ public static class ProjectSupport
                         Visit(matchCase.Body);
                     }
                     break;
+                case Expr.Async asyncExpr:
+                    Visit(asyncExpr.Body);
+                    break;
+                case Expr.Await awaitExpr:
+                    Visit(awaitExpr.Task);
+                    break;
                 default:
                     throw new NotSupportedException(expr.GetType().Name);
             }
         }
     }
 
-    private static (IReadOnlyList<string> Imports, string SourceWithoutImports) ParseImports(string filePath)
+    private static (IReadOnlyList<string> Imports, string SourceWithoutImports, IReadOnlyDictionary<string, string> Aliases) ParseImports(string filePath)
     {
         var parsed = ParseImportHeader(File.ReadAllText(filePath), filePath);
-        return (parsed.ImportNames, parsed.SourceWithoutImports);
+        return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases);
     }
 
     private static string? ReadString(JsonElement root, string name)

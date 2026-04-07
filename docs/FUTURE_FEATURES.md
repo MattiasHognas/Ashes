@@ -12,7 +12,7 @@ complete. Subsequent work focuses on runtime and ecosystem.
 | HTTPS/TLS | Planned — TLS, encryption, certificates |
 | Pattern Guards | Planned — pattern matching enhancements |
 | Type Annotations | Planned — user-written type annotations |
-| Import Aliasing | Planned — `import Ashes.IO as IO` |
+| Import Aliasing | Complete — `import Ashes.IO as io` |
 | Selective Imports | Planned — `import Ashes.IO (print)` |
 | Effects / IO Types | Planned — effect system or IO types |
 | Inline Modules | Planned — inline module declarations |

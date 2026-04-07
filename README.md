@@ -4,30 +4,38 @@ A small, **pure functional language** in the ML family — compiled directly to
 native executables without runtime dependencies.
 
 ```ash
-import Ashes.List
-import Ashes.Result
-import Ashes.IO
-
+import Ashes.IO as io
+import Ashes.List as list
+import Ashes.Result as result
+import Ashes.Async as task
 type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area s =
+let area s = 
     match s with
         | Circle(r) -> 3.14159 * r * r
         | Rect(w, h) -> w * h
-in
-    let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
-    in
-        shapes
-        |> List.map(area)
-        |> List.map(fun (a) ->
-            if a >= 10.0
-            then Ok(a)
-            else Error("too small"))
-        |> List.filter(Result.isOk)
-        |> List.length
-        |> print
+in 
+    let shapes = [Circle(5.0), Rect(3.0)(4.0), Circle(1.0)]
+    in 
+        let t = 
+            async
+                let count = 
+                    await task.fromResult(shapes
+                    |> list.map(area)
+                    |> list.map(fun (a) -> 
+                        if a >= 10.0
+                        then Ok(a)
+                        else Error("too small"))
+                    |> list.filter(result.isOk)
+                    |> list.length
+                    |> Ok)
+                in count
+        in 
+            match task.run(t) with
+                | Ok(n) -> io.print(n)
+                | Error(_) -> io.print(0)
 ```
 
 No GC. No runtime. Just a native binary.
@@ -139,13 +147,26 @@ in Ashes.IO.print(sum([1, 2, 3, 4, 5])(0))
 ### Pipelines
 
 ```ash
-import Ashes.Result
+import Ashes.Result as result
 
 "42"
 |> parseOr
-|> Ashes.Result.map(fun (n) -> n + 1)
-|> Ashes.Result.default(0)
+|> result.map(fun (n) -> n + 1)
+|> result.default(0)
 |> Ashes.IO.print
+```
+
+### Async/Await
+
+```ash
+import Ashes.Async as task
+
+let work = async
+    let! a = task.fromResult(21)
+    in
+        let! b = task.fromResult(21)
+        in a + b
+in task.run(work) |> Ashes.IO.print
 ```
 
 ### Polymorphism
@@ -171,12 +192,13 @@ in
 | `Ashes.File` | UTF-8 file read/write/exists returning `Result` |
 | `Ashes.Http` | HTTP/1.1 GET/POST for plain `http://` URLs |
 | `Ashes.Net.Tcp` | Blocking TCP client (connect, send, receive, close) |
+| `Ashes.Async` | `run`, `fromResult`, `sleep`, `all`, `race` |
 | `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
 | `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
 | `Ashes.Result` | Helpers for the built-in `Result(E, A)` type |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`
+Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
 
 ------------------------------------------------------------------------
 
