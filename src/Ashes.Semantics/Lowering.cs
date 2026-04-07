@@ -3139,7 +3139,10 @@ public sealed class Lowering
         foreach (var qv in qualifiedRefs)
         {
             var resolvedModule = ResolveModuleAlias(qv.Module);
-            if (BuiltinRegistry.TryGetModule(resolvedModule, out var bm) && bm.ResourceName is not null && !bm.Members.ContainsKey(qv.Name))
+            var isInlinedStdModule = BuiltinRegistry.TryGetModule(resolvedModule, out var bm)
+                && bm.ResourceName is not null
+                && !bm.Members.ContainsKey(qv.Name);
+            if (isInlinedStdModule)
             {
                 var exportedBindingName = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{qv.Name}";
                 if (Lookup(exportedBindingName) is not null && !captures.Contains(exportedBindingName))
