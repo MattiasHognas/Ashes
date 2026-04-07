@@ -546,6 +546,12 @@ public static class Runner
             var mergedAliases = new Dictionary<string, string>(plan.MergedAliases, StringComparer.Ordinal);
             foreach (var (alias, moduleName) in parsed.ImportAliases)
             {
+                if (mergedAliases.TryGetValue(alias, out var existing) && !string.Equals(existing, moduleName, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Conflicting alias '{alias}': maps to '{moduleName}', but already mapped to '{existing}'.");
+                }
+
                 mergedAliases.TryAdd(alias, moduleName);
             }
             return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases);

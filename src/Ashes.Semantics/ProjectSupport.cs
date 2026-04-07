@@ -251,6 +251,12 @@ public static class ProjectSupport
         {
             foreach (var (alias, moduleName) in module.Aliases)
             {
+                if (mergedAliases.TryGetValue(alias, out var existing) && !string.Equals(existing, moduleName, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Conflicting alias '{alias}' in module '{module.ModuleName}': maps to '{moduleName}', but already mapped to '{existing}'.");
+                }
+
                 mergedAliases.TryAdd(alias, moduleName);
             }
         }
