@@ -535,7 +535,8 @@ public static class Runner
             if (sourceOverride is null)
             {
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules);
+                var parsedAliases = ProjectSupport.ParseImportHeader(source, filePath);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, parsedAliases.ImportAliases.Count == 0 ? null : parsedAliases.ImportAliases);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -543,7 +544,7 @@ public static class Runner
             var importedStdModules = plan.ImportedStdModules
                 .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
                 .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules);
+            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
         }
 
         if (HasImports(source))
@@ -565,7 +566,8 @@ public static class Runner
                 );
                 var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
                 var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules);
+                var parsedAliases = ProjectSupport.ParseImportHeader(source, filePath);
+                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, parsedAliases.ImportAliases.Count == 0 ? null : parsedAliases.ImportAliases);
             }
 
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -573,19 +575,19 @@ public static class Runner
             var importedStdModules = parsed.ImportNames
                 .Where(ProjectSupport.IsStdModule)
                 .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules);
+            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
         }
 
         return CompileToImage(source, targetId, backendOptions);
     }
 
-    private static byte[] CompileToImage(string source, string targetId, BackendCompileOptions backendOptions, IReadOnlySet<string>? importedStdModules = null)
+    private static byte[] CompileToImage(string source, string targetId, BackendCompileOptions backendOptions, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         var diag = new Diagnostics();
         var program = new Parser(StripLeadingCommentLines(source), diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(diag, importedStdModules).Lower(program);
+        var ir = new Lowering(diag, importedStdModules, moduleAliases).Lower(program);
         diag.ThrowIfAny();
 
         var backend = BackendFactory.Create(targetId);

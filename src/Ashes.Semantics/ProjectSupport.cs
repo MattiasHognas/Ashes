@@ -33,7 +33,8 @@ public sealed record ProjectCompilationPlan(
 
 public readonly record struct ParsedImportHeader(
     IReadOnlyList<string> ImportNames,
-    string SourceWithoutImports
+    string SourceWithoutImports,
+    IReadOnlyDictionary<string, string> ImportAliases
 );
 
 public readonly record struct CombinedCompilationLayout(
@@ -62,7 +63,7 @@ public static class ProjectSupport
         IReadOnlyList<ModuleBindingFragment> TopLevelBindings,
         string? LegacyExportName);
 
-    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\s*$";
+    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
     private static readonly Regex ImportLine = new(
         ImportModulePattern,
@@ -164,6 +165,7 @@ public static class ProjectSupport
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)
     {
         var imports = new List<string>();
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
         var sourceLines = new List<string>();
         using var reader = new StringReader(source);
         string? line;
@@ -177,14 +179,19 @@ public static class ProjectSupport
             var match = ImportLine.Match(line);
             if (inHeader && match.Success)
             {
-                imports.Add(match.Groups[1].Value);
+                var moduleName = match.Groups[1].Value;
+                imports.Add(moduleName);
+                if (match.Groups[2].Success)
+                {
+                    aliases[match.Groups[2].Value] = moduleName;
+                }
                 continue;
             }
 
             if (inHeader && trimmed.StartsWith("import ", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar'.");
+                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.");
             }
 
             if (inHeader && (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal)))
@@ -196,7 +203,7 @@ public static class ProjectSupport
             sourceLines.Add(line);
         }
 
-        return new ParsedImportHeader(imports, string.Join('\n', sourceLines));
+        return new ParsedImportHeader(imports, string.Join('\n', sourceLines), aliases);
     }
 
     public static ProjectCompilationPlan BuildCompilationPlan(AshesProject project)

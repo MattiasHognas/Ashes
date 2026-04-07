@@ -27,7 +27,7 @@ public sealed class LexerTests
             TokenKind.True,
             TokenKind.False,
             TokenKind.Type,
-            TokenKind.As,
+            TokenKind.Ident,
             TokenKind.Async,
             TokenKind.Await,
             TokenKind.Ident,

@@ -14,6 +14,7 @@ public sealed class ProjectSupportTests
 
         parsed.ImportNames.ShouldBe(["Ashes.IO"]);
         parsed.SourceWithoutImports.ShouldBe("type Bool = | True | False\nprint(1)");
+        parsed.ImportAliases.ShouldBeEmpty();
     }
 
     [Test]
