@@ -455,7 +455,7 @@ public static partial class DocumentService
                         combined.Value.EntryOffset,
                         combined.Value.BodyStart,
                         combined.Value.ImportedStdModules,
-                        BuildModuleAliases(header.Imports),
+                        null,
                         []);
                 }
             }
