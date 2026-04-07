@@ -159,15 +159,14 @@ import Ashes.Result as result
 ### Async/Await
 
 ```ash
-import Ashes.Async as async
+import Ashes.Async as task
 
-let task = async {
-    let! a = async.fromResult(21)
+let work = async
+    let! a = task.fromResult(21)
     in
-        let! b = async.fromResult(21)
+        let! b = task.fromResult(21)
         in a + b
-}
-in async.run(task) |> Ashes.IO.print
+in task.run(work) |> Ashes.IO.print
 ```
 
 ### Polymorphism
