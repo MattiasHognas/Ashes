@@ -38,7 +38,11 @@
       "patterns": [
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let\\?|let!|let|rec|in|if|then|else|match|with|fun|type|async|await)\\b"
+          "match": "(?<!\\w)(let\\?|let!)(?!\\w)"
+        },
+        {
+          "name": "keyword.control.ashes",
+          "match": "\\b(let|rec|in|if|then|else|match|with|fun|type|async|await)\\b"
         }
       ]
     },
