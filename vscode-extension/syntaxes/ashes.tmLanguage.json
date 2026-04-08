@@ -24,7 +24,7 @@
     "imports": {
       "patterns": [
         {
-          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_.]*?)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
+          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_.]*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
           "captures": {
             "1": { "name": "keyword.control.import.ashes" },
             "2": { "name": "entity.name.namespace.ashes" },
@@ -50,7 +50,7 @@
         },
         {
           "name": "constant.language.wildcard.ashes",
-          "match": "\\b_\\b"
+          "match": "(?<!\\w)_(?!\\w)"
         }
       ]
     },
@@ -73,7 +73,7 @@
       "patterns": [
         {
           "name": "constant.numeric.float.ashes",
-          "match": "\\b\\d+\\.\\d+\\b"
+          "match": "\\b\\d+\\.\\d+"
         },
         {
           "name": "constant.numeric.integer.ashes",
