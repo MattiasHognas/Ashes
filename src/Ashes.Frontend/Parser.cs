@@ -118,17 +118,29 @@ public sealed class Parser
         }
 
         var pattern = ParsePattern();
+        Expr? guard = null;
+        if (_current.Kind == TokenKind.When)
+        {
+            Consume(TokenKind.When);
+            guard = ParseExpressionCore();
+        }
         Consume(TokenKind.Arrow);
         var body = ParseExpressionCore();
-        cases.Add(new MatchCase(pattern, body));
+        cases.Add(new MatchCase(pattern, body, guard));
 
         while (_current.Kind == TokenKind.Pipe)
         {
             Consume(TokenKind.Pipe);
             pattern = ParsePattern();
+            guard = null;
+            if (_current.Kind == TokenKind.When)
+            {
+                Consume(TokenKind.When);
+                guard = ParseExpressionCore();
+            }
             Consume(TokenKind.Arrow);
             body = ParseExpressionCore();
-            cases.Add(new MatchCase(pattern, body));
+            cases.Add(new MatchCase(pattern, body, guard));
         }
 
         return RegisterExpr(new Expr.Match(value, cases, matchPos), matchPos, LastConsumedEnd);

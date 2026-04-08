@@ -907,6 +907,15 @@ public static partial class DocumentService
                             caseScope[binding.Key] = 0;
                         }
 
+                        if (matchCase.Guard is not null)
+                        {
+                            var inGuard = CollectVisibleBindingsInExpr(matchCase.Guard, position, caseScope);
+                            if (inGuard.Count > 0)
+                            {
+                                return inGuard;
+                            }
+                        }
+
                         var inBody = CollectVisibleBindingsInExpr(matchCase.Body, position, caseScope);
                         if (inBody.Count > 0)
                         {
@@ -1381,6 +1390,15 @@ public static partial class DocumentService
                             caseScope[binding.Key] = binding.Value;
                         }
 
+                        if (matchCase.Guard is not null)
+                        {
+                            var inGuard = ResolveDefinitionInExpr(matchCase.Guard, position, currentFilePath, imports, caseScope);
+                            if (inGuard is not null)
+                            {
+                                return inGuard;
+                            }
+                        }
+
                         var inBody = ResolveDefinitionInExpr(matchCase.Body, position, currentFilePath, imports, caseScope);
                         if (inBody is not null)
                         {
@@ -1736,6 +1754,7 @@ public static partial class DocumentService
                 foreach (var matchCase in match.Cases)
                 {
                     if (TryFindPatternBindingDefinition(matchCase.Pattern, name, filePath, out definition)
+                        || (matchCase.Guard is not null && TryFindBindingDefinition(matchCase.Guard, name, filePath, out definition))
                         || TryFindBindingDefinition(matchCase.Body, name, filePath, out definition))
                     {
                         return true;

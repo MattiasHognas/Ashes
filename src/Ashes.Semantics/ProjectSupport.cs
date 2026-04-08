@@ -1156,6 +1156,10 @@ public static class ProjectSupport
                     Visit(match.Value);
                     foreach (var matchCase in match.Cases)
                     {
+                        if (matchCase.Guard is not null)
+                        {
+                            Visit(matchCase.Guard);
+                        }
                         Visit(matchCase.Body);
                     }
                     break;

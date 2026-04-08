@@ -10,6 +10,7 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#operators" },
+    { "include": "#punctuation" },
     { "include": "#identifiers" }
   ],
   "repository": {
@@ -42,7 +43,7 @@
         },
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|rec|in|if|then|else|match|with|fun|type|async|await)\\b"
+          "match": "\\b(let|rec|in|if|then|else|match|with|when|fun|type|async|await)\\b"
         }
       ]
     },
@@ -94,6 +95,26 @@
         {
           "name": "keyword.operator.ashes",
           "match": "->|::|>=|<=|==|!=|\\+|\\-|\\*|\\/|=|\\||,|\\."
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.paren.open.ashes",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.paren.close.ashes",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.bracket.open.ashes",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.bracket.close.ashes",
+          "match": "\\]"
         }
       ]
     },
