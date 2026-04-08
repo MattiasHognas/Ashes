@@ -6,13 +6,11 @@ complete. Subsequent work focuses on runtime and ecosystem.
 
 | Feature | Status |
 |---------|--------|
-| Async/Await | Complete |
 | Async Networking | Planned — non-blocking TCP/HTTP inside `async` |
 | Package Manager | Planned — ecosystem and dependency management |
 | HTTPS/TLS | Planned — TLS, encryption, certificates |
 | Pattern Guards | Planned — pattern matching enhancements |
 | Type Annotations | Planned — user-written type annotations |
-| Import Aliasing | Complete — `import Ashes.IO as io` |
 | Selective Imports | Planned — `import Ashes.IO (print)` |
 | Effects / IO Types | Planned — effect system or IO types |
 | Inline Modules | Planned — inline module declarations |
