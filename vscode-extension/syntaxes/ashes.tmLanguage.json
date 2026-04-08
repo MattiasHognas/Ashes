@@ -10,6 +10,7 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#operators" },
+    { "include": "#punctuation" },
     { "include": "#identifiers" }
   ],
   "repository": {
@@ -94,6 +95,26 @@
         {
           "name": "keyword.operator.ashes",
           "match": "->|::|>=|<=|==|!=|\\+|\\-|\\*|\\/|=|\\||,|\\."
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.paren.open.ashes",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.paren.close.ashes",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.bracket.open.ashes",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.bracket.close.ashes",
+          "match": "\\]"
         }
       ]
     },
