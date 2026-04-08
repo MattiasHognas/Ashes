@@ -20,6 +20,7 @@ public enum TokenKind
     Else,
     Match,
     With,
+    When,
 
     Fun,
     True,

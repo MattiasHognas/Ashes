@@ -3033,6 +3033,15 @@ public sealed class Lowering
             // Track owned bindings created by pattern matching
             TrackOwnedBindingsInPattern(patternBindings);
 
+            // If the case has a guard, evaluate it and jump to fail label if false
+            if (match.Cases[i].Guard is { } guard)
+            {
+                if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+                var (guardTemp, guardType) = LowerExpr(guard);
+                Unify(guardType, new TypeRef.TBool());
+                Emit(new IrInst.JumpIfFalse(guardTemp, caseFailLabel));
+            }
+
             // Each case body IS in tail position (if the match itself is)
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
             var (bodyTemp, bodyType) = LowerExpr(match.Cases[i].Body);
@@ -3095,7 +3104,7 @@ public sealed class Lowering
         }
 
         if (!reportedNonExhaustive &&
-            TryGetMissingPattern(prunedValueType, match.Cases.Select(c => c.Pattern).ToList(), out var missingPattern))
+            TryGetMissingPattern(prunedValueType, match.Cases.Where(c => c.Guard is null).Select(c => c.Pattern).ToList(), out var missingPattern))
         {
             _diag.Error(matchPos, $"Non-exhaustive match expression. Missing case: {FormatPattern(missingPattern)}.");
         }
@@ -4314,6 +4323,10 @@ public sealed class Lowering
                             bndCase.Add(name);
                         }
 
+                        if (mc.Guard is not null)
+                        {
+                            Visit(mc.Guard, bndCase);
+                        }
                         Visit(mc.Body, bndCase);
                     }
                     return;
@@ -4402,7 +4415,11 @@ public sealed class Lowering
             case Expr.Match m:
                 CollectQualifiedVarsVisit(m.Value, result);
                 foreach (var mc in m.Cases)
+                {
+                    if (mc.Guard is not null)
+                        CollectQualifiedVarsVisit(mc.Guard, result);
                     CollectQualifiedVarsVisit(mc.Body, result);
+                }
                 break;
             case Expr.Add a:
                 CollectQualifiedVarsVisit(a.Left, result);
@@ -4523,7 +4540,7 @@ public sealed class Lowering
 
         foreach (var matchCase in cases)
         {
-            if (IsCatchAllPattern(matchCase.Pattern))
+            if (IsCatchAllPattern(matchCase.Pattern) && matchCase.Guard is null)
             {
                 return true;
             }
@@ -4552,6 +4569,11 @@ public sealed class Lowering
 
         foreach (var matchCase in cases)
         {
+            if (matchCase.Guard is not null)
+            {
+                continue;
+            }
+
             if (matchCase.Pattern is Pattern.BoolLit b)
             {
                 if (b.Value) hasTrue = true;
@@ -4588,7 +4610,7 @@ public sealed class Lowering
             return null;
         }
 
-        if (cases.Any(c => IsCatchAllPattern(c.Pattern)))
+        if (cases.Any(c => IsCatchAllPattern(c.Pattern) && c.Guard is null))
         {
             return [];
         }
@@ -4596,6 +4618,11 @@ public sealed class Lowering
         var seenConstructors = new HashSet<string>(StringComparer.Ordinal);
         foreach (var matchCase in cases)
         {
+            if (matchCase.Guard is not null)
+            {
+                continue;
+            }
+
             if (TryGetConstructorSymbol(matchCase.Pattern, out var ctor) &&
                 string.Equals(ctor.ParentType, namedType.Symbol.Name, StringComparison.Ordinal))
             {
@@ -4616,7 +4643,7 @@ public sealed class Lowering
             return null;
         }
 
-        if (cases.Any(c => IsCatchAllPattern(c.Pattern)))
+        if (cases.Any(c => IsCatchAllPattern(c.Pattern) && c.Guard is null))
         {
             return [];
         }
@@ -5050,7 +5077,7 @@ public sealed class Lowering
                 continue;
             }
 
-            if (IsCatchAllPattern(matchCase.Pattern))
+            if (IsCatchAllPattern(matchCase.Pattern) && matchCase.Guard is null)
             {
                 hasCatchAll = true;
                 continue;

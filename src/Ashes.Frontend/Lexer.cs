@@ -298,6 +298,7 @@ public sealed class Lexer
             "else" => TokenKind.Else,
             "match" => TokenKind.Match,
             "with" => TokenKind.With,
+            "when" => TokenKind.When,
             "fun" => TokenKind.Fun,
             "true" => TokenKind.True,
             "false" => TokenKind.False,

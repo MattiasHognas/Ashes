@@ -56,7 +56,7 @@ public abstract record Expr
 
 }
 
-public readonly record struct MatchCase(Pattern Pattern, Expr Body);
+public readonly record struct MatchCase(Pattern Pattern, Expr Body, Expr? Guard = null);
 
 public abstract record Pattern
 {

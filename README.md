@@ -34,7 +34,8 @@ in
                 in count
         in 
             match task.run(t) with
-                | Ok(n) -> io.print(n)
+                | Ok(n) when n >= 1 -> io.print(n)
+                | Ok(_) -> io.print(0)
                 | Error(_) -> io.print(0)
 ```
 
