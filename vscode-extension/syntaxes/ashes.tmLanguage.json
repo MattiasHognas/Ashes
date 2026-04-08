@@ -24,7 +24,7 @@
       "patterns": [
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|rec|in|if|then|else|match|with|fun|type)\\b"
+          "match": "\\b(let|rec|in|if|then|else|match|with|when|fun|type|async|await)\\b"
         }
       ]
     },

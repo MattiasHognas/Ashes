@@ -63,6 +63,7 @@ Lists and cons
 - `match <expr> with` stays on one line.
 - Each arm starts on its own line.
 - Nested multiline expressions inside an arm are indented one level.
+- Pattern guards are formatted inline: `| pattern when condition -> expr`
 
 Example:
 
@@ -73,6 +74,14 @@ match xs with
         match tail with
             | [] -> head
             | _ -> head
+```
+
+Example with pattern guard:
+
+```ash
+match x with
+    | n when n >= 10 -> "big"
+    | _ -> "small"
 ```
 
 Type declarations
