@@ -4,6 +4,7 @@
   "scopeName": "source.ashes",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#imports" },
     { "include": "#keywords" },
     { "include": "#constants" },
     { "include": "#strings" },
@@ -20,8 +21,25 @@
         }
       ]
     },
+    "imports": {
+      "patterns": [
+        {
+          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_]*(?:\\.[A-Z][A-Za-z0-9_]*)*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
+          "captures": {
+            "1": { "name": "keyword.control.import.ashes" },
+            "2": { "name": "entity.name.namespace.ashes" },
+            "3": { "name": "keyword.control.as.ashes" },
+            "4": { "name": "entity.name.namespace.alias.ashes" }
+          }
+        }
+      ]
+    },
     "keywords": {
       "patterns": [
+        {
+          "name": "keyword.control.ashes",
+          "match": "(?<!\\w)(let\\?|let!)(?!\\w)"
+        },
         {
           "name": "keyword.control.ashes",
           "match": "\\b(let|rec|in|if|then|else|match|with|when|fun|type|async|await)\\b"
@@ -33,6 +51,10 @@
         {
           "name": "constant.language.boolean.ashes",
           "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.wildcard.ashes",
+          "match": "(?<!\\w)_(?!\\w)"
         }
       ]
     },
@@ -54,6 +76,10 @@
     "numbers": {
       "patterns": [
         {
+          "name": "constant.numeric.float.ashes",
+          "match": "\\b\\d+\\.\\d+"
+        },
+        {
           "name": "constant.numeric.integer.ashes",
           "match": "\\b\\d+\\b"
         }
@@ -62,8 +88,12 @@
     "operators": {
       "patterns": [
         {
+          "name": "keyword.operator.pipeline.ashes",
+          "match": "\\|\\?>|\\|!>|\\|>"
+        },
+        {
           "name": "keyword.operator.ashes",
-          "match": "(->|::|>=|<=|==|!=|\\+|\\-|\\*|\\/|=|\\||,)"
+          "match": "->|::|>=|<=|==|!=|\\+|\\-|\\*|\\/|=|\\||,|\\."
         }
       ]
     },
