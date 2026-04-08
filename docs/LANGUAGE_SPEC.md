@@ -655,6 +655,10 @@ match value with
 | pattern1 -> expr1
 | pattern2 -> expr2
 
+Each arm may include an optional guard:
+
+| pattern when condition -> expr
+
 ---
 
 ## 11.1 List Patterns
@@ -859,7 +863,60 @@ match flag with
 
 ---
 
-## 11.8 Let Pattern Bindings
+## 11.8 Pattern Guards
+
+Match arms can include an optional `when` guard clause that adds a boolean
+condition to the pattern.
+
+Syntax:
+
+| pattern when condition -> expr
+
+Semantics:
+
+1. The pattern is matched first.
+2. If the pattern matches, the `when` condition is evaluated.
+3. If the condition is `true`, the branch expression is executed.
+4. If the condition is `false`, matching continues with the next arm.
+
+The guard expression has access to all bindings introduced by the pattern.
+
+Example:
+
+match x with
+| n when n >= 10 -> "big"
+| _ -> "small"
+
+Example with constructor patterns:
+
+type Outcome =
+    | Good(Int)
+    | Bad(String)
+
+match outcome with
+| Good(n) when n >= 100 -> "excellent"
+| Good(n) -> "ok"
+| Bad(e) -> e
+
+Exhaustiveness:
+
+- A guarded arm does not count toward exhaustiveness, because the guard
+  may be `false`. A match must still have unguarded arms that cover all
+  patterns.
+- A guarded catch-all pattern (e.g. `_ when cond`) does not make
+  subsequent arms unreachable.
+
+Desugaring model:
+
+`| p when cond -> expr` behaves like:
+
+| p -> if cond then expr else <continue to next arm>
+
+Pattern guards are syntax sugar — no new evaluation rules are introduced.
+
+---
+
+## 11.9 Let Pattern Bindings
 
 Let expressions support destructuring patterns on the left side of `=`.
 

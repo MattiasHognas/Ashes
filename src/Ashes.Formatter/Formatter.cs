@@ -477,6 +477,11 @@ public static class Formatter
             WriteIndent(sb, indent + options.IndentSize, options);
             sb.Append("| ");
             WritePattern(sb, matchCase.Pattern);
+            if (matchCase.Guard is not null)
+            {
+                sb.Append(" when ");
+                WriteExprInline(sb, matchCase.Guard, indent + options.IndentSize, 0, preferPipelines, options);
+            }
             sb.Append(" -> ");
             if (IsSingleLine(matchCase.Body, preferPipelines))
             {
