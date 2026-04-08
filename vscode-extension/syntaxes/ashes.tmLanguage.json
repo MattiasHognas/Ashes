@@ -24,7 +24,7 @@
     "imports": {
       "patterns": [
         {
-          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_.]*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
+          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_]*(?:\\.[A-Z][A-Za-z0-9_]*)*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
           "captures": {
             "1": { "name": "keyword.control.import.ashes" },
             "2": { "name": "entity.name.namespace.ashes" },
