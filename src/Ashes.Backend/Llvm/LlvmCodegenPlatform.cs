@@ -473,4 +473,80 @@ internal static partial class LlvmCodegen
             },
             name);
     }
+
+    private static LlvmValueHandle EmitLinuxSyscall6(LlvmCodegenState state, long nr,
+        LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3,
+        LlvmValueHandle arg4, LlvmValueHandle arg5, LlvmValueHandle arg6, string name)
+    {
+        long resolved = ResolveSyscallNr(state.Flavor, nr);
+        if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            return EmitSyscall6Arm64(state, resolved, arg1, arg2, arg3, arg4, arg5, arg6, name);
+        }
+
+        return EmitSyscall6X86(state, resolved, arg1, arg2, arg3, arg4, arg5, arg6, name);
+    }
+
+    private static LlvmValueHandle EmitSyscall6X86(LlvmCodegenState state, long nr,
+        LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3,
+        LlvmValueHandle arg4, LlvmValueHandle arg5, LlvmValueHandle arg6, string name)
+    {
+        // x86-64 Linux 6-argument syscall convention:
+        //   rax = syscall number
+        //   rdi = arg1, rsi = arg2, rdx = arg3, r10 = arg4, r8 = arg5, r9 = arg6
+        //   Note: r10 is used instead of rcx (rcx is clobbered by syscall).
+        LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64,
+            [state.I64, state.I64, state.I64, state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
+            syscallType,
+            "syscall",
+            "={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}",
+            true,
+            false);
+        return LlvmApi.BuildCall2(state.Target.Builder,
+            syscallType,
+            syscall,
+            new[]
+            {
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
+                NormalizeToI64(state, arg1),
+                NormalizeToI64(state, arg2),
+                NormalizeToI64(state, arg3),
+                NormalizeToI64(state, arg4),
+                NormalizeToI64(state, arg5),
+                NormalizeToI64(state, arg6)
+            },
+            name);
+    }
+
+    private static LlvmValueHandle EmitSyscall6Arm64(LlvmCodegenState state, long nr,
+        LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3,
+        LlvmValueHandle arg4, LlvmValueHandle arg5, LlvmValueHandle arg6, string name)
+    {
+        // AArch64 Linux 6-argument syscall:
+        //   x8 = syscall number
+        //   x0 = arg1, x1 = arg2, x2 = arg3, x3 = arg4, x4 = arg5, x5 = arg6
+        LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64,
+            [state.I64, state.I64, state.I64, state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle syscall = LlvmApi.GetInlineAsm(
+            syscallType,
+            "svc #0",
+            "={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory},~{cc}",
+            true,
+            false);
+        return LlvmApi.BuildCall2(state.Target.Builder,
+            syscallType,
+            syscall,
+            new[]
+            {
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
+                NormalizeToI64(state, arg1),
+                NormalizeToI64(state, arg2),
+                NormalizeToI64(state, arg3),
+                NormalizeToI64(state, arg4),
+                NormalizeToI64(state, arg5),
+                NormalizeToI64(state, arg6)
+            },
+            name);
+    }
 }

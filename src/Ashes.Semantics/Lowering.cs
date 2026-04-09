@@ -3543,44 +3543,31 @@ public sealed class Lowering
 
     private void EmitRequireTagMatch(int ptrTemp, int expectedTag, string failLabel)
     {
-        // The IR has no dedicated equality instruction; emulate tag == expectedTag as
-        // (tag >= expectedTag) AND (tag <= expectedTag) using the existing CmpIntGe / CmpIntLe.
         int tagTemp = NewTemp();
-        int geTemp = NewTemp();
-        int leTemp = NewTemp();
+        int eqTemp = NewTemp();
         int expectedTagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, ptrTemp));
         Emit(new IrInst.LoadConstInt(expectedTagTemp, expectedTag));
-        Emit(new IrInst.CmpIntGe(geTemp, tagTemp, expectedTagTemp));
-        Emit(new IrInst.JumpIfFalse(geTemp, failLabel));
-        Emit(new IrInst.CmpIntLe(leTemp, tagTemp, expectedTagTemp));
-        Emit(new IrInst.JumpIfFalse(leTemp, failLabel));
+        Emit(new IrInst.CmpIntEq(eqTemp, tagTemp, expectedTagTemp));
+        Emit(new IrInst.JumpIfFalse(eqTemp, failLabel));
     }
 
     private void EmitRequireZero(int valueTemp, string failLabel)
     {
-        // IR has <= and >= but no direct == comparison.
         int zeroTemp = NewTemp();
-        int geTemp = NewTemp();
-        int leTemp = NewTemp();
+        int eqTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-        Emit(new IrInst.CmpIntGe(geTemp, valueTemp, zeroTemp));
-        Emit(new IrInst.JumpIfFalse(geTemp, failLabel));
-        Emit(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
-        Emit(new IrInst.JumpIfFalse(leTemp, failLabel));
+        Emit(new IrInst.CmpIntEq(eqTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(eqTemp, failLabel));
     }
 
     private void EmitRequireNonZero(int valueTemp, string failLabel)
     {
-        // IR has <= but no > comparison; treat non-zero list pointers as > 0.
         int zeroTemp = NewTemp();
-        int leTemp = NewTemp();
-        var passLabel = NewLabel("match_nonzero");
+        int neTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-        Emit(new IrInst.CmpIntLe(leTemp, valueTemp, zeroTemp));
-        Emit(new IrInst.JumpIfFalse(leTemp, passLabel));
-        Emit(new IrInst.Jump(failLabel));
-        Emit(new IrInst.Label(passLabel));
+        Emit(new IrInst.CmpIntNe(neTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(neTemp, failLabel));
     }
 
     private void EmitRequireIntEqual(int valueTemp, long expected, string failLabel)

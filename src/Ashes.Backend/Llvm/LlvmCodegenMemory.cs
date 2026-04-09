@@ -6,9 +6,13 @@ internal static partial class LlvmCodegen
 {
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
     {
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
-        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(state.Target.Builder, cursor, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "heap_cursor_next");
-        LlvmApi.BuildStore(state.Target.Builder, nextCursor, state.HeapCursorSlot);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle sizeConst = LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0);
+        EmitHeapEnsureSpace(state, sizeConst);
+        // After EnsureSpace the cursor global points to valid space in the current chunk.
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
+        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, sizeConst, "heap_cursor_next");
+        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
         return cursor;
     }
 
@@ -160,10 +164,183 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes)
     {
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
-        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(state.Target.Builder, cursor, NormalizeToI64(state, sizeBytes), "heap_cursor_next_dyn");
-        LlvmApi.BuildStore(state.Target.Builder, nextCursor, state.HeapCursorSlot);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle normalizedSize = NormalizeToI64(state, sizeBytes);
+        EmitHeapEnsureSpace(state, normalizedSize);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
+        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, normalizedSize, "heap_cursor_next_dyn");
+        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
         return cursor;
+    }
+
+    /// <summary>
+    /// Allocates the initial heap chunk at program entry via mmap (Linux) or VirtualAlloc (Windows).
+    /// Sets __ashes_heap_cursor and __ashes_heap_end globals.
+    /// </summary>
+    private static void EmitHeapChunkInit(LlvmCodegenState state)
+    {
+        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap");
+        EmitHeapChunkInitCheck(state, chunkBase);
+        LlvmApi.BuildStore(state.Target.Builder, chunkBase, state.HeapCursorSlot);
+        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(state.Target.Builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap_end");
+        LlvmApi.BuildStore(state.Target.Builder, chunkEnd, state.HeapEndSlot);
+    }
+
+    /// <summary>
+    /// Ensures the current heap chunk has enough space for sizeBytes.
+    /// If cursor + size would exceed the chunk end, allocates new chunk(s) from the OS
+    /// until the request fits in the current chunk.
+    /// </summary>
+    private static void EmitHeapEnsureSpace(LlvmCodegenState state, LlvmValueHandle sizeBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_check");
+        var growBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_grow");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_ok");
+
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_check_cursor");
+        LlvmValueHandle needed = LlvmApi.BuildAdd(builder, cursor, sizeBytes, "heap_check_needed");
+        LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "heap_end");
+        LlvmValueHandle overflow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, needed, heapEnd, "heap_overflow");
+        LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, growBlock);
+        EmitHeapGrow(state);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+    }
+
+    private static readonly byte[] HeapAllocFailedMessage =
+        "Runtime error: failed to allocate heap memory from OS\n"u8.ToArray();
+
+    /// <summary>
+    /// Allocates a new heap chunk from the OS and updates cursor/end globals.
+    /// The old chunk remains valid (bump allocator never frees).
+    /// </summary>
+    private static void EmitHeapGrow(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap");
+        EmitHeapChunkInitCheck(state, chunkBase);
+        LlvmApi.BuildStore(builder, chunkBase, state.HeapCursorSlot);
+        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_end");
+        LlvmApi.BuildStore(builder, chunkEnd, state.HeapEndSlot);
+    }
+
+    /// <summary>
+    /// Checks if the OS memory allocation succeeded. On Linux raw syscalls report failures as
+    /// negative errno values in the range [-4095, -1]; on Windows VirtualAlloc returns NULL (0).
+    /// Panics with a diagnostic message if the allocation failed.
+    /// </summary>
+    private static void EmitHeapChunkInitCheck(LlvmCodegenState state, LlvmValueHandle chunkBase)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle failed;
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            LlvmValueHandle linuxErrnoMin = LlvmApi.ConstInt(state.I64, unchecked((ulong)(-4095L)), 1);
+            LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 1);
+            LlvmValueHandle isErrnoMinOrAbove = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, chunkBase, linuxErrnoMin, "mmap_errno_min_or_above");
+            LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, chunkBase, zero, "mmap_negative");
+            failed = LlvmApi.BuildAnd(builder, isErrnoMinOrAbove, isNegative, "mmap_failed");
+        }
+        else
+        {
+            LlvmValueHandle failValue = LlvmApi.ConstInt(state.I64, 0, 0); // NULL
+            failed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, chunkBase, failValue, "virtualalloc_failed");
+        }
+        var failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_alloc_fail");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_alloc_ok");
+        LlvmApi.BuildCondBr(builder, failed, failBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        EmitHeapAllocFailedPanic(state);
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+    }
+
+    private static void EmitHeapAllocFailedPanic(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            LlvmValueHandle msgPtr = EmitStackByteArray(state, HeapAllocFailedMessage);
+            LlvmValueHandle msgLen = LlvmApi.ConstInt(state.I64, (ulong)HeapAllocFailedMessage.Length, 0);
+            EmitLinuxSyscall(state, SyscallWrite,
+                LlvmApi.ConstInt(state.I64, 2, 0),
+                LlvmApi.BuildPtrToInt(builder, msgPtr, state.I64, "oom_msg_i64"),
+                msgLen,
+                "sys_write_oom");
+            EmitExit(state, LlvmApi.ConstInt(state.I64, 1, 0));
+        }
+        else
+        {
+            EmitWindowsExitProcess(state, LlvmApi.ConstInt(state.I32, 1, 0));
+        }
+    }
+
+    /// <summary>
+    /// Allocates memory from the OS.
+    /// Linux: mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+    /// Windows: VirtualAlloc(NULL, size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)
+    /// Returns the base address as an i64.
+    /// </summary>
+    private static LlvmValueHandle EmitAllocateOsMemory(LlvmCodegenState state, LlvmValueHandle sizeBytes, string prefix)
+    {
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            return EmitLinuxMmap(state, sizeBytes, prefix);
+        }
+
+        return EmitWindowsVirtualAlloc(state, sizeBytes, prefix);
+    }
+
+    private static LlvmValueHandle EmitLinuxMmap(LlvmCodegenState state, LlvmValueHandle sizeBytes, string prefix)
+    {
+        // mmap(addr=NULL, length, prot=PROT_READ|PROT_WRITE, flags=MAP_PRIVATE|MAP_ANONYMOUS, fd=-1, offset=0)
+        const long protReadWrite = 0x1 | 0x2;       // PROT_READ | PROT_WRITE
+        const long mapPrivateAnon = 0x02 | 0x20;     // MAP_PRIVATE | MAP_ANONYMOUS
+        return EmitLinuxSyscall6(state, SyscallMmap,
+            LlvmApi.ConstInt(state.I64, 0, 0),                          // addr = NULL
+            sizeBytes,                                                    // length
+            LlvmApi.ConstInt(state.I64, (ulong)protReadWrite, 0),        // prot
+            LlvmApi.ConstInt(state.I64, (ulong)mapPrivateAnon, 0),       // flags
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),     // fd = -1
+            LlvmApi.ConstInt(state.I64, 0, 0),                           // offset = 0
+            prefix + "_mmap");
+    }
+
+    private static LlvmValueHandle EmitWindowsVirtualAlloc(LlvmCodegenState state, LlvmValueHandle sizeBytes, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // VirtualAlloc(lpAddress=NULL, dwSize, flAllocationType=MEM_COMMIT|MEM_RESERVE, flProtect=PAGE_READWRITE)
+        const uint memCommitReserve = 0x1000 | 0x2000; // MEM_COMMIT | MEM_RESERVE
+        const uint pageReadWrite = 0x04;                // PAGE_READWRITE
+
+        LlvmTypeHandle virtualAllocType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I32, state.I32]);
+        LlvmValueHandle virtualAllocPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsVirtualAllocImport,
+            prefix + "_va_ptr");
+        return LlvmApi.BuildCall2(builder,
+            virtualAllocType,
+            virtualAllocPtr,
+            new[]
+            {
+                LlvmApi.ConstInt(state.I64, 0, 0),                        // lpAddress = NULL
+                NormalizeToI64(state, sizeBytes),                          // dwSize
+                LlvmApi.ConstInt(state.I32, memCommitReserve, 0),          // flAllocationType
+                LlvmApi.ConstInt(state.I32, pageReadWrite, 0)              // flProtect
+            },
+            prefix + "_va_call");
     }
 
     private static LlvmValueHandle EmitStringToCString(LlvmCodegenState state, LlvmValueHandle stringRef, string prefix)
