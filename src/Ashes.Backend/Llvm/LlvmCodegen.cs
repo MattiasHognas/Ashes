@@ -387,7 +387,8 @@ internal static partial class LlvmCodegen
             heapStorageGlobal,
             heapCursorGlobal,
             heapEndGlobal,
-            windowsGetStdHandleImport,            windowsWriteFileImport,
+            windowsGetStdHandleImport,
+            windowsWriteFileImport,
             windowsReadFileImport,
             windowsCreateFileImport,
             windowsCloseHandleImport,
@@ -457,12 +458,6 @@ internal static partial class LlvmCodegen
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
         return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs;
-    }
-
-    private static bool ProgramUsesHeapAllocation(IrProgram program)
-    {
-        return program.EntryFunction.Instructions.Any(RequiresEntryHeapStorage)
-            || program.Functions.Any(static function => function.Instructions.Any(RequiresEntryHeapStorage));
     }
 
     private static void EmitFunctionBody(
