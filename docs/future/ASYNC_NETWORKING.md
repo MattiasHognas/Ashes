@@ -30,8 +30,9 @@ inside `async` blocks with `await`.
 | `Ashes.Net.Tcp.receive(socket)(maxBytes)` | `Task(Str, Str)` — async-only |
 | `Ashes.Net.Tcp.close(socket)` | `Task(Str, Unit)` — async-only |
 
-All six APIs become intrinsics that must be called inside `async`
-blocks and awaited.  There is no synchronous fallback.
+All six APIs become compiler-provided networking builtins that must be
+called inside `async` blocks and awaited.  There is no synchronous
+fallback.
 
 ------------------------------------------------------------------------
 
