@@ -229,19 +229,28 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Checks if the OS memory allocation succeeded. On Linux mmap returns MAP_FAILED (-1)
-    /// on failure; on Windows VirtualAlloc returns NULL (0). Panics with a diagnostic message
-    /// if the allocation failed.
+    /// Checks if the OS memory allocation succeeded. On Linux raw syscalls report failures as
+    /// negative errno values in the range [-4095, -1]; on Windows VirtualAlloc returns NULL (0).
+    /// Panics with a diagnostic message if the allocation failed.
     /// </summary>
     private static void EmitHeapChunkInitCheck(LlvmCodegenState state, LlvmValueHandle chunkBase)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        // mmap returns (void*)-1 on failure, VirtualAlloc returns NULL (0).
-        LlvmValueHandle failValue = IsLinuxFlavor(state.Flavor)
-            ? LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1) // MAP_FAILED = -1
-            : LlvmApi.ConstInt(state.I64, 0, 0);                      // NULL
-        LlvmValueHandle failed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, chunkBase, failValue, "mmap_failed");
+        LlvmValueHandle failed;
 
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            LlvmValueHandle linuxErrnoMin = LlvmApi.ConstInt(state.I64, unchecked((ulong)(-4095L)), 1);
+            LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 1);
+            LlvmValueHandle isErrnoMinOrAbove = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, chunkBase, linuxErrnoMin, "mmap_errno_min_or_above");
+            LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, chunkBase, zero, "mmap_negative");
+            failed = LlvmApi.BuildAnd(builder, isErrnoMinOrAbove, isNegative, "mmap_failed");
+        }
+        else
+        {
+            LlvmValueHandle failValue = LlvmApi.ConstInt(state.I64, 0, 0); // NULL
+            failed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, chunkBase, failValue, "virtualalloc_failed");
+        }
         var failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_alloc_fail");
         var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_alloc_ok");
         LlvmApi.BuildCondBr(builder, failed, failBlock, okBlock);
