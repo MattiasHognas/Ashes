@@ -99,9 +99,10 @@ internal static partial class LlvmImageLinker
         int recvHintOffset = WriteHintName(rdataStream, 0, "recv");
         int closeSocketHintOffset = WriteHintName(rdataStream, 0, "closesocket");
         int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
+        int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
         int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset];
 
@@ -156,6 +157,7 @@ internal static partial class LlvmImageLinker
         ulong wideCharToMultiByteIatVa = kernel32IatVa + 8 * 8;
         ulong localFreeIatVa = kernel32IatVa + 9 * 8;
         ulong sleepIatVa = kernel32IatVa + 10 * 8;
+        ulong virtualAllocIatVa = kernel32IatVa + 11 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -198,6 +200,7 @@ internal static partial class LlvmImageLinker
                 ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
                 ["__imp_LocalFree"] = localFreeIatVa,
                 ["__imp_Sleep"] = sleepIatVa,
+                ["__imp_VirtualAlloc"] = virtualAllocIatVa,
                 ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
                 ["__imp_WSAStartup"] = wsaStartupIatVa,
                 ["__imp_socket"] = socketIatVa,

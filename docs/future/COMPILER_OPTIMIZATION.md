@@ -18,7 +18,7 @@ are significant optimization opportunities:
 
 1. LLVM module-level optimization passes are completely disabled (dead code)
 2. ~~Memory is never freed — 4 MB bump allocator with no bounds checking
-   silently crashes on overflow~~ ✅ Bounds checking added
+   silently crashes on overflow~~ ✅ Dynamic heap via `mmap`/`VirtualAlloc`
 3. Manual byte loops replace LLVM intrinsics for string operations
 4. ~~Pattern matching uses double comparisons where single equality checks
    suffice~~ ✅ Fixed
@@ -61,37 +61,45 @@ pass manager. PLT32 is treated identically to PC32 for static executables
 
 ## Finding 2 — Memory Management
 
-**Status:** Partially addressed ✅  
+**Status:** Mostly addressed ✅  
 **Severity:** Critical
 
 ### The allocator
 
-```
-HeapSizeBytes = 4 MB (fixed)
-EmitAlloc: cursor += size; return old_cursor;
-```
+~~The heap was a fixed 4 MB global byte array embedded in the BSS section
+of the executable. This imposed a hard limit of ~262 144 cons cells and
+bloated every binary by 4 MB.~~
 
-- ~~No bounds check — if `cursor + size > 4 MB` the program writes past the
-  array and crashes with SIGSEGV.~~ ✅ **Fixed.** `EmitAlloc` and
-  `EmitAllocDynamic` now compare `nextCursor > heapEnd` and branch to an
-  OOM panic that prints `"Runtime error: heap memory exhausted"` and exits
-  cleanly.
-- The theoretical limit is 262 144 cons cells (each 16 bytes).
+✅ **Fixed.** The allocator now uses OS-backed virtual memory:
+
+- **Linux:** `mmap(NULL, 4MB, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)`
+  via a new 6-argument syscall wrapper (x86-64 and ARM64).
+- **Windows:** `VirtualAlloc(NULL, 4MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)`
+  via a new kernel32 import.
+- Chunks are allocated on demand — when the current chunk is exhausted, a
+  new 4 MB chunk is allocated from the OS automatically.
+- The global array is removed, eliminating the 4 MB BSS overhead from every
+  compiled binary.
+- If the OS refuses the allocation (out of address space), the program
+  prints `"Runtime error: failed to allocate heap memory from OS"` and exits
+  with code 1.
+- Verified working with 1 000 000 cons cells (16 MB, 4× the old limit).
 
 ### No deallocation (still open)
 
 - `Drop` instructions exist in IR for semantic correctness.
 - Backend `EmitDrop()` is a no-op for all heap types (only sockets get
   closed).
-- For any long-running program (server, event loop), guaranteed OOM.
+- For any long-running program (server, event loop), memory usage will grow
+  monotonically. The OS will eventually refuse an allocation, but this is
+  significantly more forgiving than the old hard 4 MB ceiling.
 
 ### Recommendations
 
 1. ✅ **Done:** Heap bounds checking — clean error on overflow.
-2. **Short-term:** Consider growing the heap via `mmap` / `VirtualAlloc`
-   when exhausted.
+2. ✅ **Done:** Growing heap via `mmap` / `VirtualAlloc` — no hard limit.
 3. **Long-term:** Implement a real allocator (arena + generational GC, or
-   reference counting).
+   reference counting) to reclaim memory within long-running programs.
 
 ------------------------------------------------------------------------
 
@@ -298,21 +306,22 @@ structured output), this wastes heap space and comparison time.
 |---|------|--------|
 | 1 | Add heap bounds check | ✅ Done |
 | 2 | Fix pattern match double-comparison | ✅ Done |
-| 3 | Add `LLVMBuildMemCpy` interop and use in `EmitCopyBytes` | Open |
+| 3 | Replace fixed heap with dynamic `mmap`/`VirtualAlloc` chunks | ✅ Done |
+| 4 | Add `LLVMBuildMemCpy` interop and use in `EmitCopyBytes` | Open |
 
 ### Medium-term (moderate effort, high impact)
 
 | # | Item | Status |
 |---|------|--------|
-| 4 | Add PLT32 relocation support, then enable LLVM optimization passes | Open |
-| 5 | Add `nounwind` attribute to all emitted functions | Open |
-| 6 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | Open |
-| 7 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | Open |
+| 5 | Add PLT32 relocation support, then enable LLVM optimization passes | Open |
+| 6 | Add `nounwind` attribute to all emitted functions | Open |
+| 7 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | Open |
+| 8 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | Open |
 
 ### Long-term (significant effort)
 
 | # | Item | Status |
 |---|------|--------|
-| 8 | Replace bump allocator with growing heap or real GC | Open |
-| 9 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
-| 10 | Decision tree pattern matching for large ADTs | Open |
+| 9 | Implement real deallocation (arena GC or reference counting) | Open |
+| 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
+| 11 | Decision tree pattern matching for large ADTs | Open |

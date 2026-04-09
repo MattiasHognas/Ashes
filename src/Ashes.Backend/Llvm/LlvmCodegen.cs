@@ -8,7 +8,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    private const int HeapSizeBytes = 1024 * 1024 * 4;
+    private const int HeapChunkBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
     private const int MaxFileReadBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
@@ -18,6 +18,7 @@ internal static partial class LlvmCodegen
     private const long SyscallWrite = 1;
     private const long SyscallOpen = 2;
     private const long SyscallClose = 3;
+    private const long SyscallMmap = 9;
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
@@ -29,6 +30,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallClose = 57;
     private const long Arm64SyscallOpenat = 56;
     private const long Arm64SyscallLseek = 62;
+    private const long Arm64SyscallMmap = 222;
     private const long Arm64SyscallRead = 63;
     private const long Arm64SyscallWrite = 64;
     private const long Arm64SyscallExit = 93;
@@ -198,7 +200,6 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
-        LlvmTypeHandle heapType = LlvmApi.ArrayType2(i8, HeapSizeBytes);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
@@ -250,9 +251,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsLocalFreeImport = default;
         LlvmValueHandle windowsCommandLineToArgvImport = default;
         LlvmValueHandle windowsSleepImport = default;
-        LlvmValueHandle heapStorageGlobal = LlvmApi.AddGlobal(target.Module, heapType, "__ashes_heap_storage");
-        LlvmApi.SetLinkage(heapStorageGlobal, LlvmLinkage.Internal);
-        LlvmApi.SetInitializer(heapStorageGlobal, LlvmApi.ConstNull(heapType));
+        LlvmValueHandle windowsVirtualAllocImport = default;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
@@ -322,6 +321,12 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsExitProcessImport, LlvmLinkage.External);
         }
 
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            windowsVirtualAllocImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualAlloc");
+            LlvmApi.SetLinkage(windowsVirtualAllocImport, LlvmLinkage.External);
+        }
+
         if (usesWindowsSleep)
         {
             windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
@@ -384,7 +389,6 @@ internal static partial class LlvmCodegen
             usesProgramArgs,
             i32,
             i32Ptr,
-            heapStorageGlobal,
             heapCursorGlobal,
             heapEndGlobal,
             windowsGetStdHandleImport,
@@ -405,6 +409,7 @@ internal static partial class LlvmCodegen
             windowsLocalFreeImport,
             windowsCommandLineToArgvImport,
             windowsSleepImport,
+            windowsVirtualAllocImport,
             isEntry: true,
             debugContext: dbg);
 
@@ -420,7 +425,6 @@ internal static partial class LlvmCodegen
                 usesProgramArgs,
                 i32,
                 i32Ptr,
-                heapStorageGlobal,
                 heapCursorGlobal,
                 heapEndGlobal,
                 windowsGetStdHandleImport,
@@ -441,6 +445,7 @@ internal static partial class LlvmCodegen
                 windowsLocalFreeImport,
                 windowsCommandLineToArgvImport,
                 windowsSleepImport,
+                windowsVirtualAllocImport,
                 isEntry: false,
                 debugContext: dbg);
         }
@@ -470,7 +475,6 @@ internal static partial class LlvmCodegen
         bool usesProgramArgs,
         LlvmTypeHandle i32,
         LlvmTypeHandle i32Ptr,
-        LlvmValueHandle heapStorageGlobal,
         LlvmValueHandle heapCursorGlobal,
         LlvmValueHandle heapEndGlobal,
         LlvmValueHandle windowsGetStdHandleImport,
@@ -491,6 +495,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsLocalFreeImport,
         LlvmValueHandle windowsCommandLineToArgvImport,
         LlvmValueHandle windowsSleepImport,
+        LlvmValueHandle windowsVirtualAllocImport,
         bool isEntry,
         DebugInfoContext? debugContext = null)
     {
@@ -523,23 +528,6 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(target.Builder, i64, "program_args");
         LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), programArgsSlot);
-
-        if (isEntry)
-        {
-            LlvmValueHandle heapBasePtr = LlvmApi.BuildGEP2(target.Builder,
-                LlvmApi.ArrayType2(i8, HeapSizeBytes),
-                heapStorageGlobal,
-                new[]
-                {
-                    LlvmApi.ConstInt(i64, 0, 0),
-                    LlvmApi.ConstInt(i64, 0, 0)
-                },
-                "heap_base_ptr");
-            LlvmValueHandle heapBaseI64 = LlvmApi.BuildPtrToInt(target.Builder, heapBasePtr, i64, "heap_base_i64");
-            LlvmApi.BuildStore(target.Builder, heapBaseI64, heapCursorGlobal);
-            LlvmValueHandle heapEndI64 = LlvmApi.BuildAdd(target.Builder, heapBaseI64, LlvmApi.ConstInt(i64, HeapSizeBytes, 0), "heap_end_i64");
-            LlvmApi.BuildStore(target.Builder, heapEndI64, heapEndGlobal);
-        }
 
         if (!isEntry && function.HasEnvAndArgParams)
         {
@@ -592,9 +580,15 @@ internal static partial class LlvmCodegen
             windowsLocalFreeImport,
             windowsCommandLineToArgvImport,
             windowsSleepImport,
+            windowsVirtualAllocImport,
             flavor,
             usesProgramArgs,
             isEntry);
+
+        if (isEntry)
+        {
+            EmitHeapChunkInit(state);
+        }
 
         if (isEntry && usesProgramArgs)
         {
@@ -812,6 +806,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsLocalFreeImport,
         LlvmValueHandle WindowsCommandLineToArgvImport,
         LlvmValueHandle WindowsSleepImport,
+        LlvmValueHandle WindowsVirtualAllocImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -865,6 +860,7 @@ internal static partial class LlvmCodegen
             SyscallWrite => Arm64SyscallWrite,
             SyscallOpen => Arm64SyscallOpenat,
             SyscallClose => Arm64SyscallClose,
+            SyscallMmap => Arm64SyscallMmap,
             SyscallLseek => Arm64SyscallLseek,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,
