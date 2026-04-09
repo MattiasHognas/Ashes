@@ -1,22 +1,21 @@
 # Future Features
 
-The core language (ownership, borrowing, pattern matching, optimization)
-is complete. Async/await with combinators (`all`, `race`, `sleep`) is
-complete. Subsequent work focuses on runtime and ecosystem.
+Planned features and future work for the Ashes language and ecosystem.
 
-| Feature | Status |
-|---------|--------|
-| Async Networking | Planned — non-blocking TCP/HTTP inside `async` |
-| HTTPS/TLS | Planned — TLS, encryption, certificates |
-| Pattern Guards | Planned — pattern matching enhancements |
-| Type Annotations | Planned — user-written type annotations |
-| Selective Imports | Planned — `import Ashes.IO (print)` |
-| Effects / IO Types | Planned — effect system or IO types |
-| Inline Modules | Planned — inline module declarations |
-| Ashes.String | Planned — standard library string utilities |
-| Ashes.Bytes | Planned — standard library byte utilities |
-| Ashes.Net.Http | Planned — standard library HTTP module |
-| Ashes.Math | Planned — standard library math utilities |
+| Feature | Description |
+|---------|-------------|
+| [Self-Hosting](SELF_HOSTING.md) | Rewrite the compiler in Ashes |
+| [Async Networking](ASYNC_NETWORKING.md) | Non-blocking TCP/HTTP inside `async` |
+| HTTPS/TLS | TLS, encryption, certificates |
+| Pattern Guards | Pattern matching enhancements |
+| Type Annotations | User-written type annotations |
+| Selective Imports | `import Ashes.IO (print)` |
+| Effects / IO Types | Effect system or IO types |
+| Inline Modules | Inline module declarations |
+| Ashes.String | Standard library string utilities |
+| Ashes.Bytes | Standard library byte utilities |
+| Ashes.Net.Http | Standard library HTTP module |
+| Ashes.Math | Standard library math utilities |
 
 ------------------------------------------------------------------------
 
@@ -41,6 +40,9 @@ complete. Subsequent work focuses on runtime and ecosystem.
 ------------------------------------------------------------------------
 
 ## Async Networking
+
+See [ASYNC_NETWORKING.md](ASYNC_NETWORKING.md) for the full redesign
+plan.
 
 Convert existing blocking TCP/HTTP operations to non-blocking
 variants inside `async` blocks, powered by a platform-specific
