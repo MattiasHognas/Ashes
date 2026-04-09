@@ -1095,6 +1095,43 @@ static void PrintRuntimeFailure(int exitCode, string stdout, string stderr)
     AnsiConsole.Write(new Text(sb.ToString()));
 }
 
+static System.Text.Json.JsonSerializerOptions CreateProjectJsonOptions() => new()
+{
+    WriteIndented = true,
+    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+};
+
+static (Dictionary<string, object?> Fields, Dictionary<string, object?> Dependencies) ReadProjectJson(System.Text.Json.JsonElement root)
+{
+    var obj = new Dictionary<string, object?>();
+    foreach (var prop in root.EnumerateObject())
+    {
+        if (prop.Name == "dependencies")
+        {
+            continue;
+        }
+
+        obj[prop.Name] = DeserializeJsonElement(prop.Value);
+    }
+
+    var deps = new Dictionary<string, object?>();
+    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        foreach (var dep in existingDeps.EnumerateObject())
+        {
+            deps[dep.Name] = DeserializeJsonElement(dep.Value);
+        }
+    }
+
+    return (obj, deps);
+}
+
+static void WriteProjectJson(string projectFilePath, Dictionary<string, object?> obj)
+{
+    var json = System.Text.Json.JsonSerializer.Serialize(obj, CreateProjectJsonOptions());
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+}
+
 static int RunInit()
 {
     var cwd = Directory.GetCurrentDirectory();
@@ -1115,12 +1152,7 @@ static int RunInit()
         ["sourceRoots"] = new[] { "src" }
     };
 
-    var jsonOptions = new System.Text.Json.JsonSerializerOptions
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-    };
-    var json = System.Text.Json.JsonSerializer.Serialize(projectJson, jsonOptions);
+    var json = System.Text.Json.JsonSerializer.Serialize(projectJson, CreateProjectJsonOptions());
     File.WriteAllText(projectFilePath, json + Environment.NewLine);
     AnsiConsole.MarkupLine("[green]Created[/] ashes.json");
 
@@ -1156,38 +1188,12 @@ static int RunAdd(string[] a)
     using var doc = System.Text.Json.JsonDocument.Parse(text);
     var root = doc.RootElement;
 
-    // Build a mutable dictionary from the existing JSON
-    var obj = new Dictionary<string, object?>();
-    foreach (var prop in root.EnumerateObject())
-    {
-        if (prop.Name == "dependencies")
-        {
-            continue; // we'll rebuild this
-        }
-
-        obj[prop.Name] = DeserializeJsonElement(prop.Value);
-    }
-
-    // Read or create the dependencies map
-    var deps = new Dictionary<string, object?>();
-    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
-    {
-        foreach (var dep in existingDeps.EnumerateObject())
-        {
-            deps[dep.Name] = DeserializeJsonElement(dep.Value);
-        }
-    }
+    var (obj, deps) = ReadProjectJson(root);
 
     deps[packageName] = "*";
     obj["dependencies"] = deps;
 
-    var jsonOptions = new System.Text.Json.JsonSerializerOptions
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-    };
-    var json = System.Text.Json.JsonSerializer.Serialize(obj, jsonOptions);
-    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+    WriteProjectJson(projectFilePath, obj);
 
     AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to dependencies.");
     return 0;
@@ -1220,40 +1226,16 @@ static int RunRemove(string[] a)
         throw new CliUserException($"Package '{packageName}' is not in dependencies.");
     }
 
-    // Build a mutable dictionary from the existing JSON
-    var obj = new Dictionary<string, object?>();
-    foreach (var prop in root.EnumerateObject())
-    {
-        if (prop.Name == "dependencies")
-        {
-            continue; // we'll rebuild this
-        }
+    var (obj, deps) = ReadProjectJson(root);
 
-        obj[prop.Name] = DeserializeJsonElement(prop.Value);
-    }
-
-    // Rebuild dependencies without the removed package
-    var deps = new Dictionary<string, object?>();
-    foreach (var dep in existingDeps.EnumerateObject())
-    {
-        if (dep.Name != packageName)
-        {
-            deps[dep.Name] = DeserializeJsonElement(dep.Value);
-        }
-    }
+    deps.Remove(packageName);
 
     if (deps.Count > 0)
     {
         obj["dependencies"] = deps;
     }
 
-    var jsonOptions = new System.Text.Json.JsonSerializerOptions
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-    };
-    var json = System.Text.Json.JsonSerializer.Serialize(obj, jsonOptions);
-    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+    WriteProjectJson(projectFilePath, obj);
 
     AnsiConsole.MarkupLine($"[green]Removed[/] {Markup.Escape(packageName)} from dependencies.");
     return 0;
