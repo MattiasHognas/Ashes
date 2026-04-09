@@ -165,10 +165,11 @@ Implementation per API:
     Verify they still work; the `let!` examples already show
     `await Ashes.Http.get(...)`.
 27. **Add new test** `tcp_connect_outside_async.ash` — Verify calling
-    `Ashes.Net.Tcp.connect` outside `async` produces compile error
-    `ASH011`.
+    `Ashes.Net.Tcp.connect` outside `async` produces a new dedicated
+    async-only API compile error code.
 28. **Add new test** `http_get_outside_async.ash` — Verify calling
-    `Ashes.Http.get` outside `async` produces compile error `ASH011`.
+    `Ashes.Http.get` outside `async` produces the same new dedicated
+    async-only API compile error code.
 
 ## Phase 8 — Format All `.ash` Files
 
