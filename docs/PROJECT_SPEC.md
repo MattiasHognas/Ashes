@@ -240,6 +240,23 @@ Adds a dependency to the project manifest.
 - Adds the package name with version `"*"` to the `dependencies` map.
 - Fails if no `ashes.json` is found.
 
+### 6.3 ashes remove \<package\>
+
+Removes a dependency from the project manifest.
+
+- Locates `ashes.json` by walking upward from the current directory.
+- Removes the package from the `dependencies` map.
+- If the `dependencies` map becomes empty, the field is omitted.
+- Fails if no `ashes.json` is found or the package is not in dependencies.
+
+### 6.4 ashes install
+
+Lists project dependencies. In v0.x the package registry is not yet available, so dependencies are recorded but not fetched.
+
+- Locates `ashes.json` by walking upward from the current directory.
+- Lists all entries in the `dependencies` map with their version constraints.
+- If there are no dependencies, prints a message and exits.
+
 ---
 
 ## 7. CLI behavior in project mode

@@ -34,6 +34,8 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes fmt`       | Format `.ash` source files                             |
 | `ashes init`      | Create a new Ashes project in the current directory     |
 | `ashes add`       | Add a dependency to the project manifest                |
+| `ashes remove`    | Remove a dependency from the project manifest           |
+| `ashes install`   | List project dependencies (registry not yet available)  |
 
 ---
 
@@ -538,6 +540,94 @@ ashes add json-parser
 
 ---
 
+### `ashes remove`
+
+Remove a dependency from the nearest `ashes.json` project manifest.
+
+#### Synopsis
+
+```
+ashes remove <package>
+```
+
+#### Arguments
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `<package>` | string | **Yes** | The package name to remove. |
+
+#### Options
+
+None.
+
+#### Behaviour
+
+1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
+2. If no `ashes.json` is found, the command fails with exit code **1**.
+3. If the package is not present in `dependencies`, the command fails with exit code **1**.
+4. Removes the package from the `dependencies` object and writes the file back.
+5. If the `dependencies` object becomes empty after removal, the field is omitted from the written JSON.
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Dependency removed successfully. |
+| `1`  | No `ashes.json` found, missing package argument, package not in dependencies, or I/O error. |
+
+#### Examples
+
+```bash
+ashes remove json-parser
+# Removed json-parser from dependencies.
+```
+
+---
+
+### `ashes install`
+
+List project dependencies from the nearest `ashes.json` project manifest. In v0.x the package registry is not yet available, so dependencies are listed but not fetched.
+
+#### Synopsis
+
+```
+ashes install
+```
+
+#### Arguments
+
+None.
+
+#### Options
+
+None.
+
+#### Behaviour
+
+1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
+2. If no `ashes.json` is found, the command fails with exit code **1**.
+3. Lists all entries in the `dependencies` object with their version constraints.
+4. If there are no dependencies, prints a message and exits successfully.
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Dependencies listed (or none present). |
+| `1`  | No `ashes.json` found or I/O error. |
+
+#### Examples
+
+```bash
+ashes install
+# Dependencies (2):
+#   json-parser *
+#   http-utils  *
+# Package registry not yet available. Dependencies are recorded but not fetched.
+```
+
+---
+
 ## Project File (`ashes.json`)
 
 The project file enables multi-module compilation and controls build settings.
@@ -615,6 +705,10 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | `ashes init` when `ashes.json` exists | `ashes.json already exists in this directory.` | `1` |
 | `ashes add` without package argument | `Missing package name.` | `1` |
 | `ashes add` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
+| `ashes remove` without package argument | `Missing package name.` | `1` |
+| `ashes remove` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
+| `ashes remove` when package not in dependencies | `Package '<name>' is not in dependencies.` | `1` |
+| `ashes install` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 
 ---
 

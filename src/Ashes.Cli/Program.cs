@@ -19,6 +19,8 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
+    AnsiConsole.MarkupLine("  [bold]ashes remove[/]  <package>");
+    AnsiConsole.MarkupLine("  [bold]ashes install[/]");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
 
@@ -454,6 +456,8 @@ try
         "fmt" => await RunFmtAsync(args.Skip(1).ToArray()),
         "init" => RunInit(),
         "add" => RunAdd(args.Skip(1).ToArray()),
+        "remove" => RunRemove(args.Skip(1).ToArray()),
+        "install" => RunInstall(),
         "--version" or "-v" => RunVersion(),
         _ => Usage()
     };
@@ -1186,6 +1190,109 @@ static int RunAdd(string[] a)
     File.WriteAllText(projectFilePath, json + Environment.NewLine);
 
     AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to dependencies.");
+    return 0;
+}
+
+static int RunRemove(string[] a)
+{
+    if (a.Length == 0)
+    {
+        throw new CliUserException("Missing package name.");
+    }
+
+    var packageName = a[0];
+
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    var text = File.ReadAllText(projectFilePath);
+    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    var root = doc.RootElement;
+
+    // Check that the package actually exists in dependencies
+    if (!root.TryGetProperty("dependencies", out var existingDeps)
+        || existingDeps.ValueKind != System.Text.Json.JsonValueKind.Object
+        || !existingDeps.TryGetProperty(packageName, out _))
+    {
+        throw new CliUserException($"Package '{packageName}' is not in dependencies.");
+    }
+
+    // Build a mutable dictionary from the existing JSON
+    var obj = new Dictionary<string, object?>();
+    foreach (var prop in root.EnumerateObject())
+    {
+        if (prop.Name == "dependencies")
+        {
+            continue; // we'll rebuild this
+        }
+
+        obj[prop.Name] = DeserializeJsonElement(prop.Value);
+    }
+
+    // Rebuild dependencies without the removed package
+    var deps = new Dictionary<string, object?>();
+    foreach (var dep in existingDeps.EnumerateObject())
+    {
+        if (dep.Name != packageName)
+        {
+            deps[dep.Name] = DeserializeJsonElement(dep.Value);
+        }
+    }
+
+    if (deps.Count > 0)
+    {
+        obj["dependencies"] = deps;
+    }
+
+    var jsonOptions = new System.Text.Json.JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+    var json = System.Text.Json.JsonSerializer.Serialize(obj, jsonOptions);
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+
+    AnsiConsole.MarkupLine($"[green]Removed[/] {Markup.Escape(packageName)} from dependencies.");
+    return 0;
+}
+
+static int RunInstall()
+{
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    var text = File.ReadAllText(projectFilePath);
+    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    var root = doc.RootElement;
+
+    var deps = new Dictionary<string, string>();
+    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        foreach (var dep in existingDeps.EnumerateObject())
+        {
+            deps[dep.Name] = dep.Value.GetString() ?? "*";
+        }
+    }
+
+    if (deps.Count == 0)
+    {
+        AnsiConsole.MarkupLine("[grey]No dependencies to install.[/]");
+        return 0;
+    }
+
+    AnsiConsole.MarkupLine($"[bold]Dependencies[/] ({deps.Count}):");
+    foreach (var (name, version) in deps)
+    {
+        AnsiConsole.MarkupLine($"  {Markup.Escape(name)} [grey]{Markup.Escape(version)}[/]");
+    }
+
+    AnsiConsole.MarkupLine("[yellow]Package registry not yet available. Dependencies are recorded but not fetched.[/]");
     return 0;
 }
 
