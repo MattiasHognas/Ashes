@@ -32,6 +32,8 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes repl`      | Start an interactive read-eval-print loop               |
 | `ashes test`      | Run `.ash` test files and compare against `// expect:` comments |
 | `ashes fmt`       | Format `.ash` source files                             |
+| `ashes init`      | Create a new Ashes project in the current directory     |
+| `ashes add`       | Add a dependency to the project manifest                |
 
 ---
 
@@ -450,6 +452,92 @@ ashes fmt examples
 
 ---
 
+### `ashes init`
+
+Create a new Ashes project in the current directory by scaffolding an `ashes.json` manifest and a starter `src/Main.ash` entry file.
+
+#### Synopsis
+
+```
+ashes init
+```
+
+#### Arguments
+
+None.
+
+#### Options
+
+None.
+
+#### Behaviour
+
+1. If `ashes.json` already exists in the current directory, the command fails with exit code **1**.
+2. Creates `ashes.json` with `name` (derived from the directory name), `entry` set to `"src/Main.ash"`, and `sourceRoots` set to `["src"]`.
+3. Creates the `src/` directory if it does not exist.
+4. Creates `src/Main.ash` with a hello-world program. If the file already exists it is not overwritten.
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Project created successfully. |
+| `1`  | `ashes.json` already exists or an I/O error occurred. |
+
+#### Examples
+
+```bash
+mkdir myapp && cd myapp
+ashes init
+# Created ashes.json
+# Created src/Main.ash
+```
+
+---
+
+### `ashes add`
+
+Add a dependency to the nearest `ashes.json` project manifest.
+
+#### Synopsis
+
+```
+ashes add <package>
+```
+
+#### Arguments
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `<package>` | string | **Yes** | The package name to add. |
+
+#### Options
+
+None.
+
+#### Behaviour
+
+1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
+2. If no `ashes.json` is found, the command fails with exit code **1**.
+3. Reads the existing JSON, adds the package to the `dependencies` object with version `"*"`, and writes the file back.
+4. If the package already exists in `dependencies`, it is overwritten with `"*"`.
+
+#### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Dependency added successfully. |
+| `1`  | No `ashes.json` found, missing package argument, or I/O error. |
+
+#### Examples
+
+```bash
+ashes add json-parser
+# Added json-parser to dependencies.
+```
+
+---
+
 ## Project File (`ashes.json`)
 
 The project file enables multi-module compilation and controls build settings.
@@ -464,6 +552,7 @@ The project file enables multi-module compilation and controls build settings.
 | `include` | string array | No | `[]` | Additional directories searched for imported modules. |
 | `outDir` | string | No | `"out"` | Directory where the compiled binary is written. |
 | `target` | string (enum) | No | OS default | Default back end target; overridden by `--target` on the command line. |
+| `dependencies` | object (string → string) | No | `{}` | Map of package names to version constraints. Recorded in v0.x but not yet resolved or fetched automatically. |
 
 ### Example
 
@@ -523,6 +612,9 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | Parse / type error in source | Diagnostic message | `1` |
 | `ashes fmt` given more or fewer than one path | `Provide exactly one file or directory.` | `2` |
 | `ashes fmt` path does not exist | `Path not found: <path>` | `1` |
+| `ashes init` when `ashes.json` exists | `ashes.json already exists in this directory.` | `1` |
+| `ashes add` without package argument | `Missing package name.` | `1` |
+| `ashes add` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 
 ---
 

@@ -17,6 +17,8 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]]");
     AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
+    AnsiConsole.MarkupLine("  [bold]ashes init[/]");
+    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
 
@@ -450,6 +452,8 @@ try
         "repl" => await RunReplAsync(args.Skip(1).ToArray()),
         "test" => RunTest(args.Skip(1).ToArray()),
         "fmt" => await RunFmtAsync(args.Skip(1).ToArray()),
+        "init" => RunInit(),
+        "add" => RunAdd(args.Skip(1).ToArray()),
         "--version" or "-v" => RunVersion(),
         _ => Usage()
     };
@@ -1085,6 +1089,119 @@ static void PrintRuntimeFailure(int exitCode, string stdout, string stderr)
     }
 
     AnsiConsole.Write(new Text(sb.ToString()));
+}
+
+static int RunInit()
+{
+    var cwd = Directory.GetCurrentDirectory();
+    var projectFilePath = Path.Combine(cwd, "ashes.json");
+
+    if (File.Exists(projectFilePath))
+    {
+        throw new CliUserException("ashes.json already exists in this directory.");
+    }
+
+    var projectName = new DirectoryInfo(cwd).Name;
+    var entryRelative = Path.Combine("src", "Main.ash");
+
+    var projectJson = new Dictionary<string, object>
+    {
+        ["name"] = projectName,
+        ["entry"] = entryRelative.Replace('\\', '/'),
+        ["sourceRoots"] = new[] { "src" }
+    };
+
+    var jsonOptions = new System.Text.Json.JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+    var json = System.Text.Json.JsonSerializer.Serialize(projectJson, jsonOptions);
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+    AnsiConsole.MarkupLine("[green]Created[/] ashes.json");
+
+    var srcDir = Path.Combine(cwd, "src");
+    Directory.CreateDirectory(srcDir);
+
+    var mainPath = Path.Combine(srcDir, "Main.ash");
+    if (!File.Exists(mainPath))
+    {
+        File.WriteAllText(mainPath, "Ashes.IO.print(\"hello, ashes!\")" + "\n");
+        AnsiConsole.MarkupLine("[green]Created[/] src/Main.ash");
+    }
+
+    return 0;
+}
+
+static int RunAdd(string[] a)
+{
+    if (a.Length == 0)
+    {
+        throw new CliUserException("Missing package name.");
+    }
+
+    var packageName = a[0];
+
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    var text = File.ReadAllText(projectFilePath);
+    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    var root = doc.RootElement;
+
+    // Build a mutable dictionary from the existing JSON
+    var obj = new Dictionary<string, object>();
+    foreach (var prop in root.EnumerateObject())
+    {
+        if (prop.Name == "dependencies")
+        {
+            continue; // we'll rebuild this
+        }
+
+        obj[prop.Name] = DeserializeJsonElement(prop.Value);
+    }
+
+    // Read or create the dependencies map
+    var deps = new Dictionary<string, object>();
+    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        foreach (var dep in existingDeps.EnumerateObject())
+        {
+            deps[dep.Name] = DeserializeJsonElement(dep.Value);
+        }
+    }
+
+    deps[packageName] = "*";
+    obj["dependencies"] = deps;
+
+    var jsonOptions = new System.Text.Json.JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+    var json = System.Text.Json.JsonSerializer.Serialize(obj, jsonOptions);
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+
+    AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to dependencies.");
+    return 0;
+}
+
+static object DeserializeJsonElement(System.Text.Json.JsonElement element)
+{
+    return element.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.String => element.GetString()!,
+        System.Text.Json.JsonValueKind.Number => element.GetDouble(),
+        System.Text.Json.JsonValueKind.True => true,
+        System.Text.Json.JsonValueKind.False => false,
+        System.Text.Json.JsonValueKind.Null => null!,
+        System.Text.Json.JsonValueKind.Array => element.EnumerateArray().Select(DeserializeJsonElement).ToArray(),
+        System.Text.Json.JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => DeserializeJsonElement(p.Value)),
+        _ => element.GetRawText()
+    };
 }
 
 static int RunVersion()
