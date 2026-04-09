@@ -1153,7 +1153,7 @@ static int RunAdd(string[] a)
     var root = doc.RootElement;
 
     // Build a mutable dictionary from the existing JSON
-    var obj = new Dictionary<string, object>();
+    var obj = new Dictionary<string, object?>();
     foreach (var prop in root.EnumerateObject())
     {
         if (prop.Name == "dependencies")
@@ -1165,7 +1165,7 @@ static int RunAdd(string[] a)
     }
 
     // Read or create the dependencies map
-    var deps = new Dictionary<string, object>();
+    var deps = new Dictionary<string, object?>();
     if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
     {
         foreach (var dep in existingDeps.EnumerateObject())
@@ -1189,15 +1189,15 @@ static int RunAdd(string[] a)
     return 0;
 }
 
-static object DeserializeJsonElement(System.Text.Json.JsonElement element)
+static object? DeserializeJsonElement(System.Text.Json.JsonElement element)
 {
     return element.ValueKind switch
     {
-        System.Text.Json.JsonValueKind.String => element.GetString()!,
+        System.Text.Json.JsonValueKind.String => element.GetString(),
         System.Text.Json.JsonValueKind.Number => element.GetDouble(),
         System.Text.Json.JsonValueKind.True => true,
         System.Text.Json.JsonValueKind.False => false,
-        System.Text.Json.JsonValueKind.Null => null!,
+        System.Text.Json.JsonValueKind.Null => null,
         System.Text.Json.JsonValueKind.Array => element.EnumerateArray().Select(DeserializeJsonElement).ToArray(),
         System.Text.Json.JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => DeserializeJsonElement(p.Value)),
         _ => element.GetRawText()
