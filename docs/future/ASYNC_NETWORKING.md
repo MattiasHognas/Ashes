@@ -91,8 +91,9 @@ Spec-first is a ground rule.  Update before any implementation.
 This is the most complex phase.  Each of the 6 APIs must produce
 `Task(E, A)` instead of `Result(E, A)`.
 
-**Recommended approach (Option A):** Each API becomes an intrinsic that
-creates an async block internally (like `async { <blocking-call> }`).
+**Recommended approach (Option A):** Each API remains a builtin
+(`BuiltinValueKind`) whose lowering creates an async block internally
+(like `async { <blocking-call> }`).
 The blocking IR instruction stays the same at codegen level; the
 lowering wraps it in `CreateTask` + coroutine.  The caller must `await`
 it inside their own `async` block.
