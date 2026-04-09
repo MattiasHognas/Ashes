@@ -121,7 +121,7 @@ Implementation per API:
     return `Task(Str, X)` instead of `Result(Str, X)` in their type
     scheme.
 17. **Enforce async-only usage** — Add a compiler check (new diagnostic,
-    e.g. `ASH011`) that TCP/HTTP calls outside `async` blocks produce a
+    e.g. `ASH012`) that TCP/HTTP calls outside `async` blocks produce a
     compile-time error.
 
 ## Phase 5 — Semantics: Supporting Changes
