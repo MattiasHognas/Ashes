@@ -7,7 +7,6 @@ complete. Subsequent work focuses on runtime and ecosystem.
 | Feature | Status |
 |---------|--------|
 | Async Networking | Planned — non-blocking TCP/HTTP inside `async` |
-| Package Manager | Planned — ecosystem and dependency management |
 | HTTPS/TLS | Planned — TLS, encryption, certificates |
 | Pattern Guards | Planned — pattern matching enhancements |
 | Type Annotations | Planned — user-written type annotations |
