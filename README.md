@@ -50,8 +50,14 @@ Ashes compiles `.ash` source files to **standalone native executables**
 produced binaries have **zero runtime dependencies** — no external
 assembler, toolchain, or garbage collector required.
 
-This repository contains the full toolchain: compiler, formatter, test
-runner, language server, debugger, package manager, and VS Code extension.
+This repository contains the full toolchain:
+- Compiler
+- Formatter
+- Test runner
+- Language server
+- Debugger
+- Package manager
+- VS Code extension
 
 ### Design Principles
 
@@ -258,7 +264,7 @@ semantic tokens, and completions.
 For local development:
 
 ```powershell
-.\scripts\install-vscode-extension-local.ps1
+.\scripts\install-vscode-extension-local.sh
 ```
 
 ### Debugging
