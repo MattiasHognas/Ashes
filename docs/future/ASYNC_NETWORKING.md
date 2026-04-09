@@ -78,6 +78,103 @@ Spec-first is a ground rule.  Update before any implementation.
 7. Add note: "All networking APIs are async-only and must be awaited
    inside `async` blocks."
 
+## Phase 2.5 — Runtime ABI Boundary (Future FFI Compatibility)
+
+To ensure that the async networking implementation does not block
+future user-facing interop (FFI), all TCP/HTTP builtins must be lowered
+through a **stable runtime ABI layer**, rather than directly embedding
+backend-specific behavior.
+
+### Core Rule
+
+All networking builtins must ultimately lower to calls into **named
+runtime symbols** (e.g. native functions), rather than being treated as
+special-case codegen instructions indefinitely.
+
+This applies even if the initial implementation still uses existing IR
+instructions internally.
+
+### Required Design Constraints
+
+1. **Explicit Runtime Symbols**
+
+   Each operation must have a well-defined runtime entry point:
+
+   - `ashes_tcp_connect`
+   - `ashes_tcp_send`
+   - `ashes_tcp_receive`
+   - `ashes_tcp_close`
+   - `ashes_http_get`
+   - `ashes_http_post`
+
+   These symbols form part of the **Ashes runtime ABI**.
+
+2. **Stable Calling Convention**
+
+   The lowering layer must define (and consistently use):
+
+   - how arguments are passed (strings, ints, sockets)
+   - how results are returned (`Result`-like or split error/value)
+   - how async tasks wrap these calls
+   - how errors are represented across the boundary
+
+   This convention must be consistent across all runtime calls.
+
+3. **No Backend-Specific Semantics in Lowering**
+
+   Lowering must not depend on:
+   - LLVM-specific behavior
+   - direct syscalls
+   - platform-specific logic
+
+   All such behavior must live behind the runtime ABI layer.
+
+4. **Resource Handles Are Opaque**
+
+   Types like `Socket` must be treated as opaque handles at the ABI level.
+
+   - The compiler must not assume layout
+   - The runtime owns allocation and destruction
+   - Ownership is transferred explicitly via return values and Drop
+
+5. **Separation of Concerns**
+
+   The system must remain layered:
+
+   - Ashes source → high-level APIs (`Http`, `Tcp`)
+   - Lowering → runtime ABI calls
+   - Runtime → platform-specific implementation (blocking or non-blocking)
+
+6. **Forward Compatibility with FFI**
+
+   This ABI layer will later be reused for user-facing interop.
+
+   Therefore:
+   - Do not hardcode special-case handling for networking only
+   - Do not bypass the ABI for performance shortcuts
+   - Treat networking builtins as first-class runtime calls
+
+### Initial Implementation Allowance
+
+For this phase, it is acceptable to:
+
+- keep existing IR instructions (`HttpGet`, `NetTcpConnect`, etc.)
+- wrap them in tasks as described
+
+However, the design must allow these IR instructions to be **replaced
+or re-lowered** into runtime ABI calls in a future phase without
+changing language semantics.
+
+### Rationale
+
+This ensures:
+
+- HTTPS/TLS can later be implemented as runtime functionality without
+  changing the language
+- user-facing FFI can reuse the same calling convention
+- the compiler can eventually be self-hosted in Ashes without being
+  tied to hidden backend intrinsics
+
 ## Phase 3 — Semantics: Builtin Registry (`src/Ashes.Semantics/BuiltinRegistry.cs`)
 
 8. **HTTP/TCP dispatch** — Currently `Http`/`Tcp` are `BuiltinValueKind`
