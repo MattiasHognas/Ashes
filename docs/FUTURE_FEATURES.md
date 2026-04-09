@@ -6,7 +6,7 @@ complete. Subsequent work focuses on runtime and ecosystem.
 
 | Feature | Status |
 |---------|--------|
-| Async Networking | Planned — non-blocking TCP/HTTP inside `async` |
+| [Async Networking](future/ASYNC_NETWORKING.md) | Planned — non-blocking TCP/HTTP inside `async` |
 | Package Manager | Planned — ecosystem and dependency management |
 | HTTPS/TLS | Planned — TLS, encryption, certificates |
 | Pattern Guards | Planned — pattern matching enhancements |
@@ -42,6 +42,9 @@ complete. Subsequent work focuses on runtime and ecosystem.
 ------------------------------------------------------------------------
 
 ## Async Networking
+
+See [future/ASYNC_NETWORKING.md](future/ASYNC_NETWORKING.md) for the
+full redesign plan.
 
 Convert existing blocking TCP/HTTP operations to non-blocking
 variants inside `async` blocks, powered by a platform-specific
