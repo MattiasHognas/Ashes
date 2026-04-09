@@ -36,21 +36,3 @@ Planned features and future work for the Ashes language and ecosystem.
    updates visible to user code.
 6. **No GC.** All resource and memory management is deterministic and
    compile-time verified.
-
-------------------------------------------------------------------------
-
-## Async Networking
-
-See [ASYNC_NETWORKING.md](ASYNC_NETWORKING.md) for the full redesign
-plan.
-
-Convert existing blocking TCP/HTTP operations to non-blocking
-variants inside `async` blocks, powered by a platform-specific
-event loop (`epoll` on Linux, IO completion ports on Windows).
-
-Deliverables:
-- Non-blocking TCP connect/send/receive
-- Async HTTP get/post atop async TCP
-- Event loop runtime with I/O readiness
-- Tests: concurrent HTTP requests, parallel TCP connections,
-  async resource cleanup, error propagation across awaits
