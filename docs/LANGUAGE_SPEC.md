@@ -1202,7 +1202,7 @@ namespace. User projects cannot override them with project-local modules.
 ## 13.6 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules are tracked in
-`FUTURE_FEATURES.md`.
+`future/FUTURE_FEATURES.md`.
 
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
@@ -1662,7 +1662,7 @@ of the first task:
 
 # 20. Unsupported (Future)
 
-See `FUTURE_FEATURES.md` for the list of planned but not yet supported features.
+See `future/FUTURE_FEATURES.md` for the list of planned but not yet supported features.
 
 Note: project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
 (`ashes.json` + `PROJECT_SPEC.md`) and are resolved before expression parsing. Built-in

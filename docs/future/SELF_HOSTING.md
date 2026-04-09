@@ -99,7 +99,7 @@ express:
   diagnostics and `print`.
 - **String interpolation or formatting** — for error messages.
 
-An `Ashes.String` module (already listed in FUTURE_FEATURES.md) would
+An `Ashes.String` module (already listed in `FUTURE_FEATURES.md`) would
 need at minimum: `charAt`, `substring`, `length`, `toInt`, `toFloat`,
 `fromInt`, `fromFloat`, `startsWith`, `contains`, `split`, `trim`,
 `indexOf`, and character-predicate helpers.
