@@ -99,7 +99,7 @@ it inside their own `async` block.
 This achieves the API design goal (async-only, no sync alternatives)
 without requiring a full event loop rewrite.  The blocking syscalls
 still happen, but inside a task coroutine.  The event loop can be
-optimised later.
+optimized later.
 
 Implementation per API:
 
