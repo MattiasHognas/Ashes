@@ -39,8 +39,8 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_compile_should_not_emit_a_constant_image_for_simple_programs()
     {
-        var first = CompileForLinux("40 + 2");
-        var second = CompileForLinux("40 + 3");
+        var first = CompileForLinux("Ashes.IO.print(40 + 2)");
+        var second = CompileForLinux("Ashes.IO.print(40 + 3)");
 
         first.ShouldNotBe(second);
     }

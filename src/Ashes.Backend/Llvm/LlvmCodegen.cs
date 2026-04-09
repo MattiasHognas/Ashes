@@ -130,12 +130,31 @@ internal static partial class LlvmCodegen
             return; // No optimization at O0
         }
 
+        // Use a targeted pass pipeline instead of "default<ON>" to avoid
+        // aggressive transforms (loop unrolling, vectorization, lib-call
+        // recognition, simplifycfg) that can miscompile freestanding
+        // inline-assembly code. Each level adds progressively more passes.
+        //
+        // Excluded passes:
+        //   simplifycfg – merges blocks across inline-asm boundaries → SIGSEGV
+        //   loop-vectorize / slp-vectorize – introduces libc vector calls
+        //   loop-unroll – code-size explosion for marginal gain
         string passString = level switch
         {
-            Backends.BackendOptimizationLevel.O1 => "default<O1>",
-            Backends.BackendOptimizationLevel.O2 => "default<O2>",
-            Backends.BackendOptimizationLevel.O3 => "default<O3>",
-            _ => "default<O2>",
+            Backends.BackendOptimizationLevel.O1 =>
+                "function(mem2reg,dce,early-cse)",
+            Backends.BackendOptimizationLevel.O2 =>
+                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
+                ",cgscc(inline)" +
+                ",function(dce,instcombine<no-verify-fixpoint>)",
+            Backends.BackendOptimizationLevel.O3 =>
+                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn,licm)" +
+                ",cgscc(inline)" +
+                ",function(dce,instcombine<no-verify-fixpoint>,gvn,dse)",
+            _ =>
+                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
+                ",cgscc(inline)" +
+                ",function(dce,instcombine<no-verify-fixpoint>)",
         };
 
         LlvmPassBuilderOptionsHandle passOptions = LlvmApi.CreatePassBuilderOptions();
@@ -932,6 +951,40 @@ internal static partial class LlvmCodegen
 
             LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
             LlvmApi.BuildRet(target.Builder, dest);
+        }
+
+        // ── strlen(s) → length ───────────────────────────────────────────
+        {
+            LlvmTypeHandle strlenType = LlvmApi.FunctionType(i64, [i8Ptr]);
+            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "strlen", strlenType);
+
+            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+
+            LlvmValueHandle str = LlvmApi.GetParam(fn, 0);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+            LlvmValueHandle charPtr = LlvmApi.BuildGEP2(target.Builder, i8, str, [idx], "char_ptr");
+            LlvmValueHandle ch = LlvmApi.BuildLoad2(target.Builder, i8, charPtr, "ch");
+            LlvmValueHandle isNull = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Eq, ch, LlvmApi.ConstInt(i8, 0, 0), "is_null");
+            LlvmApi.BuildCondBr(target.Builder, isNull, doneBlock, bodyBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+            LlvmValueHandle finalIdx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "len");
+            LlvmApi.BuildRet(target.Builder, finalIdx);
         }
     }
 

@@ -401,6 +401,13 @@ internal static partial class LlvmImageLinker
         ulong loadedTextVa,
         IReadOnlyDictionary<int, ulong> sectionBaseVas)
     {
+        // Build a name-based lookup table for defined symbols so we can resolve
+        // SHN_UNDEF (section 0) references produced by LLVM optimization passes.
+        // These occur when LLVM inlines an internal function and then re-emits
+        // a call to the external symbol (e.g. memcpy, memset).
+        byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
+        var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
+
         foreach (ElfSectionHeader relocationSection in relocationSections)
         {
             if (relocationSection.EntrySize == 0)
@@ -421,7 +428,7 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas) + addend);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
                 Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                 switch (relocationType)
@@ -444,11 +451,79 @@ internal static partial class LlvmImageLinker
         }
     }
 
+    /// <summary>
+    /// Builds a dictionary mapping symbol names to their resolved VAs for all
+    /// defined symbols in the object file. Used to resolve SHN_UNDEF references
+    /// by name when LLVM optimization passes re-introduce external calls to
+    /// symbols that are actually defined in the module (e.g. memcpy, memset).
+    /// </summary>
+    private static Dictionary<string, ulong> BuildDefinedSymbolTable(
+        ReadOnlySpan<byte> objectBytes,
+        ElfSectionHeader symtab,
+        byte[] strtab,
+        int textSectionIndex,
+        ulong loadedTextVa,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+    {
+        var result = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        int symbolCount = checked((int)(symtab.Size / symtab.EntrySize));
+        for (int i = 0; i < symbolCount; i++)
+        {
+            ElfSymbol sym = ReadElfSymbol(objectBytes, symtab, i);
+            if (sym.SectionIndex == 0)
+            {
+                continue; // skip undefined symbols
+            }
+
+            string name = ReadNullTerminatedString(strtab, (int)sym.NameIndex);
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            ulong va;
+            if (sym.SectionIndex == textSectionIndex)
+            {
+                va = loadedTextVa + sym.Value;
+            }
+            else if (sectionBaseVas.TryGetValue(sym.SectionIndex, out ulong baseVa))
+            {
+                va = baseVa + sym.Value;
+            }
+            else
+            {
+                continue; // symbol in an unloaded section
+            }
+
+            result.TryAdd(name, va);
+        }
+
+        return result;
+    }
+
+    private static string ReadNullTerminatedString(byte[] strtab, int offset)
+    {
+        if (offset < 0 || offset >= strtab.Length)
+        {
+            return string.Empty;
+        }
+
+        int end = offset;
+        while (end < strtab.Length && strtab[end] != 0)
+        {
+            end++;
+        }
+
+        return System.Text.Encoding.UTF8.GetString(strtab, offset, end - offset);
+    }
+
     private static ulong ResolveElfTargetVa(
         ElfSymbol symbol,
         int textSectionIndex,
         ulong loadedTextVa,
-        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        byte[] strtab,
+        IReadOnlyDictionary<string, ulong> definedSymbolVas)
     {
         if (symbol.SectionIndex == textSectionIndex)
         {
@@ -458,6 +533,20 @@ internal static partial class LlvmImageLinker
         if (sectionBaseVas.TryGetValue(symbol.SectionIndex, out ulong sectionBaseVa))
         {
             return sectionBaseVa + symbol.Value;
+        }
+
+        // SHN_UNDEF (section 0): look up by name in the defined symbol table.
+        // This handles LLVM passes that inline an internal function definition
+        // and then re-emit calls to the external symbol name.
+        if (symbol.SectionIndex == 0)
+        {
+            string name = ReadNullTerminatedString(strtab, (int)symbol.NameIndex);
+            if (definedSymbolVas.TryGetValue(name, out ulong va))
+            {
+                return va;
+            }
+
+            throw new InvalidOperationException($"LLVM ELF text relocation references undefined symbol '{name}' (section 0) with no local definition.");
         }
 
         throw new InvalidOperationException($"LLVM ELF text relocation targeted unsupported section {symbol.SectionIndex}.");
@@ -472,6 +561,7 @@ internal static partial class LlvmImageLinker
 
         int offset = checked((int)symtab.Offset + symbolIndex * (int)symtab.EntrySize);
         return new ElfSymbol(
+            NameIndex: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)),
             SectionIndex: BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 6, 2)),
             Value: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8)));
     }
@@ -479,6 +569,23 @@ internal static partial class LlvmImageLinker
     private static byte[] ReadStringTable(ReadOnlySpan<byte> bytes, ElfSectionHeader section)
     {
         return bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray();
+    }
+
+    private static ElfSectionHeader ReadElfSectionHeader(ReadOnlySpan<byte> bytes, int index)
+    {
+        ulong sectionHeaderOffset = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(40, 8));
+        ushort sectionHeaderEntrySize = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(58, 2));
+        int offset = checked((int)sectionHeaderOffset + index * sectionHeaderEntrySize);
+        return new ElfSectionHeader(
+            NameOffset: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)),
+            Type: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)),
+            Flags: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8)),
+            Offset: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 24, 8)),
+            Size: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 32, 8)),
+            Link: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 40, 4)),
+            Info: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 44, 4)),
+            AddressAlign: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 48, 8)),
+            EntrySize: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 56, 8)));
     }
 
     private static int FindEntryOffset(ReadOnlySpan<byte> bytes, ElfSectionHeader symtab, byte[] symbolStrings, int textSectionIndex, string entrySymbolName)
@@ -622,6 +729,7 @@ internal static partial class LlvmImageLinker
         ulong EntrySize);
 
     private readonly record struct ElfSymbol(
+        uint NameIndex,
         ushort SectionIndex,
         ulong Value);
 

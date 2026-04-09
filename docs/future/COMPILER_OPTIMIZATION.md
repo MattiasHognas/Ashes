@@ -30,13 +30,24 @@ are significant optimization opportunities:
 
 ## Finding 1 — LLVM Optimization Passes Are Dead Code
 
-**Status:** Open — highest-impact single item  
+**Status:** ✅ Fixed  
 **Severity:** Critical impact  
 **Files:** `LlvmCodegen.cs:129-158`, `LlvmImageLinkerElf.cs:15-17`
 
-`RunLlvmOptimizationPasses()` is defined but **never called**. The custom
-ELF/PE linkers cannot handle `R_X86_64_PLT32` and other relocation types
-that LLVM passes produce.
+`RunLlvmOptimizationPasses()` is now called for every target (Linux x64,
+Linux ARM64, Windows x64). A targeted pass pipeline avoids `simplifycfg`
+(which miscompiles inline-asm control flow) while enabling `mem2reg`,
+`instcombine`, `early-cse`, `reassociate`, `gvn`, `dce`, `inline`, `licm`,
+and `dse` across O1/O2/O3 levels.
+
+Relocation support was added for `R_X86_64_PLT32` (ELF) and
+`IMAGE_REL_AMD64_REL32_1` through `_5` (PE). The ELF linker now resolves
+SHN_UNDEF (section 0) symbols by name, handling cases where LLVM inlines a
+builtin definition and re-introduces an external call.
+
+Builtin `memcpy`, `memset`, and `strlen` implementations are emitted into
+every module so LLVM intrinsic lowering has local definitions for the
+freestanding target.
 
 ### What this means
 
@@ -105,21 +116,15 @@ bloated every binary by 4 MB.~~
 
 ## Finding 3 — Manual Byte Loops Instead of LLVM Intrinsics
 
-**Status:** Open  
+**Status:** ✅ Fixed (EmitCopyBytes)  
 **Severity:** High  
 **Files:** `LlvmCodegenMemory.cs:103-148`
 
 ### String concatenation (`EmitCopyBytes`)
 
-Copies bytes one at a time via a loop:
-
-```
-for i = 0 to length:
-    dest[i] = src[i]   // one byte at a time
-```
-
-Should use `LLVMBuildMemCpy()` which maps to `llvm.memcpy` intrinsic —
-vectorized by LLVM to `rep movsb` or `movaps` instructions.
+✅ **Fixed.** `EmitCopyBytes` now uses `LLVMBuildMemCpy` (the `llvm.memcpy`
+intrinsic) instead of a manual byte-by-byte loop. LLVM can vectorize this
+to `rep movsb` or SIMD copies.
 
 ### String comparison
 
@@ -171,12 +176,12 @@ Every ADT constructor match and every empty/non-empty list check benefits.
 
 ## Finding 5 — No LLVM Function Attributes
 
-**Status:** Open  
+**Status:** ✅ Partially fixed (`nounwind`)  
 **Severity:** Medium-High  
 
-No functions are annotated with LLVM attributes. The APIs
-(`LLVMAddAttributeAtIndex`, `LLVMCreateEnumAttribute`) are not even
-declared in the interop layer.
+All emitted functions (entry + lifted closures) now have the `nounwind`
+attribute applied via `LLVMAddAttributeAtIndex` / `LLVMCreateEnumAttribute`.
+This eliminates unwind table generation for smaller, faster code.
 
 ### Missing attributes
 
@@ -220,7 +225,7 @@ to target their specific CPU for maximum performance (e.g.
 
 ## Finding 7 — IR Optimizer Is 50 % Disabled
 
-**Status:** Open  
+**Status:** ✅ Partially fixed (identity/strength reduction added)  
 **Severity:** Medium  
 **File:** `IrOptimizer.cs`
 
@@ -228,15 +233,17 @@ to target their specific CPU for maximum performance (e.g.
 |------|--------|-------|
 | Borrow Elision | ❌ No-op | Awaits temp aliasing infrastructure |
 | Constant Folding | ✅ Active | Good for scalars; resets at labels |
+| Identity/Strength Reduction | ✅ Active | `x+0`, `x*1`, `x*0`, `x*2→x+x`, `x/1`, `x-0` |
+| Unreachable Code Elimination | ✅ Active | Removes code after unconditional jumps/returns |
 | Dead Code Elimination | ⚠️ Minimal | Only removes unused `LoadConst*` |
 | Drop Elision | ❌ No-op | Awaits per-object `free()` allocator |
 
 ### Missing optimizations at IR level
 
-- **Identity elimination:** `x + 0`, `x * 1`, `x * 0` not simplified.
-- **Strength reduction:** `x * 2` is a multiply, not `x + x` or shift.
-- **Unreachable code elimination:** Code after unconditional jumps or
-  returns remains.
+- ~~**Identity elimination:** `x + 0`, `x * 1`, `x * 0` not simplified.~~ ✅ Fixed
+- ~~**Strength reduction:** `x * 2` is a multiply, not `x + x` or shift.~~ ✅ Fixed
+- ~~**Unreachable code elimination:** Code after unconditional jumps or
+  returns remains.~~ ✅ Fixed
 - **Dead store elimination:** Unused `StoreLocal` not removed.
 - **Constant propagation across simple labels:** Labels with a single
   predecessor could propagate constant knowledge.
@@ -245,7 +252,7 @@ to target their specific CPU for maximum performance (e.g.
 
 ## Finding 8 — TCO Implementation
 
-**Status:** Good — minor gaps open  
+**Status:** ✅ Partially fixed (`LLVMSetTailCall` added)  
 **Severity:** Low-Medium
 
 ### What works
@@ -253,6 +260,10 @@ to target their specific CPU for maximum performance (e.g.
 The compiler implements IR-level tail call optimization that converts
 tail-recursive self-calls into loops. Verified working with 1 000 000
 iterations in constant stack space.
+
+✅ **New:** `LLVMSetTailCall` is now declared in the interop layer and
+tail-position calls are marked at the LLVM level as a safety net for cases
+the IR-level TCO misses.
 
 ### Gaps
 
@@ -307,16 +318,16 @@ structured output), this wastes heap space and comparison time.
 | 1 | Add heap bounds check | ✅ Done |
 | 2 | Fix pattern match double-comparison | ✅ Done |
 | 3 | Replace fixed heap with dynamic `mmap`/`VirtualAlloc` chunks | ✅ Done |
-| 4 | Add `LLVMBuildMemCpy` interop and use in `EmitCopyBytes` | Open |
+| 4 | Add `LLVMBuildMemCpy` interop and use in `EmitCopyBytes` | ✅ Done |
 
 ### Medium-term (moderate effort, high impact)
 
 | # | Item | Status |
 |---|------|--------|
-| 5 | Add PLT32 relocation support, then enable LLVM optimization passes | Open |
-| 6 | Add `nounwind` attribute to all emitted functions | Open |
-| 7 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | Open |
-| 8 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | Open |
+| 5 | Add PLT32 relocation support, then enable LLVM optimization passes | ✅ Done |
+| 6 | Add `nounwind` attribute to all emitted functions | ✅ Done |
+| 7 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | ✅ Done |
+| 8 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | ✅ Done |
 
 ### Long-term (significant effort)
 
