@@ -213,7 +213,7 @@ Ashes is split into focused phases:
 | **Ashes.Semantics** | Binding, scope resolution, type inference |
 | **Ashes.Backend** | IR lowering and native code generation |
 | **Ashes.Formatter** | Canonical source formatting |
-| **Ashes.Cli** | CLI orchestration (`compile`, `run`, `repl`, `test`, `fmt`) |
+| **Ashes.Cli** | CLI orchestration (`compile`, `run`, `repl`, `test`, `fmt`, `init`, `add`, `remove`, `install`) |
 | **Ashes.Lsp** | Language server (diagnostics, formatting, hover, completions) |
 | **Ashes.Dap** | Debug server (gdb and lldb support) |
 | **Ashes.TestRunner** | End-to-end `.ash` test execution |
@@ -244,6 +244,10 @@ ashes run -- arg1 arg2               # pass arguments
 ashes repl                            # interactive REPL
 ashes test tests                      # run end-to-end test suite
 ashes fmt examples -w                 # auto-format in place
+ashes init                            # create a new project
+ashes add json-parser                 # add a dependency
+ashes remove json-parser              # remove a dependency
+ashes install                         # list project dependencies
 ```
 
 ### VS Code Extension
