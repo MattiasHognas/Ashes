@@ -6,9 +6,11 @@ internal static partial class LlvmCodegen
 {
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
     {
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
-        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(state.Target.Builder, cursor, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "heap_cursor_next");
-        LlvmApi.BuildStore(state.Target.Builder, nextCursor, state.HeapCursorSlot);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
+        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "heap_cursor_next");
+        EmitHeapOverflowCheck(state, nextCursor);
+        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
         return cursor;
     }
 
@@ -160,10 +162,55 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes)
     {
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
-        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(state.Target.Builder, cursor, NormalizeToI64(state, sizeBytes), "heap_cursor_next_dyn");
-        LlvmApi.BuildStore(state.Target.Builder, nextCursor, state.HeapCursorSlot);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
+        LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, NormalizeToI64(state, sizeBytes), "heap_cursor_next_dyn");
+        EmitHeapOverflowCheck(state, nextCursor);
+        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
         return cursor;
+    }
+
+    private static void EmitHeapOverflowCheck(LlvmCodegenState state, LlvmValueHandle nextCursor)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "heap_end");
+        LlvmValueHandle overflow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, nextCursor, heapEnd, "heap_overflow");
+
+        var oomBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_oom");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_ok");
+        LlvmApi.BuildCondBr(builder, overflow, oomBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, oomBlock);
+        EmitHeapExhaustedPanic(state);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+    }
+
+    private static readonly byte[] HeapExhaustedMessage =
+        "Runtime error: heap memory exhausted\n"u8.ToArray();
+
+    private static void EmitHeapExhaustedPanic(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // Write error to stderr (fd 2), then exit(1)
+            LlvmValueHandle msgPtr = EmitStackByteArray(state, HeapExhaustedMessage);
+            LlvmValueHandle msgLen = LlvmApi.ConstInt(state.I64, (ulong)HeapExhaustedMessage.Length, 0);
+            EmitLinuxSyscall(state, SyscallWrite,
+                LlvmApi.ConstInt(state.I64, 2, 0), // fd = stderr
+                LlvmApi.BuildPtrToInt(builder, msgPtr, state.I64, "oom_msg_i64"),
+                msgLen,
+                "sys_write_oom");
+            EmitExit(state, LlvmApi.ConstInt(state.I64, 1, 0));
+        }
+        else
+        {
+            // Windows: ExitProcess(1). The error message is omitted because
+            // GetStdHandle/WriteFile imports may not be present in all programs.
+            EmitWindowsExitProcess(state, LlvmApi.ConstInt(state.I32, 1, 0));
+        }
     }
 
     private static LlvmValueHandle EmitStringToCString(LlvmCodegenState state, LlvmValueHandle stringRef, string prefix)

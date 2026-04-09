@@ -210,9 +210,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.PrintBool>(program)
                 || ProgramUsesInstruction<IrInst.PanicStr>(program)
                 || usesReadLine);
-        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.WindowsX64
-            && (ProgramUsesInstruction<IrInst.PanicStr>(program)
-                || usesReadLine);
+        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.WindowsX64;
         bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.WindowsX64
             && usesProgramArgs;
         bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.WindowsX64
@@ -258,6 +256,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        LlvmValueHandle heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
+        LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
         if (usesWindowsStdout || usesWindowsReadLine)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
@@ -385,8 +386,8 @@ internal static partial class LlvmCodegen
             i32Ptr,
             heapStorageGlobal,
             heapCursorGlobal,
-            windowsGetStdHandleImport,
-            windowsWriteFileImport,
+            heapEndGlobal,
+            windowsGetStdHandleImport,            windowsWriteFileImport,
             windowsReadFileImport,
             windowsCreateFileImport,
             windowsCloseHandleImport,
@@ -420,6 +421,7 @@ internal static partial class LlvmCodegen
                 i32Ptr,
                 heapStorageGlobal,
                 heapCursorGlobal,
+                heapEndGlobal,
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
                 windowsReadFileImport,
@@ -457,6 +459,12 @@ internal static partial class LlvmCodegen
         return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs;
     }
 
+    private static bool ProgramUsesHeapAllocation(IrProgram program)
+    {
+        return program.EntryFunction.Instructions.Any(RequiresEntryHeapStorage)
+            || program.Functions.Any(static function => function.Instructions.Any(RequiresEntryHeapStorage));
+    }
+
     private static void EmitFunctionBody(
         LlvmTargetContext target,
         LlvmValueHandle llvmFunction,
@@ -469,6 +477,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32Ptr,
         LlvmValueHandle heapStorageGlobal,
         LlvmValueHandle heapCursorGlobal,
+        LlvmValueHandle heapEndGlobal,
         LlvmValueHandle windowsGetStdHandleImport,
         LlvmValueHandle windowsWriteFileImport,
         LlvmValueHandle windowsReadFileImport,
@@ -531,7 +540,10 @@ internal static partial class LlvmCodegen
                     LlvmApi.ConstInt(i64, 0, 0)
                 },
                 "heap_base_ptr");
-            LlvmApi.BuildStore(target.Builder, LlvmApi.BuildPtrToInt(target.Builder, heapBasePtr, i64, "heap_base_i64"), heapCursorGlobal);
+            LlvmValueHandle heapBaseI64 = LlvmApi.BuildPtrToInt(target.Builder, heapBasePtr, i64, "heap_base_i64");
+            LlvmApi.BuildStore(target.Builder, heapBaseI64, heapCursorGlobal);
+            LlvmValueHandle heapEndI64 = LlvmApi.BuildAdd(target.Builder, heapBaseI64, LlvmApi.ConstInt(i64, HeapSizeBytes, 0), "heap_end_i64");
+            LlvmApi.BuildStore(target.Builder, heapEndI64, heapEndGlobal);
         }
 
         if (!isEntry && function.HasEnvAndArgParams)
@@ -556,6 +568,7 @@ internal static partial class LlvmCodegen
             tempSlots,
             localSlots,
             heapCursorGlobal,
+            heapEndGlobal,
             labelBlocks,
             fallthroughBlocks,
             i64,
@@ -775,6 +788,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle[] TempSlots,
         LlvmValueHandle[] LocalSlots,
         LlvmValueHandle HeapCursorSlot,
+        LlvmValueHandle HeapEndSlot,
         Dictionary<string, LlvmBasicBlockHandle> LabelBlocks,
         Dictionary<int, LlvmBasicBlockHandle> FallthroughBlocks,
         LlvmTypeHandle I64,
