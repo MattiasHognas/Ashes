@@ -189,23 +189,28 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Ensures the current heap chunk has enough space for sizeBytes.
-    /// If cursor + size would exceed the chunk end, allocates a new chunk from the OS.
+    /// If cursor + size would exceed the chunk end, allocates new chunk(s) from the OS
+    /// until the request fits in the current chunk.
     /// </summary>
     private static void EmitHeapEnsureSpace(LlvmCodegenState state, LlvmValueHandle sizeBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_check");
+        var growBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_grow");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_ok");
+
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_check_cursor");
         LlvmValueHandle needed = LlvmApi.BuildAdd(builder, cursor, sizeBytes, "heap_check_needed");
         LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "heap_end");
         LlvmValueHandle overflow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, needed, heapEnd, "heap_overflow");
-
-        var growBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_grow");
-        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_ok");
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
         EmitHeapGrow(state);
-        LlvmApi.BuildBr(builder, continueBlock);
+        LlvmApi.BuildBr(builder, checkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
     }
