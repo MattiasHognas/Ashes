@@ -321,7 +321,7 @@ Implementation per API:
 
 ## Implementation Order
 
-1. Spec first (Phases 1–2)
+1. Spec first (Phases 1–2.5)
 2. Semantics (Phases 3–5) — all 6 APIs change together
 3. Backend verification (Phase 6)
 4. Tests (Phases 7–8)
