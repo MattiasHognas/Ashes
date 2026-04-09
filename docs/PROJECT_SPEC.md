@@ -100,7 +100,21 @@ Default backend target.
 
 If omitted, the CLI may choose a reasonable default based on the host OS.
 
-### 3.7 `defaults` (optional)
+### 3.7 `dependencies` (optional)
+A map of package names to version strings. Each key is a package identifier and each value is a SemVer-compatible version constraint.
+
+- Default: `{}`
+- Example:
+```json
+"dependencies": {
+  "json-parser": "1.0.0",
+  "http-utils": "2.3.1"
+}
+```
+
+In v0.x, dependencies are recorded in the manifest but not yet resolved or fetched automatically. Future versions will add a registry, lock file, and automatic download.
+
+### 3.8 `defaults` (optional)
 A future-facing object for CLI defaults. In v0.x this is allowed but not required to be used.
 
 Example:
@@ -207,9 +221,47 @@ If a cycle exists, compilation fails.
 
 ---
 
-## 6. CLI behavior in project mode
+## 6. CLI project management commands
 
-### 6.1 ashes run
+### 6.1 ashes init
+
+Creates a new Ashes project in the current directory.
+
+- Creates `ashes.json` with `name`, `entry`, and `sourceRoots` fields.
+- Creates `src/Main.ash` with a hello-world program.
+- The project name defaults to the current directory name.
+- Fails if `ashes.json` already exists.
+
+### 6.2 ashes add \<package\>
+
+Adds a dependency to the project manifest.
+
+- Locates `ashes.json` by walking upward from the current directory.
+- Adds the package name with version `"*"` to the `dependencies` map.
+- Fails if no `ashes.json` is found.
+
+### 6.3 ashes remove \<package\>
+
+Removes a dependency from the project manifest.
+
+- Locates `ashes.json` by walking upward from the current directory.
+- Removes the package from the `dependencies` map.
+- If the `dependencies` map becomes empty, the field is omitted.
+- Fails if no `ashes.json` is found or the package is not in dependencies.
+
+### 6.4 ashes install
+
+Lists project dependencies. In v0.x the package registry is not yet available, so dependencies are recorded but not fetched.
+
+- Locates `ashes.json` by walking upward from the current directory.
+- Lists all entries in the `dependencies` map with their version constraints.
+- If there are no dependencies, prints a message and exits.
+
+---
+
+## 7. CLI behavior in project mode
+
+### 7.1 ashes run
 
 - Compiles the project entry and all imports
 - Runs the produced executable
@@ -221,21 +273,21 @@ Example:
 ashes run -- hello world
 ```
 
-### 6.2 ashes compile
+### 7.2 ashes compile
 
 - Compiles the project entry and all imports
 - Writes output to:
   - `<outDir>/<projectName or entryName>` by default, or
   - `-o <path>` if specified
 
-### 6.3 ashes test
+### 7.3 ashes test
 
 - Uses existing `.ash` test runner behavior
 - Tests may still run outside project mode; v0.x does not require tests to use `ashes.json`
 
 ---
 
-## 7. Versioning
+## 8. Versioning
 
 v0.x:
 

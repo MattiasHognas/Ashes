@@ -6,7 +6,6 @@ Planned features and future work for the Ashes language and ecosystem.
 |---------|-------------|
 | [Self-Hosting](SELF_HOSTING.md) | Rewrite the compiler in Ashes |
 | [Async Networking](ASYNC_NETWORKING.md) | Non-blocking TCP/HTTP inside `async` |
-| Package Manager | Ecosystem and dependency management |
 | HTTPS/TLS | TLS, encryption, certificates |
 | Pattern Guards | Pattern matching enhancements |
 | Type Annotations | User-written type annotations |

@@ -17,6 +17,10 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]]");
     AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
+    AnsiConsole.MarkupLine("  [bold]ashes init[/]");
+    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
+    AnsiConsole.MarkupLine("  [bold]ashes remove[/]  <package>");
+    AnsiConsole.MarkupLine("  [bold]ashes install[/]");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
 
@@ -450,6 +454,10 @@ try
         "repl" => await RunReplAsync(args.Skip(1).ToArray()),
         "test" => RunTest(args.Skip(1).ToArray()),
         "fmt" => await RunFmtAsync(args.Skip(1).ToArray()),
+        "init" => RunInit(args.Skip(1).ToArray()),
+        "add" => RunAdd(args.Skip(1).ToArray()),
+        "remove" => RunRemove(args.Skip(1).ToArray()),
+        "install" => RunInstall(args.Skip(1).ToArray()),
         "--version" or "-v" => RunVersion(),
         _ => Usage()
     };
@@ -1085,6 +1093,251 @@ static void PrintRuntimeFailure(int exitCode, string stdout, string stderr)
     }
 
     AnsiConsole.Write(new Text(sb.ToString()));
+}
+
+static System.Text.Json.JsonSerializerOptions CreateProjectJsonOptions() => new()
+{
+    WriteIndented = true,
+    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+};
+
+static (Dictionary<string, object?> Fields, Dictionary<string, object?> Dependencies) ReadProjectJson(System.Text.Json.JsonElement root)
+{
+    var obj = new Dictionary<string, object?>();
+    foreach (var prop in root.EnumerateObject())
+    {
+        if (prop.Name == "dependencies")
+        {
+            continue;
+        }
+
+        obj[prop.Name] = DeserializeJsonElement(prop.Value);
+    }
+
+    var deps = new Dictionary<string, object?>();
+    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        foreach (var dep in existingDeps.EnumerateObject())
+        {
+            deps[dep.Name] = DeserializeJsonElement(dep.Value);
+        }
+    }
+
+    return (obj, deps);
+}
+
+static System.Text.Json.JsonDocument ParseProjectJson(string projectFilePath)
+{
+    var text = File.ReadAllText(projectFilePath);
+    try
+    {
+        var doc = System.Text.Json.JsonDocument.Parse(text);
+        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            doc.Dispose();
+            throw new CliUserException($"Invalid ashes.json ({projectFilePath}): root must be a JSON object.");
+        }
+
+        return doc;
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        throw new CliUserException($"Invalid ashes.json ({projectFilePath}): {ex.Message}");
+    }
+}
+
+static void WriteProjectJson(string projectFilePath, Dictionary<string, object?> obj)
+{
+    var json = System.Text.Json.JsonSerializer.Serialize(obj, CreateProjectJsonOptions());
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+}
+
+static int RunInit(string[] a)
+{
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length > 0)
+    {
+        throw new CliUsageException("Unknown argument.");
+    }
+
+    var cwd = Directory.GetCurrentDirectory();
+    var projectFilePath = Path.Combine(cwd, "ashes.json");
+
+    if (File.Exists(projectFilePath))
+    {
+        throw new CliUserException("ashes.json already exists in this directory.");
+    }
+
+    var projectName = new DirectoryInfo(cwd).Name;
+    var entryRelative = Path.Combine("src", "Main.ash");
+
+    var projectJson = new Dictionary<string, object>
+    {
+        ["name"] = projectName,
+        ["entry"] = entryRelative.Replace('\\', '/'),
+        ["sourceRoots"] = new[] { "src" }
+    };
+
+    var json = System.Text.Json.JsonSerializer.Serialize(projectJson, CreateProjectJsonOptions());
+    File.WriteAllText(projectFilePath, json + Environment.NewLine);
+    AnsiConsole.MarkupLine("[green]Created[/] ashes.json");
+
+    var srcDir = Path.Combine(cwd, "src");
+    Directory.CreateDirectory(srcDir);
+
+    var mainPath = Path.Combine(srcDir, "Main.ash");
+    if (!File.Exists(mainPath))
+    {
+        File.WriteAllText(mainPath, "Ashes.IO.print(\"hello, ashes!\")" + "\n");
+        AnsiConsole.MarkupLine("[green]Created[/] src/Main.ash");
+    }
+
+    return 0;
+}
+
+static int RunAdd(string[] a)
+{
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length == 0)
+    {
+        throw new CliUserException("Missing package name.");
+    }
+
+    var packageName = a[0];
+
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    using var doc = ParseProjectJson(projectFilePath);
+    var root = doc.RootElement;
+
+    var (obj, deps) = ReadProjectJson(root);
+
+    deps[packageName] = "*";
+    obj["dependencies"] = deps;
+
+    WriteProjectJson(projectFilePath, obj);
+
+    AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to dependencies.");
+    return 0;
+}
+
+static int RunRemove(string[] a)
+{
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length == 0)
+    {
+        throw new CliUserException("Missing package name.");
+    }
+
+    var packageName = a[0];
+
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    using var doc = ParseProjectJson(projectFilePath);
+    var root = doc.RootElement;
+
+    // Check that the package actually exists in dependencies
+    if (!root.TryGetProperty("dependencies", out var existingDeps)
+        || existingDeps.ValueKind != System.Text.Json.JsonValueKind.Object
+        || !existingDeps.TryGetProperty(packageName, out _))
+    {
+        throw new CliUserException($"Package '{packageName}' is not in dependencies.");
+    }
+
+    var (obj, deps) = ReadProjectJson(root);
+
+    deps.Remove(packageName);
+
+    if (deps.Count > 0)
+    {
+        obj["dependencies"] = deps;
+    }
+
+    WriteProjectJson(projectFilePath, obj);
+
+    AnsiConsole.MarkupLine($"[green]Removed[/] {Markup.Escape(packageName)} from dependencies.");
+    return 0;
+}
+
+static int RunInstall(string[] a)
+{
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length > 0)
+    {
+        throw new CliUsageException("Unknown argument.");
+    }
+
+    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    if (string.IsNullOrEmpty(projectFilePath))
+    {
+        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    }
+
+    using var doc = ParseProjectJson(projectFilePath);
+    var root = doc.RootElement;
+
+    var deps = new Dictionary<string, string>();
+    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        foreach (var dep in existingDeps.EnumerateObject())
+        {
+            deps[dep.Name] = dep.Value.GetString() ?? "*";
+        }
+    }
+
+    if (deps.Count == 0)
+    {
+        AnsiConsole.MarkupLine("[grey]No dependencies to install.[/]");
+        return 0;
+    }
+
+    AnsiConsole.MarkupLine($"[bold]Dependencies[/] ({deps.Count}):");
+    foreach (var (name, version) in deps)
+    {
+        AnsiConsole.MarkupLine($"  {Markup.Escape(name)} [grey]{Markup.Escape(version)}[/]");
+    }
+
+    AnsiConsole.MarkupLine("[yellow]Package registry not yet available. Dependencies are recorded but not fetched.[/]");
+    return 0;
+}
+
+static object? DeserializeJsonElement(System.Text.Json.JsonElement element)
+{
+    return element.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.String => element.GetString(),
+        System.Text.Json.JsonValueKind.Number => element.GetDouble(),
+        System.Text.Json.JsonValueKind.True => true,
+        System.Text.Json.JsonValueKind.False => false,
+        System.Text.Json.JsonValueKind.Null => null,
+        System.Text.Json.JsonValueKind.Array => element.EnumerateArray().Select(DeserializeJsonElement).ToArray(),
+        System.Text.Json.JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => DeserializeJsonElement(p.Value)),
+        _ => element.GetRawText()
+    };
 }
 
 static int RunVersion()
