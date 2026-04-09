@@ -51,7 +51,7 @@ produced binaries have **zero runtime dependencies** — no external
 assembler, toolchain, or garbage collector required.
 
 This repository contains the full toolchain: compiler, formatter, test
-runner, language server, debugger, and VS Code extension.
+runner, language server, debugger, package manager, and VS Code extension.
 
 ### Design Principles
 

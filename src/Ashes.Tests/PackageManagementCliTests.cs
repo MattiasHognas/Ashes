@@ -407,6 +407,122 @@ public sealed class PackageManagementCliTests
         }
     }
 
+    // ──────────────── --help and unexpected args ────────────────
+
+    [Test]
+    public async Task Init_help_should_show_usage()
+    {
+        var result = await RunCliAsync(["init", "--help"]);
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands");
+    }
+
+    [Test]
+    public async Task Init_unexpected_arg_should_fail()
+    {
+        var result = await RunCliAsync(["init", "--unknown"]);
+
+        result.ExitCode.ShouldBe(2);
+        result.Stderr.ShouldContain("Unknown argument");
+    }
+
+    [Test]
+    public async Task Add_help_should_show_usage()
+    {
+        var result = await RunCliAsync(["add", "--help"]);
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands");
+    }
+
+    [Test]
+    public async Task Remove_help_should_show_usage()
+    {
+        var result = await RunCliAsync(["remove", "--help"]);
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands");
+    }
+
+    [Test]
+    public async Task Install_help_should_show_usage()
+    {
+        var result = await RunCliAsync(["install", "--help"]);
+
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldContain("Commands");
+    }
+
+    [Test]
+    public async Task Install_unexpected_arg_should_fail()
+    {
+        var result = await RunCliAsync(["install", "--unknown"]);
+
+        result.ExitCode.ShouldBe(2);
+        result.Stderr.ShouldContain("Unknown argument");
+    }
+
+    [Test]
+    public async Task Add_should_not_treat_help_as_package_name()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            await RunCliAsync(["init"], workingDirectory: tempDir);
+
+            var result = await RunCliAsync(["add", "-h"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Commands");
+
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            json.ShouldNotContain("-h");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Remove_should_not_treat_help_as_package_name()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            await RunCliAsync(["init"], workingDirectory: tempDir);
+
+            var result = await RunCliAsync(["remove", "-h"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(0);
+            result.Output.ShouldContain("Commands");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Add_should_fail_on_invalid_json()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), "not valid json!!!");
+
+            var result = await RunCliAsync(["add", "some-pkg"], workingDirectory: tempDir);
+
+            result.ExitCode.ShouldBe(1);
+            result.Stderr.ShouldContain("Invalid ashes.json");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     // ──────────────── helpers ────────────────
 
     private static async Task<CliCommandResult> RunCliAsync(string[] args, string? workingDirectory = null)

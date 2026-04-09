@@ -454,10 +454,10 @@ try
         "repl" => await RunReplAsync(args.Skip(1).ToArray()),
         "test" => RunTest(args.Skip(1).ToArray()),
         "fmt" => await RunFmtAsync(args.Skip(1).ToArray()),
-        "init" => RunInit(),
+        "init" => RunInit(args.Skip(1).ToArray()),
         "add" => RunAdd(args.Skip(1).ToArray()),
         "remove" => RunRemove(args.Skip(1).ToArray()),
-        "install" => RunInstall(),
+        "install" => RunInstall(args.Skip(1).ToArray()),
         "--version" or "-v" => RunVersion(),
         _ => Usage()
     };
@@ -1126,14 +1126,44 @@ static (Dictionary<string, object?> Fields, Dictionary<string, object?> Dependen
     return (obj, deps);
 }
 
+static System.Text.Json.JsonDocument ParseProjectJson(string projectFilePath)
+{
+    var text = File.ReadAllText(projectFilePath);
+    try
+    {
+        var doc = System.Text.Json.JsonDocument.Parse(text);
+        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            doc.Dispose();
+            throw new CliUserException($"Invalid ashes.json ({projectFilePath}): root must be a JSON object.");
+        }
+
+        return doc;
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        throw new CliUserException($"Invalid ashes.json ({projectFilePath}): {ex.Message}");
+    }
+}
+
 static void WriteProjectJson(string projectFilePath, Dictionary<string, object?> obj)
 {
     var json = System.Text.Json.JsonSerializer.Serialize(obj, CreateProjectJsonOptions());
     File.WriteAllText(projectFilePath, json + Environment.NewLine);
 }
 
-static int RunInit()
+static int RunInit(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length > 0)
+    {
+        throw new CliUsageException("Unknown argument.");
+    }
+
     var cwd = Directory.GetCurrentDirectory();
     var projectFilePath = Path.Combine(cwd, "ashes.json");
 
@@ -1171,6 +1201,11 @@ static int RunInit()
 
 static int RunAdd(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     if (a.Length == 0)
     {
         throw new CliUserException("Missing package name.");
@@ -1184,8 +1219,7 @@ static int RunAdd(string[] a)
         throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
     }
 
-    var text = File.ReadAllText(projectFilePath);
-    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    using var doc = ParseProjectJson(projectFilePath);
     var root = doc.RootElement;
 
     var (obj, deps) = ReadProjectJson(root);
@@ -1201,6 +1235,11 @@ static int RunAdd(string[] a)
 
 static int RunRemove(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
     if (a.Length == 0)
     {
         throw new CliUserException("Missing package name.");
@@ -1214,8 +1253,7 @@ static int RunRemove(string[] a)
         throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
     }
 
-    var text = File.ReadAllText(projectFilePath);
-    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    using var doc = ParseProjectJson(projectFilePath);
     var root = doc.RootElement;
 
     // Check that the package actually exists in dependencies
@@ -1241,16 +1279,25 @@ static int RunRemove(string[] a)
     return 0;
 }
 
-static int RunInstall()
+static int RunInstall(string[] a)
 {
+    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    {
+        return Usage(0);
+    }
+
+    if (a.Length > 0)
+    {
+        throw new CliUsageException("Unknown argument.");
+    }
+
     var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
     if (string.IsNullOrEmpty(projectFilePath))
     {
         throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
     }
 
-    var text = File.ReadAllText(projectFilePath);
-    using var doc = System.Text.Json.JsonDocument.Parse(text);
+    using var doc = ParseProjectJson(projectFilePath);
     var root = doc.RootElement;
 
     var deps = new Dictionary<string, string>();
