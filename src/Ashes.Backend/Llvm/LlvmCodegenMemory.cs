@@ -126,29 +126,9 @@ internal static partial class LlvmCodegen
     private static void EmitCopyBytes(LlvmCodegenState state, LlvmValueHandle destBytes, LlvmValueHandle sourceBytes, LlvmValueHandle length, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
-
-        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
-        var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
-        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_continue");
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_index");
-        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, length, prefix + "_done");
-        LlvmApi.BuildCondBr(builder, done, continueBlock, bodyBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-        LlvmValueHandle sourcePtr = LlvmApi.BuildGEP2(builder, state.I8, sourceBytes, new[] { index }, prefix + "_src_ptr");
-        LlvmValueHandle destPtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, new[] { index }, prefix + "_dst_ptr");
-        LlvmValueHandle value = LlvmApi.BuildLoad2(builder, state.I8, sourcePtr, prefix + "_value");
-        LlvmApi.BuildStore(builder, value, destPtr);
-        LlvmValueHandle nextIndex = LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_next");
-        LlvmApi.BuildStore(builder, nextIndex, indexSlot);
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        // Use llvm.memcpy intrinsic — LLVM will lower this to vectorized
+        // copies (rep movsb / movaps) instead of a byte-by-byte loop.
+        LlvmApi.BuildMemCpy(builder, destBytes, 1, sourceBytes, 1, length);
     }
 
     private static LlvmValueHandle LoadStringLength(LlvmCodegenState state, LlvmValueHandle stringRef, string name)

@@ -71,6 +71,7 @@ internal static partial class LlvmCodegen
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options);
 
         VerifyModule(target);
+        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
     }
@@ -82,6 +83,7 @@ internal static partial class LlvmCodegen
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options);
 
         VerifyModule(target);
+        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
     }
@@ -93,6 +95,7 @@ internal static partial class LlvmCodegen
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options);
 
         VerifyModule(target);
+        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry");
     }
@@ -119,14 +122,6 @@ internal static partial class LlvmCodegen
     /// instcombine, simplifycfg, mem2reg, dead-code elimination, inlining,
     /// loop optimizations, and other standard LLVM passes.
     /// At O0 no passes are run — codegen output is used as-is.
-    ///
-    /// NOTE: Currently not wired into the compilation pipeline because the
-    /// custom ELF/PE linkers do not yet handle the additional relocation
-    /// types and sections that module-level optimization passes produce.
-    /// The codegen optimization level (set via LlvmCodeGenOptLevel in
-    /// LlvmTargetSetup) still applies LLVM optimizations during instruction
-    /// selection and register allocation. Full pass manager integration
-    /// will be enabled when the linker supports a broader relocation set.
     /// </summary>
     internal static void RunLlvmOptimizationPasses(LlvmTargetContext target, Backends.BackendOptimizationLevel level)
     {
@@ -353,6 +348,11 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsCommandLineToArgvImport, LlvmLinkage.External);
         }
 
+        // Emit a local memcpy implementation for the freestanding target.
+        // LLVM may lower llvm.memcpy intrinsics to calls to memcpy when the size is
+        // not a compile-time constant. Since we have no libc, we provide our own.
+        EmitBuiltinMemcpy(target, i8, i64, i8Ptr);
+
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             IsLinuxFlavor(flavor)
@@ -360,11 +360,18 @@ internal static partial class LlvmCodegen
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
 
+        // Apply nounwind to all functions — Ashes has no exceptions / unwind semantics,
+        // so LLVM can skip unwind table generation for smaller, faster code.
+        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
+        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
+        LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
+
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
         {
             LlvmValueHandle llvmFunction = LlvmApi.AddFunction(target.Module, function.Label, closureFunctionType);
             LlvmApi.SetLinkage(llvmFunction, LlvmLinkage.Internal);
+            LlvmApi.AddAttributeAtIndex(llvmFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 
@@ -618,7 +625,7 @@ internal static partial class LlvmCodegen
             }
 
             EmitInstructionDebugLocation(debugContext, target.Builder, instruction, function.Label);
-            terminated = EmitInstruction(state, instruction, index);
+            terminated = EmitInstruction(state, instruction, index, function.Instructions);
         }
 
         if (!terminated)
@@ -641,7 +648,7 @@ internal static partial class LlvmCodegen
         }
     }
 
-    private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index)
+    private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index, IReadOnlyList<IrInst> instructions)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         return instruction switch
@@ -720,7 +727,8 @@ internal static partial class LlvmCodegen
             IrInst.PanicStr panicStr => EmitPanic(state, LoadTemp(state, panicStr.Source)),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp))),
-            IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp))),
+            IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
+                isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
@@ -842,6 +850,90 @@ internal static partial class LlvmCodegen
 
     private static bool IsLinuxFlavor(LlvmCodegenFlavor flavor) =>
         flavor is LlvmCodegenFlavor.LinuxX64 or LlvmCodegenFlavor.LinuxArm64;
+
+    /// <summary>
+    /// Emits local <c>memcpy</c> and <c>memset</c> function implementations so that LLVM's
+    /// intrinsic lowering has definitions to call. Without libc, the linker would fail
+    /// on the external symbols. Functions use weak linkage so LLVM's optimizer doesn't
+    /// eliminate them but also doesn't complain about redefinition.
+    /// </summary>
+    private static void EmitBuiltinMemcpy(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        // ── memcpy(dest, src, n) → dest ──────────────────────────────────
+        {
+            LlvmTypeHandle memcpyType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i8Ptr, i64]);
+            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memcpy", memcpyType);
+
+            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+
+            LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
+            LlvmValueHandle src = LlvmApi.GetParam(fn, 1);
+            LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+            LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
+            LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+            LlvmValueHandle srcPtr = LlvmApi.BuildGEP2(target.Builder, i8, src, [idx], "src_ptr");
+            LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
+            LlvmValueHandle val = LlvmApi.BuildLoad2(target.Builder, i8, srcPtr, "byte");
+            LlvmApi.BuildStore(target.Builder, val, dstPtr);
+            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+            LlvmApi.BuildRet(target.Builder, dest);
+        }
+
+        // ── memset(dest, val, n) → dest ──────────────────────────────────
+        {
+            LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+            LlvmTypeHandle memsetType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i32, i64]);
+            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memset", memsetType);
+
+            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+
+            LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
+            LlvmValueHandle fillVal = LlvmApi.GetParam(fn, 1);
+            LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+            LlvmValueHandle fillByte = LlvmApi.BuildTrunc(target.Builder, fillVal, i8, "fill_byte");
+            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+            LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
+            LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+            LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
+            LlvmApi.BuildStore(target.Builder, fillByte, dstPtr);
+            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+            LlvmApi.BuildBr(target.Builder, checkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+            LlvmApi.BuildRet(target.Builder, dest);
+        }
+    }
 
     /// <summary>
     /// Translates x86-64 syscall constants to the correct number for the target architecture.

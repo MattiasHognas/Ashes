@@ -13,6 +13,7 @@ internal static partial class LlvmImageLinker
     private const ulong ElfBaseVa = 0x400000;
     private const int LinuxTrampolineLength = 20;
     private const uint ElfRelocX86_64Pc32 = 2;
+    private const uint ElfRelocX86_64Plt32 = 4;
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
 
@@ -426,6 +427,8 @@ internal static partial class LlvmImageLinker
                 switch (relocationType)
                 {
                     case ElfRelocX86_64Pc32:
+                    case ElfRelocX86_64Plt32:
+                        // PLT32 is resolved identically to PC32 for static executables (S + A - P).
                         BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
                         break;
                     case ElfRelocX86_64_32:
