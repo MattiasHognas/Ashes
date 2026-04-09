@@ -1,5 +1,14 @@
 # Async-Only TCP/HTTP API Redesign
 
+Convert existing blocking TCP/HTTP operations to non-blocking variants inside async blocks, powered by a platform-specific event loop (epoll on Linux, IO completion ports on Windows).
+
+## Deliverables:
+
+Non-blocking TCP connect/send/receive
+Async HTTP get/post atop async TCP
+Event loop runtime with I/O readiness
+Tests: concurrent HTTP requests, parallel TCP connections, async resource cleanup, error propagation across awaits
+
 ## Goal
 
 Remove all synchronous TCP/HTTP APIs and replace them with async-only
