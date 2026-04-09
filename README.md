@@ -353,6 +353,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | 1.1.0 | Add memory safety |
 | 1.2.0 | Add async/await |
 | 1.2.1 | Add import aliasing |
+| 1.3.0 | Add package manager, pattern guards and syntax highlighting |
 
 ------------------------------------------------------------------------
 
