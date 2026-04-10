@@ -102,7 +102,8 @@ public abstract record IrInst
     /// SourceTemp is the temp holding the owned value to clean up.
     /// For resource types (Socket), routes to platform-specific cleanup.
     /// For other owned types (String, List, ADTs, Closures), a no-op in
-    /// the current linear allocator — placeholder for future free().
+    /// the current bump allocator — actual deallocation is handled by
+    /// RestoreArenaState which resets the heap cursor for copy-type scopes.
     /// </summary>
     public sealed record Drop(int SourceTemp, string TypeName) : IrInst;
 
@@ -114,6 +115,23 @@ public abstract record IrInst
     /// In the current linear allocator this is a simple value copy (pointer pass-through).
     /// </summary>
     public sealed record Borrow(int Target, int SourceTemp) : IrInst;
+
+    /// <summary>
+    /// Saves the current heap allocator state (cursor and end pointers) into two
+    /// local slots. Emitted at ownership scope entry so that arena-based
+    /// deallocation can restore the cursor at scope exit.
+    /// </summary>
+    public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst;
+
+    /// <summary>
+    /// Restores the heap allocator state (cursor and end pointers) from two local
+    /// slots previously saved by <see cref="SaveArenaState"/>. This effectively
+    /// frees all heap memory allocated since the matching SaveArenaState by
+    /// resetting the bump pointer. Only emitted at scope exit when the scope's
+    /// result is a copy type (Int, Float, Bool) and no heap-allocated values
+    /// escape the scope.
+    /// </summary>
+    public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing

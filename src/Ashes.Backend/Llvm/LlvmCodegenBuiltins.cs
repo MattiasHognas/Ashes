@@ -654,9 +654,10 @@ internal static partial class LlvmCodegen
 
             default:
                 // Owned heap types (String, List, ADTs, Closures, etc.):
-                // No-op in the current linear allocator. The Drop instruction
-                // is recorded in IR for semantic correctness. Phase 4 will
-                // replace the linear allocator and emit actual free() calls.
+                // No-op per-object — bulk deallocation is handled by
+                // RestoreArenaState which resets the heap cursor at scope
+                // exit for copy-type scopes. The Drop instruction is kept
+                // in IR for semantic correctness and resource cleanup routing.
                 return false;
         }
     }

@@ -585,10 +585,11 @@ public static class IrOptimizer
     // ── Pass 4: Drop elision ────────────────────────────────────────────
     // Remove Drop instructions for slots that were never stored to
     // (the value is uninitialized or was already consumed).
-    // Currently a no-op — the Drop instructions in the IR are needed for
-    // semantic correctness (Phase 2). When the allocator moves beyond
-    // linear/bump allocation to per-object free(), this pass will skip
-    // drops for values proven to be dead or moved.
+    // Currently a no-op — the Drop instructions in the IR are still needed
+    // for resource types (Socket). Arena-based deallocation now handles
+    // bulk memory reclamation via RestoreArenaState. When per-object free()
+    // or more granular arena analysis is added, this pass will skip drops
+    // for values proven to be dead or moved.
 
     private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
     {

@@ -162,6 +162,11 @@ public sealed class Lowering
     // Each scope level tracks owned values introduced at that level.
     private readonly Stack<Dictionary<string, OwnershipInfo>> _ownershipScopes = new();
 
+    // Arena watermark local slot pairs (cursor, end) for each ownership scope.
+    // SaveArenaState is emitted at scope entry; RestoreArenaState may be emitted
+    // at scope exit when the scope's result is a copy type (no heap escapes).
+    private readonly Stack<(int CursorSlot, int EndSlot)> _arenaWatermarks = new();
+
     // Alias map for ownership: when `let y = x` and x is owned, y → x.
     // This prevents double-Drop and propagates diagnostics through aliases.
     // Aliases are resolved transitively (y → x → z chains are followed).
@@ -218,6 +223,8 @@ public sealed class Lowering
         }
         _scopes.Push(rootScope);
         _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+        // Root scope: push sentinel arena watermark (no restore will happen at program exit)
+        _arenaWatermarks.Push((-1, -1));
     }
 
     /// <summary>
@@ -1306,6 +1313,10 @@ public sealed class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
+        // Save the arena watermark BEFORE lowering the let-bound value so that
+        // heap allocations from the value expression are covered by the arena scope.
+        EmitArenaWatermark();
+
         var (valTemp, valType) = LowerExpr(let.Value);
 
         int slot = NewLocal();
@@ -1354,14 +1365,14 @@ public sealed class Lowering
         {
             int resultSlot = NewLocal();
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopOwnershipScope();
+            PopOwnershipScope(bodyType);
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
             _scopes.Pop();
             return (resultTemp, bodyType);
         }
 
-        PopOwnershipScope();
+        PopOwnershipScope(bodyType);
         _scopes.Pop();
         return (bodyTemp, bodyType);
     }
@@ -3022,8 +3033,13 @@ public sealed class Lowering
         for (int i = 0; i < match.Cases.Count; i++)
         {
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
+            var armCleanupLabel = NewLabel("match_arm_cleanup");
             var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
             _scopes.Push(caseScope);
+            // Save the arena watermark before pattern matching and body evaluation
+            // so allocations in guard expressions and the arm body are covered.
+            EmitArenaWatermark();
+            var (armCursorSlot, armEndSlot) = _arenaWatermarks.Peek();
             PushOwnershipScope();
 
             var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
@@ -3036,19 +3052,19 @@ public sealed class Lowering
             else
             {
                 Unify(valueType, patternType);
-                EmitPattern(match.Cases[i].Pattern, valueTemp, caseFailLabel, patternBindings);
+                EmitPattern(match.Cases[i].Pattern, valueTemp, armCleanupLabel, patternBindings);
             }
 
             // Track owned bindings created by pattern matching
             TrackOwnedBindingsInPattern(patternBindings);
 
-            // If the case has a guard, evaluate it and jump to fail label if false
+            // If the case has a guard, evaluate it and jump to cleanup label if false
             if (match.Cases[i].Guard is { } guard)
             {
                 if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
                 var (guardTemp, guardType) = LowerExpr(guard);
                 Unify(guardType, new TypeRef.TBool());
-                Emit(new IrInst.JumpIfFalse(guardTemp, caseFailLabel));
+                Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
             }
 
             // Each case body IS in tail position (if the match itself is)
@@ -3064,8 +3080,17 @@ public sealed class Lowering
                 }
             }
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopOwnershipScope();
+            PopOwnershipScope(bodyType);
             Emit(new IrInst.Jump(endLabel));
+
+            // Arm cleanup path (Label → RestoreArenaState → Jump): when pattern/guard
+            // fails, restore the arena watermark to reclaim any heap allocations made
+            // during pattern matching or guard evaluation. This is always safe on the
+            // failure path because no result escapes from a failed arm — all allocations
+            // between the watermark and the current cursor are unreachable garbage.
+            Emit(new IrInst.Label(armCleanupLabel));
+            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot));
+            Emit(new IrInst.Jump(caseFailLabel));
 
             _scopes.Pop();
             if (i < match.Cases.Count - 1)
@@ -3197,6 +3222,7 @@ public sealed class Lowering
         var savedLocal = _nextLocal;
         var savedScopes = _scopes.ToArray();
         var savedOwnershipScopes = _ownershipScopes.ToArray();
+        var savedArenaWatermarks = _arenaWatermarks.ToArray();
         var savedTcoCtx = _tcoCtx;
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         _tcoCtx = null;
@@ -3234,6 +3260,9 @@ public sealed class Lowering
         _scopes.Push(scope);
         _ownershipScopes.Clear();
         _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+        // Coroutine root scope: push sentinel arena watermark
+        _arenaWatermarks.Clear();
+        _arenaWatermarks.Push((-1, -1));
 
         // --- Lower the async body ---
         var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
@@ -3274,6 +3303,11 @@ public sealed class Lowering
         foreach (var s in savedOwnershipScopes.Reverse())
         {
             _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(s, StringComparer.Ordinal));
+        }
+        _arenaWatermarks.Clear();
+        foreach (var w in savedArenaWatermarks.Reverse())
+        {
+            _arenaWatermarks.Push(w);
         }
         _tcoCtx = savedTcoCtx;
         _insideAsync = savedInsideAsync;
@@ -4118,7 +4152,24 @@ public sealed class Lowering
     }
 
     /// <summary>
+    /// Emits SaveArenaState to capture the current heap watermark.
+    /// Must be called before any heap allocations that should be covered
+    /// by the arena scope. The returned slot pair is pushed onto the
+    /// arena watermarks stack and will be popped by <see cref="PopOwnershipScope"/>.
+    /// </summary>
+    private void EmitArenaWatermark()
+    {
+        int cursorSlot = NewLocal();
+        int endSlot = NewLocal();
+        _arenaWatermarks.Push((cursorSlot, endSlot));
+        Emit(new IrInst.SaveArenaState(cursorSlot, endSlot));
+    }
+
+    /// <summary>
     /// Pushes a new ownership scope. Must be matched with PopOwnershipScope().
+    /// Does not emit SaveArenaState — call <see cref="EmitArenaWatermark"/> at the
+    /// desired IR position before or after this call. The arena watermark stack
+    /// must have one entry per ownership scope for PopOwnershipScope to pair correctly.
     /// </summary>
     private void PushOwnershipScope()
     {
@@ -4127,11 +4178,36 @@ public sealed class Lowering
 
     /// <summary>
     /// Pops an ownership scope, emitting Drop instructions for any remaining alive owned values.
+    /// When <paramref name="resultType"/> is a copy type (Int, Float, Bool), emits
+    /// RestoreArenaState to reset the bump allocator to the scope-entry watermark,
+    /// effectively freeing all heap memory allocated within the scope.
     /// </summary>
-    private void PopOwnershipScope()
+    private void PopOwnershipScope(TypeRef? resultType = null)
     {
         EmitDropsForCurrentScope();
+
+        var (cursorSlot, endSlot) = _arenaWatermarks.Pop();
+
+        // Arena reset is safe when the scope result is a copy type — no heap-allocated
+        // values escape the scope. All owned heap values were dropped above, so the
+        // memory between the watermark and the current cursor is unreachable garbage.
+        if (resultType is not null && CanArenaReset(resultType))
+        {
+            Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot));
+        }
+
         _ownershipScopes.Pop();
+    }
+
+    /// <summary>
+    /// Returns true if the given type is a copy type safe for arena reset.
+    /// Copy types (Int, Float, Bool) don't reference heap memory, so restoring
+    /// the heap cursor after computing a copy-type result is always safe.
+    /// </summary>
+    private bool CanArenaReset(TypeRef type)
+    {
+        var pruned = Prune(type);
+        return pruned is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
     }
 
     /// <summary>

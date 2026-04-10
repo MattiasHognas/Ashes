@@ -236,6 +236,36 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Saves the current heap cursor and end pointers into local slots.
+    /// Used at ownership scope entry for arena-based deallocation.
+    /// </summary>
+    private static bool EmitSaveArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "arena_save_cursor");
+        LlvmApi.BuildStore(builder, cursor, state.LocalSlots[cursorLocalSlot]);
+        LlvmValueHandle end = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_save_end");
+        LlvmApi.BuildStore(builder, end, state.LocalSlots[endLocalSlot]);
+        return false;
+    }
+
+    /// <summary>
+    /// Restores the heap cursor and end pointers from local slots previously saved
+    /// by <see cref="EmitSaveArenaState"/>. This resets the bump allocator to the
+    /// scope-entry watermark, effectively freeing all heap memory allocated since
+    /// the matching SaveArenaState.
+    /// </summary>
+    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[cursorLocalSlot], "arena_restore_cursor");
+        LlvmApi.BuildStore(builder, cursor, state.HeapCursorSlot);
+        LlvmValueHandle end = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[endLocalSlot], "arena_restore_end");
+        LlvmApi.BuildStore(builder, end, state.HeapEndSlot);
+        return false;
+    }
+
+    /// <summary>
     /// Checks if the OS memory allocation succeeded. On Linux raw syscalls report failures as
     /// negative errno values in the range [-4095, -1]; on Windows VirtualAlloc returns NULL (0).
     /// Panics with a diagnostic message if the allocation failed.

@@ -770,6 +770,9 @@ internal static partial class LlvmCodegen
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
             IrInst.Return ret => EmitReturn(state, ret.Source),
+            // Arena deallocation: save/restore heap cursor and end pointers
+            IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot),
+            IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }
