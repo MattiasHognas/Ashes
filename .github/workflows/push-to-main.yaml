@@ -46,6 +46,7 @@ jobs:
         with:
           path: runtimes
           key: runtimes-22
+          enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
         if: steps.cache-runtimes.outputs.cache-hit != 'true'
