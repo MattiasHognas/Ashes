@@ -205,20 +205,21 @@
     EntryFunction: {
       Label: _start_main,
       Instructions: [
+        {
+          EndLocalSlot: 1
+        },
         {},
         {
           Target: 1,
           FuncLabel: lambda_0
         },
         {
+          Slot: 2,
           Source: 1
         },
         {
-          CursorLocalSlot: 1,
-          EndLocalSlot: 2
-        },
-        {
-          Target: 2
+          Target: 2,
+          Slot: 2
         },
         {
           Target: 3,
@@ -250,7 +251,8 @@
           Source: 7
         },
         {
-          Target: 8
+          Target: 8,
+          Slot: 2
         },
         {
           SourceTemp: 8,
@@ -268,7 +270,7 @@
       TempCount: 10,
       HasEnvAndArgParams: false,
       LocalNames: {
-        0: add
+        2: add
       }
     },
     Functions: [

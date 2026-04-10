@@ -1313,6 +1313,10 @@ public sealed class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
+        // Save the arena watermark BEFORE lowering the let-bound value so that
+        // heap allocations from the value expression are covered by the arena scope.
+        EmitArenaWatermark();
+
         var (valTemp, valType) = LowerExpr(let.Value);
 
         int slot = NewLocal();
@@ -3031,6 +3035,9 @@ public sealed class Lowering
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
             var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
             _scopes.Push(caseScope);
+            // Save the arena watermark before pattern matching and body evaluation
+            // so allocations in guard expressions and the arm body are covered.
+            EmitArenaWatermark();
             PushOwnershipScope();
 
             var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
@@ -4134,17 +4141,28 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Pushes a new ownership scope. Must be matched with PopOwnershipScope().
-    /// Emits SaveArenaState to capture the current heap watermark for potential
-    /// arena-based deallocation at scope exit.
+    /// Emits SaveArenaState to capture the current heap watermark.
+    /// Must be called before any heap allocations that should be covered
+    /// by the arena scope. The returned slot pair is pushed onto the
+    /// arena watermarks stack and will be popped by <see cref="PopOwnershipScope"/>.
     /// </summary>
-    private void PushOwnershipScope()
+    private void EmitArenaWatermark()
     {
-        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
         int cursorSlot = NewLocal();
         int endSlot = NewLocal();
         _arenaWatermarks.Push((cursorSlot, endSlot));
         Emit(new IrInst.SaveArenaState(cursorSlot, endSlot));
+    }
+
+    /// <summary>
+    /// Pushes a new ownership scope. Must be matched with PopOwnershipScope().
+    /// Does not emit SaveArenaState — call <see cref="EmitArenaWatermark"/> at the
+    /// desired IR position before or after this call. The arena watermark stack
+    /// must have one entry per ownership scope for PopOwnershipScope to pair correctly.
+    /// </summary>
+    private void PushOwnershipScope()
+    {
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
     }
 
     /// <summary>

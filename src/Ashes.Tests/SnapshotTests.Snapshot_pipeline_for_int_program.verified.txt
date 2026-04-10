@@ -124,6 +124,9 @@
       Label: _start_main,
       Instructions: [
         {
+          EndLocalSlot: 1
+        },
+        {
           Value: 40
         },
         {
@@ -135,14 +138,12 @@
           Right: 1
         },
         {
+          Slot: 2,
           Source: 2
         },
         {
-          CursorLocalSlot: 1,
-          EndLocalSlot: 2
-        },
-        {
-          Target: 3
+          Target: 3,
+          Slot: 2
         },
         {
           Target: 4,
@@ -164,7 +165,7 @@
       TempCount: 6,
       HasEnvAndArgParams: false,
       LocalNames: {
-        0: x
+        2: x
       }
     },
     UsesPrintInt: true,

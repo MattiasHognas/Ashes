@@ -193,6 +193,51 @@ public sealed class ArenaDeallocationTests
             "Int result body should emit RestoreArenaState after drops.");
     }
 
+    // --- Watermark placement: SaveArenaState before heap-allocating let-bound value ---
+
+    [Test]
+    public void SaveArenaState_emitted_before_list_alloc_in_let()
+    {
+        // When the let-bound value allocates on the heap (list construction),
+        // SaveArenaState must appear BEFORE the Alloc instructions so that
+        // the arena watermark covers those allocations.
+        var ir = LowerProgram("let xs = [1, 2, 3] in 0");
+        var insts = ir.EntryFunction.Instructions;
+
+        var saveIndex = insts.FindIndex(i => i is IrInst.SaveArenaState);
+        var firstAllocIndex = insts.FindIndex(i => i is IrInst.Alloc);
+
+        saveIndex.ShouldBeGreaterThanOrEqualTo(0, "Should emit SaveArenaState.");
+        firstAllocIndex.ShouldBeGreaterThanOrEqualTo(0, "Should emit Alloc for list construction.");
+        saveIndex.ShouldBeLessThan(firstAllocIndex,
+            "SaveArenaState must precede heap allocations from the let-bound value.");
+    }
+
+    [Test]
+    public void Heap_let_value_with_copy_body_emits_RestoreArenaState()
+    {
+        // let xs = [1, 2, 3] in 0 — the body is Int (copy type),
+        // so RestoreArenaState should be emitted to reclaim the list allocation.
+        var ir = LowerProgram("let xs = [1, 2, 3] in 0");
+        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue(
+            "Copy-type body after heap-allocating let value should emit RestoreArenaState.");
+    }
+
+    [Test]
+    public void SaveArenaState_emitted_before_tuple_alloc_in_let()
+    {
+        var ir = LowerProgram("let t = (1, 2) in 0");
+        var insts = ir.EntryFunction.Instructions;
+
+        var saveIndex = insts.FindIndex(i => i is IrInst.SaveArenaState);
+        var firstAllocIndex = insts.FindIndex(i => i is IrInst.Alloc);
+
+        saveIndex.ShouldBeGreaterThanOrEqualTo(0, "Should emit SaveArenaState.");
+        firstAllocIndex.ShouldBeGreaterThanOrEqualTo(0, "Should emit Alloc for tuple construction.");
+        saveIndex.ShouldBeLessThan(firstAllocIndex,
+            "SaveArenaState must precede heap allocations from the let-bound tuple.");
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
