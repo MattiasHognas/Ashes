@@ -32,7 +32,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
-    table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Default is generic.");
+    table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
