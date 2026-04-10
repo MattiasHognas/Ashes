@@ -16,14 +16,16 @@ compiler quality-of-implementation improvements.
 The compiler produces correct code and has a solid architecture, but there
 are significant optimization opportunities:
 
-1. LLVM module-level optimization passes are completely disabled (dead code)
+1. ~~LLVM module-level optimization passes are completely disabled (dead
+   code)~~ ✅ Passes enabled with targeted pipeline (O0–O3)
 2. ~~Memory is never freed — 4 MB bump allocator with no bounds checking
    silently crashes on overflow~~ ✅ Dynamic heap via `mmap`/`VirtualAlloc`
-3. Manual byte loops replace LLVM intrinsics for string operations
+3. ~~Manual byte loops replace LLVM intrinsics for string operations~~ ✅
+   `EmitCopyBytes` uses `LLVMBuildMemCpy`; comparison and CString still open
 4. ~~Pattern matching uses double comparisons where single equality checks
    suffice~~ ✅ Fixed
-5. No function attributes — LLVM cannot reason about `nounwind`, `noalias`,
-   `readonly`, etc.
+5. ~~No function attributes — LLVM cannot reason about `nounwind`, `noalias`,
+   `readonly`, etc.~~ ✅ `nounwind` added; others still open
 6. CPU features are empty — compiled as generic x86-64 with no SSE4.2/AVX
 
 ------------------------------------------------------------------------
@@ -50,24 +52,13 @@ Builtin `memcpy`, `memset`, and `strlen` implementations are emitted into
 every module so LLVM intrinsic lowering has local definitions for the
 freestanding target.
 
-### What this means
+### Validated
 
-- No `mem2reg` (promotes alloca to SSA registers) — all locals go through
-  memory.
-- No function inlining across lambda boundaries.
-- No loop-invariant code motion.
-- No common subexpression elimination.
-- No dead code elimination at the LLVM level.
-- No constant propagation beyond what the IR optimizer already does.
-
-Only codegen-level optimizations work — instruction selection, register
-allocation, and basic peephole optimizations via `LlvmCodeGenOptLevel`.
-
-### Fix path
-
-Add `R_X86_64_PLT32` (type 4) support to the ELF linker, then wire up the
-pass manager. PLT32 is treated identically to PC32 for static executables
-(`S + A - P`). For PE, add `IMAGE_REL_AMD64_REL32_1` through `_5` support.
+All four optimization levels (O0, O1, O2, O3) are validated by 36
+parameterized tests in `OptimizationLevelTests.cs` — covering arithmetic,
+string operations, pattern matching, recursion, closures, tail recursion,
+floats, and string equality. Windows PE compilation is also tested at every
+level.
 
 ------------------------------------------------------------------------
 
@@ -136,17 +127,6 @@ data portion after a length check.
 
 Copies the entire string byte-by-byte to add a null terminator.
 
-### Impact
-
-For a string of N bytes the current code generates N load+store pairs.
-`llvm.memcpy` generates 1 instruction that LLVM can optimize to SIMD
-copies. For a 1 KB string that is ~1 000× fewer IR instructions.
-
-### Fix path
-
-Add `LLVMBuildMemCpy` to the LLVM interop layer (`LlvmApi.cs`) and replace
-`EmitCopyBytes` with a single call.
-
 ------------------------------------------------------------------------
 
 ## Finding 4 — Pattern Matching Double-Comparison
@@ -184,11 +164,10 @@ All emitted functions (entry + lifted closures) now have the `nounwind`
 attribute applied via `LLVMAddAttributeAtIndex` / `LLVMCreateEnumAttribute`.
 This eliminates unwind table generation for smaller, faster code.
 
-### Missing attributes
+### Remaining attributes
 
 | Attribute | Applies to | Effect |
 |-----------|-----------|--------|
-| `nounwind` | All Ashes functions | Skip unwind tables → smaller code |
 | `noalias` | Return values of heap allocations | Unique pointer guarantees |
 | `readonly` | Pure helper functions | Enables CSE and LICM |
 | `nonnull` | Non-optional pointers | Better optimization |
@@ -196,11 +175,6 @@ This eliminates unwind table generation for smaller, faster code.
 
 Industry benchmarks show 5–15 % improvement from proper attribute
 annotation even without full passes.
-
-### Fix path
-
-Add `LLVMAddAttributeAtIndex` and `LLVMCreateEnumAttribute` to
-`LlvmApi.cs`. Start with `nounwind` on every emitted function.
 
 ------------------------------------------------------------------------
 
@@ -271,15 +245,8 @@ the IR-level TCO misses.
 - **Non-tail recursion:** `n + f(n - 1)` with 1 M depth → SIGSEGV.
   Expected, but there is no safety net.
 - **No mutual recursion TCO:** Only self-calls are detected.
-- **No LLVM-level tail calls:** `LLVMSetTailCall()` is not declared, so
-  LLVM cannot optimize calls that the IR-level TCO misses.
 - **Stack depth:** Effectively limited to ~10 K–100 K non-TCO recursive
   calls depending on frame size.
-
-### Recommendation
-
-Add `LLVMSetTailCall` to the interop layer and mark tail-position calls at
-the LLVM level as a safety net.
 
 ------------------------------------------------------------------------
 
