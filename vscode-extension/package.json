@@ -4,6 +4,10 @@
   "description": "Ashes programming language support",
   "version": "0.0.1",
   "publisher": "mattiashognas",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MattiasHognas/Ashes"
+  },
   "engines": {
     "vscode": "^1.110.0",
     "node": "^20.19.0 || ^22.13.0 || >=24"
