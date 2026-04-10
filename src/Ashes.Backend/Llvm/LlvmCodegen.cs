@@ -117,10 +117,14 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Runs the LLVM new pass manager optimization pipeline on the module.
-    /// Uses the standard "default&lt;ON&gt;" pipeline string which includes:
-    /// instcombine, simplifycfg, mem2reg, dead-code elimination, inlining,
-    /// loop optimizations, and other standard LLVM passes.
+    /// Runs a targeted LLVM new pass manager pipeline on the module.
+    /// Uses a custom pass string (not <c>default&lt;ON&gt;</c>) to avoid
+    /// aggressive transforms that miscompile freestanding inline-assembly
+    /// code — in particular <c>simplifycfg</c> (merges blocks across
+    /// inline-asm boundaries), loop vectorization, and loop unrolling.
+    /// O1: mem2reg, dce, early-cse.
+    /// O2: adds reassociate, instcombine, gvn, inline.
+    /// O3: adds licm (via loop-mssa), dse.
     /// At O0 no passes are run — codegen output is used as-is.
     /// </summary>
     internal static void RunLlvmOptimizationPasses(LlvmTargetContext target, Backends.BackendOptimizationLevel level)
