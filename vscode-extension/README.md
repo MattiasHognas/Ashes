@@ -42,7 +42,7 @@ pre-download the compiler, language server, and debug adapter in one step.
 
 | Setting | Default | Description |
 |---|---|---|
-| `ashes.autoStartLanguageServer` | `true` | Automatically start the language server when an `.ash` file is opened. Set to `false` to start it manually via **Install Toolchain**. |
+| `ashes.autoStartLanguageServer` | `true` | Automatically start the language server when an `.ash` file is opened. Set to `false` to disable automatic startup. |
 | `ashes.debugger` | `"gdb"` | Native debugger backend (`gdb` or `lldb`) |
 | `ashes.lspServerPath` | `""` | Override the language server binary path |
 | `ashes.dapServerPath` | `""` | Override the DAP server binary path |
