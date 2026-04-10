@@ -254,7 +254,7 @@ internal static partial class LlvmCodegen
         var debugLoc = LlvmApi.CreateDebugLocation(dbg.LlvmContext, line, 0, sp, default);
         var currentBlock = LlvmApi.GetInsertBlock(builder);
 
-        foreach (var (slot, name) in function.LocalNames)
+        foreach (var (slot, name) in function.LocalNames.OrderBy(kv => kv.Key))
         {
             if (slot >= localSlots.Length)
             {
