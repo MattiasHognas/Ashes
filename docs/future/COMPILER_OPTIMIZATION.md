@@ -306,7 +306,7 @@ structured output), this wastes heap space and comparison time.
 
 ## Finding 10 — Debug Info Is Incomplete
 
-**Status:** ✅ Mostly fixed  
+**Status:** ✅ Fixed  
 **Severity:** Low (correctness only, no performance impact)
 
 - ~~`isOptimized` flag is hardcoded to `false` regardless of `-O` level.~~
@@ -319,7 +319,10 @@ structured output), this wastes heap space and comparison time.
 - ~~No parameter debug info — subroutine types created with no parameters.~~
   ✅ Fixed — Lambda parameters (arg slot 1) now emit `DW_TAG_formal_parameter`
   via `DIBuilderCreateParameterVariable`, making them visible in debuggers.
-- Uses C99 language identifier (no Ashes DWARF language code).
+- ~~Uses C99 language identifier (no Ashes DWARF language code).~~
+  ✅ Fixed — Now uses a custom language code (`0x8001`) from the DWARF
+  user-defined range (`DW_LANG_lo_user`–`DW_LANG_hi_user`), so debuggers
+  no longer misidentify Ashes programs as C99.
 
 ------------------------------------------------------------------------
 

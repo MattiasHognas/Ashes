@@ -50,7 +50,7 @@ internal static partial class LlvmCodegen
             // Compile unit
             CompileUnit = LlvmApi.DIBuilderCreateCompileUnit(
                 DIBuilder,
-                LlvmApi.DwarfLangC99,
+                LlvmApi.DwarfLangAshes,
                 DefaultFile,
                 "Ashes Compiler",
                 isOptimized: isOptimized);

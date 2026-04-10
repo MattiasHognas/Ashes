@@ -784,8 +784,8 @@ internal static partial class LlvmApi
 
     // ── Constants for debug info ────────────────────────────────────────
 
-    /// <summary>DW_LANG_C99 — stand-in language code for Ashes in DWARF.</summary>
-    public const uint DwarfLangC99 = 12;
+    /// <summary>User-defined DWARF language code for Ashes (DW_LANG_lo_user + 1).</summary>
+    public const uint DwarfLangAshes = 0x8001;
 
     /// <summary>DW_ATE_signed — DWARF signed integer encoding.</summary>
     public const uint DwarfAteSigned = 5;
