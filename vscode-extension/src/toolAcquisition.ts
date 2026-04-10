@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
   "github.com",
   "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
 ]);
 
 /** Return true when `hostname` is in (or is a subdomain of) an allowed host. */
