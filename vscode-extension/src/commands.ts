@@ -4,14 +4,38 @@ import * as vscode from "vscode";
 import { spawn } from "child_process";
 import { acquireCompiler } from "./compilerAcquisition";
 import { acquireTool } from "./toolAcquisition";
-import {
-  LSP_CONFIG,
-  DAP_CONFIG,
-  getRequiredVersion,
-} from "./extension";
 
 let outputChannel: vscode.OutputChannel | undefined;
+let extensionExportsCache: typeof import("./extension") | undefined;
 
+function getExtensionExports(): typeof import("./extension") {
+  if (!extensionExportsCache) {
+    extensionExportsCache = require("./extension") as typeof import("./extension");
+  }
+  return extensionExportsCache;
+}
+
+const LSP_CONFIG = new Proxy({} as typeof import("./extension").LSP_CONFIG, {
+  get(_target, property) {
+    return getExtensionExports().LSP_CONFIG[
+      property as keyof typeof import("./extension").LSP_CONFIG
+    ];
+  },
+}) as typeof import("./extension").LSP_CONFIG;
+
+const DAP_CONFIG = new Proxy({} as typeof import("./extension").DAP_CONFIG, {
+  get(_target, property) {
+    return getExtensionExports().DAP_CONFIG[
+      property as keyof typeof import("./extension").DAP_CONFIG
+    ];
+  },
+}) as typeof import("./extension").DAP_CONFIG;
+
+function getRequiredVersion(
+  ...args: Parameters<typeof import("./extension").getRequiredVersion>
+): ReturnType<typeof import("./extension").getRequiredVersion> {
+  return getExtensionExports().getRequiredVersion(...args);
+}
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
     outputChannel = vscode.window.createOutputChannel("Ashes Compiler");
