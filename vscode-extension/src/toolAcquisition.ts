@@ -162,9 +162,7 @@ export async function downloadToFile(
   const fileStream = fs.createWriteStream(destPath);
   try {
     // Convert the web ReadableStream to a Node Readable and pipe to disk.
-    const nodeReadable = Readable.fromWeb(
-      res.body,
-    );
+    const nodeReadable = Readable.fromWeb(res.body);
     await pipeline(nodeReadable, fileStream);
   } catch (err) {
     // Clean up partial file on failure

@@ -23,7 +23,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Ashes requires a trusted workspace because it downloads and runs external toolchain binaries."
+      "description": "Ashes requires a trusted workspace because it downloads and executes external toolchain binaries."
     }
   },
   "main": "./out/extension.js",
