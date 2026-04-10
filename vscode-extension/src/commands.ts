@@ -358,26 +358,51 @@ export async function installToolchainCommand(
   }
 
   const requiredVersion = getRequiredVersion(context);
+  let compilerInstalled = false;
+  let languageServerInstalled = false;
+  let dapServerInstalled = false;
 
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Installing Ashes toolchain…",
-      cancellable: false,
-    },
-    async (progress) => {
-      progress.report({ message: "Acquiring compiler…" });
-      const compilerPath = await acquireCompiler(context, requiredVersion);
-      await context.workspaceState.update("ashes.compilerPath", compilerPath);
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Installing Ashes toolchain…",
+        cancellable: false,
+      },
+      async (progress) => {
+        progress.report({ message: "Acquiring compiler…" });
+        const compilerPath = await acquireCompiler(context, requiredVersion);
+        await context.workspaceState.update("ashes.compilerPath", compilerPath);
+        compilerInstalled = true;
 
-      progress.report({ message: "Acquiring language server…" });
-      await acquireTool(context, LSP_CONFIG, requiredVersion);
+        progress.report({ message: "Acquiring language server…" });
+        await acquireTool(context, LSP_CONFIG, requiredVersion);
+        languageServerInstalled = true;
 
-      progress.report({ message: "Acquiring DAP server…" });
-      await acquireTool(context, DAP_CONFIG, requiredVersion);
-    },
-  );
+        progress.report({ message: "Acquiring DAP server…" });
+        await acquireTool(context, DAP_CONFIG, requiredVersion);
+        dapServerInstalled = true;
+      },
+    );
+  } catch (error: unknown) {
+    const installedComponents = [
+      compilerInstalled ? "compiler" : undefined,
+      languageServerInstalled ? "language server" : undefined,
+      dapServerInstalled ? "DAP server" : undefined,
+    ].filter((component): component is string => component !== undefined);
 
+    const partialSuccessMessage =
+      installedComponents.length > 0
+        ? ` Installed before the failure: ${installedComponents.join(", ")}.`
+        : "";
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+
+    void vscode.window.showErrorMessage(
+      `Failed to install the Ashes toolchain: ${errorMessage}.${partialSuccessMessage}`,
+    );
+    return;
+  }
   void vscode.window.showInformationMessage(
     "Ashes toolchain installed successfully.",
   );
