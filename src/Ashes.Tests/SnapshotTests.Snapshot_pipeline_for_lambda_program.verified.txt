@@ -262,7 +262,10 @@
       ],
       LocalCount: 2,
       TempCount: 10,
-      HasEnvAndArgParams: false
+      HasEnvAndArgParams: false,
+      LocalNames: {
+        0: add
+      }
     },
     Functions: [
       {
@@ -283,7 +286,10 @@
         ],
         LocalCount: 2,
         TempCount: 3,
-        HasEnvAndArgParams: true
+        HasEnvAndArgParams: true,
+        LocalNames: {
+          1: y
+        }
       },
       {
         Label: lambda_0,
@@ -308,7 +314,10 @@
         ],
         LocalCount: 2,
         TempCount: 3,
-        HasEnvAndArgParams: true
+        HasEnvAndArgParams: true,
+        LocalNames: {
+          1: x
+        }
       }
     ],
     UsesPrintInt: true,
@@ -318,5 +327,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: 21CA831B13B939F5F2299FAC9BE1BDBAE3B76F9652C5535B9AC09CFD80435C5C
+  ElfSha256: 3693341F54602F17AC6366C15E07265FB302F12A6E48B5514FFFDD3057009F51
 }

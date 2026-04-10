@@ -50,7 +50,7 @@ internal static partial class LlvmCodegen
             // Compile unit
             CompileUnit = LlvmApi.DIBuilderCreateCompileUnit(
                 DIBuilder,
-                LlvmApi.DwarfLangC99,
+                LlvmApi.DwarfLangAshes,
                 DefaultFile,
                 "Ashes Compiler",
                 isOptimized: isOptimized);
@@ -222,5 +222,89 @@ internal static partial class LlvmCodegen
         {
             dbg.ClearDebugLocation(builder);
         }
+    }
+
+    /// <summary>
+    /// Emits DWARF debug variable declarations for named local slots.
+    /// For lambda parameters (env slot 0, arg slot 1), emits DW_TAG_formal_parameter.
+    /// For other named locals (let bindings, match bindings), emits DW_TAG_auto_variable.
+    /// Must be called after allocas are created but before the function body.
+    /// </summary>
+    private static void EmitLocalVariableDebugInfo(
+        DebugInfoContext dbg,
+        LlvmBuilderHandle builder,
+        IrFunction function,
+        LlvmValueHandle[] localSlots)
+    {
+        if (function.LocalNames is null || function.LocalNames.Count == 0)
+        {
+            return;
+        }
+
+        var scope = dbg.GetSubprogram(function.Label);
+        if (scope is null)
+        {
+            return;
+        }
+
+        var sp = scope.Value;
+        var file = dbg.GetOrCreateFile(FindFirstFunctionSourcePath(function));
+        uint line = FindFirstFunctionLine(function);
+        var emptyExpr = LlvmApi.DIBuilderCreateExpression(dbg.DIBuilder);
+        var debugLoc = LlvmApi.CreateDebugLocation(dbg.LlvmContext, line, 0, sp, default);
+        var currentBlock = LlvmApi.GetInsertBlock(builder);
+
+        foreach (var (slot, name) in function.LocalNames.OrderBy(kv => kv.Key))
+        {
+            if (slot >= localSlots.Length)
+            {
+                continue;
+            }
+
+            LlvmMetadataHandle varInfo;
+            if (function.HasEnvAndArgParams && slot == 1)
+            {
+                // Lambda parameter (arg slot) — emit as formal parameter.
+                // Ashes lambdas always receive (env, arg) with arg at slot 1;
+                // DWARF argNo=1 marks this as the first user-visible parameter.
+                varInfo = LlvmApi.DIBuilderCreateParameterVariable(
+                    dbg.DIBuilder, sp, name, 1, file, line, dbg.IntType);
+            }
+            else
+            {
+                // Local variable (let binding, match binding, etc.)
+                varInfo = LlvmApi.DIBuilderCreateAutoVariable(
+                    dbg.DIBuilder, sp, name, file, line, dbg.IntType);
+            }
+
+            LlvmApi.DIBuilderInsertDeclareRecordAtEnd(
+                dbg.DIBuilder, localSlots[slot], varInfo, emptyExpr, debugLoc, currentBlock);
+        }
+    }
+
+    private static string? FindFirstFunctionSourcePath(IrFunction function)
+    {
+        foreach (var inst in function.Instructions)
+        {
+            if (inst.Location is not null)
+            {
+                return inst.Location.Value.FilePath;
+            }
+        }
+
+        return null;
+    }
+
+    private static uint FindFirstFunctionLine(IrFunction function)
+    {
+        foreach (var inst in function.Instructions)
+        {
+            if (inst.Location is not null)
+            {
+                return (uint)inst.Location.Value.Line;
+            }
+        }
+
+        return 0;
     }
 }

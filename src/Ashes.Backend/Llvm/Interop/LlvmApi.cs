@@ -157,6 +157,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMPositionBuilderAtEnd")]
     public static partial void PositionBuilderAtEnd(LlvmBuilderHandle builder, LlvmBasicBlockHandle block);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetInsertBlock")]
+    public static partial LlvmBasicBlockHandle GetInsertBlock(LlvmBuilderHandle builder);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeBuilder")]
     public static partial void DisposeBuilder(LlvmBuilderHandle builder);
 
@@ -209,6 +212,17 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMConstReal")]
     public static partial LlvmValueHandle ConstReal(LlvmTypeHandle type, double value);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMConstArray2")]
+    private static unsafe partial LlvmValueHandle ConstArray2Raw(LlvmTypeHandle elementType, LlvmValueHandle* constantVals, ulong length);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMConstStructInContext")]
+    private static unsafe partial LlvmValueHandle ConstStructInContextRaw(
+        LlvmContextHandle context, LlvmValueHandle* constantVals, uint count, int packed);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMStructTypeInContext")]
+    private static unsafe partial LlvmTypeHandle StructTypeInContextRaw(
+        LlvmContextHandle context, LlvmTypeHandle* elementTypes, uint elementCount, int packed);
+
     [LibraryImport(Lib, EntryPoint = "LLVMGetInlineAsm", StringMarshalling = StringMarshalling.Utf8)]
     private static partial LlvmValueHandle GetInlineAsmRaw(
         LlvmTypeHandle functionType, string asmString, nint asmLen,
@@ -230,6 +244,12 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMSetInitializer")]
     public static partial void SetInitializer(LlvmValueHandle global, LlvmValueHandle constant);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetGlobalConstant")]
+    public static partial void SetGlobalConstant(LlvmValueHandle global, int isConstant);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetUnnamedAddr")]
+    public static partial void SetUnnamedAddr(LlvmValueHandle global, int unnamedAddr);
 
     [LibraryImport(Lib, EntryPoint = "LLVMGetParam")]
     public static partial LlvmValueHandle GetParam(LlvmValueHandle function, uint index);
@@ -469,6 +489,39 @@ internal static partial class LlvmApi
         }
     }
 
+    public static LlvmValueHandle ConstArray2(LlvmTypeHandle elementType, ReadOnlySpan<LlvmValueHandle> constantVals)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* ptr = constantVals)
+            {
+                return ConstArray2Raw(elementType, ptr, (ulong)constantVals.Length);
+            }
+        }
+    }
+
+    public static LlvmValueHandle ConstStructInContext(LlvmContextHandle context, ReadOnlySpan<LlvmValueHandle> constantVals, bool packed = false)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* ptr = constantVals)
+            {
+                return ConstStructInContextRaw(context, ptr, (uint)constantVals.Length, packed ? 1 : 0);
+            }
+        }
+    }
+
+    public static LlvmTypeHandle StructTypeInContext(LlvmContextHandle context, ReadOnlySpan<LlvmTypeHandle> elementTypes, bool packed = false)
+    {
+        unsafe
+        {
+            fixed (LlvmTypeHandle* ptr = elementTypes)
+            {
+                return StructTypeInContextRaw(context, ptr, (uint)elementTypes.Length, packed ? 1 : 0);
+            }
+        }
+    }
+
     public static LlvmValueHandle GetInlineAsm(
         LlvmTypeHandle functionType, string asmString, string constraints,
         bool hasSideEffects, bool isAlignStack)
@@ -631,8 +684,30 @@ internal static partial class LlvmApi
             builder, scope, name, (nint)name.Length, file, line, ty, 1, 0, 0);
     }
 
-    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareAtEnd")]
-    public static partial LlvmValueHandle DIBuilderInsertDeclareAtEnd(
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateParameterVariable", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateParameterVariable(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        string name, nint nameLen,
+        uint argNo,
+        LlvmMetadataHandle file,
+        uint lineNo,
+        LlvmMetadataHandle ty,
+        int alwaysPreserve,
+        uint flags);
+
+    public static LlvmMetadataHandle DIBuilderCreateParameterVariable(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle scope,
+        string name, uint argNo, LlvmMetadataHandle file, uint line, LlvmMetadataHandle ty)
+    {
+        return DIBuilderCreateParameterVariable(
+            builder, scope, name, (nint)name.Length, argNo, file, line, ty, 1, 0);
+    }
+
+    // LLVM 22: LLVMDIBuilderInsertDeclareAtEnd was removed; use the Record variant.
+    // Returns LLVMDbgRecordRef (an opaque pointer); we don't use the return value.
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareRecordAtEnd")]
+    public static partial nint DIBuilderInsertDeclareRecordAtEnd(
         LlvmDIBuilderHandle builder,
         LlvmValueHandle storage,
         LlvmMetadataHandle varInfo,
@@ -709,8 +784,8 @@ internal static partial class LlvmApi
 
     // ── Constants for debug info ────────────────────────────────────────
 
-    /// <summary>DW_LANG_C99 — stand-in language code for Ashes in DWARF.</summary>
-    public const uint DwarfLangC99 = 12;
+    /// <summary>User-defined DWARF language code for Ashes (DW_LANG_lo_user + 1).</summary>
+    public const uint DwarfLangAshes = 0x8001;
 
     /// <summary>DW_ATE_signed — DWARF signed integer encoding.</summary>
     public const uint DwarfAteSigned = 5;
