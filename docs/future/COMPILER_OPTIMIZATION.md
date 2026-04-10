@@ -66,7 +66,7 @@ level.
 
 ## Finding 2 — Memory Management
 
-**Status:** ✅ Addressed (Phases 1, 2a–2d complete; Phase 3 future)  
+**Status:** ✅ Addressed (Phases 1, 2a–2d, 3 complete)  
 **Severity:** Critical
 
 ### The allocator
@@ -95,9 +95,9 @@ bloated every binary by 4 MB.~~
 - `Drop` instructions exist in IR for semantic correctness.
 - Backend `EmitDrop()` is a no-op for all heap types (only sockets get
   closed).
-- Arena-based deallocation (Phases 1, 2a–2d) reclaims heap memory at
-  scope exit and TCO iteration boundaries for most common patterns.
-  See sections below for details.
+- Arena-based deallocation (Phases 1, 2a–2d, 3) reclaims heap memory at
+  scope exit, TCO iteration boundaries, and function call boundaries for
+  most common patterns. See sections below for details.
 - Abandoned OS chunks are now reclaimed via `munmap` / `VirtualFree`
   when `RestoreArenaState` resets to a previous chunk (Phase 2d).
 
@@ -206,16 +206,45 @@ OS chunks are now reclaimed.
 - **Outcome:** Long-running programs with periodic arena resets now return
   excess OS memory instead of holding it indefinitely.
 
-### Remaining limitations (Phase 3 work)
+### Per-function-call arena watermarks (Phase 3 — done)
 
-- Copy-out only supports `TStr` for general scope results. List, ADT, and
-  closure results still skip arena reset (requires deep-copy or escape
-  analysis for types with internal heap pointers).
+Every non-TCO function call chain now gets its own arena watermark.
+`SaveArenaState` is emitted before evaluating the callee and arguments;
+after the final `CallClosure`, the result type determines cleanup.
+
+- **Mechanism:** `LowerCall` allocates two local watermark slots and emits
+  `SaveArenaState` before evaluating the root expression and arguments.
+  After the last `CallClosure` in the curried call chain, the final
+  result type is checked:
+  - Copy type (Int, Float, Bool) → `RestoreArenaState` reclaims all
+    allocations from the call chain (intermediate closures, temporary
+    data structures inside the callee, argument construction).
+  - String (`TStr`) → `RestoreArenaState` + `CopyOutArena` copies the
+    result to the watermark position, reclaiming everything else.
+  - Other heap types (List, ADT, closure) → no arena action
+    (conservative fallback — internal pointers may reference memory
+    within the watermark region).
+- **Watermark independence:** The per-call watermark slots are managed
+  independently of the `_arenaWatermarks` / `_ownershipScopes` stacks,
+  avoiding any stack imbalance.
+- **Curried calls:** For `f(x)(y)`, a single watermark covers the entire
+  chain. Intermediate closures from partial application are reclaimed
+  when the final result is a copy type or string.
+- **Nesting:** Nested calls (e.g. `f(g(x))`) each get their own
+  watermark. Inner watermarks reclaim eagerly; outer watermarks catch
+  what inner ones miss.
+- **Overhead:** ~10 instructions per call (2 loads + 2 stores for save;
+  2 loads + 1 compare + 1 branch + 2 stores for restore fast path).
+  No overhead on the slow path unless chunks were actually consumed.
+
+### Remaining limitations (future work)
+
+- Copy-out only supports `TStr` for general scope and per-call results.
+  List, ADT, and closure results still skip arena reset (requires
+  deep-copy or escape analysis for types with internal heap pointers).
 - TCO copy-out only supports `TStr` and `TList(copy-type element)`. More
   complex accumulator types (e.g. `List of List`, ADTs) still skip
   per-iteration arena reset.
-- Per-function arena regions (Phase 3) remain future work — each function
-  call would get its own arena with OS-level reclamation on return.
 
 ### Recommendations
 
@@ -226,8 +255,8 @@ OS chunks are now reclaimed.
 5. ✅ **Phase 2b done:** Copy-out for string scope results.
 6. ✅ **Phase 2c done:** TCO copy-out for string and list-of-copy-type args.
 7. ✅ **Phase 2d done:** Abandoned OS chunk reclamation on arena reset.
-8. **Phase 3:** Per-function arena regions with full OS-level reclamation.
-9. **Future:** Extend copy-out to List, ADT, and closure scope results
+8. ✅ **Phase 3 done:** Per-function-call arena watermarks.
+9. **Future:** Extend copy-out to List, ADT, and closure results
    (requires escape analysis or deep-copy for internal heap pointers).
 
 ------------------------------------------------------------------------
@@ -479,6 +508,6 @@ structured output), this wastes heap space and comparison time.
 
 | # | Item | Status |
 |---|------|--------|
-| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅, Phase 2a ✅, Phase 2b ✅, Phase 2c ✅, Phase 2d ✅ |
+| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅, Phase 2a ✅, Phase 2b ✅, Phase 2c ✅, Phase 2d ✅, Phase 3 ✅ |
 | 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
 | 11 | Decision tree pattern matching for large ADTs | Open |
