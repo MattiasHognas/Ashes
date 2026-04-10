@@ -316,6 +316,171 @@ public sealed class ArenaDeallocationTests
         }
     }
 
+    // --- TCO loop iteration arena reset ---
+
+    [Test]
+    public void TCO_loop_with_int_args_emits_SaveArenaState_after_body_label()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the body label (contains "_body")
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
+
+        // SaveArenaState should appear right after the body label
+        var nextInst = insts[bodyLabelIdx + 1];
+        nextInst.ShouldBeOfType<IrInst.SaveArenaState>(
+            "SaveArenaState should be emitted immediately after the TCO body label.");
+    }
+
+    [Test]
+    public void TCO_loop_with_int_args_emits_RestoreArenaState_before_jump_back()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the tail-call jump back: RestoreArenaState followed by Jump to body label
+        bool foundTcoRestore = false;
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                foundTcoRestore = true;
+                break;
+            }
+        }
+        foundTcoRestore.ShouldBeTrue(
+            "TCO loop with copy-type args should emit RestoreArenaState before jumping back.");
+    }
+
+    [Test]
+    public void TCO_loop_with_int_args_save_restore_slots_match()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the SaveArenaState after body label
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        var save = (IrInst.SaveArenaState)insts[bodyLabelIdx + 1];
+
+        // Find RestoreArenaState before the jump back
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState restore
+                && insts[i + 1] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                restore.CursorLocalSlot.ShouldBe(save.CursorLocalSlot,
+                    "TCO arena Save and Restore should use matching cursor slots.");
+                restore.EndLocalSlot.ShouldBe(save.EndLocalSlot,
+                    "TCO arena Save and Restore should use matching end slots.");
+                return;
+            }
+        }
+        Assert.Fail("Expected RestoreArenaState before TCO jump-back.");
+    }
+
+    [Test]
+    public void TCO_loop_with_list_arg_does_not_emit_RestoreArenaState_before_jump()
+    {
+        // When a tail-call argument is a heap type (list), arena reset is NOT safe.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) (n :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Should NOT find RestoreArenaState before a jump to body label
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                Assert.Fail(
+                    "TCO loop with heap-type arg (List) should NOT emit RestoreArenaState before jump-back.");
+            }
+        }
+    }
+
+    [Test]
+    public void TCO_loop_with_list_arg_still_emits_SaveArenaState_after_body_label()
+    {
+        // Even when arena reset can't happen (heap-type args), the SaveArenaState is still
+        // emitted at loop body start — it's just not restored on the tail-call path.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) (n :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
+        insts[bodyLabelIdx + 1].ShouldBeOfType<IrInst.SaveArenaState>(
+            "SaveArenaState should still be emitted after body label even for heap-type args.");
+    }
+
+    [Test]
+    public void TCO_single_param_with_int_arg_emits_RestoreArenaState()
+    {
+        // Single-parameter TCO: let rec countdown = fun n -> if n == 0 then 0 else countdown (n - 1)
+        var ir = LowerProgram(
+            """
+            let rec countdown = fun (n) ->
+                if n == 0 then 0
+                else countdown (n - 1)
+            in countdown 100
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        bool foundTcoRestore = false;
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                foundTcoRestore = true;
+                break;
+            }
+        }
+        foundTcoRestore.ShouldBeTrue(
+            "Single-param TCO loop with Int arg should emit RestoreArenaState before jump-back.");
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
@@ -326,6 +491,15 @@ public sealed class ArenaDeallocationTests
         var ir = new Lowering(diagnostics).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
+    }
+
+    /// <summary>
+    /// Finds the lifted function containing the TCO body label (the innermost TCO lambda).
+    /// </summary>
+    private static IrFunction FindTcoFunction(IrProgram ir)
+    {
+        return ir.Functions.First(f =>
+            f.Instructions.Any(i => i is IrInst.Label lbl && lbl.Name.Contains("_body")));
     }
 
     private static bool HasSaveArenaState(List<IrInst> instructions)

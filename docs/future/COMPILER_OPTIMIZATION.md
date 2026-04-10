@@ -115,20 +115,44 @@ watermark, effectively freeing all heap memory allocated within the scope.
   the scope's `Drop` instructions have run.
 - **Coverage:** Let-expression scopes and match-arm scopes with Int, Float,
   or Bool results. Nested scopes compose correctly (stack-like watermarks).
-- **Limitations (Phase 2 work):**
-  - Scopes returning heap types (String, List, ADTs, closures) skip arena
-    reset — requires escape analysis or copy-out to support.
-  - TCO loop iterations don't individually arena-reset yet.
-  - Abandoned OS chunks from `EmitHeapGrow` are not reclaimed on reset.
+
+### TCO loop iteration arena reset (Phase 2a — done)
+
+TCO (tail call optimization) loops now emit per-iteration arena
+save/restore when all tail-call arguments are copy types. This prevents
+heap memory from growing monotonically across loop iterations.
+
+- **Mechanism:** After the TCO loop body label, `SaveArenaState` snapshots
+  the heap cursor and end pointers. Before the tail-call jump-back,
+  `RestoreArenaState` resets both pointers to the iteration-start
+  watermark, reclaiming all heap allocations from that iteration.
+- **Safety guarantee:** When all tail-call argument types are copy types
+  (Int, Float, Bool), no heap pointers are stored into the mutable param
+  slots — arena reset cannot create dangling references.
+- **Skipped when unsafe:** If any tail-call argument is a heap type
+  (String, List, ADT, closure), `RestoreArenaState` is not emitted on the
+  tail-call path. The `SaveArenaState` is still emitted (for future use
+  when copy-out or escape analysis makes arena reset safe).
+- **Coverage:** Single- and multi-parameter TCO functions with copy-type
+  accumulator patterns (e.g. `sum n acc`, `countdown n`).
+
+### Remaining limitations (Phase 2b+ work)
+
+- Scopes returning heap types (String, List, ADTs, closures) skip arena
+  reset — requires escape analysis or copy-out to support.
+- TCO loops with heap-type tail-call arguments (e.g. list-building
+  accumulators) skip per-iteration arena reset — requires copy-out.
+- Abandoned OS chunks from `EmitHeapGrow` are not reclaimed on reset.
 
 ### Recommendations
 
 1. ✅ **Done:** Heap bounds checking — clean error on overflow.
 2. ✅ **Done:** Growing heap via `mmap` / `VirtualAlloc` — no hard limit.
 3. ✅ **Phase 1 done:** Arena-based scope deallocation for copy-type results.
-4. **Phase 2:** Extend arena reset to heap-type results via copy-out or
-   escape analysis. Integrate with TCO loop iterations.
-5. **Long-term:** Per-function arena regions with `munmap` / `VirtualFree`
+4. ✅ **Phase 2a done:** TCO loop iteration arena reset for copy-type args.
+5. **Phase 2b:** Extend arena reset to heap-type results via copy-out or
+   escape analysis. Extend TCO arena reset to heap-type args via copy-out.
+6. **Long-term:** Per-function arena regions with `munmap` / `VirtualFree`
    for full memory reclamation.
 
 ------------------------------------------------------------------------
@@ -380,6 +404,6 @@ structured output), this wastes heap space and comparison time.
 
 | # | Item | Status |
 |---|------|--------|
-| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅ |
+| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅, Phase 2a ✅ |
 | 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
 | 11 | Decision tree pattern matching for large ADTs | Open |

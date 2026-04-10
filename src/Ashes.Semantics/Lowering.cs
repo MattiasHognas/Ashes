@@ -75,6 +75,12 @@ public sealed class Lowering
         public List<string> ParamNames { get; init; } = [];
         public List<int> ParamSlots { get; init; } = [];
         public bool InTailPosition { get; set; }
+
+        // Arena watermark for per-iteration reset in TCO loops.
+        // Saved right after the loop body label; restored before jumping back
+        // when all tail-call arguments are copy types (no heap pointers escape).
+        public int ArenaCursorSlot { get; set; } = -1;
+        public int ArenaEndSlot { get; set; } = -1;
     }
 
     private TcoContext? _tcoCtx;
@@ -2444,6 +2450,13 @@ public sealed class Lowering
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
+
+            // Save arena watermark at loop body start so per-iteration heap
+            // allocations can be reclaimed before jumping back to the next iteration.
+            tco.ArenaCursorSlot = NewLocal();
+            tco.ArenaEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+
             tco.InTailPosition = true;
         }
 
@@ -2686,6 +2699,7 @@ public sealed class Lowering
             tco.InTailPosition = false;
 
             var newArgTemps = new int[collectedArgs.Count];
+            var newArgTypes = new TypeRef[collectedArgs.Count];
             // Type-check: resolve self binding and unify arg types with param types
             var selfBinding = Lookup(tco.SelfName);
             var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
@@ -2693,6 +2707,7 @@ public sealed class Lowering
             {
                 var (argTemp, argType) = LowerExpr(collectedArgs[i]);
                 newArgTemps[i] = argTemp;
+                newArgTypes[i] = argType;
                 if (curType is TypeRef.TFun funType)
                 {
                     Unify(funType.Arg, argType);
@@ -2704,6 +2719,15 @@ public sealed class Lowering
             for (int i = 0; i < tco.ParamSlots.Count; i++)
             {
                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
+            }
+
+            // Arena reset: restore heap state to loop-iteration watermark before
+            // jumping back. This is safe when all tail-call arguments are copy types
+            // (Int, Float, Bool) — no heap pointers are stored into param slots, so
+            // reclaiming the iteration's heap allocations cannot create dangling refs.
+            if (tco.ArenaCursorSlot >= 0 && newArgTypes.All(CanArenaReset))
+            {
+                Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
             }
 
             // Jump back to loop start

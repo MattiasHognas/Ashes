@@ -321,6 +321,48 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
     }
 
+    // --- TCO arena reset end-to-end tests ---
+
+    [Test]
+    public async Task TCO_loop_with_arena_reset_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Sum 1..10000 using tail-recursive accumulator — all args are copy types,
+        // so arena reset fires on every iteration, keeping heap usage constant.
+        var src = """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in Ashes.IO.print(sum 10000 0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("50005000\n");
+    }
+
+    [Test]
+    public async Task TCO_loop_with_string_intermediates_and_copy_args_runs_correctly()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Even though the body creates intermediate heap allocations (let binding
+        // with string), the tail-call args are all Int → arena resets safely.
+        var src = """
+            let rec count = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else
+                    let tag = "iter" in
+                    count (n - 1) (acc + 1)
+            in Ashes.IO.print(count 1000 0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1000\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();
