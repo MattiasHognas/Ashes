@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -21,6 +22,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Arithmetic_program_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         var result = await CompileAndRunAsync("Ashes.IO.print(40 + 2)", level);
         result.Stdout.ShouldBe("42");
     }
@@ -34,6 +37,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task String_concat_program_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         var result = await CompileAndRunAsync("""Ashes.IO.print("hello " + "world")""", level);
         result.Stdout.ShouldBe("hello world");
     }
@@ -47,6 +52,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Pattern_match_program_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = """
             match ([1, 2], (3, 4)) with
             | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b)
@@ -65,6 +72,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Recursive_fibonacci_program_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = "let rec fib = fun (n) -> match n with | 0 -> 0 | 1 -> 1 | _ -> fib(n - 1) + fib(n - 2) in Ashes.IO.print(fib(10))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("55");
@@ -79,6 +88,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Closure_program_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = "let mk = fun (x) -> fun (y) -> x + y in let add20 = mk(20) in Ashes.IO.print(add20(22))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("42");
@@ -93,6 +104,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Tail_recursive_loop_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = "let rec loop = fun (acc) -> fun (n) -> match n with | 0 -> acc | _ -> loop(acc + n)(n - 1) in Ashes.IO.print(loop(0)(100))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("5050");
@@ -107,6 +120,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task Float_arithmetic_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = "if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("42");
@@ -121,6 +136,8 @@ public sealed class OptimizationLevelTests
     [Arguments(BackendOptimizationLevel.O3)]
     public async Task String_equality_produces_correct_output(BackendOptimizationLevel level)
     {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
         const string source = """if ("he" + "llo") == "hello" then Ashes.IO.print(42) else Ashes.IO.print(0)""";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("42");
