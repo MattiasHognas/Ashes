@@ -3,6 +3,12 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import { acquireCompiler } from "./compilerAcquisition";
+import { acquireTool } from "./toolAcquisition";
+import {
+  LSP_CONFIG,
+  DAP_CONFIG,
+  getRequiredVersion,
+} from "./extension";
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -14,12 +20,30 @@ function getOutputChannel(): vscode.OutputChannel {
 }
 
 /**
+ * Guard that checks workspace trust before downloading binaries.
+ * Returns true when the workspace is trusted, false otherwise.
+ */
+function requireTrustedWorkspace(): boolean {
+  if (!vscode.workspace.isTrusted) {
+    void vscode.window.showWarningMessage(
+      "This command requires a trusted workspace. Open the workspace trust editor to grant trust.",
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
  * Get the compiler path, ensuring it matches the required version.
  * Always resolves via compiler acquisition (which may use its own cache).
  */
 async function ensureCompiler(
   context: vscode.ExtensionContext,
 ): Promise<string | undefined> {
+  if (!requireTrustedWorkspace()) {
+    return undefined;
+  }
+
   const requiredVersion =
     (context.extension.packageJSON as { version?: string }).version ?? "0.0.1";
 
@@ -297,6 +321,42 @@ export async function testCommand(
   } else {
     vscode.window.showErrorMessage("Tests failed. See output for details.");
   }
+}
+
+/**
+ * Explicitly install all Ashes toolchain binaries (compiler, LSP, DAP).
+ */
+export async function installToolchainCommand(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  if (!requireTrustedWorkspace()) {
+    return;
+  }
+
+  const requiredVersion = getRequiredVersion(context);
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Installing Ashes toolchain…",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: "Acquiring compiler…" });
+      const compilerPath = await acquireCompiler(context, requiredVersion);
+      await context.workspaceState.update("ashes.compilerPath", compilerPath);
+
+      progress.report({ message: "Acquiring language server…" });
+      await acquireTool(context, LSP_CONFIG, requiredVersion);
+
+      progress.report({ message: "Acquiring DAP server…" });
+      await acquireTool(context, DAP_CONFIG, requiredVersion);
+    },
+  );
+
+  void vscode.window.showInformationMessage(
+    "Ashes toolchain installed successfully.",
+  );
 }
 
 /**

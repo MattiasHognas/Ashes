@@ -17,8 +17,15 @@
     "onCommand:ashes.compile",
     "onCommand:ashes.run",
     "onCommand:ashes.test",
+    "onCommand:ashes.installToolchain",
     "onDebugResolve:ashes"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Ashes requires a trusted workspace because it downloads and runs external toolchain binaries."
+    }
+  },
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -90,6 +97,11 @@
       {
         "command": "ashes.test",
         "title": "Run Tests",
+        "category": "Ashes"
+      },
+      {
+        "command": "ashes.installToolchain",
+        "title": "Install Toolchain",
         "category": "Ashes"
       }
     ],

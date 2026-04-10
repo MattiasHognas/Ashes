@@ -1,8 +1,9 @@
 import * as fs from "fs";
-import * as https from "https";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
 
 import * as vscode from "vscode";
 
@@ -24,6 +25,21 @@ function isAllowedHost(hostname: string): boolean {
     }
   }
   return false;
+}
+
+/** Validate that a URL is HTTPS and targets an allowed host. */
+function validateUrl(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(
+      `Refusing to download over insecure protocol: ${parsed.protocol}`,
+    );
+  }
+  if (!isAllowedHost(parsed.hostname)) {
+    throw new Error(
+      `Refusing to download from untrusted host: ${parsed.hostname}`,
+    );
+  }
 }
 
 const GITHUB_OWNER = "MattiasHognas";
@@ -106,77 +122,59 @@ export function getBundledToolPath(
   );
 }
 
-/** Follow redirects and download a URL to a local file.
- *  Only HTTPS URLs targeting {@link ALLOWED_HOSTS} are permitted.
+/**
+ * Download a URL to a local file using Node 20+ fetch().
+ * Follows redirects automatically.  Only HTTPS URLs targeting
+ * {@link ALLOWED_HOSTS} are permitted — both the original URL and the
+ * final redirected URL are validated.
+ * The response body is streamed to disk; partial files are cleaned up
+ * on failure.
  */
-export function downloadToFile(url: string, destPath: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const follow = (u: string): void => {
-      const parsed = new URL(u);
-      if (parsed.protocol !== "https:") {
-        reject(
-          new Error(
-            `Refusing to download over insecure protocol: ${parsed.protocol}`,
-          ),
-        );
-        return;
-      }
-      if (!isAllowedHost(parsed.hostname)) {
-        reject(
-          new Error(
-            `Refusing to download from untrusted host: ${parsed.hostname}`,
-          ),
-        );
-        return;
-      }
-      https
-        .get(u, { headers: { "User-Agent": "vscode-ashes" } }, (res) => {
-          const { statusCode, headers } = res;
-          if (
-            statusCode === 301 ||
-            statusCode === 302 ||
-            statusCode === 307 ||
-            statusCode === 308
-          ) {
-            if (!headers.location) {
-              reject(new Error("Redirect with no Location header"));
-              return;
-            }
-            const redirectUrl = new URL(headers.location, u).toString();
-            follow(redirectUrl);
-            return;
-          }
-          if (statusCode !== 200) {
-            reject(new Error(`HTTP ${statusCode ?? "?"} fetching ${u}`));
-            return;
-          }
-          fs.mkdirSync(path.dirname(destPath), { recursive: true });
-          const file = fs.createWriteStream(destPath);
-          res.on("error", (err) => {
-            file.close(() => {
-              reject(err);
-            });
-          });
-          res.pipe(file);
-          file.on("finish", () =>
-            file.close((err) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve();
-              }
-            }),
-          );
-          file.on("error", (err) => {
-            file.close(() => {
-              reject(err);
-            });
-          });
-        })
-        .on("error", reject);
-    };
-    follow(url);
+export async function downloadToFile(
+  url: string,
+  destPath: string,
+): Promise<void> {
+  validateUrl(url);
+
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      "User-Agent": "vscode-ashes",
+      Accept: "application/octet-stream",
+    },
   });
+
+  // Validate the final URL after redirects
+  if (res.url) {
+    validateUrl(res.url);
+  }
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} fetching ${url}`);
+  }
+
+  if (!res.body) {
+    throw new Error(`No response body when fetching ${url}`);
+  }
+
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+
+  const fileStream = fs.createWriteStream(destPath);
+  try {
+    // Convert the web ReadableStream to a Node Readable and pipe to disk.
+    const nodeReadable = Readable.fromWeb(
+      res.body,
+    );
+    await pipeline(nodeReadable, fileStream);
+  } catch (err) {
+    // Clean up partial file on failure
+    try {
+      fs.unlinkSync(destPath);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 }
 
 /**
