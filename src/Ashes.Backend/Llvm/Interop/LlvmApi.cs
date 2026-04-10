@@ -376,11 +376,36 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMAddAttributeAtIndex")]
     public static partial void AddAttributeAtIndex(LlvmValueHandle function, uint index, LlvmAttributeHandle attribute);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMCreateStringAttribute")]
+    private static partial LlvmAttributeHandle CreateStringAttributeRaw(
+        LlvmContextHandle context, nint kind, uint kindLength, nint value, uint valueLength);
+
     /// <summary>Function-level attribute index for <see cref="AddAttributeAtIndex"/>.</summary>
     public const uint AttributeIndexFunction = 0xFFFFFFFF; // (uint)-1
 
+    /// <summary>Return-value attribute index for <see cref="AddAttributeAtIndex"/>.</summary>
+    public const uint AttributeIndexReturn = 0;
+
     public static uint GetEnumAttributeKindForName(string name) =>
         GetEnumAttributeKindForNameRaw(name, (nint)name.Length);
+
+    /// <summary>
+    /// Creates a string attribute (e.g. <c>memory(read)</c>) via the LLVM C API.
+    /// Used for attributes that cannot be represented as enum attributes.
+    /// </summary>
+    public static LlvmAttributeHandle CreateStringAttribute(LlvmContextHandle context, string kind, string value)
+    {
+        var kindBytes = System.Text.Encoding.UTF8.GetBytes(kind);
+        var valueBytes = System.Text.Encoding.UTF8.GetBytes(value);
+        unsafe
+        {
+            fixed (byte* kp = kindBytes)
+            fixed (byte* vp = valueBytes)
+            {
+                return CreateStringAttributeRaw(context, (nint)kp, (uint)kindBytes.Length, (nint)vp, (uint)valueBytes.Length);
+            }
+        }
+    }
 
     // ── Debugging ───────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMPrintModuleToString")]
