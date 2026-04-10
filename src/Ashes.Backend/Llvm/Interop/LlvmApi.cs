@@ -704,6 +704,8 @@ internal static partial class LlvmApi
             builder, scope, name, (nint)name.Length, argNo, file, line, ty, 1, 0);
     }
 
+    // LLVM 22: LLVMDIBuilderInsertDeclareAtEnd was removed; use the Record variant.
+    // Returns LLVMDbgRecordRef (an opaque pointer); we don't use the return value.
     [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareRecordAtEnd")]
     public static partial nint DIBuilderInsertDeclareRecordAtEnd(
         LlvmDIBuilderHandle builder,

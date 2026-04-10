@@ -264,7 +264,9 @@ internal static partial class LlvmCodegen
             LlvmMetadataHandle varInfo;
             if (function.HasEnvAndArgParams && slot == 1)
             {
-                // Lambda parameter (arg slot) — emit as formal parameter
+                // Lambda parameter (arg slot) — emit as formal parameter.
+                // Ashes lambdas always receive (env, arg) with arg at slot 1;
+                // DWARF argNo=1 marks this as the first user-visible parameter.
                 varInfo = LlvmApi.DIBuilderCreateParameterVariable(
                     dbg.DIBuilder, sp, name, 1, file, line, dbg.IntType);
             }
