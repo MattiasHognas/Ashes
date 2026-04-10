@@ -659,7 +659,8 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);    byte[] image;
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);
+    byte[] image;
     if (project is null)
     {
         var source = await ReadSourceAsync(inputFile, expr);
