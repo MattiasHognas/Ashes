@@ -220,44 +220,44 @@ public static class IrOptimizer
                 // unless the label has a single predecessor, in which case we can
                 // propagate constants from that predecessor.
                 case IrInst.Label lbl:
-                {
-                    bool hasFallthrough = !prevIsTerminator;
-                    int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
-                    int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
-
-                    if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
                     {
-                        // Single-predecessor label reached only by a branch (no fall-through):
-                        // restore the saved state from the branch point.
-                        knownInts.Clear();
-                        foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
-                        knownFloats.Clear();
-                        foreach (var kv in savedFloatStates[lbl.Name]) knownFloats[kv.Key] = kv.Value;
-                        knownBools.Clear();
-                        foreach (var kv in savedBoolStates[lbl.Name]) knownBools[kv.Key] = kv.Value;
-                    }
-                    else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
-                    {
-                        // Fall-through-only label (no branches target it) — keep current
-                        // constant state because sequential execution is the only path.
-                    }
-                    else
-                    {
-                        // Multiple predecessors — clear all constant knowledge.
-                        knownInts.Clear();
-                        knownFloats.Clear();
-                        knownBools.Clear();
-                    }
+                        bool hasFallthrough = !prevIsTerminator;
+                        int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
+                        int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
 
-                    // Clean up any saved state for this label.
-                    savedIntStates.Remove(lbl.Name);
-                    savedFloatStates.Remove(lbl.Name);
-                    savedBoolStates.Remove(lbl.Name);
+                        if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+                        {
+                            // Single-predecessor label reached only by a branch (no fall-through):
+                            // restore the saved state from the branch point.
+                            knownInts.Clear();
+                            foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
+                            knownFloats.Clear();
+                            foreach (var kv in savedFloatStates[lbl.Name]) knownFloats[kv.Key] = kv.Value;
+                            knownBools.Clear();
+                            foreach (var kv in savedBoolStates[lbl.Name]) knownBools[kv.Key] = kv.Value;
+                        }
+                        else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
+                        {
+                            // Fall-through-only label (no branches target it) — keep current
+                            // constant state because sequential execution is the only path.
+                        }
+                        else
+                        {
+                            // Multiple predecessors — clear all constant knowledge.
+                            knownInts.Clear();
+                            knownFloats.Clear();
+                            knownBools.Clear();
+                        }
 
-                    result.Add(inst);
-                    prevIsTerminator = false;
-                    break;
-                }
+                        // Clean up any saved state for this label.
+                        savedIntStates.Remove(lbl.Name);
+                        savedFloatStates.Remove(lbl.Name);
+                        savedBoolStates.Remove(lbl.Name);
+
+                        result.Add(inst);
+                        prevIsTerminator = false;
+                        break;
+                    }
 
                 case IrInst.JumpIfFalse jif:
                     // Save state for the target label — will be used if the label turns
@@ -417,30 +417,30 @@ public static class IrOptimizer
 
                 // Labels: preserve state across single-predecessor labels.
                 case IrInst.Label lbl:
-                {
-                    bool hasFallthrough = !prevIsTerminator;
-                    int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
-                    int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
+                    {
+                        bool hasFallthrough = !prevIsTerminator;
+                        int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
+                        int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
 
-                    if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
-                    {
-                        knownInts.Clear();
-                        foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
-                    }
-                    else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
-                    {
-                        // Fall-through-only — keep current state.
-                    }
-                    else
-                    {
-                        knownInts.Clear();
-                    }
+                        if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+                        {
+                            knownInts.Clear();
+                            foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
+                        }
+                        else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
+                        {
+                            // Fall-through-only — keep current state.
+                        }
+                        else
+                        {
+                            knownInts.Clear();
+                        }
 
-                    savedIntStates.Remove(lbl.Name);
-                    result.Add(inst);
-                    prevIsTerminator = false;
-                    break;
-                }
+                        savedIntStates.Remove(lbl.Name);
+                        result.Add(inst);
+                        prevIsTerminator = false;
+                        break;
+                    }
 
                 case IrInst.JumpIfFalse jif:
                     savedIntStates[jif.Target] = new Dictionary<int, long>(knownInts);
