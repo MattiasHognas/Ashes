@@ -17,8 +17,15 @@
     "onCommand:ashes.compile",
     "onCommand:ashes.run",
     "onCommand:ashes.test",
+    "onCommand:ashes.installToolchain",
     "onDebugResolve:ashes"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Ashes requires a trusted workspace because it downloads and executes external toolchain binaries."
+    }
+  },
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -73,6 +80,11 @@
           "type": "string",
           "default": "",
           "description": "Override the path to the Ashes compiler executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.autoStartLanguageServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the Ashes language server when an .ash file is opened. When disabled, the extension will not start the language server automatically."
         }
       }
     },
@@ -90,6 +102,11 @@
       {
         "command": "ashes.test",
         "title": "Run Tests",
+        "category": "Ashes"
+      },
+      {
+        "command": "ashes.installToolchain",
+        "title": "Install Toolchain",
         "category": "Ashes"
       }
     ],
