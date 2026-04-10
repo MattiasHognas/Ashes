@@ -84,7 +84,7 @@
         "ashes.autoStartLanguageServer": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically start the Ashes language server when an .ash file is opened. When disabled, the language server can be started manually via the 'Ashes: Install Toolchain' command."
+          "description": "Automatically start the Ashes language server when an .ash file is opened. When disabled, the extension will not start the language server automatically."
         }
       }
     },
