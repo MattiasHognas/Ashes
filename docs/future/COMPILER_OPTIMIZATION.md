@@ -132,7 +132,32 @@ freestanding `bcmp` builtin is emitted alongside `memcmp` to support this.
 
 ### String-to-CString conversion
 
-Copies the entire string byte-by-byte to add a null terminator.
+✅ **Fixed.** `EmitStringToCString` uses `EmitCopyBytes` (which calls
+`LLVMBuildMemCpy`) to copy the string data, then writes a single null
+terminator byte.
+
+### Heap string literal initialization
+
+✅ **Fixed.** `EmitHeapStringFromBytes` now creates a global constant byte
+array and uses `LLVMBuildMemCpy` instead of emitting N individual store
+instructions. For an N-byte string this replaces 2N IR instructions
+(N GEPs + N stores) with one global constant and one memcpy intrinsic.
+
+### Stack string/byte array initialization
+
+✅ **Fixed.** `EmitStackStringObject` and `EmitStackByteArray` also use
+the global constant + memcpy pattern for initialization.
+
+### String literal rodata placement
+
+✅ **Fixed.** `EmitHeapStringLiteral` now creates a global constant struct
+`{ i64 length, [N x i8] data }` in the read-only data section instead of
+heap-allocating at runtime. Since Ashes strings are immutable, string
+literals never need heap allocation. This eliminates heap pressure and
+makes string literal addresses available at link time.
+
+New LLVM C API bindings added: `LLVMConstArray2`, `LLVMSetGlobalConstant`,
+`LLVMSetUnnamedAddr`, `LLVMConstStructInContext`, `LLVMStructTypeInContext`.
 
 ------------------------------------------------------------------------
 
@@ -316,6 +341,8 @@ structured output), this wastes heap space and comparison time.
 | 11 | Add `--target-cpu` CLI flag for CPU-specific codegen | ✅ Done |
 | 12 | Dead store elimination for unused `StoreLocal` | ✅ Done |
 | 13 | Constant propagation across single-predecessor labels | ✅ Done |
+| 14 | Replace all byte-by-byte store loops with global constant + `memcpy` | ✅ Done |
+| 15 | Place string literals in `.rodata` as global constants (no heap alloc) | ✅ Done |
 
 ### Long-term (significant effort)
 
