@@ -66,7 +66,7 @@ level.
 
 ## Finding 2 — Memory Management
 
-**Status:** Mostly addressed ✅  
+**Status:** ✅ Addressed (Phases 1, 2a–2d complete; Phase 3 future)  
 **Severity:** Critical
 
 ### The allocator
@@ -90,14 +90,16 @@ bloated every binary by 4 MB.~~
   with code 1.
 - Verified working with 1 000 000 cons cells (16 MB, 4× the old limit).
 
-### No deallocation (still open)
+### Deallocation — arena-based region deallocation
 
 - `Drop` instructions exist in IR for semantic correctness.
 - Backend `EmitDrop()` is a no-op for all heap types (only sockets get
   closed).
-- For any long-running program (server, event loop), memory usage will grow
-  monotonically. The OS will eventually refuse an allocation, but this is
-  significantly more forgiving than the old hard 4 MB ceiling.
+- Arena-based deallocation (Phases 1, 2a–2d) reclaims heap memory at
+  scope exit and TCO iteration boundaries for most common patterns.
+  See sections below for details.
+- Abandoned OS chunks are now reclaimed via `munmap` / `VirtualFree`
+  when `RestoreArenaState` resets to a previous chunk (Phase 2d).
 
 ### Arena-based scope deallocation (Phase 1 — done)
 
@@ -136,13 +138,84 @@ heap memory from growing monotonically across loop iterations.
 - **Coverage:** Single- and multi-parameter TCO functions with copy-type
   accumulator patterns (e.g. `sum n acc`, `countdown n`).
 
-### Remaining limitations (Phase 2b+ work)
+### Copy-out for heap-type scope results (Phase 2b — done)
 
-- Scopes returning heap types (String, List, ADTs, closures) skip arena
-  reset — requires escape analysis or copy-out to support.
-- TCO loops with heap-type tail-call arguments (e.g. list-building
-  accumulators) skip per-iteration arena reset — requires copy-out.
-- Abandoned OS chunks from `EmitHeapGrow` are not reclaimed on reset.
+Scopes that return a heap type now use a copy-out strategy to allow arena
+reset. After `RestoreArenaState` resets the bump cursor, a new
+`CopyOutArena` IR instruction shallow-copies the result object from the
+(physically intact but logically freed) arena region to fresh space at the
+reset watermark.
+
+- **IR instruction:** `CopyOutArena(destTemp, srcTemp, staticSizeBytes)`.
+  `staticSizeBytes = -1` means dynamic size (strings: read the 8-byte
+  length field at runtime → `total = 8 + length`). Positive values are
+  fixed-size copies (e.g. 16 bytes for a cons cell).
+- **Safety guarantee:** Only a shallow copy is needed. Internal pointers
+  (e.g. list tail) reference memory allocated in parent scopes or previous
+  iterations — outside the current watermark, never reclaimed.
+- **Copy direction:** After arena reset the cursor is at watermark W ≤ src,
+  so `dest ≤ src` always holds and forward `memcpy` is safe with no
+  destructive overlap.
+- **Gating condition:** Copy-out is only emitted when the scope contained
+  at least one alive owned value (checked via `HasAliveOwnedValuesInCurrentScope`),
+  so scopes with nothing to reclaim skip the overhead.
+- **Coverage:** String (`TStr`) results from let-expression and match-arm
+  scopes. `CanCopyOutArena` currently handles `TStr`; other heap types
+  (List, ADT, closure) still skip arena reset as copy-out is not yet safe
+  for types with internal heap pointers into the reclaimed region.
+
+### TCO loop arena reset for heap-type arguments (Phase 2c — done)
+
+TCO loops with heap-type tail-call arguments now use the copy-out mechanism
+to allow per-iteration arena reset, handling the common list-accumulator
+pattern (e.g. `build n (x :: acc)`).
+
+- **Mechanism:** Before `RestoreArenaState` on the tail-call path, each
+  heap-type argument is checked with `CanCopyOutTcoArg`. If all pass, the
+  arena is reset and each heap-type arg is copy-outed, then its param slot
+  is overwritten with the fresh copy pointer.
+- **Safe types for TCO copy-out:**
+  - `TStr` — self-contained, no internal heap pointers.
+  - `TList` where the element type is a copy type (Int, Float, Bool) — the
+    cons cell is `{head:i64, tail:i64}` where head is a direct value and
+    tail points to the previous iteration's copy-outed cell (below the
+    watermark, never reclaimed).
+- **Conservative fallback:** If any heap-type arg cannot be copy-outed
+  (e.g. `List of List` — head is a pointer into the reclaimed region),
+  the entire arena reset is skipped on that tail-call path.
+- **Copy order:** Left-to-right, matching evaluation order. Each copy
+  lands above the previous one — no destructive overlap.
+
+### Abandoned OS chunk reclamation on arena reset (Phase 2d — done)
+
+When `RestoreArenaState` resets the cursor to a previous chunk, abandoned
+OS chunks are now reclaimed.
+
+- **Chunk linked list:** Each 4 MB chunk header (first 8 bytes) stores
+  the base address of the previous chunk (0 for the first chunk).
+  `EmitHeapGrow` writes the outgoing chunk's base into the new chunk's
+  header. Allocations start at offset +8 within each chunk.
+- **Fast path:** When the saved watermark end matches the current chunk
+  end (same chunk), only the cursor is reset — single store, no syscalls.
+- **Slow path:** When chunks differ, `RestoreArenaState` walks the linked
+  list from the current chunk back to the saved chunk, calling
+  `munmap` (Linux: syscall 11 / AArch64 syscall 215) or
+  `VirtualFree(ptr, 0, MEM_RELEASE)` (Windows) on each abandoned chunk.
+  A loop variable tracks the current chunk end until it matches the saved
+  watermark.
+- **Outcome:** Long-running programs with periodic arena resets now return
+  excess OS memory instead of holding it indefinitely.
+
+### Remaining limitations (Phase 3 work)
+
+- Copy-out only supports `TStr` for general scope results. List, ADT, and
+  closure results still skip arena reset (requires deep-copy or escape
+  analysis for types with internal heap pointers).
+- TCO copy-out only supports `TStr` and `TList(copy-type element)`. More
+  complex accumulator types (e.g. `List of List`, ADTs) still skip
+  per-iteration arena reset.
+- Per-function arena regions (Phase 3) remain future work — each function
+  call would get its own arena with OS-level reclamation on return.
 
 ### Recommendations
 
@@ -150,10 +223,12 @@ heap memory from growing monotonically across loop iterations.
 2. ✅ **Done:** Growing heap via `mmap` / `VirtualAlloc` — no hard limit.
 3. ✅ **Phase 1 done:** Arena-based scope deallocation for copy-type results.
 4. ✅ **Phase 2a done:** TCO loop iteration arena reset for copy-type args.
-5. **Phase 2b:** Extend arena reset to heap-type results via copy-out or
-   escape analysis. Extend TCO arena reset to heap-type args via copy-out.
-6. **Long-term:** Per-function arena regions with `munmap` / `VirtualFree`
-   for full memory reclamation.
+5. ✅ **Phase 2b done:** Copy-out for string scope results.
+6. ✅ **Phase 2c done:** TCO copy-out for string and list-of-copy-type args.
+7. ✅ **Phase 2d done:** Abandoned OS chunk reclamation on arena reset.
+8. **Phase 3:** Per-function arena regions with full OS-level reclamation.
+9. **Future:** Extend copy-out to List, ADT, and closure scope results
+   (requires escape analysis or deep-copy for internal heap pointers).
 
 ------------------------------------------------------------------------
 
@@ -404,6 +479,6 @@ structured output), this wastes heap space and comparison time.
 
 | # | Item | Status |
 |---|------|--------|
-| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅, Phase 2a ✅ |
+| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅, Phase 2a ✅, Phase 2b ✅, Phase 2c ✅, Phase 2d ✅ |
 | 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
 | 11 | Decision tree pattern matching for large ADTs | Open |
