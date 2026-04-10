@@ -889,7 +889,7 @@ internal static partial class LlvmCodegen
         {
             LlvmTypeHandle memcpyType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i8Ptr, i64]);
             LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memcpy", memcpyType);
-            ApplyBuiltinAttributes(target, fn, isReadOnly: false, destSrcNoAlias: true, pointerParamCount: 2);
+            ApplyBuiltinAttributes(target, fn, isReadOnly: false, destSrcNoAlias: true, returnsPointer: true, pointerParamCount: 2);
 
             LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
             LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
@@ -928,8 +928,8 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
             LlvmTypeHandle memsetType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i32, i64]);
             LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memset", memsetType);
-            // memset writes to dest only; dest pointer is nonnull. Only 1 pointer param.
-            ApplyBuiltinAttributes(target, fn, isReadOnly: false, destSrcNoAlias: false, pointerParamCount: 1);
+            // memset writes to dest only; dest pointer is nonnull. Returns dest pointer.
+            ApplyBuiltinAttributes(target, fn, isReadOnly: false, returnsPointer: true, pointerParamCount: 1);
 
             LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
             LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
@@ -1084,11 +1084,13 @@ internal static partial class LlvmCodegen
     /// All builtins are nounwind (no exceptions) and willreturn (bounded loops).
     /// Read-only builtins (memcmp, bcmp, strlen) additionally get memory(read).
     /// Pointer parameters get noalias and nonnull where appropriate.
+    /// Functions that return a pointer (memcpy, memset) get nonnull on the return value.
     /// </summary>
     private static void ApplyBuiltinAttributes(
         LlvmTargetContext target, LlvmValueHandle fn,
         bool isReadOnly,
         bool destSrcNoAlias = false,
+        bool returnsPointer = false,
         uint pointerParamCount = 0)
     {
         // Function-level attributes
@@ -1136,7 +1138,7 @@ internal static partial class LlvmCodegen
         }
 
         // Return value: nonnull for functions that return a pointer (memcpy, memset).
-        if (destSrcNoAlias)
+        if (returnsPointer)
         {
             LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexReturn,
                 LlvmApi.CreateEnumAttribute(target.Context, nonnullKind, 0));
