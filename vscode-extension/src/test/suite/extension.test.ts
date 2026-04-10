@@ -108,13 +108,50 @@ suite("Ashes Extension", () => {
       "types.ash should be recognized as ashes language",
     );
 
-    // Verify keywords are present in the source — ensures the fixture is
-    // intact and the grammar file is bundled.
-    const fullText = doc.getText();
-    assert.ok(fullText.includes("type"), "Source should contain 'type'");
-    assert.ok(fullText.includes("match"), "Source should contain 'match'");
-    assert.ok(fullText.includes("let"), "Source should contain 'let'");
-    assert.ok(fullText.includes("fun"), "Source should contain 'fun'");
+    // Verify the extension contributes a grammar entry for "ashes" and
+    // that the referenced grammar file actually exists in the extension.
+    const ext = vscode.extensions.getExtension("mattiashognas.ashes-vscode");
+    assert.ok(ext, "Extension should be installed");
+
+    const contributes = (
+      ext.packageJSON as {
+        contributes?: {
+          grammars?: Array<{
+            language: string;
+            scopeName: string;
+            path: string;
+          }>;
+        };
+      }
+    ).contributes;
+    assert.ok(contributes?.grammars, "Extension should contribute grammars");
+
+    const ashesGrammar = contributes.grammars.find(
+      (g) => g.language === "ashes",
+    );
+    assert.ok(
+      ashesGrammar,
+      'Extension should contribute a grammar for language "ashes"',
+    );
+    assert.strictEqual(
+      ashesGrammar.scopeName,
+      "source.ashes",
+      "Grammar scopeName should be source.ashes",
+    );
+
+    // Verify the grammar file referenced in the contribution actually
+    // exists within the installed extension directory.
+    const grammarAbsPath = path.join(ext.extensionPath, ashesGrammar.path);
+    const grammarExists = await vscode.workspace.fs
+      .stat(vscode.Uri.file(grammarAbsPath))
+      .then(
+        () => true,
+        () => false,
+      );
+    assert.ok(
+      grammarExists,
+      `Grammar file should exist at ${ashesGrammar.path} (resolved: ${grammarAbsPath})`,
+    );
   });
 
   test("ashes debugger type is registered", () => {
