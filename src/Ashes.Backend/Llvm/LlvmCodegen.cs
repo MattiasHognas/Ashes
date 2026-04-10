@@ -874,8 +874,7 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Emits local <c>memcpy</c> and <c>memset</c> function implementations so that LLVM's
     /// intrinsic lowering has definitions to call. Without libc, the linker would fail
-    /// on the external symbols. Functions use weak linkage so LLVM's optimizer doesn't
-    /// eliminate them but also doesn't complain about redefinition.
+    /// on the external symbols, so these definitions are added directly to the module.
     /// </summary>
     private static void EmitBuiltinMemcpy(
         LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
