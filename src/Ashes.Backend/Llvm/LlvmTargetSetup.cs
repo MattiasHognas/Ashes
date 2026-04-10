@@ -126,6 +126,12 @@ internal sealed record LlvmTargetContext(
     LlvmTargetMachineHandle TargetMachine,
     string TargetTriple) : IDisposable
 {
+    private int _globalConstantCounter;
+
+    /// <summary>Returns a module-unique integer for naming global constants.</summary>
+    public int NextGlobalConstantId() =>
+        System.Threading.Interlocked.Increment(ref _globalConstantCounter);
+
     public void Dispose()
     {
         LlvmApi.DisposeBuilder(Builder);

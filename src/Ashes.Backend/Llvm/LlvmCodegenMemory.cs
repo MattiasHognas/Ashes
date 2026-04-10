@@ -4,8 +4,6 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    private static int _globalConstantCounter;
-
     /// <summary>
     /// Creates a module-level global constant byte array and returns a pointer
     /// to its first element. The global is marked internal linkage, constant,
@@ -13,7 +11,7 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmValueHandle CreateGlobalConstantBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)
     {
-        int id = System.Threading.Interlocked.Increment(ref _globalConstantCounter);
+        int id = state.Target.NextGlobalConstantId();
         LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)bytes.Count);
 
         // Build constant initializer: [N x i8] c"..."
@@ -405,7 +403,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
             state.Target.Context, [state.I64, arrayType]);
 
-        int id = System.Threading.Interlocked.Increment(ref _globalConstantCounter);
+        int id = state.Target.NextGlobalConstantId();
         LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
         LlvmApi.SetInitializer(global, constStruct);
         LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
