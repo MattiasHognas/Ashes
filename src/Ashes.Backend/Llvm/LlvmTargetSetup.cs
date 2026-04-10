@@ -9,7 +9,7 @@ internal static class LlvmTargetSetup
     private static bool _initialized;
     private static readonly Lock SyncRoot = new();
 
-    public static LlvmTargetContext Create(string targetId, BackendOptimizationLevel optimizationLevel)
+    public static LlvmTargetContext Create(string targetId, BackendOptimizationLevel optimizationLevel, string? targetCpu = null)
     {
         EnsureInitialized();
 
@@ -38,12 +38,31 @@ internal static class LlvmTargetSetup
             _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
         };
 
-        string cpu = targetId == Backends.TargetIds.LinuxArm64 ? "generic" : "x86-64";
+        // Resolve CPU name and features. When --target-cpu is not specified,
+        // use safe generic defaults (runs on any CPU of the target arch).
+        // When "native" is specified, LLVM detects the host CPU at compile time.
+        string cpu;
+        string features;
+        if (targetCpu is not null && targetCpu.Equals("native", StringComparison.OrdinalIgnoreCase))
+        {
+            cpu = LlvmApi.GetHostCPUName();
+            features = LlvmApi.GetHostCPUFeatures();
+        }
+        else if (targetCpu is not null)
+        {
+            cpu = targetCpu;
+            features = string.Empty;
+        }
+        else
+        {
+            cpu = targetId == Backends.TargetIds.LinuxArm64 ? "generic" : "x86-64";
+            features = string.Empty;
+        }
 
         LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target,
             targetTriple,
             cpu,
-            string.Empty,
+            features,
             optLevel,
             LlvmRelocMode.Static,
             LlvmCodeModel.Default);

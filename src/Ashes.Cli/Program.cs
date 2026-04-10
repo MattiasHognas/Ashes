@@ -12,10 +12,10 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
@@ -32,6 +32,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
+    table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
@@ -498,12 +499,14 @@ async Task<int> RunCompileAsync(string[] a)
     string? expr = null;
     string? inputFile = null;
     string? projectPath = null;
+    string? targetCpu = null;
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
 
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
@@ -536,7 +539,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);
 
     var sw = Stopwatch.StartNew();
     byte[] image;
@@ -620,11 +623,13 @@ async Task<int> RunRunAsync(string[] a)
     string? expr = null;
     string? inputFile = null;
     string? projectPath = null;
+    string? targetCpu = null;
 
     for (int i = 0; i < cliArgs.Length; i++)
     {
         var arg = cliArgs[i];
         if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
+        if (arg == "--target-cpu" && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
         if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
@@ -654,8 +659,7 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode);
-
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);
     byte[] image;
     if (project is null)
     {
@@ -707,17 +711,19 @@ async Task<int> RunReplAsync(string[] a)
 
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
+    string? targetCpu = null;
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         throw new CliUsageException("Unknown argument.");
     }
 
     target ??= BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu);
     var sessionBindings = new List<ReplBinding>();
 
     AnsiConsole.Write(new Rule("[bold]Ashes REPL[/]").RuleStyle("grey").LeftJustified());
@@ -878,12 +884,14 @@ int RunTest(string[] a)
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? projectPath = null;
+    string? targetCpu = null;
     var paths = new List<string>();
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -896,7 +904,7 @@ int RunTest(string[] a)
 
     var project = ResolveProject(projectPath, null, null);
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu);
 
     return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions);
 }
