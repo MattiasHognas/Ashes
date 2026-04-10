@@ -376,7 +376,8 @@ internal static partial class LlvmCodegen
             LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
                 srcPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_out_nil_check");
 
-            // Alloca to hold the result across both paths (avoids phi node).
+            // Alloca to hold the result across both paths — no phi node binding
+            // available; mem2reg promotes this to a phi automatically.
             LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_out_result_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
 
@@ -399,7 +400,9 @@ internal static partial class LlvmCodegen
             return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "copy_out_result");
         }
 
-        // Dynamic size (strings): source is never nil.
+        // Dynamic size (strings): source is never nil — Ashes strings are always
+        // heap-allocated {length, bytes} structs; the type system has no nullable
+        // string representation, so every TStr value is a valid non-zero pointer.
         LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
         LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
 
