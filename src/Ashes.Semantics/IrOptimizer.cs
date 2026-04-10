@@ -30,6 +30,8 @@ public static class IrOptimizer
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
         instructions = ElideBorrowsForConstants(instructions);
         instructions = FoldConstants(instructions);
+        instructions = ReduceIdentitiesAndStrength(instructions);
+        instructions = ElideUnreachableCode(instructions);
         instructions = ElideDeadCode(instructions);
         instructions = ElideRedundantDrops(instructions);
 
@@ -208,6 +210,184 @@ public static class IrOptimizer
                 default:
                     result.Add(inst);
                     break;
+            }
+        }
+
+        return changed ? result : instructions;
+    }
+
+    // ── Pass 2b: Identity elimination and strength reduction ─────────────
+    // Simplify arithmetic with known identity values:
+    //   x + 0 → x, 0 + x → x, x - 0 → x
+    //   x * 1 → x, 1 * x → x, x * 0 → 0, 0 * x → 0
+    //   x / 1 → x
+    //   x * 2 → x + x (strength reduction)
+
+    private static List<IrInst> ReduceIdentitiesAndStrength(List<IrInst> instructions)
+    {
+        var knownInts = new Dictionary<int, long>();
+        var result = new List<IrInst>(instructions.Count);
+        bool changed = false;
+
+        foreach (var inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.LoadConstInt lci:
+                    knownInts[lci.Target] = lci.Value;
+                    result.Add(inst);
+                    break;
+
+                case IrInst.AddInt add:
+                    {
+                        bool leftZero = knownInts.TryGetValue(add.Left, out long lv) && lv == 0;
+                        bool rightZero = knownInts.TryGetValue(add.Right, out long rv) && rv == 0;
+                        if (leftZero)
+                        {
+                            // 0 + x → x: copy Right → Target
+                            result.Add(new IrInst.Borrow(add.Target, add.Right) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else if (rightZero)
+                        {
+                            // x + 0 → x: copy Left → Target
+                            result.Add(new IrInst.Borrow(add.Target, add.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else
+                        {
+                            result.Add(inst);
+                        }
+
+                        break;
+                    }
+
+                case IrInst.SubInt sub:
+                    {
+                        bool rightZero = knownInts.TryGetValue(sub.Right, out long rv) && rv == 0;
+                        if (rightZero)
+                        {
+                            // x - 0 → x
+                            result.Add(new IrInst.Borrow(sub.Target, sub.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else
+                        {
+                            result.Add(inst);
+                        }
+
+                        break;
+                    }
+
+                case IrInst.MulInt mul:
+                    {
+                        bool leftKnown = knownInts.TryGetValue(mul.Left, out long lv);
+                        bool rightKnown = knownInts.TryGetValue(mul.Right, out long rv);
+
+                        if ((leftKnown && lv == 0) || (rightKnown && rv == 0))
+                        {
+                            // x * 0 or 0 * x → 0
+                            result.Add(new IrInst.LoadConstInt(mul.Target, 0) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else if (leftKnown && lv == 1)
+                        {
+                            // 1 * x → x
+                            result.Add(new IrInst.Borrow(mul.Target, mul.Right) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else if (rightKnown && rv == 1)
+                        {
+                            // x * 1 → x
+                            result.Add(new IrInst.Borrow(mul.Target, mul.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else if (rightKnown && rv == 2)
+                        {
+                            // x * 2 → x + x (strength reduction)
+                            result.Add(new IrInst.AddInt(mul.Target, mul.Left, mul.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else if (leftKnown && lv == 2)
+                        {
+                            // 2 * x → x + x (strength reduction)
+                            result.Add(new IrInst.AddInt(mul.Target, mul.Right, mul.Right) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else
+                        {
+                            result.Add(inst);
+                        }
+
+                        break;
+                    }
+
+                case IrInst.DivInt div:
+                    {
+                        bool rightOne = knownInts.TryGetValue(div.Right, out long rv) && rv == 1;
+                        if (rightOne)
+                        {
+                            // x / 1 → x
+                            result.Add(new IrInst.Borrow(div.Target, div.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else
+                        {
+                            result.Add(inst);
+                        }
+
+                        break;
+                    }
+
+                // Labels invalidate knowledge (control flow merge point).
+                case IrInst.Label:
+                    knownInts.Clear();
+                    result.Add(inst);
+                    break;
+
+                default:
+                    result.Add(inst);
+                    break;
+            }
+        }
+
+        return changed ? result : instructions;
+    }
+
+    // ── Pass 2c: Unreachable code elimination ───────────────────────────
+    // Remove instructions after unconditional jumps or returns until the
+    // next label (which re-establishes reachability).
+
+    private static List<IrInst> ElideUnreachableCode(List<IrInst> instructions)
+    {
+        var result = new List<IrInst>(instructions.Count);
+        bool unreachable = false;
+        bool changed = false;
+
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.Label)
+            {
+                // Labels re-establish reachability.
+                unreachable = false;
+                result.Add(inst);
+                continue;
+            }
+
+            if (unreachable)
+            {
+                // Skip instructions after an unconditional terminator.
+                changed = true;
+                continue;
+            }
+
+            result.Add(inst);
+
+            // Unconditional terminators: Jump and Return make subsequent code unreachable
+            // until the next label.
+            if (inst is IrInst.Jump or IrInst.Return)
+            {
+                unreachable = true;
             }
         }
 
