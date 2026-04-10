@@ -568,6 +568,12 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildStore(target.Builder, LlvmApi.GetParam(llvmFunction, 1), localSlots[1]);
         }
 
+        // Emit DWARF debug variable declarations for named locals (after allocas, in entry block)
+        if (debugContext is not null)
+        {
+            EmitLocalVariableDebugInfo(debugContext, target.Builder, function, localSlots);
+        }
+
         var labelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal);
         foreach (IrInst.Label label in function.Instructions.OfType<IrInst.Label>())
         {

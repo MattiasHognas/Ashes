@@ -228,7 +228,8 @@ public sealed record IrFunction(
     int LocalCount,
     int TempCount,
     bool HasEnvAndArgParams, // true for lambdas (implicit env+arg params)
-    CoroutineInfo? Coroutine = null // non-null for async coroutine functions
+    CoroutineInfo? Coroutine = null, // non-null for async coroutine functions
+    IReadOnlyDictionary<int, string>? LocalNames = null // slot → source name (debug info)
 );
 
 public sealed record IrProgram(

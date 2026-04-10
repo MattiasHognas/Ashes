@@ -262,7 +262,10 @@
       ],
       LocalCount: 2,
       TempCount: 10,
-      HasEnvAndArgParams: false
+      HasEnvAndArgParams: false,
+      LocalNames: {
+        0: add
+      }
     },
     Functions: [
       {
@@ -283,7 +286,10 @@
         ],
         LocalCount: 2,
         TempCount: 3,
-        HasEnvAndArgParams: true
+        HasEnvAndArgParams: true,
+        LocalNames: {
+          1: y
+        }
       },
       {
         Label: lambda_0,
@@ -308,7 +314,10 @@
         ],
         LocalCount: 2,
         TempCount: 3,
-        HasEnvAndArgParams: true
+        HasEnvAndArgParams: true,
+        LocalNames: {
+          1: x
+        }
       }
     ],
     UsesPrintInt: true,

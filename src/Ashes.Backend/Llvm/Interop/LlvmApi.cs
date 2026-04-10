@@ -157,6 +157,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMPositionBuilderAtEnd")]
     public static partial void PositionBuilderAtEnd(LlvmBuilderHandle builder, LlvmBasicBlockHandle block);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetInsertBlock")]
+    public static partial LlvmBasicBlockHandle GetInsertBlock(LlvmBuilderHandle builder);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeBuilder")]
     public static partial void DisposeBuilder(LlvmBuilderHandle builder);
 
@@ -681,8 +684,28 @@ internal static partial class LlvmApi
             builder, scope, name, (nint)name.Length, file, line, ty, 1, 0, 0);
     }
 
-    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareAtEnd")]
-    public static partial LlvmValueHandle DIBuilderInsertDeclareAtEnd(
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateParameterVariable", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateParameterVariable(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        string name, nint nameLen,
+        uint argNo,
+        LlvmMetadataHandle file,
+        uint lineNo,
+        LlvmMetadataHandle ty,
+        int alwaysPreserve,
+        uint flags);
+
+    public static LlvmMetadataHandle DIBuilderCreateParameterVariable(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle scope,
+        string name, uint argNo, LlvmMetadataHandle file, uint line, LlvmMetadataHandle ty)
+    {
+        return DIBuilderCreateParameterVariable(
+            builder, scope, name, (nint)name.Length, argNo, file, line, ty, 1, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderInsertDeclareRecordAtEnd")]
+    public static partial nint DIBuilderInsertDeclareRecordAtEnd(
         LlvmDIBuilderHandle builder,
         LlvmValueHandle storage,
         LlvmMetadataHandle varInfo,

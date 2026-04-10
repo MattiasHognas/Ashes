@@ -158,7 +158,10 @@
       ],
       LocalCount: 1,
       TempCount: 6,
-      HasEnvAndArgParams: false
+      HasEnvAndArgParams: false,
+      LocalNames: {
+        0: x
+      }
     },
     UsesPrintInt: true,
     UsesPrintStr: false,
