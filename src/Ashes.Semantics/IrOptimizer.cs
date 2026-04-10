@@ -60,6 +60,8 @@ public static class IrOptimizer
 
     // ── Pass 2: Constant folding ────────────────────────────────────────
     // Evaluate arithmetic on known constant operands at compile time.
+    // Labels with a single predecessor preserve constant knowledge from
+    // that predecessor, enabling folding across branch boundaries.
 
     private static List<IrInst> FoldConstants(List<IrInst> instructions)
     {
@@ -68,8 +70,20 @@ public static class IrOptimizer
         var knownFloats = new Dictionary<int, double>();
         var knownBools = new Dictionary<int, bool>();
 
+        // Pre-scan: count how many explicit branches (Jump/JumpIfFalse) target
+        // each label. Combined with fall-through analysis, this tells us the
+        // total predecessor count at each label.
+        var branchRefs = CountBranchRefsToLabels(instructions);
+
+        // Saved constant state for single-predecessor labels reached by a
+        // JumpIfFalse or Jump from elsewhere (not by fall-through).
+        var savedIntStates = new Dictionary<string, Dictionary<int, long>>();
+        var savedFloatStates = new Dictionary<string, Dictionary<int, double>>();
+        var savedBoolStates = new Dictionary<string, Dictionary<int, bool>>();
+
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
+        bool prevIsTerminator = false; // tracks whether the previous instruction was Jump/Return
 
         foreach (var inst in instructions)
         {
@@ -78,16 +92,19 @@ public static class IrOptimizer
                 case IrInst.LoadConstInt lci:
                     knownInts[lci.Target] = lci.Value;
                     result.Add(inst);
+                    prevIsTerminator = false;
                     break;
 
                 case IrInst.LoadConstFloat lcf:
                     knownFloats[lcf.Target] = lcf.Value;
                     result.Add(inst);
+                    prevIsTerminator = false;
                     break;
 
                 case IrInst.LoadConstBool lcb:
                     knownBools[lcb.Target] = lcb.Value;
                     result.Add(inst);
+                    prevIsTerminator = false;
                     break;
 
                 case IrInst.AddInt add when knownInts.ContainsKey(add.Left) && knownInts.ContainsKey(add.Right):
@@ -199,16 +216,71 @@ public static class IrOptimizer
                         break;
                     }
 
-                // Labels, jumps, and control flow invalidate constant knowledge
-                case IrInst.Label:
-                    knownInts.Clear();
-                    knownFloats.Clear();
-                    knownBools.Clear();
+                // Labels, jumps, and control flow invalidate constant knowledge —
+                // unless the label has a single predecessor, in which case we can
+                // propagate constants from that predecessor.
+                case IrInst.Label lbl:
+                {
+                    bool hasFallthrough = !prevIsTerminator;
+                    int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
+                    int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
+
+                    if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+                    {
+                        // Single-predecessor label reached only by a branch (no fall-through):
+                        // restore the saved state from the branch point.
+                        knownInts.Clear();
+                        foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
+                        knownFloats.Clear();
+                        foreach (var kv in savedFloatStates[lbl.Name]) knownFloats[kv.Key] = kv.Value;
+                        knownBools.Clear();
+                        foreach (var kv in savedBoolStates[lbl.Name]) knownBools[kv.Key] = kv.Value;
+                    }
+                    else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
+                    {
+                        // Fall-through-only label (no branches target it) — keep current
+                        // constant state because sequential execution is the only path.
+                    }
+                    else
+                    {
+                        // Multiple predecessors — clear all constant knowledge.
+                        knownInts.Clear();
+                        knownFloats.Clear();
+                        knownBools.Clear();
+                    }
+
+                    // Clean up any saved state for this label.
+                    savedIntStates.Remove(lbl.Name);
+                    savedFloatStates.Remove(lbl.Name);
+                    savedBoolStates.Remove(lbl.Name);
+
                     result.Add(inst);
+                    prevIsTerminator = false;
+                    break;
+                }
+
+                case IrInst.JumpIfFalse jif:
+                    // Save state for the target label — will be used if the label turns
+                    // out to be a single-predecessor label (only this branch targets it).
+                    savedIntStates[jif.Target] = new Dictionary<int, long>(knownInts);
+                    savedFloatStates[jif.Target] = new Dictionary<int, double>(knownFloats);
+                    savedBoolStates[jif.Target] = new Dictionary<int, bool>(knownBools);
+                    result.Add(inst);
+                    prevIsTerminator = false; // JumpIfFalse is conditional, not a terminator
+                    break;
+
+                case IrInst.Jump jmp:
+                    // Save state for the target label.
+                    savedIntStates[jmp.Target] = new Dictionary<int, long>(knownInts);
+                    savedFloatStates[jmp.Target] = new Dictionary<int, double>(knownFloats);
+                    savedBoolStates[jmp.Target] = new Dictionary<int, bool>(knownBools);
+                    result.Add(inst);
+                    prevIsTerminator = true; // Jump is an unconditional terminator
                     break;
 
                 default:
                     result.Add(inst);
+                    prevIsTerminator = inst is IrInst.Return;
                     break;
             }
         }
@@ -226,8 +298,11 @@ public static class IrOptimizer
     private static List<IrInst> ReduceIdentitiesAndStrength(List<IrInst> instructions)
     {
         var knownInts = new Dictionary<int, long>();
+        var branchRefs = CountBranchRefsToLabels(instructions);
+        var savedIntStates = new Dictionary<string, Dictionary<int, long>>();
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
+        bool prevIsTerminator = false;
 
         foreach (var inst in instructions)
         {
@@ -236,6 +311,7 @@ public static class IrOptimizer
                 case IrInst.LoadConstInt lci:
                     knownInts[lci.Target] = lci.Value;
                     result.Add(inst);
+                    prevIsTerminator = false;
                     break;
 
                 case IrInst.AddInt add:
@@ -339,14 +415,48 @@ public static class IrOptimizer
                         break;
                     }
 
-                // Labels invalidate knowledge (control flow merge point).
-                case IrInst.Label:
-                    knownInts.Clear();
+                // Labels: preserve state across single-predecessor labels.
+                case IrInst.Label lbl:
+                {
+                    bool hasFallthrough = !prevIsTerminator;
+                    int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
+                    int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
+
+                    if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+                    {
+                        knownInts.Clear();
+                        foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
+                    }
+                    else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
+                    {
+                        // Fall-through-only — keep current state.
+                    }
+                    else
+                    {
+                        knownInts.Clear();
+                    }
+
+                    savedIntStates.Remove(lbl.Name);
                     result.Add(inst);
+                    prevIsTerminator = false;
+                    break;
+                }
+
+                case IrInst.JumpIfFalse jif:
+                    savedIntStates[jif.Target] = new Dictionary<int, long>(knownInts);
+                    result.Add(inst);
+                    prevIsTerminator = false;
+                    break;
+
+                case IrInst.Jump jmp:
+                    savedIntStates[jmp.Target] = new Dictionary<int, long>(knownInts);
+                    result.Add(inst);
+                    prevIsTerminator = true;
                     break;
 
                 default:
                     result.Add(inst);
+                    prevIsTerminator = inst is IrInst.Return;
                     break;
             }
         }
@@ -559,5 +669,31 @@ public static class IrOptimizer
                 // LoadEnv, LoadProgramArgs, ReadLine, Alloc, AllocAdt, Label, Jump:
                 // These either have no source temps or only define targets.
         }
+    }
+
+    /// <summary>
+    /// Counts the number of explicit branch instructions (Jump and JumpIfFalse)
+    /// that target each label. Used to determine whether a label has a single
+    /// predecessor and can safely propagate constant knowledge.
+    /// </summary>
+    private static Dictionary<string, int> CountBranchRefsToLabels(List<IrInst> instructions)
+    {
+        var refs = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var inst in instructions)
+        {
+            string? target = inst switch
+            {
+                IrInst.Jump j => j.Target,
+                IrInst.JumpIfFalse jf => jf.Target,
+                _ => null
+            };
+
+            if (target is not null)
+            {
+                refs[target] = refs.GetValueOrDefault(target) + 1;
+            }
+        }
+
+        return refs;
     }
 }

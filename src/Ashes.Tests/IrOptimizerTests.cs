@@ -268,6 +268,79 @@ public sealed class IrOptimizerTests
         stdout.ShouldBe("no\n");
     }
 
+    // ── Constant propagation across single-predecessor labels ─────────
+
+    [Test]
+    public void Constant_propagation_preserves_constants_across_single_predecessor_label()
+    {
+        // Build IR manually: LoadConstInt(t0, 10), LoadConstInt(t1, 20),
+        // JumpIfFalse(bool, else_lbl), ..., Jump(end_lbl), Label(else_lbl),
+        // AddInt(t3, t0, t1) — should fold to 30 at else_lbl because it's
+        // a single-predecessor label (only the JumpIfFalse targets it).
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 10),
+            new IrInst.LoadConstInt(1, 20),
+            new IrInst.LoadConstBool(2, false), // condition
+            new IrInst.JumpIfFalse(2, "else_0"),
+            new IrInst.LoadConstInt(3, 99),     // then branch
+            new IrInst.StoreLocal(0, 3),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            // At this point, t0=10, t1=20 should be known (propagated from JumpIfFalse)
+            new IrInst.AddInt(4, 0, 1),         // 10 + 20 = 30 → should fold
+            new IrInst.StoreLocal(0, 4),
+            new IrInst.Label("end_0"),
+            new IrInst.LoadLocal(5, 0),
+            new IrInst.Return(5),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 6, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        // The AddInt(4, 0, 1) after else_0 should be folded to LoadConstInt(4, 30)
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 4, Value: 30 })
+            .ShouldBeTrue("Expected constant 30 from folding across single-predecessor label.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AddInt { Target: 4 })
+            .ShouldBeFalse("AddInt should be folded at single-predecessor label.");
+    }
+
+    [Test]
+    public void Constant_propagation_clears_at_multi_predecessor_label()
+    {
+        // end_0 has two predecessors (Jump from then + fall-through from else)
+        // so constants should NOT propagate through it.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 10),
+            new IrInst.LoadConstInt(1, 20),
+            new IrInst.LoadConstBool(2, false),
+            new IrInst.JumpIfFalse(2, "else_0"),
+            new IrInst.LoadConstInt(3, 99),
+            new IrInst.StoreLocal(0, 3),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(4, 77),
+            new IrInst.StoreLocal(0, 4),
+            new IrInst.Label("end_0"),
+            // At end_0: both then and else branches reach here — t0, t1 should NOT be known
+            new IrInst.AddInt(5, 0, 1),         // should NOT be folded
+            new IrInst.Return(5),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 6, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        // AddInt should NOT be folded at multi-predecessor label
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AddInt { Target: 5 })
+            .ShouldBeTrue("AddInt should NOT be folded at multi-predecessor label.");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static IrProgram Lower(string source)
