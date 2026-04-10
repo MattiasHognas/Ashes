@@ -6,14 +6,24 @@ const fixturesPath = path.resolve(__dirname, "../../../src/test/fixtures");
 
 /** Poll until the extension is active, with a timeout. */
 async function waitForActivation(timeoutMs = 10_000): Promise<void> {
-  const ext = vscode.extensions.getExtension("mattiashognas.ashes-vscode");
-  if (!ext) {
-    return;
+  const extensionId = "mattiashognas.ashes-vscode";
+  const ext = vscode.extensions.getExtension(extensionId);
+  assert.ok(ext, `Extension ${extensionId} should be installed`);
+
+  if (!ext.isActive) {
+    await ext.activate();
   }
+
   const start = Date.now();
   while (!ext.isActive && Date.now() - start < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+
+  assert.strictEqual(
+    ext.isActive,
+    true,
+    `Extension ${extensionId} did not activate within ${timeoutMs}ms`,
+  );
 }
 
 suite("Ashes Extension", () => {
