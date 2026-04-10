@@ -2857,6 +2857,16 @@ public sealed class Lowering
             }
         }
 
+        // Phase 3: per-call arena watermark — save the heap cursor/end before
+        // evaluating the callee and arguments so that intermediate allocations
+        // (closures from partial application, temporary data structures inside
+        // the callee, argument construction) can be reclaimed after the call
+        // chain completes.  The watermark is managed independently of the
+        // _arenaWatermarks / _ownershipScopes stacks to avoid unbalancing them.
+        int callWmCursorSlot = NewLocal();
+        int callWmEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(callWmCursorSlot, callWmEndSlot));
+
         // For non-TCO calls, sub-expressions are NOT in tail position
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
@@ -2915,6 +2925,25 @@ public sealed class Lowering
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
             currentTemp = target;
             currentType = Prune(fun.Ret);
+        }
+
+        // Phase 3: restore arena after the call chain completes.
+        // - Copy-type result (Int, Float, Bool): all allocations from the call
+        //   chain are unreachable → reclaim via RestoreArenaState.
+        // - String result: reclaim + copy-out the self-contained string.
+        // - Other heap types (List, ADT, closure): skip — internal pointers may
+        //   reference memory within the watermark region.
+        var callResultType = Prune(currentType);
+        if (CanArenaReset(callResultType))
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot));
+        }
+        else if (CanCopyOutArena(callResultType, out int callCopySize))
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot));
+            int copyDest = NewTemp();
+            Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+            currentTemp = copyDest;
         }
 
         return (currentTemp, currentType);
