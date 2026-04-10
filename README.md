@@ -41,7 +41,7 @@ in
 
 No GC. No runtime. Just a native binary.
 
-------------------------------------------------------------------------
+---
 
 ## What is Ashes?
 
@@ -77,7 +77,7 @@ This repository contains the full toolchain:
 - **Haskell** — purity and type-driven design
 - **Rust** — deterministic memory management without a GC
 
-------------------------------------------------------------------------
+---
 
 ## Quick Start
 
@@ -112,7 +112,7 @@ dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
 ./hello     # runs without dotnet, without anything
 ```
 
-------------------------------------------------------------------------
+---
 
 ## A Tour of Ashes
 
@@ -189,7 +189,7 @@ in
         in Ashes.IO.print("ok")
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Standard Library
 
@@ -207,7 +207,7 @@ in
 
 Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
 
-------------------------------------------------------------------------
+---
 
 ## Compiler Architecture
 
@@ -237,7 +237,7 @@ dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o he
 dotnet run --project src/Ashes.Cli -- compile --target linux-arm64 hello.ash -o hello
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Tooling
 
@@ -278,7 +278,7 @@ ashes compile --debug examples/hello.ash -o hello
 See [docs/DEBUGGING.md](docs/DEBUGGING.md) for the full debugging guide,
 including VS Code extension setup, launch configuration, and GDB usage.
 
-------------------------------------------------------------------------
+---
 
 ## Testing
 
@@ -300,7 +300,7 @@ dotnet run --project src/Ashes.Tests -- --no-progress # compiler unit tests
 
 See [docs/TESTING.md](docs/TESTING.md) for the full testing reference.
 
-------------------------------------------------------------------------
+---
 
 ## Examples
 
@@ -324,7 +324,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 [`list_pipeline/`](examples/list_pipeline/),
 [`result_flow/`](examples/result_flow/)
 
-------------------------------------------------------------------------
+---
 
 ## Documentation
 
@@ -343,19 +343,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | [Standard Library](docs/STANDARD_LIBRARY.md) | Module-by-module API reference |
 | [Future Features](docs/future/FUTURE_FEATURES.md) | Planned future work |
 
-## Versions
-
-| Version | Main feature |
-|---|---|
-| 1.0.0 | Base |
-| 1.0.5 | Add LLVM |
-| 1.0.6 | Add debugger |
-| 1.1.0 | Add memory safety |
-| 1.2.0 | Add async/await |
-| 1.2.1 | Add import aliasing |
-| 1.3.0 | Add package manager, pattern guards and syntax highlighting |
-
-------------------------------------------------------------------------
+---
 
 ## Why "Ashes"?
 
@@ -363,7 +351,7 @@ The name comes from my beloved dog. Her enthusiasm for trying anything new
 mirrors the spirit of this project — an experiment, a learning journey, and
 a personal exploration of functional language design.
 
-------------------------------------------------------------------------
+---
 
 ## Contributing
 
