@@ -379,8 +379,9 @@ internal static partial class LlvmCodegen
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
 
-        // Apply nounwind to all functions — Ashes has no exceptions / unwind semantics,
-        // so LLVM can skip unwind table generation for smaller, faster code.
+        // Apply nounwind to Ashes-generated functions — the entry point and lifted
+        // closures. Ashes has no exceptions / unwind semantics, so LLVM can skip
+        // unwind table generation for smaller, faster code.
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
         LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
