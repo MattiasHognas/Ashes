@@ -214,6 +214,10 @@
           Source: 1
         },
         {
+          CursorLocalSlot: 1,
+          EndLocalSlot: 2
+        },
+        {
           Target: 2
         },
         {
@@ -242,7 +246,7 @@
           Source: 7
         },
         {
-          Slot: 1,
+          Slot: 3,
           Source: 7
         },
         {
@@ -254,13 +258,13 @@
         },
         {
           Target: 9,
-          Slot: 1
+          Slot: 3
         },
         {
           Source: 9
         }
       ],
-      LocalCount: 2,
+      LocalCount: 4,
       TempCount: 10,
       HasEnvAndArgParams: false,
       LocalNames: {

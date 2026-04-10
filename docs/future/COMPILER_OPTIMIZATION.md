@@ -99,15 +99,37 @@ bloated every binary by 4 MB.~~
   monotonically. The OS will eventually refuse an allocation, but this is
   significantly more forgiving than the old hard 4 MB ceiling.
 
+### Arena-based scope deallocation (Phase 1 — done)
+
+The compiler now emits `SaveArenaState` at ownership scope entry and
+`RestoreArenaState` at scope exit when the scope result is a **copy type**
+(Int, Float, Bool). This resets the bump allocator to the scope-entry
+watermark, effectively freeing all heap memory allocated within the scope.
+
+- **Mechanism:** Each `PushOwnershipScope` allocates two local slots and
+  emits `SaveArenaState(cursorSlot, endSlot)` to snapshot the heap cursor
+  and end pointers. At `PopOwnershipScope`, if the result type is a copy
+  type, `RestoreArenaState(cursorSlot, endSlot)` restores both pointers.
+- **Safety guarantee:** Copy-type results never reference heap memory, so
+  all allocations between save and restore are unreachable garbage after
+  the scope's `Drop` instructions have run.
+- **Coverage:** Let-expression scopes and match-arm scopes with Int, Float,
+  or Bool results. Nested scopes compose correctly (stack-like watermarks).
+- **Limitations (Phase 2 work):**
+  - Scopes returning heap types (String, List, ADTs, closures) skip arena
+    reset — requires escape analysis or copy-out to support.
+  - TCO loop iterations don't individually arena-reset yet.
+  - Abandoned OS chunks from `EmitHeapGrow` are not reclaimed on reset.
+
 ### Recommendations
 
 1. ✅ **Done:** Heap bounds checking — clean error on overflow.
 2. ✅ **Done:** Growing heap via `mmap` / `VirtualAlloc` — no hard limit.
-3. **Long-term:** Implement arena-based region deallocation — the compiler
-   already tracks ownership and inserts `Drop` at scope exit, so entire
-   arenas can be freed deterministically without a GC or runtime
-   reference counting (consistent with the language's no-runtime,
-   no-GC design).
+3. ✅ **Phase 1 done:** Arena-based scope deallocation for copy-type results.
+4. **Phase 2:** Extend arena reset to heap-type results via copy-out or
+   escape analysis. Integrate with TCO loop iterations.
+5. **Long-term:** Per-function arena regions with `munmap` / `VirtualFree`
+   for full memory reclamation.
 
 ------------------------------------------------------------------------
 
@@ -358,6 +380,6 @@ structured output), this wastes heap space and comparison time.
 
 | # | Item | Status |
 |---|------|--------|
-| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Open |
+| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Phase 1 ✅ |
 | 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
 | 11 | Decision tree pattern matching for large ADTs | Open |

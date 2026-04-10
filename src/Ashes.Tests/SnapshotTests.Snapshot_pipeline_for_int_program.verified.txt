@@ -138,6 +138,10 @@
           Source: 2
         },
         {
+          CursorLocalSlot: 1,
+          EndLocalSlot: 2
+        },
+        {
           Target: 3
         },
         {
@@ -156,7 +160,7 @@
           Source: 5
         }
       ],
-      LocalCount: 1,
+      LocalCount: 3,
       TempCount: 6,
       HasEnvAndArgParams: false,
       LocalNames: {
