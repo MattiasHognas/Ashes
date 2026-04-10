@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]*.*.*'
+      - '[0-9]*.*.*'
 
 jobs:
   prepare-llvm:
@@ -255,7 +255,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: Ashes ${{ github.ref_name }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: |
             artifacts/ashes-win-x64/ashes-win-x64.zip
             artifacts/ashes-linux-x64/ashes-linux-x64.zip
