@@ -6,11 +6,7 @@ import {
   TransportKind,
 } from "vscode-languageclient/node";
 import { acquireTool } from "./toolAcquisition";
-import {
-  LSP_CONFIG,
-  DAP_CONFIG,
-  getRequiredVersion,
-} from "./toolConfigs";
+import { LSP_CONFIG, DAP_CONFIG, getRequiredVersion } from "./toolConfigs";
 import {
   compileCommand,
   runCommand,
@@ -81,9 +77,7 @@ async function ensureLanguageClientStarted(
   }
 }
 
-export function activate(
-  context: vscode.ExtensionContext,
-): void {
+export function activate(context: vscode.ExtensionContext): void {
   // Register compiler commands
   context.subscriptions.push(
     vscode.commands.registerCommand("ashes.compile", () =>

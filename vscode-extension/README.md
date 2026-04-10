@@ -31,22 +31,22 @@ pre-download the compiler, language server, and debug adapter in one step.
 
 ## Commands
 
-| Command | Default Key | Description |
-|---|---|---|
-| **Ashes: Compile** | `Shift+F5` | Compile the active `.ash` file or project |
-| **Ashes: Run** | `Ctrl+F5` | Compile and run the active file/project |
-| **Ashes: Run Tests** | — | Run tests in the workspace or active file |
-| **Ashes: Install Toolchain** | — | Download compiler, LSP, and DAP binaries |
+| Command                      | Default Key | Description                               |
+| ---------------------------- | ----------- | ----------------------------------------- |
+| **Ashes: Compile**           | `Shift+F5`  | Compile the active `.ash` file or project |
+| **Ashes: Run**               | `Ctrl+F5`   | Compile and run the active file/project   |
+| **Ashes: Run Tests**         | —           | Run tests in the workspace or active file |
+| **Ashes: Install Toolchain** | —           | Download compiler, LSP, and DAP binaries  |
 
 ## Settings
 
-| Setting | Default | Description |
-|---|---|---|
-| `ashes.autoStartLanguageServer` | `true` | Automatically start the language server when an `.ash` file is opened. Set to `false` to disable automatic startup. |
-| `ashes.debugger` | `"gdb"` | Native debugger backend (`gdb` or `lldb`) |
-| `ashes.lspServerPath` | `""` | Override the language server binary path |
-| `ashes.dapServerPath` | `""` | Override the DAP server binary path |
-| `ashes.compilerPath` | `""` | Override the compiler binary path |
+| Setting                         | Default | Description                                                                                                         |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ashes.autoStartLanguageServer` | `true`  | Automatically start the language server when an `.ash` file is opened. Set to `false` to disable automatic startup. |
+| `ashes.debugger`                | `"gdb"` | Native debugger backend (`gdb` or `lldb`)                                                                           |
+| `ashes.lspServerPath`           | `""`    | Override the language server binary path                                                                            |
+| `ashes.dapServerPath`           | `""`    | Override the DAP server binary path                                                                                 |
+| `ashes.compilerPath`            | `""`    | Override the compiler binary path                                                                                   |
 
 ## Debugging
 
@@ -62,7 +62,7 @@ pre-download the compiler, language server, and debug adapter in one step.
      "request": "launch",
      "program": "${workspaceFolder}/out/${workspaceFolderBasename}",
      "cwd": "${workspaceFolder}",
-     "stopOnEntry": false
+     "stopOnEntry": false,
    }
    ```
 3. Press **F5** to start debugging.

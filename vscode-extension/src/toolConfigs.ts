@@ -19,9 +19,7 @@ export const DAP_CONFIG: ToolConfig = {
   settingKey: "ashes.dapServerPath",
 };
 
-export function getRequiredVersion(
-  context: vscode.ExtensionContext,
-): string {
+export function getRequiredVersion(context: vscode.ExtensionContext): string {
   return (
     (context.extension.packageJSON as { version?: string }).version ?? "0.0.1"
   );

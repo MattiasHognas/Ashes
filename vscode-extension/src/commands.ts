@@ -367,8 +367,7 @@ export async function installToolchainCommand(
       installedComponents.length > 0
         ? ` Installed before the failure: ${installedComponents.join(", ")}.`
         : "";
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     void vscode.window.showErrorMessage(
       `Failed to install the Ashes toolchain: ${errorMessage}.${partialSuccessMessage}`,
