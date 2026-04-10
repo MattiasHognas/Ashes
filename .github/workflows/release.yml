@@ -90,6 +90,7 @@ jobs:
         run: |
           mkdir -p staging
           cp publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
+          cp publish/${{ matrix.rid }}/libLLVM.so staging/
           [ -f LICENSE ] && cp LICENSE staging/ || true
           cp README.md staging/
           (cd staging && zip ../${{ matrix.artifact }}.zip *)
@@ -100,6 +101,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
           Copy-Item publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
+          Copy-Item publish/${{ matrix.rid }}/libLLVM.dll staging/
           if (Test-Path LICENSE) { Copy-Item LICENSE staging/ }
           Copy-Item README.md staging/
           Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact }}.zip
