@@ -3,8 +3,6 @@
 Full language support for the [Ashes](https://github.com/MattiasHognas/Ashes)
 pure functional programming language.
 
-![Ashes](icon.png)
-
 ## Features
 
 - **Syntax highlighting** — TextMate grammar for `.ash` files
