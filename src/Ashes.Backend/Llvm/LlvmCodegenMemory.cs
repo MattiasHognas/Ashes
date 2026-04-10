@@ -359,6 +359,8 @@ internal static partial class LlvmCodegen
     /// from the source object and allocates <c>8 + length</c> bytes.
     /// For fixed-size objects (<paramref name="staticSizeBytes"/> &gt; 0): allocates
     /// exactly <paramref name="staticSizeBytes"/> bytes (e.g. 16 for a cons cell).
+    /// A nil (0) source pointer is passed through unchanged — this handles empty
+    /// lists in TCO copy-out where the tail pointer is nil.
     /// </para>
     /// </summary>
     private static LlvmValueHandle EmitCopyOutArena(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
@@ -366,25 +368,46 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
 
-        LlvmValueHandle sizeBytes;
-        if (staticSizeBytes == -1)
+        // Fixed-size objects (e.g. cons cells) may have a nil source pointer —
+        // for example, an empty list tail in a TCO iteration. Guard against
+        // copying from address 0 by branching around the alloc+memcpy.
+        if (staticSizeBytes > 0)
         {
-            // Dynamic size: string layout {length:i64, bytes...}. Total = 8 + length.
-            LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
-            sizeBytes = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
-        }
-        else
-        {
-            sizeBytes = LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0);
+            LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+                srcPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_out_nil_check");
+
+            // Alloca to hold the result across both paths (avoids phi node).
+            LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_out_result_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+            var copyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_out_do");
+            var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_out_merge");
+            LlvmApi.BuildCondBr(builder, isNil, mergeBlock, copyBlock);
+
+            // Non-nil path: allocate and copy.
+            LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
+            LlvmValueHandle sizeBytes = LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0);
+            LlvmValueHandle destPtr = EmitAllocDynamic(state, sizeBytes);
+            LlvmValueHandle srcPtrBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
+            LlvmValueHandle destPtrBytes = LlvmApi.BuildIntToPtr(builder, destPtr, state.I8Ptr, "copy_out_dest_ptr");
+            EmitCopyBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
+            LlvmApi.BuildStore(builder, destPtr, resultSlot);
+            LlvmApi.BuildBr(builder, mergeBlock);
+
+            // Merge: load result (0 for nil path, destPtr for copy path).
+            LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+            return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "copy_out_result");
         }
 
-        LlvmValueHandle destPtr = EmitAllocDynamic(state, sizeBytes);
+        // Dynamic size (strings): source is never nil.
+        LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
+        LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
 
-        // Forward memcpy: dest ≤ src, no overlap.
-        LlvmValueHandle srcPtrBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
-        LlvmValueHandle destPtrBytes = LlvmApi.BuildIntToPtr(builder, destPtr, state.I8Ptr, "copy_out_dest_ptr");
-        EmitCopyBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
-        return destPtr;
+        LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize);
+        LlvmValueHandle dynSrcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
+        LlvmValueHandle dynDestBytes = LlvmApi.BuildIntToPtr(builder, dynDest, state.I8Ptr, "copy_out_dest_ptr");
+        EmitCopyBytes(state, dynDestBytes, dynSrcBytes, dynSize, "copy_out");
+        return dynDest;
     }
 
     /// <summary>
