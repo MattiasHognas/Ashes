@@ -5,97 +5,79 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
-import { type ToolConfig, acquireTool } from "./toolAcquisition";
-import { acquireCompiler } from "./compilerAcquisition";
+import { acquireTool } from "./toolAcquisition";
+import { LSP_CONFIG, DAP_CONFIG, getRequiredVersion } from "./toolConfigs";
 import {
   compileCommand,
   runCommand,
   testCommand,
+  installToolchainCommand,
   disposeCommands,
 } from "./commands";
 
+export { LSP_CONFIG, DAP_CONFIG, getRequiredVersion };
+
 let client: LanguageClient | undefined;
+let clientStarting = false;
 
-const LSP_CONFIG: ToolConfig = {
-  displayName: "Ashes language server",
-  assetPrefix: "ashes-lsp",
-  executableBaseName: "Ashes.Lsp",
-  cacheSubdir: "lsp",
-  bundledSubdir: "lsp-server",
-  settingKey: "ashes.lspServerPath",
-};
-
-const DAP_CONFIG: ToolConfig = {
-  displayName: "Ashes DAP server",
-  assetPrefix: "ashes-dap",
-  executableBaseName: "ashes-dap",
-  cacheSubdir: "dap",
-  bundledSubdir: "dap-server",
-  settingKey: "ashes.dapServerPath",
-};
-
-function getRequiredVersion(context: vscode.ExtensionContext): string {
-  return (
-    (context.extension.packageJSON as { version?: string }).version ?? "0.0.1"
-  );
-}
-
-export async function activate(
+/**
+ * Acquire the LSP binary on demand, start the LanguageClient once, and
+ * reuse it on subsequent calls.  Does nothing in untrusted workspaces.
+ */
+async function ensureLanguageClientStarted(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const requiredVersion = getRequiredVersion(context);
+  if (client || clientStarting) {
+    return;
+  }
 
-  // Acquire LSP server — blocks activation behind a progress bar.
-  let lspPath: string;
-  try {
-    lspPath = await acquireTool(context, LSP_CONFIG, requiredVersion);
-  } catch (err) {
-    vscode.window.showErrorMessage(
-      `Failed to acquire ${LSP_CONFIG.displayName} v${requiredVersion}: ${(err as Error).message}`,
+  if (!vscode.workspace.isTrusted) {
+    void vscode.window.showWarningMessage(
+      "Ashes language server requires a trusted workspace.",
     );
     return;
   }
 
-  // Acquire DAP server and compiler eagerly in the background.
-  // DAP promise is stored so the debug adapter factory can await it later.
-  // Compiler is fire-and-forget — failures show a notification only.
-  const dapReady = acquireTool(context, DAP_CONFIG, requiredVersion).catch(
-    (err: unknown) => {
-      vscode.window.showErrorMessage(
-        `Failed to acquire ${DAP_CONFIG.displayName} v${requiredVersion}: ${(err as Error).message}`,
-      );
-      return undefined;
-    },
-  );
+  clientStarting = true;
+  try {
+    const requiredVersion = getRequiredVersion(context);
+    const lspPath = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Downloading ${LSP_CONFIG.displayName}…`,
+        cancellable: false,
+      },
+      () => acquireTool(context, LSP_CONFIG, requiredVersion),
+    );
 
-  acquireCompiler(context, requiredVersion)
-    .then((compilerPath: string) => {
-      void context.workspaceState.update("ashes.compilerPath", compilerPath);
-    })
-    .catch((err: unknown) => {
-      vscode.window.showErrorMessage(
-        `Failed to acquire Ashes compiler v${requiredVersion}: ${(err as Error).message}`,
-      );
-    });
+    const serverOptions: ServerOptions = {
+      command: lspPath,
+      transport: TransportKind.stdio,
+    };
 
-  const serverOptions: ServerOptions = {
-    command: lspPath,
-    transport: TransportKind.stdio,
-  };
+    const clientOptions: LanguageClientOptions = {
+      documentSelector: [{ scheme: "file", language: "ashes" }],
+    };
 
-  const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "ashes" }],
-  };
+    client = new LanguageClient(
+      "ashes-lsp",
+      "Ashes Language Server",
+      serverOptions,
+      clientOptions,
+    );
+    context.subscriptions.push(client);
+    await client.start();
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Failed to start Ashes language server: ${(err as Error).message}`,
+    );
+    client = undefined;
+  } finally {
+    clientStarting = false;
+  }
+}
 
-  client = new LanguageClient(
-    "ashes-lsp",
-    "Ashes Language Server",
-    serverOptions,
-    clientOptions,
-  );
-  context.subscriptions.push(client);
-  await client.start();
-
+export function activate(context: vscode.ExtensionContext): void {
   // Register compiler commands
   context.subscriptions.push(
     vscode.commands.registerCommand("ashes.compile", () =>
@@ -108,9 +90,14 @@ export async function activate(
   context.subscriptions.push(
     vscode.commands.registerCommand("ashes.test", () => testCommand(context)),
   );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ashes.installToolchain", () =>
+      installToolchainCommand(context),
+    ),
+  );
 
-  // Register debug adapter — awaits the DAP binary acquired during activation
-  const dapFactory = new AshesDebugAdapterFactory(dapReady);
+  // Register debug adapter — acquires DAP binary on demand
+  const dapFactory = new AshesDebugAdapterFactory(context);
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory("ashes", dapFactory),
   );
@@ -122,6 +109,29 @@ export async function activate(
       debugConfigProvider,
     ),
   );
+
+  // Lazy-start LSP when an Ashes document is opened (if auto-start enabled)
+  const autoStart = vscode.workspace
+    .getConfiguration("ashes")
+    .get<boolean>("autoStartLanguageServer", true);
+
+  if (autoStart) {
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument((doc) => {
+        if (doc.languageId === "ashes") {
+          void ensureLanguageClientStarted(context);
+        }
+      }),
+    );
+
+    // Check already-open documents
+    for (const doc of vscode.workspace.textDocuments) {
+      if (doc.languageId === "ashes") {
+        void ensureLanguageClientStarted(context);
+        break;
+      }
+    }
+  }
 }
 
 export async function deactivate(): Promise<void> {
@@ -133,20 +143,37 @@ export async function deactivate(): Promise<void> {
 }
 
 class AshesDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
-  private readonly dapReady: Promise<string | undefined>;
+  private readonly context: vscode.ExtensionContext;
 
-  constructor(dapReady: Promise<string | undefined>) {
-    this.dapReady = dapReady;
+  constructor(context: vscode.ExtensionContext) {
+    this.context = context;
   }
 
   async createDebugAdapterDescriptor(
     _session: vscode.DebugSession,
     _executable: vscode.DebugAdapterExecutable | undefined,
   ): Promise<vscode.DebugAdapterDescriptor | undefined> {
-    const dapPath = await this.dapReady;
-    if (!dapPath) {
-      vscode.window.showErrorMessage(
-        "Ashes DAP server is not available. Check earlier error notifications for details.",
+    if (!vscode.workspace.isTrusted) {
+      void vscode.window.showErrorMessage(
+        "Ashes DAP server requires a trusted workspace.",
+      );
+      return undefined;
+    }
+
+    const requiredVersion = getRequiredVersion(this.context);
+    let dapPath: string;
+    try {
+      dapPath = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Downloading ${DAP_CONFIG.displayName}…`,
+          cancellable: false,
+        },
+        () => acquireTool(this.context, DAP_CONFIG, requiredVersion),
+      );
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `Failed to acquire Ashes DAP server: ${(err as Error).message}`,
       );
       return undefined;
     }
@@ -182,7 +209,7 @@ class AshesDebugConfigurationProvider
           "Cannot start debugging: no program specified in launch configuration. " +
             'Add a "program" property to your launch.json pointing to the compiled binary.',
         )
-        .then((_) => undefined);
+        .then(() => undefined);
     }
 
     // Inject the debuggerType from the extension setting when not

@@ -1,8 +1,9 @@
 import * as fs from "fs";
-import * as https from "https";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
 
 import * as vscode from "vscode";
 
@@ -24,6 +25,21 @@ function isAllowedHost(hostname: string): boolean {
     }
   }
   return false;
+}
+
+/** Validate that a URL is HTTPS and targets an allowed host. */
+function validateUrl(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(
+      `Refusing to download over insecure protocol: ${parsed.protocol}`,
+    );
+  }
+  if (!isAllowedHost(parsed.hostname)) {
+    throw new Error(
+      `Refusing to download from untrusted host: ${parsed.hostname}`,
+    );
+  }
 }
 
 const GITHUB_OWNER = "MattiasHognas";
@@ -106,77 +122,85 @@ export function getBundledToolPath(
   );
 }
 
-/** Follow redirects and download a URL to a local file.
- *  Only HTTPS URLs targeting {@link ALLOWED_HOSTS} are permitted.
+/** Maximum number of HTTP redirects to follow before giving up. */
+const MAX_REDIRECTS = 10;
+
+/**
+ * Download a URL to a local file using Node 20+ fetch().
+ * Follows redirects manually with a bounded loop, validating every
+ * intermediate URL against {@link ALLOWED_HOSTS} before issuing the
+ * request.  Only HTTPS URLs are permitted.
+ * The response body is streamed to disk; partial files are cleaned up
+ * on failure.
  */
-export function downloadToFile(url: string, destPath: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const follow = (u: string): void => {
-      const parsed = new URL(u);
-      if (parsed.protocol !== "https:") {
-        reject(
-          new Error(
-            `Refusing to download over insecure protocol: ${parsed.protocol}`,
-          ),
+export async function downloadToFile(
+  url: string,
+  destPath: string,
+): Promise<void> {
+  let currentUrl = url;
+
+  // Manual redirect loop — validate each hop before requesting it.
+  let res: Response | undefined;
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    validateUrl(currentUrl);
+
+    res = await fetch(currentUrl, {
+      redirect: "manual",
+      headers: {
+        "User-Agent": "vscode-ashes",
+        Accept: "application/octet-stream",
+      },
+    });
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error(
+          `HTTP ${res.status} redirect from ${currentUrl} with no Location header`,
         );
-        return;
       }
-      if (!isAllowedHost(parsed.hostname)) {
-        reject(
-          new Error(
-            `Refusing to download from untrusted host: ${parsed.hostname}`,
-          ),
-        );
-        return;
-      }
-      https
-        .get(u, { headers: { "User-Agent": "vscode-ashes" } }, (res) => {
-          const { statusCode, headers } = res;
-          if (
-            statusCode === 301 ||
-            statusCode === 302 ||
-            statusCode === 307 ||
-            statusCode === 308
-          ) {
-            if (!headers.location) {
-              reject(new Error("Redirect with no Location header"));
-              return;
-            }
-            const redirectUrl = new URL(headers.location, u).toString();
-            follow(redirectUrl);
-            return;
-          }
-          if (statusCode !== 200) {
-            reject(new Error(`HTTP ${statusCode ?? "?"} fetching ${u}`));
-            return;
-          }
-          fs.mkdirSync(path.dirname(destPath), { recursive: true });
-          const file = fs.createWriteStream(destPath);
-          res.on("error", (err) => {
-            file.close(() => {
-              reject(err);
-            });
-          });
-          res.pipe(file);
-          file.on("finish", () =>
-            file.close((err) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve();
-              }
-            }),
-          );
-          file.on("error", (err) => {
-            file.close(() => {
-              reject(err);
-            });
-          });
-        })
-        .on("error", reject);
-    };
-    follow(url);
-  });
+      // Resolve relative redirects against the current URL.
+      currentUrl = new URL(location, currentUrl).href;
+      continue;
+    }
+
+    break;
+  }
+
+  if (!res) {
+    throw new Error(`No response received when fetching ${url}`);
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(
+      `Too many redirects (>${MAX_REDIRECTS}) when fetching ${url}`,
+    );
+  }
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} fetching ${currentUrl}`);
+  }
+
+  if (!res.body) {
+    throw new Error(`No response body when fetching ${currentUrl}`);
+  }
+
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+
+  const fileStream = fs.createWriteStream(destPath);
+  try {
+    // Convert the web ReadableStream to a Node Readable and pipe to disk.
+    const nodeReadable = Readable.fromWeb(res.body);
+    await pipeline(nodeReadable, fileStream);
+  } catch (err) {
+    // Clean up partial file on failure
+    try {
+      fs.unlinkSync(destPath);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 }
 
 /**
