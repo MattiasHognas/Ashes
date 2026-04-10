@@ -298,8 +298,9 @@ internal static partial class LlvmCodegen
 
         // Slow path: abandoned chunks exist — walk the linked list and free them.
         LlvmApi.PositionBuilderAtEnd(builder, freeChunksBlock);
-        // Use an alloca for the loop variable (cur_end). In LLVM IR allocas in non-entry
-        // blocks are valid; mem2reg won't promote them, but correctness is unaffected.
+        // Use an alloca as the loop variable that tracks the current chunk end.
+        // This is rare code (only taken when more than one OS chunk was in use), so
+        // the extra memory access is negligible.
         LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "arena_cur_end_slot");
         LlvmApi.BuildStore(builder, currentEnd, curEndSlot);
         var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "arena_free_loop");
