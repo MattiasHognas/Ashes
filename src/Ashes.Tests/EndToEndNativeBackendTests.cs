@@ -363,6 +363,94 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("1000\n");
     }
 
+    // --- Phase 3: per-call arena watermark end-to-end tests ---
+
+    [Test]
+    public async Task Function_call_returning_int_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Curried call add(10)(32) returns Int — arena reset reclaims
+        // intermediate closures, result must still be correct.
+        var src = """
+            let add = fun (x) -> fun (y) -> x + y
+            in Ashes.IO.print(add(10)(32))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Nested_function_calls_returning_int_produce_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // f(g(x)) where both return Int — nested per-call watermarks.
+        var src = """
+            let double = fun (x) -> x + x
+            in let inc = fun (x) -> x + 1
+            in Ashes.IO.print(double(inc(20)))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Function_call_returning_string_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Function returning String — per-call arena reset + copy-out.
+        var src = """
+            let greet = fun (name) -> "hello " + name
+            in Ashes.IO.print(greet("world"))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("hello world\n");
+    }
+
+    [Test]
+    public async Task Function_call_returning_list_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Function returning List — per-call arena skip (conservative);
+        // list must survive and be usable.
+        var src = """
+            let makeList = fun (x) -> x :: [2, 3]
+            in match makeList(1) with
+                | hd :: _ -> Ashes.IO.print(hd)
+                | [] -> Ashes.IO.print(0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Multiple_calls_in_expression_produce_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // f(x) + g(y) — two independent call watermarks in one expression.
+        var src = """
+            let f = fun (x) -> x * 2
+            in let g = fun (y) -> y * 3
+            in Ashes.IO.print(f(7) + g(7))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("35\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

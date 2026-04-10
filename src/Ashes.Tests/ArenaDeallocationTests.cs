@@ -585,6 +585,144 @@ public sealed class ArenaDeallocationTests
         fixedInst.StaticSizeBytes.ShouldBe(16);
     }
 
+    // --- Phase 3: per-function-call arena watermarks ---
+
+    [Test]
+    public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
+    {
+        // add(10)(32) returns Int — per-call watermark should save+restore.
+        var ir = LowerProgram(
+            """
+            let add = fun (x) -> fun (y) -> x + y
+            in add(10)(32)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        // There should be a CallClosure (for the function call)
+        instructions.Any(i => i is IrInst.CallClosure).ShouldBeTrue(
+            "Program should contain at least one CallClosure.");
+
+        // Find the CallClosure instructions and check that they are bracketed
+        // by SaveArenaState ... RestoreArenaState (per-call watermark)
+        var callIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+        var savesBefore = instructions.Take(callIdx)
+            .Where(i => i is IrInst.SaveArenaState).ToList();
+        savesBefore.Count.ShouldBeGreaterThan(0,
+            "SaveArenaState should appear before the first CallClosure.");
+
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var restoresAfter = instructions.Skip(lastCallIdx + 1)
+            .Where(i => i is IrInst.RestoreArenaState).ToList();
+        restoresAfter.Count.ShouldBeGreaterThan(0,
+            "RestoreArenaState should appear after the last CallClosure for Int result.");
+    }
+
+    [Test]
+    public void Call_returning_int_has_matching_save_restore_slots()
+    {
+        var ir = LowerProgram(
+            """
+            let inc = fun (x) -> x + 1
+            in inc(5)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var callIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+
+        // Find the SaveArenaState immediately before the call chain
+        var saveBefore = instructions.Take(callIdx)
+            .OfType<IrInst.SaveArenaState>().Last();
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var restoreAfter = instructions.Skip(lastCallIdx + 1)
+            .OfType<IrInst.RestoreArenaState>().First();
+
+        saveBefore.CursorLocalSlot.ShouldBe(restoreAfter.CursorLocalSlot);
+        saveBefore.EndLocalSlot.ShouldBe(restoreAfter.EndLocalSlot);
+    }
+
+    [Test]
+    public void Call_returning_string_emits_CopyOutArena()
+    {
+        // toString returns String — per-call watermark should save+restore+copy-out.
+        var ir = LowerProgram(
+            """
+            let toString = fun (x) -> "result"
+            in toString(42)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        instructions.Any(i => i is IrInst.CallClosure).ShouldBeTrue(
+            "Program should contain a CallClosure.");
+
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+        afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
+            "RestoreArenaState should appear after CallClosure for String result.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeTrue(
+            "CopyOutArena should appear after CallClosure for String result.");
+
+        // RestoreArenaState must precede CopyOutArena
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
+        restoreIdx.ShouldBeLessThan(copyOutIdx,
+            "RestoreArenaState must come before CopyOutArena.");
+    }
+
+    [Test]
+    public void Call_returning_list_does_not_emit_RestoreArenaState_after_call()
+    {
+        // identity function returning a list — per-call watermark should NOT
+        // emit RestoreArenaState because lists have internal pointers.
+        var ir = LowerProgram(
+            """
+            let id = fun (xs) -> xs
+            in id([1, 2, 3])
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        lastCallIdx.ShouldBeGreaterThan(-1, "Program should contain a CallClosure.");
+
+        // After the last CallClosure in the call chain, there should be no
+        // RestoreArenaState that uses the per-call watermark slots.
+        // (The let scope's own watermark may still emit RestoreArenaState if the
+        // overall let result is a copy type, but we check specifically the
+        // per-call watermark by looking for a Restore immediately after the call.)
+        var afterCallInstructions = instructions.Skip(lastCallIdx + 1).ToList();
+        // The first instruction after CallClosure should NOT be RestoreArenaState
+        // (for list result, the per-call watermark is skipped).
+        if (afterCallInstructions.Count > 0)
+        {
+            var firstAfterCall = afterCallInstructions[0];
+            firstAfterCall.ShouldNotBeOfType<IrInst.RestoreArenaState>(
+                "List result should not trigger per-call RestoreArenaState immediately after CallClosure.");
+        }
+    }
+
+    [Test]
+    public void Call_returning_closure_does_not_emit_RestoreArenaState_after_call()
+    {
+        // Partial application returns a closure — should NOT restore arena.
+        var ir = LowerProgram(
+            """
+            let add = fun (x) -> fun (y) -> x + y
+            in let adder = add(5)
+            in adder(10)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        // Find the first CallClosure (partial application: add(5))
+        var firstCallIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+        firstCallIdx.ShouldBeGreaterThan(-1);
+
+        // The instruction after the first CallClosure should NOT be
+        // RestoreArenaState (the result is a closure, not a copy type).
+        // Note: there may be other instructions between calls.
+        var afterFirstCall = instructions.Skip(firstCallIdx + 1).ToList();
+        if (afterFirstCall.Count > 0)
+        {
+            afterFirstCall[0].ShouldNotBeOfType<IrInst.RestoreArenaState>(
+                "Closure result should not trigger per-call RestoreArenaState.");
+        }
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
