@@ -3033,11 +3033,13 @@ public sealed class Lowering
         for (int i = 0; i < match.Cases.Count; i++)
         {
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
+            var armCleanupLabel = NewLabel("match_arm_cleanup");
             var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
             _scopes.Push(caseScope);
             // Save the arena watermark before pattern matching and body evaluation
             // so allocations in guard expressions and the arm body are covered.
             EmitArenaWatermark();
+            var (armCursorSlot, armEndSlot) = _arenaWatermarks.Peek();
             PushOwnershipScope();
 
             var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
@@ -3050,19 +3052,19 @@ public sealed class Lowering
             else
             {
                 Unify(valueType, patternType);
-                EmitPattern(match.Cases[i].Pattern, valueTemp, caseFailLabel, patternBindings);
+                EmitPattern(match.Cases[i].Pattern, valueTemp, armCleanupLabel, patternBindings);
             }
 
             // Track owned bindings created by pattern matching
             TrackOwnedBindingsInPattern(patternBindings);
 
-            // If the case has a guard, evaluate it and jump to fail label if false
+            // If the case has a guard, evaluate it and jump to cleanup label if false
             if (match.Cases[i].Guard is { } guard)
             {
                 if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
                 var (guardTemp, guardType) = LowerExpr(guard);
                 Unify(guardType, new TypeRef.TBool());
-                Emit(new IrInst.JumpIfFalse(guardTemp, caseFailLabel));
+                Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
             }
 
             // Each case body IS in tail position (if the match itself is)
@@ -3080,6 +3082,15 @@ public sealed class Lowering
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
             PopOwnershipScope(bodyType);
             Emit(new IrInst.Jump(endLabel));
+
+            // Arm cleanup path (Label → RestoreArenaState → Jump): when pattern/guard
+            // fails, restore the arena watermark to reclaim any heap allocations made
+            // during pattern matching or guard evaluation. This is always safe on the
+            // failure path because no result escapes from a failed arm — all allocations
+            // between the watermark and the current cursor are unreachable garbage.
+            Emit(new IrInst.Label(armCleanupLabel));
+            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot));
+            Emit(new IrInst.Jump(caseFailLabel));
 
             _scopes.Pop();
             if (i < match.Cases.Count - 1)

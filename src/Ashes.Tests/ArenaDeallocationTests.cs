@@ -82,8 +82,14 @@ public sealed class ArenaDeallocationTests
                 | 1 -> 42
                 | _ -> 0
             """);
-        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue(
-            "Match expression with Int arms should emit RestoreArenaState.");
+        var insts = ir.EntryFunction.Instructions;
+        var restoreCount = insts.Count(i => i is IrInst.RestoreArenaState);
+        var saveCount = insts.Count(i => i is IrInst.SaveArenaState);
+
+        // Each arm has RestoreArenaState on cleanup path AND on success path
+        // (because Int is a copy type). So restoreCount > saveCount.
+        restoreCount.ShouldBeGreaterThan(saveCount,
+            "Int-result match should emit RestoreArenaState on both cleanup and success paths.");
     }
 
     // --- RestoreArenaState NOT emitted for heap-type results ---
@@ -105,16 +111,27 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Match_with_string_result_does_not_emit_RestoreArenaState()
+    public void Match_with_string_result_does_not_emit_RestoreArenaState_on_success_path()
     {
+        // With arm cleanup paths, each match arm emits RestoreArenaState on the
+        // failure (cleanup) path. For heap-type results (String), the success path
+        // does NOT emit RestoreArenaState. So the total RestoreArenaState count
+        // equals the number of arms (cleanup only, not success).
         var ir = LowerProgram(
             """
             match 1 with
                 | 1 -> "yes"
                 | _ -> "no"
             """);
-        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeFalse(
-            "Match expression with String arms should NOT emit RestoreArenaState.");
+        var insts = ir.EntryFunction.Instructions;
+        var restoreCount = insts.Count(i => i is IrInst.RestoreArenaState);
+        var saveCount = insts.Count(i => i is IrInst.SaveArenaState);
+
+        // Each arm has one SaveArenaState and one RestoreArenaState (cleanup only).
+        // Success path does NOT restore because String is a heap type.
+        restoreCount.ShouldBe(saveCount,
+            "String-result match should only emit RestoreArenaState on cleanup paths, " +
+            "not on success paths.");
     }
 
     // --- Save/Restore slot pairing ---
@@ -236,6 +253,67 @@ public sealed class ArenaDeallocationTests
         firstAllocIndex.ShouldBeGreaterThanOrEqualTo(0, "Should emit Alloc for tuple construction.");
         saveIndex.ShouldBeLessThan(firstAllocIndex,
             "SaveArenaState must precede heap allocations from the let-bound tuple.");
+    }
+
+    // --- Match arm failure cleanup: RestoreArenaState on failed paths ---
+
+    [Test]
+    public void Failed_match_arm_emits_RestoreArenaState_on_cleanup_path()
+    {
+        // When a match arm's pattern fails, the cleanup path should:
+        // 1. Label (match_arm_cleanup) — the pattern/guard failure target
+        // 2. RestoreArenaState — reclaim allocations from the failed arm
+        // 3. Jump — proceed to the next arm or noMatch
+        var ir = LowerProgram(
+            """
+            match 1 with
+                | 0 -> 42
+                | _ -> 0
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        // Find a cleanup path: Label followed by RestoreArenaState followed by Jump
+        bool foundCleanupPath = false;
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.Label
+                && insts[i + 1] is IrInst.RestoreArenaState
+                && insts[i + 2] is IrInst.Jump)
+            {
+                foundCleanupPath = true;
+                break;
+            }
+        }
+        foundCleanupPath.ShouldBeTrue(
+            "Match arm should have a cleanup path: Label → RestoreArenaState → Jump.");
+    }
+
+    [Test]
+    public void Match_arm_cleanup_RestoreArenaState_uses_same_slots_as_Save()
+    {
+        var ir = LowerProgram(
+            """
+            match 1 with
+                | 0 -> 42
+                | _ -> 0
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        // Each SaveArenaState should have a corresponding RestoreArenaState on
+        // the cleanup path using the same slot pair.
+        var saves = insts.OfType<IrInst.SaveArenaState>().ToList();
+        saves.Count.ShouldBeGreaterThanOrEqualTo(1);
+
+        foreach (var save in saves)
+        {
+            var matchingRestores = insts.OfType<IrInst.RestoreArenaState>()
+                .Where(r => r.CursorLocalSlot == save.CursorLocalSlot
+                         && r.EndLocalSlot == save.EndLocalSlot)
+                .ToList();
+            matchingRestores.Count.ShouldBeGreaterThanOrEqualTo(1,
+                $"SaveArenaState(cursor={save.CursorLocalSlot}, end={save.EndLocalSlot}) " +
+                "should have at least one matching RestoreArenaState (cleanup or success path).");
+        }
     }
 
     // --- Helpers ---
