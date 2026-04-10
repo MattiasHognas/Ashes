@@ -40,10 +40,11 @@ Linux ARM64, Windows x64). A targeted pass pipeline avoids `simplifycfg`
 `instcombine`, `early-cse`, `reassociate`, `gvn`, `dce`, `inline`, `licm`,
 and `dse` across O1/O2/O3 levels.
 
-Relocation support was added for `R_X86_64_PLT32` (ELF) and
-`IMAGE_REL_AMD64_REL32_1` through `_5` (PE). The ELF linker now resolves
-SHN_UNDEF (section 0) symbols by name, handling cases where LLVM inlines a
-builtin definition and re-introduces an external call.
+Relocation support was added for `R_X86_64_64` (absolute 64-bit),
+`R_X86_64_PLT32` (ELF) and `IMAGE_REL_AMD64_REL32_1` through `_5` (PE).
+The ELF linker now resolves SHN_UNDEF (section 0) symbols by name, handling
+cases where LLVM inlines a builtin definition and re-introduces an external
+call.
 
 Builtin `memcpy`, `memset`, and `strlen` implementations are emitted into
 every module so LLVM intrinsic lowering has local definitions for the

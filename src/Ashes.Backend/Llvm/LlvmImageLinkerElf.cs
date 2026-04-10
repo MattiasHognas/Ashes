@@ -12,6 +12,7 @@ internal static partial class LlvmImageLinker
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
     private const int LinuxTrampolineLength = 20;
+    private const uint ElfRelocX86_64_64 = 1;
     private const uint ElfRelocX86_64Pc32 = 2;
     private const uint ElfRelocX86_64Plt32 = 4;
     private const uint ElfRelocX86_64_32 = 10;
@@ -430,19 +431,34 @@ internal static partial class LlvmImageLinker
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
                 long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
-                Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
                 switch (relocationType)
                 {
+                    case ElfRelocX86_64_64:
+                        {
+                            // Absolute 64-bit: S + A.
+                            Span<byte> patch64 = textBytes.AsSpan(checked((int)relocOffset), 8);
+                            BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
+                        }
+                        break;
                     case ElfRelocX86_64Pc32:
                     case ElfRelocX86_64Plt32:
-                        // PLT32 is resolved identically to PC32 for static executables (S + A - P).
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                        {
+                            // PLT32 is resolved identically to PC32 for static executables (S + A - P).
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                        }
                         break;
                     case ElfRelocX86_64_32:
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
+                        {
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
+                        }
                         break;
                     case ElfRelocX86_64_32S:
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
+                        {
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
+                        }
                         break;
                     default:
                         throw new InvalidOperationException($"LLVM ELF emitted unsupported .text relocation type {relocationType}.");

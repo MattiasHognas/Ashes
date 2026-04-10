@@ -148,7 +148,7 @@ internal static partial class LlvmCodegen
                 ",cgscc(inline)" +
                 ",function(dce,instcombine<no-verify-fixpoint>)",
             Backends.BackendOptimizationLevel.O3 =>
-                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn,licm)" +
+                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn,loop-mssa(licm))" +
                 ",cgscc(inline)" +
                 ",function(dce,instcombine<no-verify-fixpoint>,gvn,dse)",
             _ =>
