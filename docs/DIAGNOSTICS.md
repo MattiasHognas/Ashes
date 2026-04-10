@@ -17,11 +17,15 @@ Current codes:
 | `ASH005` | List element type mismatch |
 | `ASH006` | Use-after-drop (using a resource after it has been closed) |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
+| `ASH010` | `await` used outside an `async` block |
+| `ASH011` | Conflicting error types inside an `async` block |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
+Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
 
 Currently uncoded compile failures include examples such as:
 
+- `Non-exhaustive match expression. Missing case: ...`
 - `Could not resolve module 'Foo' ...`
 - `Ambiguous module resolution for 'Foo' ...`
 - `Import name collision for imported binding 'x' ...`

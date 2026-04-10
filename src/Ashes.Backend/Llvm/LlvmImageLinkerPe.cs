@@ -15,6 +15,11 @@ internal static partial class LlvmImageLinker
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
     private const ushort CoffRelocAmd64Rel32 = 0x0004;
+    private const ushort CoffRelocAmd64Rel32_1 = 0x0005;
+    private const ushort CoffRelocAmd64Rel32_2 = 0x0006;
+    private const ushort CoffRelocAmd64Rel32_3 = 0x0007;
+    private const ushort CoffRelocAmd64Rel32_4 = 0x0008;
+    private const ushort CoffRelocAmd64Rel32_5 = 0x0009;
 
     private const int PeDosHeaderSize = 64;
     private const int PeSignatureSize = 4;
@@ -478,7 +483,14 @@ internal static partial class LlvmImageLinker
                         checked((uint)(checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas)) + addend)));
                     break;
                 case CoffRelocAmd64Rel32:
-                    long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + relocationOffset + 4));
+                case CoffRelocAmd64Rel32_1:
+                case CoffRelocAmd64Rel32_2:
+                case CoffRelocAmd64Rel32_3:
+                case CoffRelocAmd64Rel32_4:
+                case CoffRelocAmd64Rel32_5:
+                    // REL32_N: displacement is relative to (relocation offset + 4 + N) where N = type - REL32.
+                    int extraDisplacement = relocationType - CoffRelocAmd64Rel32;
+                    long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + relocationOffset + 4 + (uint)extraDisplacement));
                     long relativeTarget = checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas) + addend - nextInstructionVa);
                     BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)relativeTarget));
                     break;

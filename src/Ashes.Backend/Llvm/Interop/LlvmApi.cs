@@ -15,6 +15,7 @@ public readonly record struct LlvmTargetDataHandle(nint Ptr);
 public readonly record struct LlvmDIBuilderHandle(nint Ptr);
 public readonly record struct LlvmMetadataHandle(nint Ptr);
 public readonly record struct LlvmPassBuilderOptionsHandle(nint Ptr);
+public readonly record struct LlvmAttributeHandle(nint Ptr);
 
 // ── Enums ───────────────────────────────────────────────────────────────
 public enum LlvmIntPredicate
@@ -298,6 +299,11 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildStore")]
     public static partial LlvmValueHandle BuildStore(LlvmBuilderHandle b, LlvmValueHandle val, LlvmValueHandle ptr);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildMemCpy")]
+    public static partial LlvmValueHandle BuildMemCpy(
+        LlvmBuilderHandle b, LlvmValueHandle dst, uint dstAlign,
+        LlvmValueHandle src, uint srcAlign, LlvmValueHandle size);
+
     [LibraryImport(Lib, EntryPoint = "LLVMBuildGEP2", StringMarshalling = StringMarshalling.Utf8)]
     private static unsafe partial LlvmValueHandle BuildGEP2Raw(
         LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr,
@@ -329,6 +335,26 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMBuildUnreachable")]
     public static partial LlvmValueHandle BuildUnreachable(LlvmBuilderHandle b);
+
+    // ── Tail call support ───────────────────────────────────────────────
+    [LibraryImport(Lib, EntryPoint = "LLVMSetTailCall")]
+    public static partial void SetTailCall(LlvmValueHandle callInst, int isTailCall);
+
+    // ── Function attributes ─────────────────────────────────────────────
+    [LibraryImport(Lib, EntryPoint = "LLVMGetEnumAttributeKindForName", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial uint GetEnumAttributeKindForNameRaw(string name, nint nameLen);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMCreateEnumAttribute")]
+    public static partial LlvmAttributeHandle CreateEnumAttribute(LlvmContextHandle context, uint kindId, ulong val);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMAddAttributeAtIndex")]
+    public static partial void AddAttributeAtIndex(LlvmValueHandle function, uint index, LlvmAttributeHandle attribute);
+
+    /// <summary>Function-level attribute index for <see cref="AddAttributeAtIndex"/>.</summary>
+    public const uint AttributeIndexFunction = 0xFFFFFFFF; // (uint)-1
+
+    public static uint GetEnumAttributeKindForName(string name) =>
+        GetEnumAttributeKindForNameRaw(name, (nint)name.Length);
 
     // ── Debugging ───────────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMPrintModuleToString")]

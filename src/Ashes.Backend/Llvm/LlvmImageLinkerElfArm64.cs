@@ -225,6 +225,9 @@ internal static partial class LlvmImageLinker
         ulong loadedTextVa,
         IReadOnlyDictionary<int, ulong> sectionBaseVas)
     {
+        byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
+        var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
+
         foreach (ElfSectionHeader relocationSection in relocationSections)
         {
             if (relocationSection.EntrySize == 0)
@@ -245,7 +248,7 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas) + addend);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
 
                 switch (relocationType)

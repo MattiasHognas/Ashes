@@ -31,18 +31,24 @@ internal static partial class LlvmCodegen
         return closurePtr;
     }
 
-    private static LlvmValueHandle EmitCallClosure(LlvmCodegenState state, LlvmValueHandle closurePtr, LlvmValueHandle argValue)
+    private static LlvmValueHandle EmitCallClosure(LlvmCodegenState state, LlvmValueHandle closurePtr, LlvmValueHandle argValue, bool isTailCall = false)
     {
         LlvmValueHandle codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
         LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
         LlvmTypeHandle closureFunctionPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedCodePtr = LlvmApi.BuildIntToPtr(state.Target.Builder, codePtr, closureFunctionPtrType, "closure_code_ptr");
-        return LlvmApi.BuildCall2(state.Target.Builder,
+        LlvmValueHandle callInst = LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             typedCodePtr,
             new[] { envPtr, argValue },
             "closure_call");
+        if (isTailCall)
+        {
+            LlvmApi.SetTailCall(callInst, 1);
+        }
+
+        return callInst;
     }
 
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
