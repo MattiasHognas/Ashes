@@ -134,6 +134,29 @@ public abstract record IrInst
     public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst;
 
     /// <summary>
+    /// Copies a heap object out of the arena to a fresh allocation, emitted immediately
+    /// AFTER <see cref="RestoreArenaState"/>. The arena cursor has been reset to the
+    /// scope-entry watermark W, but the source bytes are still physically valid in
+    /// memory (arena reset does not zero memory). The copy is allocated starting
+    /// from the reset cursor (at or below the source address), so a forward memcpy
+    /// is always safe: dest ≤ src, no destructive overlap.
+    ///
+    /// <para>
+    /// <b>String (<see cref="StaticSizeBytes"/> == -1):</b>
+    /// The total size is read at runtime from the source object's length field
+    /// (8 bytes at offset 0): <c>total = 8 + *src</c>. Allocates that many bytes
+    /// and memcpy's the entire string (length word + inline bytes).
+    /// </para>
+    /// <para>
+    /// <b>Fixed-size objects (<see cref="StaticSizeBytes"/> &gt; 0):</b>
+    /// Allocates exactly <see cref="StaticSizeBytes"/> bytes and memcpy's them.
+    /// Used for cons cells (16 bytes: head + tail) when the head is a copy type,
+    /// ensuring the tail pointer to a pre-watermark cell is preserved.
+    /// </para>
+    /// </summary>
+    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+
+    /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
     /// the coroutine function pointer and captured environment.
     /// The task struct holds [state_index, coroutine_fn, result, awaited_task, captures...].

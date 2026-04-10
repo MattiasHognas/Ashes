@@ -405,9 +405,12 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_list_arg_does_not_emit_RestoreArenaState_before_jump()
+    public void TCO_loop_with_list_of_int_arg_emits_RestoreArenaState_and_CopyOutArena_before_jump()
     {
-        // When a tail-call argument is a heap type (list), arena reset is NOT safe.
+        // Phase 2c: when a tail-call argument is a TList(Int) (cons cell with copy-type head),
+        // the cons cell is self-contained (head is a direct i64, tail points to pre-watermark
+        // memory from the previous iteration). Emitting RestoreArenaState + CopyOutArena(16)
+        // allows the iteration's arena to be reclaimed while the accumulator survives.
         var ir = LowerProgram(
             """
             let rec build = fun (n) -> fun (acc) ->
@@ -418,24 +421,26 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        // Should NOT find RestoreArenaState before a jump to body label
-        for (int i = 0; i < insts.Count - 1; i++)
+        // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
+        bool foundPhase2c = false;
+        for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.Jump j
-                && j.Target.Contains("_body"))
+                && insts[i + 1] is IrInst.CopyOutArena copyOut
+                && copyOut.StaticSizeBytes == 16)
             {
-                Assert.Fail(
-                    "TCO loop with heap-type arg (List) should NOT emit RestoreArenaState before jump-back.");
+                foundPhase2c = true;
+                break;
             }
         }
+        foundPhase2c.ShouldBeTrue(
+            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16) (Phase 2c).");
     }
 
     [Test]
     public void TCO_loop_with_list_arg_still_emits_SaveArenaState_after_body_label()
     {
-        // Even when arena reset can't happen (heap-type args), the SaveArenaState is still
-        // emitted at loop body start — it's just not restored on the tail-call path.
+        // SaveArenaState is always emitted at loop body start for the per-iteration watermark.
         var ir = LowerProgram(
             """
             let rec build = fun (n) -> fun (acc) ->
@@ -449,7 +454,35 @@ public sealed class ArenaDeallocationTests
         var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
         bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
         insts[bodyLabelIdx + 1].ShouldBeOfType<IrInst.SaveArenaState>(
-            "SaveArenaState should still be emitted after body label even for heap-type args.");
+            "SaveArenaState should be emitted immediately after the TCO body label.");
+    }
+
+    [Test]
+    public void TCO_loop_with_complex_heap_arg_does_not_emit_RestoreArenaState_before_jump()
+    {
+        // A TCO arg that is a list of lists (nested heap type) is NOT safe for Phase 2c
+        // copy-out (copying a cons cell would leave the head pointer into reclaimed memory).
+        // No arena reset should be emitted in this case.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) ([n] :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                Assert.Fail(
+                    "TCO loop with nested-heap arg (List of List) should NOT emit RestoreArenaState before jump-back.");
+            }
+        }
     }
 
     [Test]
@@ -481,6 +514,77 @@ public sealed class ArenaDeallocationTests
             "Single-param TCO loop with Int arg should emit RestoreArenaState before jump-back.");
     }
 
+    // --- Phase 2b: copy-out for String scope results ---
+
+    [Test]
+    public void String_result_let_with_owned_binding_emits_CopyOutArena()
+    {
+        // let s = "hello" in s + " world"
+        // s is an owned String binding. The body is a heap-allocated concat string.
+        // Phase 2b should emit RestoreArenaState + CopyOutArena(-1) for the string result.
+        var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeTrue(
+            "String result with owned binding should emit CopyOutArena (Phase 2b).");
+    }
+
+    [Test]
+    public void String_result_let_with_owned_binding_emits_RestoreArenaState_before_CopyOutArena()
+    {
+        var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        bool foundSequence = false;
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.CopyOutArena c
+                && c.StaticSizeBytes == -1)
+            {
+                foundSequence = true;
+                break;
+            }
+        }
+        foundSequence.ShouldBeTrue(
+            "String result copy-out should follow RestoreArenaState with StaticSizeBytes == -1.");
+    }
+
+    [Test]
+    public void String_body_let_without_owned_binding_does_not_emit_CopyOutArena()
+    {
+        // let x = 42 in "hello" — x is Int (not owned), no heap to reclaim.
+        // Phase 2b copy-out requires at least one owned value in scope.
+        var ir = LowerProgram("let x = 42 in \"hello\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "String result with no owned bindings should NOT emit CopyOutArena.");
+        HasRestoreArenaState(insts).ShouldBeFalse(
+            "String result with no owned bindings should NOT emit RestoreArenaState.");
+    }
+
+    [Test]
+    public void List_body_let_does_not_emit_CopyOutArena()
+    {
+        // Lists are not self-contained (tail is a pointer chain) — no copy-out for let scope.
+        var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
+        HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse(
+            "List result should NOT emit CopyOutArena from a let scope.");
+    }
+
+    [Test]
+    public void CopyOutArena_instruction_has_correct_fields()
+    {
+        var inst = new IrInst.CopyOutArena(7, 3, -1);
+        inst.DestTemp.ShouldBe(7);
+        inst.SrcTemp.ShouldBe(3);
+        inst.StaticSizeBytes.ShouldBe(-1);
+
+        var fixedInst = new IrInst.CopyOutArena(10, 5, 16);
+        fixedInst.StaticSizeBytes.ShouldBe(16);
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
@@ -510,6 +614,11 @@ public sealed class ArenaDeallocationTests
     private static bool HasRestoreArenaState(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.RestoreArenaState);
+    }
+
+    private static bool HasCopyOutArena(List<IrInst> instructions)
+    {
+        return instructions.Any(i => i is IrInst.CopyOutArena);
     }
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
