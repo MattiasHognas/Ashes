@@ -135,20 +135,26 @@ export function activate(
     ),
   );
 
-  // Lazy-start LSP when an Ashes document is opened
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((doc) => {
+  // Lazy-start LSP when an Ashes document is opened (if auto-start enabled)
+  const autoStart = vscode.workspace
+    .getConfiguration("ashes")
+    .get<boolean>("autoStartLanguageServer", true);
+
+  if (autoStart) {
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument((doc) => {
+        if (doc.languageId === "ashes") {
+          void ensureLanguageClientStarted(context);
+        }
+      }),
+    );
+
+    // Check already-open documents
+    for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId === "ashes") {
         void ensureLanguageClientStarted(context);
+        break;
       }
-    }),
-  );
-
-  // Check already-open documents
-  for (const doc of vscode.workspace.textDocuments) {
-    if (doc.languageId === "ashes") {
-      void ensureLanguageClientStarted(context);
-      break;
     }
   }
 }

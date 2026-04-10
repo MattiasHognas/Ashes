@@ -80,6 +80,11 @@
           "type": "string",
           "default": "",
           "description": "Override the path to the Ashes compiler executable. When set, the extension uses this binary instead of downloading one. Useful for local development."
+        },
+        "ashes.autoStartLanguageServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the Ashes language server when an .ash file is opened. When disabled, the language server can be started manually via the 'Ashes: Install Toolchain' command."
         }
       }
     },
