@@ -108,6 +108,29 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMessage")]
     public static partial void DisposeMessage(nint message);
 
+    // ── Host CPU detection ──────────────────────────────────────────────
+    [LibraryImport(Lib, EntryPoint = "LLVMGetHostCPUName")]
+    private static partial nint GetHostCPUNameRaw();
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetHostCPUFeatures")]
+    private static partial nint GetHostCPUFeaturesRaw();
+
+    /// <summary>Returns the host CPU name (e.g. "skylake", "apple-m1"). Caller must not free the result.</summary>
+    public static string GetHostCPUName()
+    {
+        nint ptr = GetHostCPUNameRaw();
+        try { return Marshal.PtrToStringAnsi(ptr) ?? string.Empty; }
+        finally { DisposeMessage(ptr); }
+    }
+
+    /// <summary>Returns the host CPU feature string (e.g. "+sse4.2,+avx2,...").</summary>
+    public static string GetHostCPUFeatures()
+    {
+        nint ptr = GetHostCPUFeaturesRaw();
+        try { return Marshal.PtrToStringAnsi(ptr) ?? string.Empty; }
+        finally { DisposeMessage(ptr); }
+    }
+
     // ── Context & module ────────────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMContextCreate")]
     public static partial LlvmContextHandle ContextCreate();

@@ -66,7 +66,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options);
 
@@ -78,7 +78,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options);
 
@@ -90,7 +90,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options);
 
