@@ -115,7 +115,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetHostCPUFeatures")]
     private static partial nint GetHostCPUFeaturesRaw();
 
-    /// <summary>Returns the host CPU name (e.g. "skylake", "apple-m1"). Caller must not free the result.</summary>
+    /// <summary>Returns the host CPU name (e.g. "skylake", "apple-m1"). The LLVM message is freed internally.</summary>
     public static string GetHostCPUName()
     {
         nint ptr = GetHostCPUNameRaw();

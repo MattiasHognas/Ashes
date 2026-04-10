@@ -400,6 +400,24 @@ public static class IrOptimizer
 
     private static List<IrInst> ElideDeadCode(List<IrInst> instructions)
     {
+        // Run to a fixed point: removing a dead StoreLocal may leave its
+        // source temp with no remaining uses, making the producing LoadConst*
+        // dead as well. Iterate until no further instructions are removed.
+        var current = instructions;
+        while (true)
+        {
+            var result = ElideDeadCodeOnce(current);
+            if (ReferenceEquals(result, current))
+            {
+                return result;
+            }
+
+            current = result;
+        }
+    }
+
+    private static List<IrInst> ElideDeadCodeOnce(List<IrInst> instructions)
+    {
         // Collect all temps that are used as operands (sources)
         var usedTemps = new HashSet<int>();
         foreach (var inst in instructions)
