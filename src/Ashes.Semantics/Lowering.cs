@@ -2743,10 +2743,13 @@ public sealed class Lowering
             // watermark and are therefore never reclaimed.
             if (tco.ArenaCursorSlot >= 0)
             {
+                int tcoPreRestoreEndSlot = NewLocal();
+
                 if (newArgTypes.All(CanArenaReset))
                 {
                     // Phase 2a: all copy types.
-                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                    Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                 }
                 else
                 {
@@ -2763,11 +2766,10 @@ public sealed class Lowering
 
                     if (allCopyable)
                     {
-                        // Emit arena reset followed by copy-out for each heap-type arg.
-                        // Copy-outs happen left-to-right (evaluation order), so each
-                        // subsequent copy lands above the previous one — no destructive
-                        // overlap between source and destination.
-                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+                        // Emit arena reset (pointer reset only, no chunk freeing), then
+                        // copy-out for each heap-type arg (source still readable because
+                        // chunks haven't been freed yet), then reclaim abandoned chunks.
+                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                         for (int i = 0; i < newArgTypes.Length; i++)
                         {
                             if (!CanArenaReset(newArgTypes[i]) && CanCopyOutTcoArg(newArgTypes[i], out int sizeBytes))
@@ -2777,6 +2779,7 @@ public sealed class Lowering
                                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
                             }
                         }
+                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     }
                     // else: complex heap types — no arena reset (Phase 1 fallback).
                 }
@@ -2929,20 +2932,24 @@ public sealed class Lowering
 
         // Phase 3: restore arena after the call chain completes.
         // - Copy-type result (Int, Float, Bool): all allocations from the call
-        //   chain are unreachable → reclaim via RestoreArenaState.
-        // - String result: reclaim + copy-out the self-contained string.
+        //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
+        // - String result: restore pointer → copy-out → reclaim chunks (source stays
+        //   readable until ReclaimArenaChunks frees the old OS chunks).
         // - Other heap types (List, ADT, closure): skip — internal pointers may
         //   reference memory within the watermark region.
         var callResultType = Prune(currentType);
+        int callPreRestoreEndSlot = NewLocal();
         if (CanArenaReset(callResultType))
         {
-            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot));
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         }
         else if (CanCopyOutArena(callResultType, out int callCopySize))
         {
-            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot));
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
             int copyDest = NewTemp();
             Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
             currentTemp = copyDest;
         }
 
@@ -3193,13 +3200,15 @@ public sealed class Lowering
             }
             Emit(new IrInst.Jump(endLabel));
 
-            // Arm cleanup path (Label → RestoreArenaState → Jump): when pattern/guard
-            // fails, restore the arena watermark to reclaim any heap allocations made
-            // during pattern matching or guard evaluation. This is always safe on the
-            // failure path because no result escapes from a failed arm — all allocations
-            // between the watermark and the current cursor are unreachable garbage.
+            // Arm cleanup path (Label → RestoreArenaState → ReclaimArenaChunks → Jump):
+            // when pattern/guard fails, restore the arena watermark to reclaim any heap
+            // allocations made during pattern matching or guard evaluation. This is always
+            // safe on the failure path because no result escapes from a failed arm — all
+            // allocations between the watermark and the current cursor are unreachable garbage.
+            int armCleanupPreRestoreEndSlot = NewLocal();
             Emit(new IrInst.Label(armCleanupLabel));
-            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot));
+            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot, armCleanupPreRestoreEndSlot));
+            Emit(new IrInst.ReclaimArenaChunks(armEndSlot, armCleanupPreRestoreEndSlot));
             Emit(new IrInst.Jump(caseFailLabel));
 
             _scopes.Pop();
@@ -4314,22 +4323,30 @@ public sealed class Lowering
 
         if (resultType is not null)
         {
+            int preRestoreEndSlot = NewLocal();
+
             if (CanArenaReset(resultType))
             {
                 // Copy-type result: arena reset is always safe. No heap values escape.
-                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot));
+                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+                Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
             }
-            // Heap-carried results are returned in place.
-            //
-            // Do not restore the arena and then copy from resultTemp here: with OS-chunk
-            // reclamation, RestoreArenaState may physically unmap chunks above the saved
-            // watermark, which would make resultTemp unreadable before CopyOutArena runs.
-            //
-            // A safe copy-out path requires either a restore mode that does not reclaim OS
-            // chunks while the source remains live, or a lowering/codegen sequence that
-            // copies the result before any reclaiming restore.
-            //
-            // Until such a path exists, leave the original result pointer untouched.
+            else if (hadAliveOwned && resultTemp >= 0 && CanCopyOutArena(resultType, out int staticSizeBytes))
+            {
+                // Heap-type result that is self-contained (e.g. String): restore arena
+                // watermark first (resets cursor/end but does NOT free OS chunks), then
+                // copy the result object to the freshly reset cursor position (source
+                // is still readable because chunks haven't been freed yet), then reclaim
+                // abandoned chunks.
+                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+                int copyDest = NewTemp();
+                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
+                Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+                _ownershipScopes.Pop();
+                return copyDest;
+            }
+            // else: heap type that cannot be copy-outed, or no owned values to reclaim.
+            // No arena action; the caller retains the original result pointer.
         }
 
         _ownershipScopes.Pop();

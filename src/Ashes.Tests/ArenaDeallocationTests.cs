@@ -17,11 +17,20 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void RestoreArenaState_has_cursor_and_end_slots()
+    public void RestoreArenaState_has_cursor_end_and_pre_restore_end_slots()
     {
-        var restore = new IrInst.RestoreArenaState(5, 6);
+        var restore = new IrInst.RestoreArenaState(5, 6, 7);
         restore.CursorLocalSlot.ShouldBe(5);
         restore.EndLocalSlot.ShouldBe(6);
+        restore.PreRestoreEndSlot.ShouldBe(7);
+    }
+
+    [Test]
+    public void ReclaimArenaChunks_has_saved_end_and_pre_restore_end_slots()
+    {
+        var reclaim = new IrInst.ReclaimArenaChunks(6, 7);
+        reclaim.SavedEndSlot.ShouldBe(6);
+        reclaim.PreRestoreEndSlot.ShouldBe(7);
     }
 
     // --- SaveArenaState emitted at ownership scope entry ---
@@ -272,20 +281,21 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        // Find a cleanup path: Label followed by RestoreArenaState followed by Jump
+        // Find a cleanup path: Label followed by RestoreArenaState + ReclaimArenaChunks followed by Jump
         bool foundCleanupPath = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.Label
                 && insts[i + 1] is IrInst.RestoreArenaState
-                && insts[i + 2] is IrInst.Jump)
+                && insts[i + 2] is IrInst.ReclaimArenaChunks
+                && insts[i + 3] is IrInst.Jump)
             {
                 foundCleanupPath = true;
                 break;
             }
         }
         foundCleanupPath.ShouldBeTrue(
-            "Match arm should have a cleanup path: Label → RestoreArenaState → Jump.");
+            "Match arm should have a cleanup path: Label → RestoreArenaState → ReclaimArenaChunks → Jump.");
     }
 
     [Test]
@@ -354,12 +364,13 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        // Find the tail-call jump back: RestoreArenaState followed by Jump to body label
+        // Find the tail-call jump back: RestoreArenaState + ReclaimArenaChunks followed by Jump to body label
         bool foundTcoRestore = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.Jump j
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 foundTcoRestore = true;
@@ -367,7 +378,7 @@ public sealed class ArenaDeallocationTests
             }
         }
         foundTcoRestore.ShouldBeTrue(
-            "TCO loop with copy-type args should emit RestoreArenaState before jumping back.");
+            "TCO loop with copy-type args should emit RestoreArenaState + ReclaimArenaChunks before jumping back.");
     }
 
     [Test]
@@ -387,11 +398,12 @@ public sealed class ArenaDeallocationTests
         var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
         var save = (IrInst.SaveArenaState)insts[bodyLabelIdx + 1];
 
-        // Find RestoreArenaState before the jump back
-        for (int i = 0; i < insts.Count - 1; i++)
+        // Find RestoreArenaState + ReclaimArenaChunks before the jump back
+        for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState restore
-                && insts[i + 1] is IrInst.Jump j
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 restore.CursorLocalSlot.ShouldBe(save.CursorLocalSlot,
@@ -473,10 +485,11 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        for (int i = 0; i < insts.Count - 1; i++)
+        for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.Jump j
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 Assert.Fail(
@@ -500,10 +513,11 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         bool foundTcoRestore = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.Jump j
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 foundTcoRestore = true;
@@ -511,7 +525,7 @@ public sealed class ArenaDeallocationTests
             }
         }
         foundTcoRestore.ShouldBeTrue(
-            "Single-param TCO loop with Int arg should emit RestoreArenaState before jump-back.");
+            "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks before jump-back.");
     }
 
     // --- Phase 2b: copy-out for String scope results ---
@@ -664,6 +678,55 @@ public sealed class ArenaDeallocationTests
         var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
         restoreIdx.ShouldBeLessThan(copyOutIdx,
             "RestoreArenaState must come before CopyOutArena.");
+    }
+
+    [Test]
+    public void Call_returning_string_emits_ReclaimArenaChunks_after_CopyOutArena()
+    {
+        // Sequence should be: RestoreArenaState → CopyOutArena → ReclaimArenaChunks
+        var ir = LowerProgram(
+            """
+            let toString = fun (x) -> "result"
+            in toString(42)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
+        var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
+
+        restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
+        copyOutIdx.ShouldBeGreaterThanOrEqualTo(0, "CopyOutArena should be present.");
+        reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
+
+        restoreIdx.ShouldBeLessThan(copyOutIdx,
+            "RestoreArenaState must come before CopyOutArena.");
+        copyOutIdx.ShouldBeLessThan(reclaimIdx,
+            "CopyOutArena must come before ReclaimArenaChunks (source must be readable before chunks are freed).");
+    }
+
+    [Test]
+    public void Call_returning_int_emits_ReclaimArenaChunks_after_RestoreArenaState()
+    {
+        // Copy-type result: RestoreArenaState → ReclaimArenaChunks (no CopyOutArena).
+        var ir = LowerProgram(
+            """
+            let inc = fun (x) -> x + 1
+            in inc(5)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
+
+        restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
+        reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
+        restoreIdx.ShouldBeLessThan(reclaimIdx,
+            "RestoreArenaState must come before ReclaimArenaChunks.");
     }
 
     [Test]

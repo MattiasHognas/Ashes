@@ -161,7 +161,7 @@
           Source: 5
         }
       ],
-      LocalCount: 3,
+      LocalCount: 4,
       TempCount: 6,
       HasEnvAndArgParams: false,
       LocalNames: {

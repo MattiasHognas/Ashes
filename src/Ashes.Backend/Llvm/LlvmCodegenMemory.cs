@@ -274,61 +274,84 @@ internal static partial class LlvmCodegen
     /// the matching SaveArenaState.
     ///
     /// <para>
-    /// When the current chunk end matches the saved end (fast path), only the cursor
-    /// is reset — a single store. When chunks were allocated after the watermark was
-    /// saved (slow path), the abandoned chunks are freed via munmap / VirtualFree by
-    /// walking the linked list stored in each chunk's header (first 8 bytes).
+    /// Before resetting, the current heap end is saved to <paramref name="preRestoreEndSlot"/>
+    /// so that a subsequent <see cref="EmitReclaimArenaChunks"/> can determine which
+    /// OS chunks to free. This instruction does NOT free OS chunks itself — that is
+    /// deferred to <see cref="EmitReclaimArenaChunks"/> so that any intervening
+    /// <see cref="EmitCopyOutArena"/> can safely read from the not-yet-freed chunks.
     /// </para>
     /// </summary>
-    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot)
+    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot, int preRestoreEndSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Load the saved watermark and the current chunk end.
+        // Save the current heap end before resetting — needed by ReclaimArenaChunks.
+        LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_pre_restore_end");
+        LlvmApi.BuildStore(builder, currentEnd, state.LocalSlots[preRestoreEndSlot]);
+
+        // Reset cursor and end globals to the saved watermark.
         LlvmValueHandle savedCursor = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[cursorLocalSlot], "arena_restore_cursor");
         LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[endLocalSlot], "arena_restore_end");
-        LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_current_end");
-
-        // Fast path: watermark is in the current chunk — just reset the cursor.
-        LlvmValueHandle sameChunk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentEnd, savedEnd, "arena_same_chunk");
-
-        var freeChunksBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "arena_free_chunks");
-        var restoreDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "arena_restore_done");
-        LlvmApi.BuildCondBr(builder, sameChunk, restoreDoneBlock, freeChunksBlock);
-
-        // Slow path: abandoned chunks exist — walk the linked list and free them.
-        LlvmApi.PositionBuilderAtEnd(builder, freeChunksBlock);
-        // Use an alloca as the loop variable that tracks the current chunk end.
-        // This is rare code (only taken when more than one OS chunk was in use), so
-        // the extra memory access is negligible.
-        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "arena_cur_end_slot");
-        LlvmApi.BuildStore(builder, currentEnd, curEndSlot);
-        var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "arena_free_loop");
-        LlvmApi.BuildBr(builder, loopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
-        LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "arena_loop_cur_end");
-        LlvmValueHandle curBase = LlvmApi.BuildSub(builder, curEnd, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "arena_loop_cur_base");
-        // Read prev_base from the chunk header (first 8 bytes of the chunk), then free the chunk.
-        LlvmValueHandle prevBase = LoadMemory(state, curBase, 0, "arena_loop_prev_base");
-        EmitFreeOsMemory(state, curBase, HeapChunkBytes, "arena_free_chunk");
-        LlvmValueHandle nextEnd = LlvmApi.BuildAdd(builder, prevBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "arena_loop_next_end");
-        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
-        LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "arena_loop_done");
-        LlvmApi.BuildCondBr(builder, doneFreeing, restoreDoneBlock, loopBlock);
-
-        // Merge point: update cursor and end globals to the saved watermark.
-        LlvmApi.PositionBuilderAtEnd(builder, restoreDoneBlock);
         LlvmApi.BuildStore(builder, savedCursor, state.HeapCursorSlot);
         LlvmApi.BuildStore(builder, savedEnd, state.HeapEndSlot);
         return false;
     }
 
     /// <summary>
+    /// Frees OS chunks that were allocated between the saved watermark and the
+    /// pre-restore heap state. Called AFTER <see cref="EmitRestoreArenaState"/> and
+    /// any <see cref="EmitCopyOutArena"/> instructions.
+    ///
+    /// <para>
+    /// When the pre-restore end matches the saved end (same chunk — fast path),
+    /// no chunks need to be freed. When they differ (slow path), walks the chunk
+    /// linked list from the pre-restore chunk back to the saved chunk, calling
+    /// <c>munmap</c> (Linux) or <c>VirtualFree</c> (Windows) on each abandoned chunk.
+    /// </para>
+    /// </summary>
+    private static bool EmitReclaimArenaChunks(LlvmCodegenState state, int savedEndSlot, int preRestoreEndSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[savedEndSlot], "reclaim_saved_end");
+        LlvmValueHandle preRestoreEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[preRestoreEndSlot], "reclaim_pre_restore_end");
+
+        // Fast path: same chunk — nothing to free.
+        LlvmValueHandle sameChunk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, preRestoreEnd, savedEnd, "reclaim_same_chunk");
+
+        var freeChunksBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_free_chunks");
+        var reclaimDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_done");
+        LlvmApi.BuildCondBr(builder, sameChunk, reclaimDoneBlock, freeChunksBlock);
+
+        // Slow path: abandoned chunks exist — walk the linked list and free them.
+        LlvmApi.PositionBuilderAtEnd(builder, freeChunksBlock);
+        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "reclaim_cur_end_slot");
+        LlvmApi.BuildStore(builder, preRestoreEnd, curEndSlot);
+        var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_free_loop");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "reclaim_loop_cur_end");
+        LlvmValueHandle curBase = LlvmApi.BuildSub(builder, curEnd, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_cur_base");
+        // Read prev_base from the chunk header (first 8 bytes of the chunk), then free the chunk.
+        LlvmValueHandle prevBase = LoadMemory(state, curBase, 0, "reclaim_loop_prev_base");
+        EmitFreeOsMemory(state, curBase, HeapChunkBytes, "reclaim_free_chunk");
+        LlvmValueHandle nextEnd = LlvmApi.BuildAdd(builder, prevBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_next_end");
+        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
+        LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "reclaim_loop_done");
+        LlvmApi.BuildCondBr(builder, doneFreeing, reclaimDoneBlock, loopBlock);
+
+        // Merge point.
+        LlvmApi.PositionBuilderAtEnd(builder, reclaimDoneBlock);
+        return false;
+    }
+
+    /// <summary>
     /// Copies a heap object to a fresh allocation starting at the arena watermark.
-    /// Called immediately after <see cref="EmitRestoreArenaState"/>: the cursor is at
-    /// the watermark W, but the source bytes at <paramref name="srcTemp"/> are still
-    /// physically valid (arena reset does not zero memory). Because dest ≤ src,
+    /// Called AFTER <see cref="EmitRestoreArenaState"/> but BEFORE
+    /// <see cref="EmitReclaimArenaChunks"/>: the cursor is at the watermark W, and
+    /// OS chunks have not yet been freed, so the source bytes at
+    /// <paramref name="srcTemp"/> are still physically readable. Because dest ≤ src,
     /// a forward memcpy is always safe with no destructive overlap.
     ///
     /// <para>
