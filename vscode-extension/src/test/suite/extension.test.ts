@@ -73,18 +73,24 @@ suite("Ashes Extension", () => {
     // Wait for tokenization to complete
     await new Promise((resolve) => setTimeout(resolve, 1_000));
 
-    // The document should be tokenized — verify that the comment on line 0
-    // is recognized.  We check that the line starts with "//" (the grammar
-    // matches comment.line.double-slash.ashes).
-    const firstLine = doc.lineAt(0).text;
+    // Verify the grammar is registered by checking that "ashes" is among
+    // the known languages.  If the grammar were missing, VS Code would not
+    // list "ashes" as a recognized language.
+    const languages = await vscode.languages.getLanguages();
     assert.ok(
-      firstLine.startsWith("//"),
-      "First line of types.ash should be a comment",
+      languages.includes("ashes"),
+      '"ashes" should be a registered language',
     );
 
-    // Verify keywords are present in the source — this ensures the grammar
-    // file is bundled and associated correctly.  If the grammar were missing,
-    // VS Code would treat the file as plain text.
+    // Verify the file is recognized as Ashes (grammar association works)
+    assert.strictEqual(
+      doc.languageId,
+      "ashes",
+      "types.ash should be recognized as ashes language",
+    );
+
+    // Verify keywords are present in the source — ensures the fixture is
+    // intact and the grammar file is bundled.
     const fullText = doc.getText();
     assert.ok(fullText.includes("type"), "Source should contain 'type'");
     assert.ok(fullText.includes("match"), "Source should contain 'match'");
@@ -93,23 +99,24 @@ suite("Ashes Extension", () => {
   });
 
   test("ashes debugger type is registered", () => {
-    // The extension contributes a debug adapter of type "ashes".
-    // We can verify by checking that the debug configuration provider
-    // is recognized — attempting to resolve a config should not throw.
-    const config: vscode.DebugConfiguration = {
-      type: "ashes",
-      name: "Test",
-      request: "launch",
-      program: "/tmp/nonexistent",
-    };
+    // Verify the extension contributes a debug adapter of type "ashes"
+    // by inspecting the extension's package.json contributions.
+    const ext = vscode.extensions.getExtension("mattiashognas.ashes-vscode");
+    assert.ok(ext, "Extension should be installed");
 
-    // The fact that we registered without error means the debugger type exists.
-    // Verify the debug API is accessible and our config type is correct.
-    assert.strictEqual(config.type, "ashes");
+    const contributes = (
+      ext.packageJSON as {
+        contributes?: { debuggers?: Array<{ type: string }> };
+      }
+    ).contributes;
+    assert.ok(contributes?.debuggers, "Extension should contribute debuggers");
+
+    const ashesDebugger = contributes.debuggers.find(
+      (d: { type: string }) => d.type === "ashes",
+    );
     assert.ok(
-      vscode.debug.activeDebugSession === undefined ||
-        vscode.debug.activeDebugSession !== undefined,
-      "Debug API should be accessible",
+      ashesDebugger,
+      'Extension should contribute a debugger of type "ashes"',
     );
   });
 });
