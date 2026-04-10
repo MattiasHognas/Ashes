@@ -122,11 +122,14 @@ export function getBundledToolPath(
   );
 }
 
+/** Maximum number of HTTP redirects to follow before giving up. */
+const MAX_REDIRECTS = 10;
+
 /**
  * Download a URL to a local file using Node 20+ fetch().
- * Follows redirects automatically.  Only HTTPS URLs targeting
- * {@link ALLOWED_HOSTS} are permitted — both the original URL and the
- * final redirected URL are validated.
+ * Follows redirects manually with a bounded loop, validating every
+ * intermediate URL against {@link ALLOWED_HOSTS} before issuing the
+ * request.  Only HTTPS URLs are permitted.
  * The response body is streamed to disk; partial files are cleaned up
  * on failure.
  */
@@ -134,27 +137,52 @@ export async function downloadToFile(
   url: string,
   destPath: string,
 ): Promise<void> {
-  validateUrl(url);
+  let currentUrl = url;
 
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      "User-Agent": "vscode-ashes",
-      Accept: "application/octet-stream",
-    },
-  });
+  // Manual redirect loop — validate each hop before requesting it.
+  let res: Response | undefined;
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    validateUrl(currentUrl);
 
-  // Validate the final URL after redirects
-  if (res.url) {
-    validateUrl(res.url);
+    res = await fetch(currentUrl, {
+      redirect: "manual",
+      headers: {
+        "User-Agent": "vscode-ashes",
+        Accept: "application/octet-stream",
+      },
+    });
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error(
+          `HTTP ${res.status} redirect from ${currentUrl} with no Location header`,
+        );
+      }
+      // Resolve relative redirects against the current URL.
+      currentUrl = new URL(location, currentUrl).href;
+      continue;
+    }
+
+    break;
+  }
+
+  if (!res) {
+    throw new Error(`No response received when fetching ${url}`);
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(
+      `Too many redirects (>${MAX_REDIRECTS}) when fetching ${url}`,
+    );
   }
 
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} fetching ${url}`);
+    throw new Error(`HTTP ${res.status} fetching ${currentUrl}`);
   }
 
   if (!res.body) {
-    throw new Error(`No response body when fetching ${url}`);
+    throw new Error(`No response body when fetching ${currentUrl}`);
   }
 
   fs.mkdirSync(path.dirname(destPath), { recursive: true });

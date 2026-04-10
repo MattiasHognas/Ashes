@@ -5,7 +5,12 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
-import { type ToolConfig, acquireTool } from "./toolAcquisition";
+import { acquireTool } from "./toolAcquisition";
+import {
+  LSP_CONFIG,
+  DAP_CONFIG,
+  getRequiredVersion,
+} from "./toolConfigs";
 import {
   compileCommand,
   runCommand,
@@ -14,34 +19,10 @@ import {
   disposeCommands,
 } from "./commands";
 
+export { LSP_CONFIG, DAP_CONFIG, getRequiredVersion };
+
 let client: LanguageClient | undefined;
 let clientStarting = false;
-
-export const LSP_CONFIG: ToolConfig = {
-  displayName: "Ashes language server",
-  assetPrefix: "ashes-lsp",
-  executableBaseName: "Ashes.Lsp",
-  cacheSubdir: "lsp",
-  bundledSubdir: "lsp-server",
-  settingKey: "ashes.lspServerPath",
-};
-
-export const DAP_CONFIG: ToolConfig = {
-  displayName: "Ashes DAP server",
-  assetPrefix: "ashes-dap",
-  executableBaseName: "ashes-dap",
-  cacheSubdir: "dap",
-  bundledSubdir: "dap-server",
-  settingKey: "ashes.dapServerPath",
-};
-
-export function getRequiredVersion(
-  context: vscode.ExtensionContext,
-): string {
-  return (
-    (context.extension.packageJSON as { version?: string }).version ?? "0.0.1"
-  );
-}
 
 /**
  * Acquire the LSP binary on demand, start the LanguageClient once, and
