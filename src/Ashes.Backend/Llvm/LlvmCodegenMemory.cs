@@ -378,9 +378,41 @@ internal static partial class LlvmCodegen
         return result;
     }
 
+    /// <summary>
+    /// Emit a string literal as a read-only global constant in the .rodata section.
+    /// The global has layout { i64 length, [N x i8] data } matching the runtime
+    /// string representation, so no heap allocation is needed. Since Ashes strings
+    /// are immutable, this is always safe for literals.
+    /// </summary>
     private static LlvmValueHandle EmitHeapStringLiteral(LlvmCodegenState state, string value)
     {
-        return EmitHeapStringFromBytes(state, System.Text.Encoding.UTF8.GetBytes(value), "heap_string_literal");
+        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
+
+        // Build the constant initializer: { i64 len, [N x i8] data }
+        LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)utf8.Length);
+
+        var byteElements = new LlvmValueHandle[utf8.Length];
+        for (int i = 0; i < utf8.Length; i++)
+        {
+            byteElements[i] = LlvmApi.ConstInt(state.I8, utf8[i], 0);
+        }
+
+        LlvmValueHandle constLen = LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0);
+        LlvmValueHandle constData = LlvmApi.ConstArray2(state.I8, byteElements);
+        LlvmValueHandle constStruct = LlvmApi.ConstStructInContext(
+            state.Target.Context, [constLen, constData]);
+
+        LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
+            state.Target.Context, [state.I64, arrayType]);
+
+        int id = System.Threading.Interlocked.Increment(ref _globalConstantCounter);
+        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
+        LlvmApi.SetInitializer(global, constStruct);
+        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+        LlvmApi.SetGlobalConstant(global, 1);
+        LlvmApi.SetUnnamedAddr(global, 1); // LocalUnnamedAddr — enable merging
+
+        return LlvmApi.BuildPtrToInt(state.Target.Builder, global, state.I64, "str_lit_ref");
     }
 
     private static LlvmValueHandle EmitHeapStringFromBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)

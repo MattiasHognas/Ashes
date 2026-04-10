@@ -212,6 +212,14 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMConstArray2")]
     private static unsafe partial LlvmValueHandle ConstArray2Raw(LlvmTypeHandle elementType, LlvmValueHandle* constantVals, ulong length);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMConstStructInContext")]
+    private static unsafe partial LlvmValueHandle ConstStructInContextRaw(
+        LlvmContextHandle context, LlvmValueHandle* constantVals, uint count, int packed);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMStructTypeInContext")]
+    private static unsafe partial LlvmTypeHandle StructTypeInContextRaw(
+        LlvmContextHandle context, LlvmTypeHandle* elementTypes, uint elementCount, int packed);
+
     [LibraryImport(Lib, EntryPoint = "LLVMGetInlineAsm", StringMarshalling = StringMarshalling.Utf8)]
     private static partial LlvmValueHandle GetInlineAsmRaw(
         LlvmTypeHandle functionType, string asmString, nint asmLen,
@@ -485,6 +493,28 @@ internal static partial class LlvmApi
             fixed (LlvmValueHandle* ptr = constantVals)
             {
                 return ConstArray2Raw(elementType, ptr, (ulong)constantVals.Length);
+            }
+        }
+    }
+
+    public static LlvmValueHandle ConstStructInContext(LlvmContextHandle context, ReadOnlySpan<LlvmValueHandle> constantVals, bool packed = false)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* ptr = constantVals)
+            {
+                return ConstStructInContextRaw(context, ptr, (uint)constantVals.Length, packed ? 1 : 0);
+            }
+        }
+    }
+
+    public static LlvmTypeHandle StructTypeInContext(LlvmContextHandle context, ReadOnlySpan<LlvmTypeHandle> elementTypes, bool packed = false)
+    {
+        unsafe
+        {
+            fixed (LlvmTypeHandle* ptr = elementTypes)
+            {
+                return StructTypeInContextRaw(context, ptr, (uint)elementTypes.Length, packed ? 1 : 0);
             }
         }
     }
