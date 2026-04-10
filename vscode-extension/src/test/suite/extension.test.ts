@@ -2,7 +2,19 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 import * as path from "path";
 
-const fixturesPath = path.resolve(__dirname, "../../test/fixtures");
+const fixturesPath = path.resolve(__dirname, "../../../src/test/fixtures");
+
+/** Poll until the extension is active, with a timeout. */
+async function waitForActivation(timeoutMs = 10_000): Promise<void> {
+  const ext = vscode.extensions.getExtension("mattiashognas.ashes-vscode");
+  if (!ext) {
+    return;
+  }
+  const start = Date.now();
+  while (!ext.isActive && Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
 
 suite("Ashes Extension", () => {
   suiteSetup(async () => {
@@ -11,8 +23,8 @@ suite("Ashes Extension", () => {
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
 
-    // Give the extension a moment to activate
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    // Wait for the extension to finish activating
+    await waitForActivation();
   });
 
   test("Extension is present", () => {
@@ -65,13 +77,10 @@ suite("Ashes Extension", () => {
     );
   });
 
-  test("TextMate grammar provides tokenization", async () => {
+  test("Grammar and language registration", async () => {
     const uri = vscode.Uri.file(path.join(fixturesPath, "types.ash"));
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
-
-    // Wait for tokenization to complete
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
 
     // Verify the grammar is registered by checking that "ashes" is among
     // the known languages.  If the grammar were missing, VS Code would not
