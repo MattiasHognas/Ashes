@@ -48,7 +48,7 @@ No GC. No runtime. Just a native binary.
 Ashes compiles `.ash` source files to **standalone native executables**
 (ELF on Linux, PE on Windows) using a compiler written in .NET. The
 produced binaries have **zero runtime dependencies** — no external
-assembler, toolchain, or garbage collector required.
+assembler, toolchain, or garbage collector required - and are optimized trough LLVM.
 
 This repository contains the full toolchain:
 - Compiler
