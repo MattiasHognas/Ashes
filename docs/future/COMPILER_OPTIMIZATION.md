@@ -21,12 +21,13 @@ are significant optimization opportunities:
 2. ~~Memory is never freed — 4 MB bump allocator with no bounds checking
    silently crashes on overflow~~ ✅ Dynamic heap via `mmap`/`VirtualAlloc`
 3. ~~Manual byte loops replace LLVM intrinsics for string operations~~ ✅
-   `EmitCopyBytes` uses `LLVMBuildMemCpy`; comparison and CString still open
+   `EmitCopyBytes` uses `LLVMBuildMemCpy`; comparison uses builtin `memcmp`
 4. ~~Pattern matching uses double comparisons where single equality checks
    suffice~~ ✅ Fixed
 5. ~~No function attributes — LLVM cannot reason about `nounwind`, `noalias`,
    `readonly`, etc.~~ ✅ `nounwind` added; others still open
-6. CPU features are empty — compiled as generic x86-64 with no SSE4.2/AVX
+6. ~~CPU features are empty — compiled as generic x86-64 with no SSE4.2/AVX~~
+   ✅ `--target-cpu` CLI flag added; `native` auto-detects host CPU
 
 ------------------------------------------------------------------------
 
@@ -111,7 +112,7 @@ bloated every binary by 4 MB.~~
 
 ## Finding 3 — Manual Byte Loops Instead of LLVM Intrinsics
 
-**Status:** ✅ Fixed (EmitCopyBytes)  
+**Status:** ✅ Fixed  
 **Severity:** High  
 **Files:** `LlvmCodegenMemory.cs:103-148`
 
@@ -123,8 +124,10 @@ to `rep movsb` or SIMD copies.
 
 ### String comparison
 
-Compares byte-by-byte via 5+ basic blocks. Could use `llvm.memcmp` for the
-data portion after a length check.
+✅ **Fixed.** `EmitStringComparison` now performs a length check followed by
+a call to the builtin `memcmp` function instead of a 5-block byte-by-byte
+loop. LLVM may further optimize the `memcmp` equality check into `bcmp`. A
+freestanding `bcmp` builtin is emitted alongside `memcmp` to support this.
 
 ### String-to-CString conversion
 
@@ -183,27 +186,26 @@ annotation even without full passes.
 
 ## Finding 6 — Generic CPU Target
 
-**Status:** Open  
+**Status:** ✅ Fixed  
 **Severity:** Medium  
-**File:** `LlvmTargetSetup.cs`
+**File:** `LlvmTargetSetup.cs`, `BackendCompileOptions.cs`, `Program.cs`
 
-- x86-64 uses `cpu = "x86-64"` with **empty features string**.
-- ARM64 uses `cpu = "generic"`.
-- No SSE4.2, AVX, or AVX2 features are enabled.
-- Code runs on any x86-64 CPU but leaves 10–30 % performance on the table
-  for modern CPUs.
-
-### Recommendation
-
-Add a `--target-cpu` CLI flag. Default can remain generic but allow users
-to target their specific CPU for maximum performance (e.g.
-`--target-cpu=native`).
+- x86-64 defaults to `cpu = "x86-64"` with **empty features string**.
+- ARM64 defaults to `cpu = "generic"`.
+- A `--target-cpu` CLI flag is now available on `compile`, `run`, `repl`,
+  and `test` commands.
+- `--target-cpu native` auto-detects the host CPU name and feature string
+  via `LLVMGetHostCPUName` / `LLVMGetHostCPUFeatures`.
+- Any LLVM-recognized CPU name (e.g. `skylake`, `znver3`, `apple-m1`) can
+  be passed directly.
+- The flag selects the CPU microarchitecture (instruction set extensions,
+  scheduling model) — the OS/arch target remains controlled by `--target`.
 
 ------------------------------------------------------------------------
 
 ## Finding 7 — IR Optimizer Is 50 % Disabled
 
-**Status:** ✅ Partially fixed (identity/strength reduction added)  
+**Status:** ✅ Mostly fixed  
 **Severity:** Medium  
 **File:** `IrOptimizer.cs`
 
@@ -213,7 +215,7 @@ to target their specific CPU for maximum performance (e.g.
 | Constant Folding | ✅ Active | Good for scalars; resets at labels |
 | Identity/Strength Reduction | ✅ Active | `x+0`, `x*1`, `x*0`, `x*2→x+x`, `x/1`, `x-0` |
 | Unreachable Code Elimination | ✅ Active | Removes code after unconditional jumps/returns |
-| Dead Code Elimination | ⚠️ Minimal | Only removes unused `LoadConst*` |
+| Dead Code Elimination | ✅ Active | Removes unused `LoadConst*` and dead `StoreLocal` |
 | Drop Elision | ❌ No-op | Awaits per-object `free()` allocator |
 
 ### Missing optimizations at IR level
@@ -222,7 +224,7 @@ to target their specific CPU for maximum performance (e.g.
 - ~~**Strength reduction:** `x * 2` is a multiply, not `x + x` or shift.~~ ✅ Fixed
 - ~~**Unreachable code elimination:** Code after unconditional jumps or
   returns remains.~~ ✅ Fixed
-- **Dead store elimination:** Unused `StoreLocal` not removed.
+- ~~**Dead store elimination:** Unused `StoreLocal` not removed.~~ ✅ Fixed
 - **Constant propagation across simple labels:** Labels with a single
   predecessor could propagate constant knowledge.
 
@@ -270,10 +272,11 @@ structured output), this wastes heap space and comparison time.
 
 ## Finding 10 — Debug Info Is Incomplete
 
-**Status:** Open  
+**Status:** ✅ Partially fixed (`isOptimized`)  
 **Severity:** Low (correctness only, no performance impact)
 
-- `isOptimized` flag is hardcoded to `false` regardless of `-O` level.
+- ~~`isOptimized` flag is hardcoded to `false` regardless of `-O` level.~~
+  ✅ Fixed — `isOptimized` is now `true` when optimization level > O0.
 - No local variable debug info — only function-level.
 - No parameter debug info — subroutine types created with no parameters.
 - Uses C99 language identifier (no Ashes DWARF language code).
@@ -290,15 +293,19 @@ structured output), this wastes heap space and comparison time.
 | 2 | Fix pattern match double-comparison | ✅ Done |
 | 3 | Replace fixed heap with dynamic `mmap`/`VirtualAlloc` chunks | ✅ Done |
 | 4 | Add `LLVMBuildMemCpy` interop and use in `EmitCopyBytes` | ✅ Done |
+| 5 | Replace string comparison byte loop with `memcmp` | ✅ Done |
+| 6 | Wire `isOptimized` debug flag to optimization level | ✅ Done |
 
 ### Medium-term (moderate effort, high impact)
 
 | # | Item | Status |
 |---|------|--------|
-| 5 | Add PLT32 relocation support, then enable LLVM optimization passes | ✅ Done |
-| 6 | Add `nounwind` attribute to all emitted functions | ✅ Done |
-| 7 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | ✅ Done |
-| 8 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | ✅ Done |
+| 7 | Add PLT32 relocation support, then enable LLVM optimization passes | ✅ Done |
+| 8 | Add `nounwind` attribute to all emitted functions | ✅ Done |
+| 9 | Add `LLVMSetTailCall` and mark tail calls at LLVM level | ✅ Done |
+| 10 | Enable IR identity / strength reduction (`x + 0`, `x * 1`, `x * 2`) | ✅ Done |
+| 11 | Add `--target-cpu` CLI flag for CPU-specific codegen | ✅ Done |
+| 12 | Dead store elimination for unused `StoreLocal` | ✅ Done |
 
 ### Long-term (significant effort)
 

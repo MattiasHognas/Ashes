@@ -375,6 +375,8 @@ internal static partial class LlvmCodegen
         // LLVM may lower llvm.memcpy intrinsics to calls to memcpy when the size is
         // not a compile-time constant. Since we have no libc, we provide our own.
         EmitBuiltinMemcpy(target, i8, i64, i8Ptr);
+        EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
+        EmitBuiltinBcmp(target, i8, i64, i8Ptr);
 
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
@@ -990,6 +992,85 @@ internal static partial class LlvmCodegen
             LlvmValueHandle finalIdx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "len");
             LlvmApi.BuildRet(target.Builder, finalIdx);
         }
+    }
+
+    /// <summary>
+    /// Emits a freestanding <c>memcmp(a, b, n)</c> → <c>int</c> implementation.
+    /// Returns 0 when the byte ranges are equal, non-zero otherwise.
+    /// Used to replace byte-by-byte comparison loops in string equality checks.
+    /// </summary>
+    private static void EmitBuiltinMemcmp(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+        LlvmTypeHandle memcmpType = LlvmApi.FunctionType(i32, [i8Ptr, i8Ptr, i64]);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memcmp", memcmpType);
+
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+        LlvmBasicBlockHandle neBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "not_equal");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+
+        LlvmValueHandle ptrA = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle ptrB = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
+
+        // entry: idx = 0; goto check
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
+
+        // check: if idx < size goto body else goto done (equal)
+        LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+        LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
+        LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
+
+        // body: compare bytes at [a+idx] vs [b+idx]
+        LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+        LlvmValueHandle aPtr = LlvmApi.BuildGEP2(target.Builder, i8, ptrA, [idx], "a_ptr");
+        LlvmValueHandle bPtr = LlvmApi.BuildGEP2(target.Builder, i8, ptrB, [idx], "b_ptr");
+        LlvmValueHandle aVal = LlvmApi.BuildLoad2(target.Builder, i8, aPtr, "a_byte");
+        LlvmValueHandle bVal = LlvmApi.BuildLoad2(target.Builder, i8, bPtr, "b_byte");
+        LlvmValueHandle eq = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Eq, aVal, bVal, "bytes_eq");
+        LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+        LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+        LlvmApi.BuildCondBr(target.Builder, eq, checkBlock, neBlock);
+
+        // not_equal: return difference (a - b) as sign-extended i32
+        LlvmApi.PositionBuilderAtEnd(target.Builder, neBlock);
+        LlvmValueHandle aExt = LlvmApi.BuildZExt(target.Builder, aVal, i32, "a_ext");
+        LlvmValueHandle bExt = LlvmApi.BuildZExt(target.Builder, bVal, i32, "b_ext");
+        LlvmValueHandle diff = LlvmApi.BuildSub(target.Builder, aExt, bExt, "diff");
+        LlvmApi.BuildRet(target.Builder, diff);
+
+        // done: all bytes equal → return 0
+        LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+        LlvmApi.BuildRet(target.Builder, LlvmApi.ConstInt(i32, 0, 0));
+    }
+
+    /// <summary>
+    /// Emits a freestanding <c>bcmp(a, b, n)</c> implementation.
+    /// LLVM may optimize <c>memcmp</c> equality checks into <c>bcmp</c> calls.
+    /// Delegates to the builtin <c>memcmp</c>.
+    /// </summary>
+    private static void EmitBuiltinBcmp(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+        LlvmTypeHandle bcmpType = LlvmApi.FunctionType(i32, [i8Ptr, i8Ptr, i64]);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "bcmp", bcmpType);
+
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+
+        LlvmValueHandle memcmpFn = LlvmApi.GetNamedFunction(target.Module, "memcmp");
+        LlvmTypeHandle memcmpType = LlvmApi.FunctionType(i32, [i8Ptr, i8Ptr, i64]);
+        LlvmValueHandle result = LlvmApi.BuildCall2(target.Builder, memcmpType, memcmpFn,
+            [LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), LlvmApi.GetParam(fn, 2)], "result");
+        LlvmApi.BuildRet(target.Builder, result);
     }
 
     /// <summary>

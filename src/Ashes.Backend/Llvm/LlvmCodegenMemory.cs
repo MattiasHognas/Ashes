@@ -54,9 +54,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "str_cmp_result");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "str_cmp_idx");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
 
         LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "str_cmp_left_len");
         LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "str_cmp_right_len");
@@ -65,11 +63,10 @@ internal static partial class LlvmCodegen
 
         var lenEqBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_len_eq");
         var notEqBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_not_eq");
-        var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_loop_check");
-        var loopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_loop_body");
         var eqBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_eq");
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "str_cmp_continue");
 
+        // If lengths differ → not equal
         LlvmValueHandle lenEq = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftLen, rightLen, "str_cmp_len_match");
         LlvmApi.BuildCondBr(builder, lenEq, lenEqBlock, notEqBlock);
 
@@ -77,24 +74,15 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
+        // Lengths equal → call memcmp to compare byte data
         LlvmApi.PositionBuilderAtEnd(builder, lenEqBlock);
-        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftLen, LlvmApi.ConstInt(state.I64, 0, 0), "str_cmp_empty");
-        LlvmApi.BuildCondBr(builder, isEmpty, eqBlock, loopCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
-        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "str_cmp_index");
-        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, leftLen, "str_cmp_done");
-        LlvmApi.BuildCondBr(builder, done, eqBlock, loopBodyBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle leftBytePtr = LlvmApi.BuildGEP2(builder, state.I8, leftBytes, new[] { index }, "str_cmp_left_byte_ptr");
-        LlvmValueHandle rightBytePtr = LlvmApi.BuildGEP2(builder, state.I8, rightBytes, new[] { index }, "str_cmp_right_byte_ptr");
-        LlvmValueHandle leftByte = LlvmApi.BuildLoad2(builder, state.I8, leftBytePtr, "str_cmp_left_byte");
-        LlvmValueHandle rightByte = LlvmApi.BuildLoad2(builder, state.I8, rightBytePtr, "str_cmp_right_byte");
-        LlvmValueHandle bytesEq = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftByte, rightByte, "str_cmp_bytes_eq");
-        LlvmValueHandle nextIndex = LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), "str_cmp_next_index");
-        LlvmApi.BuildStore(builder, nextIndex, indexSlot);
-        LlvmApi.BuildCondBr(builder, bytesEq, loopCheckBlock, notEqBlock);
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(state.Target.Context);
+        LlvmTypeHandle memcmpType = LlvmApi.FunctionType(i32, [state.I8Ptr, state.I8Ptr, state.I64]);
+        LlvmValueHandle memcmpFn = LlvmApi.GetNamedFunction(state.Target.Module, "memcmp");
+        LlvmValueHandle cmpResult = LlvmApi.BuildCall2(builder, memcmpType, memcmpFn,
+            new[] { leftBytes, rightBytes, leftLen }, "str_cmp_memcmp");
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cmpResult, LlvmApi.ConstInt(i32, 0, 0), "str_cmp_is_eq");
+        LlvmApi.BuildCondBr(builder, isZero, eqBlock, notEqBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, eqBlock);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), resultSlot);

@@ -395,7 +395,8 @@ public static class IrOptimizer
     }
 
     // ── Pass 3: Dead code elimination ───────────────────────────────────
-    // Remove LoadConst instructions whose target temp is never used.
+    // Remove LoadConst instructions whose target temp is never used,
+    // and StoreLocal instructions whose slot is never loaded.
 
     private static List<IrInst> ElideDeadCode(List<IrInst> instructions)
     {
@@ -406,12 +407,22 @@ public static class IrOptimizer
             CollectUsedTemps(inst, usedTemps);
         }
 
+        // Collect all local slots that are read by any LoadLocal
+        var loadedSlots = new HashSet<int>();
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.LoadLocal ll)
+            {
+                loadedSlots.Add(ll.Slot);
+            }
+        }
+
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
 
         foreach (var inst in instructions)
         {
-            // Only remove LoadConst* instructions whose target is never read
+            // Remove LoadConst* instructions whose target is never read
             if (inst is IrInst.LoadConstInt lci && !usedTemps.Contains(lci.Target))
             {
                 changed = true;
@@ -425,6 +436,13 @@ public static class IrOptimizer
             }
 
             if (inst is IrInst.LoadConstBool lcb && !usedTemps.Contains(lcb.Target))
+            {
+                changed = true;
+                continue;
+            }
+
+            // Remove StoreLocal instructions whose slot is never loaded
+            if (inst is IrInst.StoreLocal sl && !loadedSlots.Contains(sl.Slot))
             {
                 changed = true;
                 continue;
