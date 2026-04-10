@@ -4319,21 +4319,17 @@ public sealed class Lowering
                 // Copy-type result: arena reset is always safe. No heap values escape.
                 Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot));
             }
-            else if (hadAliveOwned && resultTemp >= 0 && CanCopyOutArena(resultType, out int staticSizeBytes))
-            {
-                // Heap-type result that is self-contained (e.g. String): restore arena
-                // watermark first (logically reclaims the scope's allocations, but bytes
-                // remain physically intact), then copy the result object to the freshly
-                // reset cursor position. The copy lands at or below its original address
-                // so forward memcpy is always safe.
-                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot));
-                int copyDest = NewTemp();
-                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
-                _ownershipScopes.Pop();
-                return copyDest;
-            }
-            // else: heap type that cannot be copy-outed, or no owned values to reclaim.
-            // No arena action; the caller retains the original result pointer.
+            // Heap-carried results are returned in place.
+            //
+            // Do not restore the arena and then copy from resultTemp here: with OS-chunk
+            // reclamation, RestoreArenaState may physically unmap chunks above the saved
+            // watermark, which would make resultTemp unreadable before CopyOutArena runs.
+            //
+            // A safe copy-out path requires either a restore mode that does not reclaim OS
+            // chunks while the source remains live, or a lowering/codegen sequence that
+            // copies the result before any reclaiming restore.
+            //
+            // Until such a path exists, leave the original result pointer untouched.
         }
 
         _ownershipScopes.Pop();
