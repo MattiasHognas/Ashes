@@ -17,6 +17,7 @@ internal static partial class LlvmCodegen
         public LlvmMetadataHandle SubroutineType { get; }
         public LlvmMetadataHandle IntType { get; }
         public LlvmContextHandle LlvmContext { get; }
+        public bool IsOptimized { get; }
 
         private readonly Dictionary<string, LlvmMetadataHandle> _fileCache = new(StringComparer.Ordinal);
         private readonly Dictionary<string, LlvmMetadataHandle> _subprograms = new(StringComparer.Ordinal);
@@ -24,9 +25,11 @@ internal static partial class LlvmCodegen
         public DebugInfoContext(
             LlvmTargetContext target,
             string defaultFileName,
-            string defaultDirectory)
+            string defaultDirectory,
+            bool isOptimized)
         {
             LlvmContext = target.Context;
+            IsOptimized = isOptimized;
             DIBuilder = LlvmApi.CreateDIBuilder(target.Module);
 
             // Module flags: Dwarf Version = 5, Debug Info Version = 3
@@ -50,7 +53,7 @@ internal static partial class LlvmCodegen
                 LlvmApi.DwarfLangC99,
                 DefaultFile,
                 "Ashes Compiler",
-                isOptimized: false);
+                isOptimized: isOptimized);
 
             // Subroutine type (no parameters — all Ashes functions use i64 calling convention)
             SubroutineType = LlvmApi.DIBuilderCreateSubroutineType(DIBuilder, DefaultFile);
@@ -86,7 +89,7 @@ internal static partial class LlvmCodegen
                 DIBuilder, CompileUnit,
                 name, linkageName, file,
                 line, SubroutineType,
-                isOptimized: false);
+                isOptimized: IsOptimized);
             _subprograms[linkageName] = sp;
             return sp;
         }
@@ -140,7 +143,8 @@ internal static partial class LlvmCodegen
             defaultDirectory = Path.GetDirectoryName(firstLoc.Value.FilePath) ?? ".";
         }
 
-        return new DebugInfoContext(target, defaultFileName, defaultDirectory);
+        return new DebugInfoContext(target, defaultFileName, defaultDirectory,
+            isOptimized: options.OptimizationLevel > Backends.BackendOptimizationLevel.O0);
     }
 
     private static SourceLocation? FindFirstSourceLocation(IrProgram program)

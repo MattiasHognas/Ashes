@@ -52,6 +52,7 @@ The following options are accepted by **compile**, **run**, **repl**, and **test
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
+| `--target-cpu <cpu>` | string | `generic` / `x86-64` | No | Target a specific CPU microarchitecture (e.g. `skylake`, `znver3`, `apple-m1`). Use `native` to auto-detect the host CPU. Default is safe generic codegen for the target arch. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 
 The following option is accepted by **compile** and **run** only:
@@ -96,10 +97,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
+ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -117,6 +118,7 @@ ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]      
 | `-o` | `--out` | file path | Derived from input name (see below) | No | Path for the compiled output binary. |
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
 | `--target` | | enum | OS default | No | Target back end (`linux-x64` or `windows-x64`). |
+| `--target-cpu` | | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
 | `--debug` | `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
@@ -132,6 +134,7 @@ ashes compile [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]      
 | Property | Default value |
 |----------|---------------|
 | `--target` | `linux-x64` on Linux x86-64, `linux-arm64` on Linux ARM64, `windows-x64` on Windows |
+| `--target-cpu` | `x86-64` for x86-64 targets, `generic` for ARM64 |
 | `-o` / `--out` | Derived from input (see above) |
 | `-O0`..`-O3` | `-O2` (standard optimizations) |
 
@@ -192,10 +195,10 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
-ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
+ashes run [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
 ```
 
 #### Arguments
@@ -213,6 +216,7 @@ ashes run [--target <id>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto
 |--------|-----------|---------|------------|-------------|
 | `--expr` | string | — | No | Inline Ashes source to compile and run. |
 | `--target` | enum | OS default | No | Target back end. |
+| `--target-cpu` | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
 | `--project` | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 | `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
@@ -260,7 +264,7 @@ Start an interactive read-eval-print loop. Each expression is compiled to a temp
 #### Synopsis
 
 ```
-ashes repl [--target <id>] [-O0|-O1|-O2|-O3]
+ashes repl [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3]
 ```
 
 #### Options
@@ -268,6 +272,7 @@ ashes repl [--target <id>] [-O0|-O1|-O2|-O3]
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end used for all REPL evaluations. |
+| `--target-cpu` | string | `generic` / `x86-64` | No | Target CPU microarchitecture used for all REPL evaluations. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level used for all REPL evaluations. |
 
 #### REPL Commands (typed at the prompt)
@@ -313,7 +318,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 #### Synopsis
 
 ```
-ashes test [--target <id>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
+ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
 ```
 
 #### Arguments
@@ -327,6 +332,7 @@ ashes test [--target <id>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
 | `--target` | enum | OS default | No | Target back end for test compilation. |
+| `--target-cpu` | string | `generic` / `x86-64` | No | Target CPU microarchitecture for test compilation. |
 | `--project` | file path | — | No | Load a project manifest. When no explicit `[paths...]` are given, test discovery uses `<projectDir>/tests` if that directory exists; otherwise it falls back to the project directory itself. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level for test compilation. |
 
