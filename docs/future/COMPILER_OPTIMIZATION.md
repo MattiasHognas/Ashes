@@ -101,8 +101,11 @@ bloated every binary by 4 MB.~~
 
 1. ✅ **Done:** Heap bounds checking — clean error on overflow.
 2. ✅ **Done:** Growing heap via `mmap` / `VirtualAlloc` — no hard limit.
-3. **Long-term:** Implement a real allocator (arena + generational GC, or
-   reference counting) to reclaim memory within long-running programs.
+3. **Long-term:** Implement arena-based region deallocation — the compiler
+   already tracks ownership and inserts `Drop` at scope exit, so entire
+   arenas can be freed deterministically without a GC or runtime
+   reference counting (consistent with the language's no-runtime,
+   no-GC design).
 
 ------------------------------------------------------------------------
 
@@ -301,6 +304,6 @@ structured output), this wastes heap space and comparison time.
 
 | # | Item | Status |
 |---|------|--------|
-| 9 | Implement real deallocation (arena GC or reference counting) | Open |
+| 9 | Implement arena-based region deallocation (no GC — ownership-driven) | Open |
 | 10 | Implement escape analysis — stack-allocate closures / ADTs that don't escape | Open |
 | 11 | Decision tree pattern matching for large ADTs | Open |
