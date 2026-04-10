@@ -4,6 +4,40 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
+    /// <summary>
+    /// Creates a module-level global constant byte array and returns a pointer
+    /// to its first element. The global is marked internal linkage, constant,
+    /// and unnamed_addr so LLVM can merge duplicates and place it in .rodata.
+    /// </summary>
+    private static LlvmValueHandle CreateGlobalConstantBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)
+    {
+        int id = state.Target.NextGlobalConstantId();
+        LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)bytes.Count);
+
+        // Build constant initializer: [N x i8] c"..."
+        var elements = new LlvmValueHandle[bytes.Count];
+        for (int i = 0; i < bytes.Count; i++)
+        {
+            elements[i] = LlvmApi.ConstInt(state.I8, bytes[i], 0);
+        }
+
+        LlvmValueHandle constArray = LlvmApi.ConstArray2(state.I8, elements);
+
+        // Create a global variable with the constant data
+        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, arrayType, $".{prefix}_{id}");
+        LlvmApi.SetInitializer(global, constArray);
+        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+        LlvmApi.SetGlobalConstant(global, 1);
+        LlvmApi.SetUnnamedAddr(global, 1); // LocalUnnamedAddr
+
+        // Return pointer to the first byte
+        return LlvmApi.BuildGEP2(state.Target.Builder,
+            arrayType,
+            global,
+            new[] { LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0) },
+            prefix + "_ptr");
+    }
+
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -342,9 +376,41 @@ internal static partial class LlvmCodegen
         return result;
     }
 
+    /// <summary>
+    /// Emit a string literal as a read-only global constant in the .rodata section.
+    /// The global has layout { i64 length, [N x i8] data } matching the runtime
+    /// string representation, so no heap allocation is needed. Since Ashes strings
+    /// are immutable, this is always safe for literals.
+    /// </summary>
     private static LlvmValueHandle EmitHeapStringLiteral(LlvmCodegenState state, string value)
     {
-        return EmitHeapStringFromBytes(state, System.Text.Encoding.UTF8.GetBytes(value), "heap_string_literal");
+        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
+
+        // Build the constant initializer: { i64 len, [N x i8] data }
+        LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)utf8.Length);
+
+        var byteElements = new LlvmValueHandle[utf8.Length];
+        for (int i = 0; i < utf8.Length; i++)
+        {
+            byteElements[i] = LlvmApi.ConstInt(state.I8, utf8[i], 0);
+        }
+
+        LlvmValueHandle constLen = LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0);
+        LlvmValueHandle constData = LlvmApi.ConstArray2(state.I8, byteElements);
+        LlvmValueHandle constStruct = LlvmApi.ConstStructInContext(
+            state.Target.Context, [constLen, constData]);
+
+        LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
+            state.Target.Context, [state.I64, arrayType]);
+
+        int id = state.Target.NextGlobalConstantId();
+        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
+        LlvmApi.SetInitializer(global, constStruct);
+        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+        LlvmApi.SetGlobalConstant(global, 1);
+        LlvmApi.SetUnnamedAddr(global, 1); // LocalUnnamedAddr — enable merging
+
+        return LlvmApi.BuildPtrToInt(state.Target.Builder, global, state.I64, "str_lit_ref");
     }
 
     private static LlvmValueHandle EmitHeapStringFromBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)
@@ -353,15 +419,12 @@ internal static partial class LlvmCodegen
         LlvmValueHandle len = LlvmApi.ConstInt(state.I64, (ulong)bytes.Count, 0);
         LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
         StoreMemory(state, stringRef, 0, len, prefix + "_len");
-        LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, prefix + "_bytes");
-        for (int i = 0; i < bytes.Count; i++)
+
+        if (bytes.Count > 0)
         {
-            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(builder,
-                state.I8,
-                destPtr,
-                new[] { LlvmApi.ConstInt(state.I64, (ulong)i, 0) },
-                $"{prefix}_byte_ptr_{i}");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, bytes[i], 0), cellPtr);
+            LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, prefix + "_bytes");
+            LlvmValueHandle srcPtr = CreateGlobalConstantBytes(state, bytes, prefix);
+            LlvmApi.BuildMemCpy(builder, destPtr, 1, srcPtr, 1, len);
         }
 
         return stringRef;
@@ -623,18 +686,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle storage = LlvmApi.BuildAlloca(state.Target.Builder, objectType, "str_obj");
         LlvmValueHandle lenPtr = LlvmApi.BuildBitCast(state.Target.Builder, storage, state.I64Ptr, "str_obj_len_ptr");
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0), lenPtr);
-        LlvmValueHandle bytesPtr = GetArrayElementPointer(state, objectType, storage, LlvmApi.ConstInt(state.I64, 8, 0), "str_obj_bytes");
-        for (int i = 0; i < utf8.Length; i++)
+
+        if (utf8.Length > 0)
         {
-            LlvmValueHandle cellPtr = LlvmApi.BuildGEP2(state.Target.Builder,
-                state.I8,
-                bytesPtr,
-                new[]
-                {
-                    LlvmApi.ConstInt(state.I64, (ulong)i, 0)
-                },
-                $"str_byte_ptr_{i}");
-            LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I8, utf8[i], 0), cellPtr);
+            LlvmValueHandle bytesPtr = GetArrayElementPointer(state, objectType, storage, LlvmApi.ConstInt(state.I64, 8, 0), "str_obj_bytes");
+            LlvmValueHandle srcPtr = CreateGlobalConstantBytes(state, utf8, "str_obj_data");
+            LlvmApi.BuildMemCpy(state.Target.Builder, bytesPtr, 1, srcPtr, 1,
+                LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0));
         }
 
         return LlvmApi.BuildPtrToInt(state.Target.Builder, storage, state.I64, "str_obj_i64");
@@ -644,10 +702,13 @@ internal static partial class LlvmCodegen
     {
         LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (uint)bytes.Count);
         LlvmValueHandle storage = LlvmApi.BuildAlloca(state.Target.Builder, arrayType, "byte_array");
-        for (int i = 0; i < bytes.Count; i++)
+
+        if (bytes.Count > 0)
         {
-            LlvmValueHandle ptr = GetArrayElementPointer(state, arrayType, storage, LlvmApi.ConstInt(state.I64, (ulong)i, 0), $"byte_{i}");
-            LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I8, bytes[i], 0), ptr);
+            LlvmValueHandle destPtr = GetArrayElementPointer(state, arrayType, storage, LlvmApi.ConstInt(state.I64, 0, 0), "byte_array_dest");
+            LlvmValueHandle srcPtr = CreateGlobalConstantBytes(state, bytes, "byte_data");
+            LlvmApi.BuildMemCpy(state.Target.Builder, destPtr, 1, srcPtr, 1,
+                LlvmApi.ConstInt(state.I64, (ulong)bytes.Count, 0));
         }
 
         return GetArrayElementPointer(state, arrayType, storage, LlvmApi.ConstInt(state.I64, 0, 0), "byte_array_ptr");
