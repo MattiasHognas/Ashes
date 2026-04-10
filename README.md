@@ -79,41 +79,6 @@ This repository contains the full toolchain:
 
 ---
 
-## Quick Start
-
-**Build the compiler:**
-
-```sh
-dotnet build Ashes.slnx
-```
-
-**Write a program** (`hello.ash`):
-
-```ash
-Ashes.IO.print("hello world")
-```
-
-**Run it:**
-
-```sh
-dotnet run --project src/Ashes.Cli -- run hello.ash
-```
-
-**Or try an inline expression:**
-
-```sh
-dotnet run --project src/Ashes.Cli -- run --expr "Ashes.IO.print(40 + 2)"
-```
-
-**Compile to a native executable:**
-
-```sh
-dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
-./hello     # runs without dotnet, without anything
-```
-
----
-
 ## A Tour of Ashes
 
 ### Bindings & Functions
