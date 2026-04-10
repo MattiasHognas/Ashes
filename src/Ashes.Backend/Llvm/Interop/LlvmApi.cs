@@ -209,6 +209,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMConstReal")]
     public static partial LlvmValueHandle ConstReal(LlvmTypeHandle type, double value);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMConstArray2")]
+    private static unsafe partial LlvmValueHandle ConstArray2Raw(LlvmTypeHandle elementType, LlvmValueHandle* constantVals, ulong length);
+
     [LibraryImport(Lib, EntryPoint = "LLVMGetInlineAsm", StringMarshalling = StringMarshalling.Utf8)]
     private static partial LlvmValueHandle GetInlineAsmRaw(
         LlvmTypeHandle functionType, string asmString, nint asmLen,
@@ -230,6 +233,12 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMSetInitializer")]
     public static partial void SetInitializer(LlvmValueHandle global, LlvmValueHandle constant);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetGlobalConstant")]
+    public static partial void SetGlobalConstant(LlvmValueHandle global, int isConstant);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetUnnamedAddr")]
+    public static partial void SetUnnamedAddr(LlvmValueHandle global, int unnamedAddr);
 
     [LibraryImport(Lib, EntryPoint = "LLVMGetParam")]
     public static partial LlvmValueHandle GetParam(LlvmValueHandle function, uint index);
@@ -465,6 +474,17 @@ internal static partial class LlvmApi
             fixed (LlvmValueHandle* p = indices)
             {
                 return BuildGEP2Raw(b, type, ptr, p, (uint)indices.Length, name);
+            }
+        }
+    }
+
+    public static LlvmValueHandle ConstArray2(LlvmTypeHandle elementType, ReadOnlySpan<LlvmValueHandle> constantVals)
+    {
+        unsafe
+        {
+            fixed (LlvmValueHandle* ptr = constantVals)
+            {
+                return ConstArray2Raw(elementType, ptr, (ulong)constantVals.Length);
             }
         }
     }
