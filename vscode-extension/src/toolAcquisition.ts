@@ -4,6 +4,7 @@ import * as path from "path";
 import { execFileSync } from "child_process";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
+import AdmZip from "adm-zip";
 
 import * as vscode from "vscode";
 
@@ -205,41 +206,26 @@ export async function downloadToFile(
 }
 
 /**
- * Extract a zip archive into a destination directory.
- * On Linux/macOS: uses `unzip -j` to flatten any directory structure.
- * On Windows: uses PowerShell `Expand-Archive`.
+ * Extract a zip archive into a destination directory, flattening any
+ * directory structure in the archive to match the cached tool layout.
  */
 export function extractZip(zipPath: string, destDir: string): void {
   fs.mkdirSync(destDir, { recursive: true });
-  if (process.platform === "win32") {
-    const psEscape = (p: string): string => p.replace(/'/g, "''");
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Force -LiteralPath '${psEscape(zipPath)}' -DestinationPath '${psEscape(destDir)}'`,
-      ],
-      { stdio: "pipe" },
-    );
-  } else {
-    try {
-      execFileSync("unzip", ["-j", "-o", zipPath, "-d", destDir], {
-        stdio: "pipe",
-      });
-    } catch (err) {
-      const processError = err as NodeJS.ErrnoException;
-      if (processError.code === "ENOENT") {
-        throw new Error(
-          "Failed to extract the downloaded tool because the 'unzip' command is not installed or not available on PATH. " +
-            "Install it and try again. Examples: Debian/Ubuntu: 'sudo apt install unzip', Fedora: 'sudo dnf install unzip', macOS (Homebrew): 'brew install unzip'.",
-        );
+  try {
+    const zip = new AdmZip(zipPath);
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory) {
+        continue;
       }
 
-      throw new Error(
-        `Failed to extract zip archive with 'unzip': ${processError.message}`,
-      );
+      const outputPath = path.join(destDir, path.basename(entry.entryName));
+      const content = entry.getData();
+      fs.writeFileSync(outputPath, content);
     }
+  } catch (err) {
+    throw new Error(
+      `Failed to extract zip archive '${path.basename(zipPath)}': ${(err as Error).message}`,
+    );
   }
 }
 

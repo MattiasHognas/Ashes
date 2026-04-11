@@ -19,7 +19,7 @@
 #   ./scripts/download-llvm-native.sh --all         # download all three: linux-x64, linux-arm64, win-x64
 #   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for Windows DLL
 #
-# Prerequisites: apt / sudo, wget (for LLVM apt repo key), tar (for Windows DLL)
+# Prerequisites: apt, root access (directly or via sudo), wget (for LLVM apt repo key), tar (for Windows DLL)
 
 set -euo pipefail
 
@@ -42,6 +42,33 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB_DIR="$REPO_ROOT/runtimes"
+
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=()
+elif command -v sudo >/dev/null 2>&1; then
+    SUDO=(sudo)
+else
+    echo "ERROR: This script requires root privileges. Run it as root or install sudo." >&2
+    exit 1
+fi
+
+as_root() {
+    if [ "${#SUDO[@]}" -eq 0 ]; then
+        "$@"
+    else
+        "${SUDO[@]}" "$@"
+    fi
+}
+
+ensure_command() {
+    local command_name="$1"
+    local package_name="$2"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Installing missing prerequisite: $package_name"
+        as_root apt-get install -y -qq "$package_name"
+    fi
+}
 
 # ── Resolve target architecture ──────────────────────────────────────────
 resolve_arch() {
@@ -80,15 +107,15 @@ install_linux_native() {
     if ! apt-cache show "libllvm${llvm_major}" &>/dev/null; then
         echo "Adding LLVM apt repository..."
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | gpg --dearmor | sudo tee /usr/share/keyrings/llvm-archive-keyring.gpg > /dev/null
+            | gpg --dearmor | as_root tee /usr/share/keyrings/llvm-archive-keyring.gpg > /dev/null
         local codename
         codename=$(lsb_release -cs 2>/dev/null || echo "noble")
         echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-${llvm_major}.list
-        sudo apt-get update -qq
+            | as_root tee /etc/apt/sources.list.d/llvm-${llvm_major}.list
+        as_root apt-get update -qq
     fi
 
-    sudo apt-get install -y -qq "libllvm${llvm_major}"
+    as_root apt-get install -y -qq "libllvm${llvm_major}"
 
     local so_path
     so_path=$(ldconfig -p | grep -E "libLLVM[-.]${llvm_major}[.]so|libLLVM[.]so[.]${llvm_major}" | awk '{print $NF}' | head -1 || true)
@@ -139,7 +166,7 @@ download_linux_cross() {
     local codename
     codename=$(lsb_release -cs 2>/dev/null || echo "noble")
 
-    sudo dpkg --add-architecture "$deb_arch"
+    as_root dpkg --add-architecture "$deb_arch"
 
     local ports_url
     if [ "$deb_arch" = "arm64" ]; then
@@ -148,50 +175,52 @@ download_linux_cross() {
         ports_url="https://archive.ubuntu.com/ubuntu"
     fi
     echo "deb [arch=${deb_arch}] ${ports_url} ${codename} main universe" \
-        | sudo tee /etc/apt/sources.list.d/${deb_arch}-ports.list
+        | as_root tee /etc/apt/sources.list.d/${deb_arch}-ports.list
     echo "deb [arch=${deb_arch}] ${ports_url} ${codename}-updates main universe" \
-        | sudo tee -a /etc/apt/sources.list.d/${deb_arch}-ports.list
+        | as_root tee -a /etc/apt/sources.list.d/${deb_arch}-ports.list
 
     wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-        | gpg --dearmor | sudo tee /usr/share/keyrings/llvm-archive-keyring-${deb_arch}.gpg > /dev/null
+        | gpg --dearmor | as_root tee /usr/share/keyrings/llvm-archive-keyring-${deb_arch}.gpg > /dev/null
     echo "deb [arch=${deb_arch},signed-by=/usr/share/keyrings/llvm-archive-keyring-${deb_arch}.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" \
-        | sudo tee /etc/apt/sources.list.d/llvm-${llvm_major}-${deb_arch}.list
+        | as_root tee /etc/apt/sources.list.d/llvm-${llvm_major}-${deb_arch}.list
 
-    if ! sudo apt-get update -qq 2>/tmp/apt-update-cross.log; then
+    if ! as_root apt-get update -qq 2>/tmp/apt-update-cross.log; then
         echo "  (apt-get update reported warnings — this is expected when adding a cross-arch; check /tmp/apt-update-cross.log if the download below fails)"
     fi
 
     local tmpdir
     tmpdir=$(mktemp -d)
-    cd "$tmpdir"
-    apt-get download "libllvm${llvm_major}:${deb_arch}"
-    dpkg-deb -x libllvm${llvm_major}_*.deb extracted/
+    (
+        cd "$tmpdir"
+        apt-get download "libllvm${llvm_major}:${deb_arch}"
+        dpkg-deb -x libllvm${llvm_major}_*.deb extracted/
 
-    local so_path=""
-    for candidate in \
-        "extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so" \
-        extracted/usr/lib/${lib_arch_dir}/libLLVM.so.${llvm_major}* \
-        extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so.*; do
-        if [ -f "$candidate" ]; then
-            so_path="$candidate"
-            break
+        local so_path=""
+        for candidate in \
+            "extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so" \
+            extracted/usr/lib/${lib_arch_dir}/libLLVM.so.${llvm_major}* \
+            extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so.*; do
+            if [ -f "$candidate" ]; then
+                so_path="$candidate"
+                break
+            fi
+        done
+
+        if [ -z "$so_path" ]; then
+            echo "ERROR: libLLVM for ${deb_arch} not found in extracted .deb." >&2
+            echo "  This may indicate the package structure has changed or DEB_ARCH='${deb_arch}' is incorrect." >&2
+            echo "  Expected path: extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so (or similar)" >&2
+            ls -la "extracted/usr/lib/${lib_arch_dir}/" 2>/dev/null || true
+            exit 1
         fi
-    done
 
-    if [ -z "$so_path" ]; then
-        echo "ERROR: libLLVM for ${deb_arch} not found in extracted .deb." >&2
-        echo "  This may indicate the package structure has changed or DEB_ARCH='${deb_arch}' is incorrect." >&2
-        echo "  Expected path: extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so (or similar)" >&2
-        ls -la "extracted/usr/lib/${lib_arch_dir}/" 2>/dev/null || true
-        exit 1
-    fi
+        echo "  -> $so_path ($(du -h "$so_path" | cut -f1))"
 
-    echo "  -> $so_path ($(du -h "$so_path" | cut -f1))"
-
-    local linux_out="$LIB_DIR/$rid"
-    mkdir -p "$linux_out"
-    cp -f "$so_path" "$linux_out/libLLVM.so"
-    echo "  -> Copied to $linux_out/libLLVM.so"
+        local linux_out="$LIB_DIR/$rid"
+        mkdir -p "$linux_out"
+        cp -f "$so_path" "$linux_out/libLLVM.so"
+        echo "  -> Copied to $linux_out/libLLVM.so"
+    )
 
     rm -rf "$tmpdir"
 }
@@ -214,6 +243,8 @@ download_windows_dll() {
 
     echo ""
     echo "=== Downloading LLVM ${llvm_version} Windows x64 DLL ==="
+
+    ensure_command xz xz-utils
 
     local win_url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${llvm_version}/clang+llvm-${llvm_version}-x86_64-pc-windows-msvc.tar.xz"
     local win_out="$LIB_DIR/win-x64"
