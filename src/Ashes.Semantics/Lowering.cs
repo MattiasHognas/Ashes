@@ -4461,13 +4461,14 @@ public sealed class Lowering
 
     /// <summary>
     /// Returns true if a list element type is safe for shallow cons-cell copy-out.
-    /// Safe elements are copy types (inline i64 values) or TStr (self-contained,
-    /// no internal heap pointers — the string struct contains all its data inline).
+    /// Safe elements are copy types only. Pointer-carrying values such as TStr are
+    /// not shallow-copy safe here because copying the cons cells alone would preserve
+    /// element references into arena memory that may later be reclaimed.
     /// </summary>
     private bool IsCopyOutSafeElement(TypeRef elementType)
     {
         var pruned = Prune(elementType);
-        return CanArenaReset(pruned) || pruned is TypeRef.TStr;
+        return CanArenaReset(pruned);
     }
 
     /// <summary>
