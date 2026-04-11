@@ -146,10 +146,7 @@ export async function deactivate(): Promise<void> {
 function getDefaultDebugProgramPath(filePath: string): string {
   const parsedPath = path.parse(filePath);
   const executableExtension = process.platform === "win32" ? ".exe" : "";
-  return path.join(
-    parsedPath.dir,
-    `${parsedPath.name}${executableExtension}`,
-  );
+  return path.join(parsedPath.dir, `${parsedPath.name}${executableExtension}`);
 }
 
 function resolveDebugProgramPath(
