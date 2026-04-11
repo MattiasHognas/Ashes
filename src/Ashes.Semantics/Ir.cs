@@ -67,13 +67,16 @@ public abstract record IrInst
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
 
     public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 24 bytes: {code, env, env_size}
+    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 24 bytes: {code, env, env_size}
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
 
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
+    public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
     // ADT heap cell: layout is [tag:i64, field0:u64, field1:u64, ..., fieldN:u64]
     // AllocAdt allocates (1 + FieldCount) * 8 bytes and stores Tag at offset 0.
     public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
+    public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // GetAdtTag: Target = *(Ptr + 0)

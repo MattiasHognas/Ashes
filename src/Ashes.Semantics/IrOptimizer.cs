@@ -179,6 +179,7 @@ public static class IrOptimizer
 
             // Closures.
             IrInst.MakeClosure mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
+            IrInst.MakeClosureStack mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
 
             // ADTs.
@@ -900,6 +901,7 @@ public static class IrOptimizer
             case IrInst.StoreMemOffset s: usedTemps.Add(s.BasePtr); usedTemps.Add(s.Source); break;
             case IrInst.LoadMemOffset l: usedTemps.Add(l.BasePtr); break;
             case IrInst.MakeClosure mc: usedTemps.Add(mc.EnvPtrTemp); break;
+            case IrInst.MakeClosureStack mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.CallClosure cc: usedTemps.Add(cc.ClosureTemp); usedTemps.Add(cc.ArgTemp); break;
             case IrInst.SetAdtField sf: usedTemps.Add(sf.Ptr); usedTemps.Add(sf.Source); break;
             case IrInst.GetAdtTag gt: usedTemps.Add(gt.Ptr); break;

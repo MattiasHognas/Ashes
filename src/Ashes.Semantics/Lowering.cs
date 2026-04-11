@@ -1325,7 +1325,14 @@ public sealed class Lowering
         // heap allocations from the value expression are covered by the arena scope.
         EmitArenaWatermark();
 
-        var (valTemp, valType) = LowerExpr(let.Value);
+        bool stackAllocateClosure = let.Value is Expr.Lambda && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        bool stackAllocateAdt = IsConstructorExpression(let.Value) && IsImmediateSingleArmAdtDestructuringMatch(let.Name, let.Body);
+
+        (int valTemp, TypeRef valType) = stackAllocateClosure && let.Value is Expr.Lambda lam
+            ? LowerLambda(lam, stackAllocateClosure: true)
+            : stackAllocateAdt && TryLowerConstructorExpression(let.Value, stackAllocate: true, out var loweredAdt)
+                ? loweredAdt
+                : LowerExpr(let.Value);
 
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valTemp));
@@ -2295,17 +2302,17 @@ public sealed class Lowering
         return (target, Prune(resultType));
     }
 
-    private (int, TypeRef) LowerLambda(Expr.Lambda lam)
+    private (int, TypeRef) LowerLambda(Expr.Lambda lam, bool stackAllocateClosure = false)
     {
-        return LowerLambdaCore(lam, null, null);
+        return LowerLambdaCore(lam, null, null, stackAllocateClosure);
     }
 
-    private (int, TypeRef) LowerLambdaRecursive(string selfName, TypeRef selfType, Expr.Lambda lam)
+    private (int, TypeRef) LowerLambdaRecursive(string selfName, TypeRef selfType, Expr.Lambda lam, bool stackAllocateClosure = false)
     {
-        return LowerLambdaCore(lam, selfName, selfType);
+        return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure);
     }
 
-    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType)
+    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure)
     {
         _usesClosures = true;
 
@@ -2337,7 +2344,14 @@ public sealed class Lowering
         {
             // alloc env: captures.Count * 8
             envPtrTemp = NewTemp();
-            Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+            if (stackAllocateClosure)
+            {
+                Emit(new IrInst.AllocStack(envPtrTemp, captures.Count * 8));
+            }
+            else
+            {
+                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+            }
 
             for (int i = 0; i < captures.Count; i++)
             {
@@ -2512,7 +2526,14 @@ public sealed class Lowering
         // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
+        if (stackAllocateClosure)
+        {
+            Emit(new IrInst.MakeClosureStack(closureTemp, label, envPtrTemp, envSizeBytes));
+        }
+        else
+        {
+            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
+        }
         return (closureTemp, funTy);
     }
 
@@ -2901,7 +2922,9 @@ public sealed class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (currentTemp, currentType) = LowerExpr(rootExpr);
+        var (currentTemp, currentType) = rootExpr is Expr.Lambda lam
+            ? LowerLambda(lam, stackAllocateClosure: true)
+            : LowerExpr(rootExpr);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
@@ -3006,14 +3029,21 @@ public sealed class Lowering
         return (msgTemp, new TypeRef.TNever());
     }
 
-    private (int, TypeRef) LowerNullaryConstructor(ConstructorSymbol ctor)
+    private (int, TypeRef) LowerNullaryConstructor(ConstructorSymbol ctor, bool stackAllocate = false)
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
+        if (stackAllocate)
+        {
+            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
+        }
+        else
+        {
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
+        }
         return (ptrTemp, resultType);
     }
 
@@ -3037,7 +3067,7 @@ public sealed class Lowering
         return body;
     }
 
-    private (int, TypeRef) LowerConstructorApplication(ConstructorSymbol ctor, List<Expr> args)
+    private (int, TypeRef) LowerConstructorApplication(ConstructorSymbol ctor, List<Expr> args, bool stackAllocate = false)
     {
         if (args.Count != ctor.Arity)
         {
@@ -3070,7 +3100,14 @@ public sealed class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        if (stackAllocate)
+        {
+            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
+        }
+        else
+        {
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        }
         for (int i = 0; i < argTemps.Count; i++)
         {
             Emit(new IrInst.SetAdtField(ptrTemp, i, argTemps[i]));
@@ -3171,7 +3208,10 @@ public sealed class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (valueTemp, valueType) = LowerExpr(match.Value);
+        var (valueTemp, valueType) = ShouldStackAllocateImmediateMatchScrutinee(match)
+            && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
+                ? loweredMatchValue
+                : LowerExpr(match.Value);
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();
         var endLabel = NewLabel("match_end");
@@ -5016,6 +5056,249 @@ public sealed class Lowering
             default:
                 // Literals, Var, etc. - no qualified vars to collect
                 break;
+        }
+    }
+
+    private bool TryLowerConstructorExpression(Expr expr, bool stackAllocate, out (int Temp, TypeRef Type) lowered)
+    {
+        if (expr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
+        {
+            lowered = LowerNullaryConstructor(nullaryCtor, stackAllocate);
+            return true;
+        }
+
+        var args = new List<Expr>();
+        var rootExpr = CollectCallArgs(expr, args);
+        if (rootExpr is Expr.Var callCtor && _constructorSymbols.TryGetValue(callCtor.Name, out var ctor))
+        {
+            lowered = LowerConstructorApplication(ctor, args, stackAllocate);
+            return true;
+        }
+
+        lowered = default;
+        return false;
+    }
+
+    private bool IsConstructorExpression(Expr expr)
+    {
+        if (expr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
+        {
+            return true;
+        }
+
+        var args = new List<Expr>();
+        var rootExpr = CollectCallArgs(expr, args);
+        return rootExpr is Expr.Var callCtor && _constructorSymbols.TryGetValue(callCtor.Name, out _);
+    }
+
+    private static bool ShouldStackAllocateImmediateMatchScrutinee(Expr.Match match)
+    {
+        return match.Cases.Count == 1 && match.Cases[0].Pattern is Pattern.Constructor;
+    }
+
+    private static bool IsImmediateSingleArmAdtDestructuringMatch(string name, Expr body)
+    {
+        if (body is not Expr.Match(Expr.Var varExpr, var cases, _) || !string.Equals(varExpr.Name, name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (cases.Count != 1 || cases[0].Pattern is not Pattern.Constructor)
+        {
+            return false;
+        }
+
+        bool shadowedInArm = PatternBindings(cases[0].Pattern).Any(boundName => string.Equals(boundName, name, StringComparison.Ordinal));
+        var guard = cases[0].Guard;
+        return (guard is null || !ExprReferencesName(guard, name, shadowedInArm))
+            && !ExprReferencesName(cases[0].Body, name, shadowedInArm);
+    }
+
+    private static bool UsesNameOnlyAsDirectCallee(Expr expr, string targetName, bool shadowed = false, bool allowDirectCallee = false)
+    {
+        switch (expr)
+        {
+            case Expr.IntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+            case Expr.QualifiedVar:
+                return true;
+
+            case Expr.Var v:
+                return shadowed || !string.Equals(v.Name, targetName, StringComparison.Ordinal) || allowDirectCallee;
+
+            case Expr.Add add:
+                return UsesNameOnlyAsDirectCallee(add.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(add.Right, targetName, shadowed);
+            case Expr.Subtract sub:
+                return UsesNameOnlyAsDirectCallee(sub.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(sub.Right, targetName, shadowed);
+            case Expr.Multiply mul:
+                return UsesNameOnlyAsDirectCallee(mul.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(mul.Right, targetName, shadowed);
+            case Expr.Divide div:
+                return UsesNameOnlyAsDirectCallee(div.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(div.Right, targetName, shadowed);
+            case Expr.GreaterOrEqual ge:
+                return UsesNameOnlyAsDirectCallee(ge.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(ge.Right, targetName, shadowed);
+            case Expr.LessOrEqual le:
+                return UsesNameOnlyAsDirectCallee(le.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(le.Right, targetName, shadowed);
+            case Expr.Equal eq:
+                return UsesNameOnlyAsDirectCallee(eq.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(eq.Right, targetName, shadowed);
+            case Expr.NotEqual ne:
+                return UsesNameOnlyAsDirectCallee(ne.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(ne.Right, targetName, shadowed);
+            case Expr.ResultPipe pipe:
+                return UsesNameOnlyAsDirectCallee(pipe.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(pipe.Right, targetName, shadowed);
+            case Expr.ResultMapErrorPipe pipe:
+                return UsesNameOnlyAsDirectCallee(pipe.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(pipe.Right, targetName, shadowed);
+            case Expr.Call call:
+                return UsesNameOnlyAsDirectCallee(call.Func, targetName, shadowed, allowDirectCallee: true)
+                    && UsesNameOnlyAsDirectCallee(call.Arg, targetName, shadowed);
+            case Expr.TupleLit tuple:
+                return tuple.Elements.All(elem => UsesNameOnlyAsDirectCallee(elem, targetName, shadowed));
+            case Expr.ListLit list:
+                return list.Elements.All(elem => UsesNameOnlyAsDirectCallee(elem, targetName, shadowed));
+            case Expr.Cons cons:
+                return UsesNameOnlyAsDirectCallee(cons.Head, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(cons.Tail, targetName, shadowed);
+            case Expr.If iff:
+                return UsesNameOnlyAsDirectCallee(iff.Cond, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(iff.Then, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(iff.Else, targetName, shadowed);
+            case Expr.Let let:
+                return UsesNameOnlyAsDirectCallee(let.Value, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(let.Body, targetName, shadowed || string.Equals(let.Name, targetName, StringComparison.Ordinal));
+            case Expr.LetResult letResult:
+                return UsesNameOnlyAsDirectCallee(letResult.Value, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(letResult.Body, targetName, shadowed || string.Equals(letResult.Name, targetName, StringComparison.Ordinal));
+            case Expr.LetRec letRec:
+                {
+                    bool nextShadowed = shadowed || string.Equals(letRec.Name, targetName, StringComparison.Ordinal);
+                    return UsesNameOnlyAsDirectCallee(letRec.Value, targetName, nextShadowed)
+                        && UsesNameOnlyAsDirectCallee(letRec.Body, targetName, nextShadowed);
+                }
+            case Expr.Lambda lam:
+                return UsesNameOnlyAsDirectCallee(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
+            case Expr.Match match:
+                if (!UsesNameOnlyAsDirectCallee(match.Value, targetName, shadowed))
+                {
+                    return false;
+                }
+
+                foreach (var matchCase in match.Cases)
+                {
+                    bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
+                    if (matchCase.Guard is not null && !UsesNameOnlyAsDirectCallee(matchCase.Guard, targetName, caseShadowed))
+                    {
+                        return false;
+                    }
+
+                    if (!UsesNameOnlyAsDirectCallee(matchCase.Body, targetName, caseShadowed))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            case Expr.Async asyncExpr:
+                return UsesNameOnlyAsDirectCallee(asyncExpr.Body, targetName, shadowed);
+            case Expr.Await awaitExpr:
+                return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
+            default:
+                throw new NotSupportedException(expr.GetType().Name);
+        }
+    }
+
+    private static bool ExprReferencesName(Expr expr, string targetName, bool shadowed = false)
+    {
+        switch (expr)
+        {
+            case Expr.IntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+            case Expr.QualifiedVar:
+                return false;
+
+            case Expr.Var v:
+                return !shadowed && string.Equals(v.Name, targetName, StringComparison.Ordinal);
+
+            case Expr.Add add:
+                return ExprReferencesName(add.Left, targetName, shadowed) || ExprReferencesName(add.Right, targetName, shadowed);
+            case Expr.Subtract sub:
+                return ExprReferencesName(sub.Left, targetName, shadowed) || ExprReferencesName(sub.Right, targetName, shadowed);
+            case Expr.Multiply mul:
+                return ExprReferencesName(mul.Left, targetName, shadowed) || ExprReferencesName(mul.Right, targetName, shadowed);
+            case Expr.Divide div:
+                return ExprReferencesName(div.Left, targetName, shadowed) || ExprReferencesName(div.Right, targetName, shadowed);
+            case Expr.GreaterOrEqual ge:
+                return ExprReferencesName(ge.Left, targetName, shadowed) || ExprReferencesName(ge.Right, targetName, shadowed);
+            case Expr.LessOrEqual le:
+                return ExprReferencesName(le.Left, targetName, shadowed) || ExprReferencesName(le.Right, targetName, shadowed);
+            case Expr.Equal eq:
+                return ExprReferencesName(eq.Left, targetName, shadowed) || ExprReferencesName(eq.Right, targetName, shadowed);
+            case Expr.NotEqual ne:
+                return ExprReferencesName(ne.Left, targetName, shadowed) || ExprReferencesName(ne.Right, targetName, shadowed);
+            case Expr.ResultPipe pipe:
+                return ExprReferencesName(pipe.Left, targetName, shadowed) || ExprReferencesName(pipe.Right, targetName, shadowed);
+            case Expr.ResultMapErrorPipe pipe:
+                return ExprReferencesName(pipe.Left, targetName, shadowed) || ExprReferencesName(pipe.Right, targetName, shadowed);
+            case Expr.Call call:
+                return ExprReferencesName(call.Func, targetName, shadowed) || ExprReferencesName(call.Arg, targetName, shadowed);
+            case Expr.TupleLit tuple:
+                return tuple.Elements.Any(elem => ExprReferencesName(elem, targetName, shadowed));
+            case Expr.ListLit list:
+                return list.Elements.Any(elem => ExprReferencesName(elem, targetName, shadowed));
+            case Expr.Cons cons:
+                return ExprReferencesName(cons.Head, targetName, shadowed) || ExprReferencesName(cons.Tail, targetName, shadowed);
+            case Expr.If iff:
+                return ExprReferencesName(iff.Cond, targetName, shadowed)
+                    || ExprReferencesName(iff.Then, targetName, shadowed)
+                    || ExprReferencesName(iff.Else, targetName, shadowed);
+            case Expr.Let let:
+                return ExprReferencesName(let.Value, targetName, shadowed)
+                    || ExprReferencesName(let.Body, targetName, shadowed || string.Equals(let.Name, targetName, StringComparison.Ordinal));
+            case Expr.LetResult letResult:
+                return ExprReferencesName(letResult.Value, targetName, shadowed)
+                    || ExprReferencesName(letResult.Body, targetName, shadowed || string.Equals(letResult.Name, targetName, StringComparison.Ordinal));
+            case Expr.LetRec letRec:
+                {
+                    bool nextShadowed = shadowed || string.Equals(letRec.Name, targetName, StringComparison.Ordinal);
+                    return ExprReferencesName(letRec.Value, targetName, nextShadowed)
+                        || ExprReferencesName(letRec.Body, targetName, nextShadowed);
+                }
+            case Expr.Lambda lam:
+                return ExprReferencesName(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
+            case Expr.Match match:
+                if (ExprReferencesName(match.Value, targetName, shadowed))
+                {
+                    return true;
+                }
+
+                foreach (var matchCase in match.Cases)
+                {
+                    bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
+                    if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, targetName, caseShadowed))
+                        || ExprReferencesName(matchCase.Body, targetName, caseShadowed))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            case Expr.Async asyncExpr:
+                return ExprReferencesName(asyncExpr.Body, targetName, shadowed);
+            case Expr.Await awaitExpr:
+                return ExprReferencesName(awaitExpr.Task, targetName, shadowed);
+            default:
+                throw new NotSupportedException(expr.GetType().Name);
         }
     }
 
