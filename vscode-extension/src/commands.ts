@@ -207,6 +207,16 @@ export async function compileCommand(
 }
 
 /**
+ * Resolve the compiler path for VS Code task/launch command variables.
+ */
+export async function getCompilerPathCommand(
+  context: vscode.ExtensionContext,
+): Promise<string> {
+  const compilerPath = await ensureCompiler(context);
+  return compilerPath ?? "";
+}
+
+/**
  * Compile and run the active .ash file or project.
  */
 export async function runCommand(

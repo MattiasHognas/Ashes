@@ -215,7 +215,7 @@ Create `.vscode/tasks.json` to compile before debugging:
     {
       "label": "ashes: compile (debug)",
       "type": "shell",
-      "command": "ashes",
+      "command": "${command:ashes.getCompilerPath}",
       "args": [
         "compile",
         "--debug",
@@ -232,6 +232,11 @@ Create `.vscode/tasks.json` to compile before debugging:
   ]
 }
 ```
+
+The `${command:ashes.getCompilerPath}` variable asks the extension to resolve
+the compiler path using the same logic as the Ashes commands and debugger:
+`ashes.compilerPath` override first, then bundled/downloaded toolchain assets.
+That avoids depending on a global `ashes` installation or a private cache path.
 
 Then add `"preLaunchTask": "ashes: compile (debug)"` to your launch
 configuration to auto-compile before each debug session.
