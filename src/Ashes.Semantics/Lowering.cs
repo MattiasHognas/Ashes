@@ -4574,11 +4574,11 @@ public sealed class Lowering
     /// <list type="bullet">
     ///   <item><b>String (TStr):</b> Shallow copy — self-contained, no internal heap pointers.</item>
     ///   <item><b>List with copy-type element (TList where element is Int/Float/Bool):</b>
-    ///     Deep cons-chain copy with inline head values.</item>
+    ///     Copy only the top cons cell (16 bytes) with inline head value; the tail remains in pre-watermark memory.</item>
     ///   <item><b>List with string element (TList(TStr)):</b>
-    ///     Deep cons-chain copy; each string head is also copied.</item>
+    ///     Copy only the top cons cell; the string head value is also copied, while the tail remains in pre-watermark memory.</item>
     ///   <item><b>List with inner-list element (TList(TList(copy-type))):</b>
-    ///     Deep cons-chain copy; each inner list is deep-copied recursively.</item>
+    ///     Copy only the top cons cell; the inner-list head value is deep-copied, while the tail remains in pre-watermark memory.</item>
     ///   <item><b>Closure (TFun):</b> Closure struct + env copy (24 bytes + env block).</item>
     ///   <item><b>ADT (TNamedType):</b> Shallow copy when all fields are copy types.</item>
     /// </list>
