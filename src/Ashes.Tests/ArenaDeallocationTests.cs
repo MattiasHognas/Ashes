@@ -551,16 +551,44 @@ public sealed class ArenaDeallocationTests
         bool found = false;
         for (int i = 0; i < insts.Count - 1; i++)
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts.Skip(i + 1).Any(inst => inst is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.String))
+            if (insts[i] is not IrInst.RestoreArenaState)
             {
-                found = true;
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex == -1)
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < reclaimIndex; j++)
+            {
+                if (insts[j] is IrInst.CopyOutTcoListCell cell
+                    && cell.HeadCopy == IrInst.ListHeadCopyKind.String)
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
                 break;
             }
         }
+
         found.ShouldBeTrue(
-            "TCO loop with TList(TStr) arg should emit RestoreArenaState + CopyOutTcoListCell(String).");
+            "TCO loop with TList(TStr) arg should emit CopyOutTcoListCell(String) after RestoreArenaState and before ReclaimArenaChunks.");
     }
 
     [Test]
