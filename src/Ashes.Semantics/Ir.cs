@@ -108,7 +108,7 @@ public abstract record IrInst
     public sealed record Drop(int SourceTemp, string TypeName) : IrInst;
 
     /// <summary>
-    /// Borrow instruction for compiler-inferred borrowing (Phase 3).
+    /// Borrow instruction for compiler-inferred borrowing.
     /// Produces a non-owning reference to the owned value held in SourceTemp.
     /// The borrowed reference carries no drop responsibility — the owning scope
     /// still drops the original.

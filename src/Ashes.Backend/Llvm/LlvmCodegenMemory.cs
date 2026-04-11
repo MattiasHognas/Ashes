@@ -431,16 +431,16 @@ internal static partial class LlvmCodegen
     /// approach to avoid aliasing between source and destination cells (which share
     /// the same arena region after RestoreArenaState resets the cursor):
     /// <para>
-    /// <b>Phase 1 — Count:</b> Walk the source list to count cells (N).
+    /// <b>Count:</b> Walk the source list to count cells (N).
     /// </para>
     /// <para>
-    /// <b>Phase 2 — Cache:</b> Stack-allocate N i64 slots via dynamic alloca, then
+    /// <b>Cache:</b> Stack-allocate N i64 slots via dynamic alloca, then
     /// walk the source list again, storing each head value into the buffer. After
     /// this phase all source data has been read; the buffer is on the stack, not
     /// in the arena, so it is safe from arena overwrites.
     /// </para>
     /// <para>
-    /// <b>Phase 3 — Build:</b> Allocate N fresh 16-byte arena cells, populating each
+    /// <b>Build:</b> Allocate N fresh 16-byte arena cells, populating each
     /// from the cached head values and linking tail pointers. When
     /// <paramref name="headCopy"/> is <see cref="ListHeadCopyKind.String"/>, each
     /// cached head (a string pointer) is also copied to a fresh allocation. When
@@ -467,7 +467,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
 
-        // ── Phase 1: Count source cells ─────────────────────────────────
+        // ── Count source cells ────────────────────────────────────────
         LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_count");
         LlvmApi.BuildStore(builder, zero, countSlot);
         LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_count_cur");
@@ -495,7 +495,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
         LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_list_total_cells");
 
-        // ── Phase 2: Cache head values into a stack-allocated buffer ────
+        // ── Cache head values into a stack-allocated buffer ─────────────
         // Dynamic alloca: allocate totalCells × i64 on the stack.
         LlvmValueHandle headBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, "copy_list_head_buf");
         LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cache_cur");
@@ -527,7 +527,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
 
-        // ── Phase 3: Build destination list from cached head values ─────
+        // ── Build destination list from cached head values ──────────────
         // Arena allocations happen here. Source cells are never read again.
         LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_build_idx");
         LlvmApi.BuildStore(builder, zero, buildIdxSlot);
@@ -631,7 +631,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
 
-        // ── Phase 1: Count source cells ─────────────────────────────────
+        // ── Count source cells ────────────────────────────────────────
         LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count");
         LlvmApi.BuildStore(builder, zero, countSlot);
         LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count_cur");
@@ -659,7 +659,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
         LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_total_cells");
 
-        // ── Phase 2: Cache head values into a stack-allocated buffer ────
+        // ── Cache head values into a stack-allocated buffer ─────────────
         LlvmValueHandle headBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, "copy_inner_head_buf");
         LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_cur");
         LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
@@ -690,7 +690,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
 
-        // ── Phase 3: Build destination list from cached head values ─────
+        // ── Build destination list from cached head values ──────────────
         LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_build_idx");
         LlvmApi.BuildStore(builder, zero, buildIdxSlot);
         LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_prev");
