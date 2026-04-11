@@ -10,6 +10,7 @@ import { acquireTool } from "./toolAcquisition";
 import { LSP_CONFIG, DAP_CONFIG, getRequiredVersion } from "./toolConfigs";
 import {
   compileCommand,
+  getCompilerPathCommand,
   runCommand,
   testCommand,
   installToolchainCommand,
@@ -83,6 +84,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("ashes.compile", () =>
       compileCommand(context),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ashes.getCompilerPath", () =>
+      getCompilerPathCommand(context),
     ),
   );
   context.subscriptions.push(

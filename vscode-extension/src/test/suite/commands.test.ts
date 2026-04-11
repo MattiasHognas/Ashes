@@ -131,6 +131,18 @@ suite("Command Execution — mock tools", () => {
     await vscode.commands.executeCommand("ashes.installToolchain");
   });
 
+  test("ashes.getCompilerPath resolves the configured compiler path", async () => {
+    const compilerPath = await vscode.commands.executeCommand<string>(
+      "ashes.getCompilerPath",
+    );
+
+    assert.strictEqual(
+      compilerPath,
+      path.join(mockToolsPath, "mock-compiler"),
+      "Compiler path command should resolve to the workspace override",
+    );
+  });
+
   test("setting overrides point to mock tools", () => {
     const config = vscode.workspace.getConfiguration("ashes");
     assert.ok(

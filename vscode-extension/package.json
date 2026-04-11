@@ -18,6 +18,7 @@
   ],
   "activationEvents": [
     "onLanguage:ashes",
+    "onCommand:ashes.getCompilerPath",
     "onCommand:ashes.compile",
     "onCommand:ashes.run",
     "onCommand:ashes.test",
