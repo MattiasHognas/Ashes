@@ -16,11 +16,14 @@ internal static partial class LlvmCodegen
         public LlvmMetadataHandle DefaultFile { get; }
         public LlvmMetadataHandle SubroutineType { get; }
         public LlvmMetadataHandle IntType { get; }
+        public LlvmMetadataHandle FloatType { get; }
+        public LlvmMetadataHandle BoolType { get; }
         public LlvmContextHandle LlvmContext { get; }
         public bool IsOptimized { get; }
 
         private readonly Dictionary<string, LlvmMetadataHandle> _fileCache = new(StringComparer.Ordinal);
         private readonly Dictionary<string, LlvmMetadataHandle> _subprograms = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LlvmMetadataHandle> _typeCache = new(StringComparer.Ordinal);
 
         public DebugInfoContext(
             LlvmTargetContext target,
@@ -61,6 +64,68 @@ internal static partial class LlvmCodegen
             // Basic debug types
             IntType = LlvmApi.DIBuilderCreateBasicType(
                 DIBuilder, "Int", 64, LlvmApi.DwarfAteSigned);
+            FloatType = LlvmApi.DIBuilderCreateBasicType(
+                DIBuilder, "Float", 64, LlvmApi.DwarfAteFloat);
+            BoolType = LlvmApi.DIBuilderCreateBasicType(
+                DIBuilder, "Bool", 64, LlvmApi.DwarfAteBoolean);
+
+            _typeCache["Int"] = IntType;
+            _typeCache["Float"] = FloatType;
+            _typeCache["Bool"] = BoolType;
+        }
+
+        public LlvmMetadataHandle GetOrCreateType(TypeRef type)
+        {
+            var typeName = FormatTypeName(type);
+            if (_typeCache.TryGetValue(typeName, out var cached))
+            {
+                return cached;
+            }
+
+            LlvmMetadataHandle created = type switch
+            {
+                TypeRef.TInt => IntType,
+                TypeRef.TFloat => FloatType,
+                TypeRef.TBool => BoolType,
+                TypeRef.TStr => CreateReferenceType(typeName),
+                TypeRef.TList => CreateReferenceType(typeName),
+                TypeRef.TTuple => CreateReferenceType(typeName),
+                TypeRef.TFun => CreateReferenceType(typeName),
+                TypeRef.TNamedType => CreateReferenceType(typeName),
+                TypeRef.TTypeParam => CreateReferenceType(typeName),
+                _ => IntType,
+            };
+
+            _typeCache[typeName] = created;
+            return created;
+        }
+
+        private LlvmMetadataHandle CreateReferenceType(string typeName)
+        {
+            var pointee = LlvmApi.DIBuilderCreateBasicType(
+                DIBuilder, typeName, 64, LlvmApi.DwarfAteSigned);
+            return LlvmApi.DIBuilderCreatePointerType(DIBuilder, pointee, 64);
+        }
+
+        private static string FormatTypeName(TypeRef type)
+        {
+            return type switch
+            {
+                TypeRef.TInt => "Int",
+                TypeRef.TFloat => "Float",
+                TypeRef.TStr => "Str",
+                TypeRef.TBool => "Bool",
+                TypeRef.TNever => "Never",
+                TypeRef.TList list => $"List<{FormatTypeName(list.Element)}>",
+                TypeRef.TTuple tuple => $"({string.Join(", ", tuple.Elements.Select(FormatTypeName))})",
+                TypeRef.TFun fun => $"({FormatTypeName(fun.Arg)} -> {FormatTypeName(fun.Ret)})",
+                TypeRef.TNamedType named => named.TypeArgs.Count == 0
+                    ? named.Symbol.Name
+                    : $"{named.Symbol.Name}<{string.Join(", ", named.TypeArgs.Select(FormatTypeName))}>",
+                TypeRef.TTypeParam param => param.Symbol.Name,
+                TypeRef.TVar => "Int",
+                _ => "Int",
+            };
         }
 
         public LlvmMetadataHandle GetOrCreateFile(string? filePath)
@@ -261,6 +326,11 @@ internal static partial class LlvmCodegen
                 continue;
             }
 
+            var variableType = function.LocalTypes is not null
+                && function.LocalTypes.TryGetValue(slot, out var localType)
+                ? dbg.GetOrCreateType(localType)
+                : dbg.IntType;
+
             LlvmMetadataHandle varInfo;
             if (function.HasEnvAndArgParams && slot == 1)
             {
@@ -268,13 +338,13 @@ internal static partial class LlvmCodegen
                 // Ashes lambdas always receive (env, arg) with arg at slot 1;
                 // DWARF argNo=1 marks this as the first user-visible parameter.
                 varInfo = LlvmApi.DIBuilderCreateParameterVariable(
-                    dbg.DIBuilder, sp, name, 1, file, line, dbg.IntType);
+                    dbg.DIBuilder, sp, name, 1, file, line, variableType);
             }
             else
             {
                 // Local variable (let binding, match binding, etc.)
                 varInfo = LlvmApi.DIBuilderCreateAutoVariable(
-                    dbg.DIBuilder, sp, name, file, line, dbg.IntType);
+                    dbg.DIBuilder, sp, name, file, line, variableType);
             }
 
             LlvmApi.DIBuilderInsertDeclareRecordAtEnd(

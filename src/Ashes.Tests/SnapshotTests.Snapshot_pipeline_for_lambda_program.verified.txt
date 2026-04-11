@@ -296,6 +296,14 @@
       HasEnvAndArgParams: false,
       LocalNames: {
         2: add
+      },
+      LocalTypes: {
+        2: {
+          Arg: {},
+          Ret: {
+            Id: 1
+          }
+        }
       }
     },
     Functions: [
@@ -320,6 +328,9 @@
         HasEnvAndArgParams: true,
         LocalNames: {
           1: y
+        },
+        LocalTypes: {
+          1: {}
         }
       },
       {
@@ -349,6 +360,9 @@
         HasEnvAndArgParams: true,
         LocalNames: {
           1: x
+        },
+        LocalTypes: {
+          1: {}
         }
       }
     ],

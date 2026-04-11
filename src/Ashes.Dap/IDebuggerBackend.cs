@@ -19,6 +19,6 @@ public interface IDebuggerBackend : IDisposable
     Task StepOutAsync();
     Task RunAsync();
     Task<string> GetStackTraceAsync();
-    Task<string> GetLocalsAsync();
+    Task<DapVariable[]> GetLocalsAsync();
     Task TerminateAsync();
 }

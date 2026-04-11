@@ -304,8 +304,7 @@ public sealed class DapServer : IDisposable
         DapVariable[] variables = [];
         if (_debugger is not null)
         {
-            var miResponse = await _debugger.GetLocalsAsync();
-            variables = MiResponseParser.ParseLocals(miResponse);
+            variables = await _debugger.GetLocalsAsync();
         }
 
         _transport.SendResponse(request, success: true, body: new

@@ -169,6 +169,9 @@
       HasEnvAndArgParams: false,
       LocalNames: {
         2: x
+      },
+      LocalTypes: {
+        2: {}
       }
     },
     UsesPrintInt: true,

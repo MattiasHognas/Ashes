@@ -296,6 +296,29 @@ public sealed class DapServerTests
         vars.Length.ShouldBe(0);
     }
 
+    [Test]
+    public void ParseVariableObject_extracts_name_value_and_type()
+    {
+        var mi = """5^done,name="var1",numchild="0",value="0x7abc",type="List<Int> *",thread-id="1",has_more="0""";
+
+        var variableObject = MiResponseParser.ParseVariableObject(mi);
+
+        variableObject.ShouldNotBeNull();
+        variableObject!.Name.ShouldBe("var1");
+        variableObject.Value.ShouldBe("0x7abc");
+        variableObject.Type.ShouldBe("List<Int> *");
+    }
+
+    [Test]
+    public void ParseEvaluateExpressionValue_extracts_value()
+    {
+        var mi = "3^done,value=\"42\"";
+
+        var value = MiResponseParser.ParseEvaluateExpressionValue(mi);
+
+        value.ShouldBe("42");
+    }
+
     // ── Backend selection and integration tests ────────────────────────
 
     [Test]
@@ -469,7 +492,11 @@ public sealed class DapServerTests
     {
         var mock = new MockDebuggerBackend
         {
-            LocalsResponse = """1^done,locals=[{name="x",value="42"},{name="msg",value="hello"}]""",
+            Locals =
+            [
+                new DapVariable { Name = "x", Value = "42", Type = "Int", VariablesReference = 0 },
+                new DapVariable { Name = "tail", Value = "[3, 9]", Type = "List<Int> *", VariablesReference = 0 },
+            ],
         };
 
         var launchArgs = JsonSerializer.SerializeToElement(new
@@ -504,8 +531,9 @@ public sealed class DapServerTests
         variables.GetArrayLength().ShouldBe(2);
         variables[0].GetProperty("name").GetString().ShouldBe("x");
         variables[0].GetProperty("value").GetString().ShouldBe("42");
-        variables[1].GetProperty("name").GetString().ShouldBe("msg");
-        variables[1].GetProperty("value").GetString().ShouldBe("hello");
+        variables[1].GetProperty("name").GetString().ShouldBe("tail");
+        variables[1].GetProperty("value").GetString().ShouldBe("[3, 9]");
+        variables[1].GetProperty("type").GetString().ShouldBe("List<Int> *");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -588,7 +616,7 @@ internal sealed class MockDebuggerBackend : IDebuggerBackend
 
     public List<(string Path, int Line)> BreakpointsSet { get; } = [];
     public string StackTraceResponse { get; init; } = "";
-    public string LocalsResponse { get; init; } = "";
+    public DapVariable[] Locals { get; init; } = [];
     public bool Started { get; private set; }
     public bool Terminated { get; private set; }
     public bool RunCalled { get; private set; }
@@ -617,7 +645,7 @@ internal sealed class MockDebuggerBackend : IDebuggerBackend
     }
 
     public Task<string> GetStackTraceAsync() => Task.FromResult(StackTraceResponse);
-    public Task<string> GetLocalsAsync() => Task.FromResult(LocalsResponse);
+    public Task<DapVariable[]> GetLocalsAsync() => Task.FromResult(Locals);
 
     public Task TerminateAsync()
     {

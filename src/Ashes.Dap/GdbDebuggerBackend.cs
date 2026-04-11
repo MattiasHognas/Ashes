@@ -95,9 +95,19 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         return await SendCommandAsync("-stack-list-frames");
     }
 
-    public async Task<string> GetLocalsAsync()
+    public async Task<DapVariable[]> GetLocalsAsync()
     {
-        return await SendCommandAsync("-stack-list-locals 1");
+        var localsResponse = await SendCommandAsync("-stack-list-locals 1");
+        var locals = MiResponseParser.ParseLocals(localsResponse);
+        var variables = new List<DapVariable>(locals.Length);
+
+        foreach (var local in locals)
+        {
+            var typedVariable = await CreateTypedVariableAsync(local.Name, local.Value);
+            variables.Add(typedVariable ?? local);
+        }
+
+        return [.. variables];
     }
 
     public async Task TerminateAsync()
@@ -249,6 +259,42 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
     private static string BuildBreakpointInsertCommand(string filePath, int line)
     {
         return $"-break-insert --source {EscapeGdbArg(filePath)} --line {line.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    private async Task<DapVariable?> CreateTypedVariableAsync(string localName, string fallbackValue)
+    {
+        var varCreateResponse = await SendCommandAsync($"-var-create - * {localName}");
+        var variableObject = MiResponseParser.ParseVariableObject(varCreateResponse);
+        if (variableObject is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var formattedValue = await AshesValueFormatter.FormatAsync(
+                variableObject.Value,
+                variableObject.Type,
+                EvaluateExpressionAsync);
+
+            return new DapVariable
+            {
+                Name = localName,
+                Value = string.IsNullOrWhiteSpace(formattedValue) ? fallbackValue : formattedValue,
+                Type = variableObject.Type,
+                VariablesReference = 0,
+            };
+        }
+        finally
+        {
+            _ = await SendCommandAsync($"-var-delete {variableObject.Name}");
+        }
+    }
+
+    private async Task<string?> EvaluateExpressionAsync(string expression)
+    {
+        var response = await SendCommandAsync($"-data-evaluate-expression {EscapeGdbArg(expression)}");
+        return MiResponseParser.ParseEvaluateExpressionValue(response);
     }
 
     public void Dispose()

@@ -19,6 +19,7 @@ public sealed class Lowering
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
+    private readonly Dictionary<int, TypeRef> _localTypes = new();
 
     private bool _usesPrintInt;
     private bool _usesPrintStr;
@@ -545,7 +546,8 @@ public sealed class Lowering
             LocalCount: _nextLocal,
             TempCount: _nextTemp,
             HasEnvAndArgParams: false,
-            LocalNames: new Dictionary<int, string>(_localNames)
+            LocalNames: new Dictionary<int, string>(_localNames),
+            LocalTypes: SnapshotLocalTypes()
         );
 
         return new IrProgram(
@@ -1327,7 +1329,7 @@ public sealed class Lowering
 
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valTemp));
-        _localNames[slot] = let.Name;
+        RecordLocalDebugInfo(slot, let.Name, valType);
         var scheme = Generalize(Prune(valType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
 
@@ -1427,7 +1429,7 @@ public sealed class Lowering
 
         var boundSlot = NewLocal();
         Emit(new IrInst.StoreLocal(boundSlot, payloadTemp));
-        _localNames[boundSlot] = letResult.Name;
+        RecordLocalDebugInfo(boundSlot, letResult.Name, successType);
         var child = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
         {
             [letResult.Name] = new Binding.Local(boundSlot, Prune(successType), AstSpans.GetLetResultNameOrDefault(letResult))
@@ -1465,10 +1467,10 @@ public sealed class Lowering
     private (int, TypeRef) LowerLetRec(Expr.LetRec letRec)
     {
         int slot = NewLocal();
-        _localNames[slot] = letRec.Name;
         var recType = letRec.Value is Expr.Lambda
             ? (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar())
             : NewTypeVar();
+        RecordLocalDebugInfo(slot, letRec.Name, recType);
 
         var parent = _scopes.Peek();
         var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
@@ -2355,17 +2357,19 @@ public sealed class Lowering
         var savedLocal = _nextLocal;
         var savedScopes = _scopes.ToArray();
         var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
 
         // new function state
         _inst.Clear();
         _nextTemp = 0;
         _nextLocal = 0;
         _localNames.Clear();
+        _localTypes.Clear();
 
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
         int argSlot = NewLocal(); // 1
-        _localNames[argSlot] = lam.ParamName;
+        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
 
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
@@ -2446,6 +2450,7 @@ public sealed class Lowering
                     int loadTemp = NewTemp();
                     Emit(new IrInst.LoadEnv(loadTemp, envIdx));
                     Emit(new IrInst.StoreLocal(localSlot, loadTemp));
+                    RecordLocalDebugInfo(localSlot, capName, scope[capName].Type);
                     // Override binding to use local slot
                     scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
                     tco.ParamSlots.Add(localSlot);
@@ -2483,7 +2488,8 @@ public sealed class Lowering
             LocalCount: _nextLocal,
             TempCount: _nextTemp,
             HasEnvAndArgParams: true,
-            LocalNames: new Dictionary<int, string>(_localNames)
+            LocalNames: new Dictionary<int, string>(_localNames),
+            LocalTypes: SnapshotLocalTypes()
         );
 
         // restore state
@@ -2494,7 +2500,9 @@ public sealed class Lowering
         _nextTemp = savedTemp;
         _nextLocal = savedLocal;
         _localNames.Clear();
+        _localTypes.Clear();
         foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
         _scopes.Clear();
         foreach (var s in savedScopes.Reverse())
         {
@@ -3377,6 +3385,7 @@ public sealed class Lowering
         var savedArenaWatermarks = _arenaWatermarks.ToArray();
         var savedTcoCtx = _tcoCtx;
         var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
         _tcoCtx = null;
 
         // --- Reset state for coroutine function ---
@@ -3384,6 +3393,7 @@ public sealed class Lowering
         _nextTemp = 0;
         _nextLocal = 0;
         _localNames.Clear();
+        _localTypes.Clear();
 
         // Coroutine function prologue: local[0] = state struct pointer, local[1] = dummy arg
         int stateStructSlot = NewLocal(); // → local 0
@@ -3435,7 +3445,8 @@ public sealed class Lowering
                 StateStructSize: transformResult.StateStructSize,
                 CaptureCount: captures.Count
             ),
-            LocalNames: new Dictionary<int, string>(_localNames)
+            LocalNames: new Dictionary<int, string>(_localNames),
+            LocalTypes: SnapshotLocalTypes()
         );
         _funcs.Add(coroutineFunc);
 
@@ -3445,7 +3456,9 @@ public sealed class Lowering
         _nextTemp = savedTemp;
         _nextLocal = savedLocal;
         _localNames.Clear();
+        _localTypes.Clear();
         foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
         _scopes.Clear();
         foreach (var s in savedScopes.Reverse())
         {
@@ -3676,7 +3689,7 @@ public sealed class Lowering
                 }
                 int slot = NewLocal();
                 Emit(new IrInst.StoreLocal(slot, valueTemp));
-                _localNames[slot] = v.Name;
+                RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
                 _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
                 return;
 
@@ -4706,6 +4719,23 @@ public sealed class Lowering
     private int NewLocal()
     {
         return _nextLocal++;
+    }
+
+    private void RecordLocalDebugInfo(int slot, string name, TypeRef type)
+    {
+        _localNames[slot] = name;
+        _localTypes[slot] = type;
+    }
+
+    private Dictionary<int, TypeRef> SnapshotLocalTypes()
+    {
+        var snapshot = new Dictionary<int, TypeRef>(_localTypes.Count);
+        foreach (var (slot, type) in _localTypes)
+        {
+            snapshot[slot] = Prune(type);
+        }
+
+        return snapshot;
     }
 
     private string NewLabel(string prefix)
