@@ -606,18 +606,60 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        static bool IsJumpBackToBodyLabel(object inst)
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts.Skip(i + 1).Any(inst => inst is IrInst.CopyOutClosure))
+            var text = inst.ToString() ?? string.Empty;
+            return text.Contains("_body") && (text.Contains("Jump") || text.Contains("Branch") || text.Contains("Br"));
+        }
+
+        bool found = false;
+        for (int i = 0; i < insts.Count; i++)
+        {
+            if (insts[i] is not IrInst.RestoreArenaState)
+            {
+                continue;
+            }
+
+            int copyOutIndex = -1;
+            int reclaimIndex = -1;
+            int jumpBackIndex = -1;
+
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (copyOutIndex == -1 && insts[j] is IrInst.CopyOutClosure)
+                {
+                    copyOutIndex = j;
+                }
+
+                if (reclaimIndex == -1 && insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                }
+
+                if (jumpBackIndex == -1 && IsJumpBackToBodyLabel(insts[j]))
+                {
+                    jumpBackIndex = j;
+                }
+
+                if (reclaimIndex != -1 && jumpBackIndex != -1)
+                {
+                    break;
+                }
+            }
+
+            if (copyOutIndex != -1
+                && reclaimIndex != -1
+                && jumpBackIndex != -1
+                && copyOutIndex < reclaimIndex
+                && copyOutIndex < jumpBackIndex)
             {
                 found = true;
                 break;
             }
         }
+
         found.ShouldBeTrue(
-            "TCO loop with closure arg should emit RestoreArenaState + CopyOutClosure.");
+            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
     }
 
     [Test]
