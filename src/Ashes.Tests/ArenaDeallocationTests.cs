@@ -679,17 +679,47 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        for (int i = 0; i < insts.Count - 2; i++)
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts.Skip(i + 1).Any(inst => inst is IrInst.CopyOutArena c && c.StaticSizeBytes == 16))
+            if (insts[i] is not IrInst.RestoreArenaState)
+            {
+                continue;
+            }
+
+            var copyOutIndex = -1;
+            for (int j = i + 1; j < insts.Count - 1; j++)
+            {
+                if (insts[j] is IrInst.CopyOutArena c && c.StaticSizeBytes == 16)
+                {
+                    copyOutIndex = j;
+                    break;
+                }
+            }
+
+            if (copyOutIndex == -1)
+            {
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = copyOutIndex + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex != -1)
             {
                 found = true;
                 break;
             }
         }
+
         found.ShouldBeTrue(
-            "TCO loop with ADT(Int) arg should emit RestoreArenaState + CopyOutArena(16).");
+            "TCO loop with ADT(Int) arg should emit RestoreArenaState -> CopyOutArena(16) before ReclaimArenaChunks.");
     }
 
     [Test]
