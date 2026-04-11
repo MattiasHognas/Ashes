@@ -29,7 +29,7 @@ public sealed class LspHarness : IAsyncDisposable
 
         try
         {
-            var lspAssemblyPath = Path.Combine(AppContext.BaseDirectory, "Ashes.Lsp.dll");
+            var lspAssemblyPath = Path.Combine(AppContext.BaseDirectory, "ashes-lsp.dll");
             File.Exists(lspAssemblyPath).ShouldBeTrue($"Expected LSP assembly at '{lspAssemblyPath}'");
 
             var startInfo = new ProcessStartInfo("dotnet", $"\"{lspAssemblyPath}\"")
@@ -41,7 +41,7 @@ public sealed class LspHarness : IAsyncDisposable
             };
 
             var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Failed to start Ashes.Lsp process.");
+                ?? throw new InvalidOperationException("Failed to start ashes-lsp process.");
 
             var harness = new LspHarness(process, lspAssemblyPath, timeout ?? TimeSpan.FromSeconds(10));
             await harness.InitializeAsync();
@@ -168,7 +168,7 @@ public sealed class LspHarness : IAsyncDisposable
         catch (OperationCanceledException)
         {
             TryKillProcess();
-            throw new TimeoutException($"Timed out waiting for Ashes.Lsp to exit. Assembly: '{_lspAssemblyPath}'.");
+            throw new TimeoutException($"Timed out waiting for ashes-lsp to exit. Assembly: '{_lspAssemblyPath}'.");
         }
     }
 

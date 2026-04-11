@@ -40,7 +40,7 @@ flowchart LR
 
 ## Project Dependency Graph
 
-The repository is split into nine .NET projects with strict dependency
+The repository is split into ten .NET projects with strict dependency
 rules:
 
 ```mermaid
@@ -51,6 +51,7 @@ graph TD
     Formatter["Ashes.Formatter\n(Canonical Formatting)"]
     TestRunner["Ashes.TestRunner\n(E2E .ash Tests)"]
     Lsp["Ashes.Lsp\n(Language Server)"]
+    Dap["Ashes.Dap\n(Debug Adapter Protocol Server)"]
     Cli["Ashes.Cli\n(CLI Orchestration)"]
     Tests["Ashes.Tests\n(Compiler Tests)"]
     LspTests["Ashes.Lsp.Tests\n(LSP Tests)"]
@@ -71,6 +72,7 @@ graph TD
     Tests --> Frontend
     Tests --> Semantics
     Tests --> Backend
+    Tests --> Dap
     Tests --> Lsp
     Tests --> TestRunner
     LspTests --> Lsp
@@ -83,7 +85,28 @@ graph TD
 - **Backend** depends only on Semantics (transitively Frontend).
 - **Formatter** depends only on Frontend — it never touches Semantics or Backend.
 - **Lsp** must **not** depend on Backend.
+- **Dap** currently has zero internal compiler dependencies and remains a standalone tooling process.
 - **Cli** is the only orchestration project that wires all phases together.
+
+------------------------------------------------------------------------
+
+## Tooling Servers
+
+Ashes exposes two editor-facing servers alongside the compiler and CLI:
+
+| Project | Protocol | Responsibility |
+|---------|----------|----------------|
+| Ashes.Lsp | Language Server Protocol | Syntax highlighting, diagnostics, completions, hovers, formatting |
+| Ashes.Dap | Debug Adapter Protocol | Launching debug sessions, translating IDE debug requests to native debugger commands, surfacing runtime state |
+
+`Ashes.Lsp` is a consumer of compiler phases: it requests parsing,
+binding, and formatting services from the compiler projects and converts
+the results into LSP responses.
+
+`Ashes.Dap` is intentionally outside the compiler pipeline. It does not
+parse or type-check `.ash` code; instead it brokers DAP traffic between
+the IDE and a native debugger backend such as GDB or LLDB, operating on
+already-compiled binaries and their debug information.
 
 ------------------------------------------------------------------------
 
@@ -210,27 +233,55 @@ registers.
 
 ## Memory Model
 
-Ashes programs run without a garbage collector. All heap allocations come
-from a single, pre-allocated **4 MB arena** with a bump-pointer cursor.
+Ashes programs run without a garbage collector. Heap allocation uses a
+**chunked arena allocator** with a bump-pointer cursor and a 4 MB chunk
+size.
 
 ```
-┌──────────────────────────────────────┐
-│            4 MB static heap          │
-│  ┌─────┬─────┬─────┬──── ─ ─ ─ ──┐  │
-│  │alloc│alloc│alloc│   free ...   │  │
-│  └─────┴─────┴─────┴──── ─ ─ ─ ──┘  │
-│                     ▲                │
-│                   cursor             │
-└──────────────────────────────────────┘
+┌──────────────────────── chunk 0 (4 MB) ─────────────────────────┐
+│ [prev=0] [alloc] [alloc] [alloc] ... [free]                     │
+└─────────────────────────────────────────────────────────────────┘
+                                                   │ grow on demand
+                                                   ▼
+┌──────────────────────── chunk 1 (4 MB) ─────────────────────────┐
+│ [prev=chunk0] [alloc] [alloc] ... [free]                        │
+└─────────────────────────────────────────────────────────────────┘
+                                                               ▲
+                                                            cursor
 ```
 
-- The heap and cursor are **LLVM module-level globals**, so every function
-  (including lifted closures) shares the same allocator.
-- `Alloc(n)` bumps the cursor by `n` bytes and returns the old cursor.
-- Strings are stored as `[length:i64][bytes...]` on the heap.
-- Closures are 16-byte heap cells: `[function-pointer:i64][env-pointer:i64]`.
-- ADT values are heap cells: `[tag:i64][field0:i64][field1:i64]...`.
-- There is no deallocation — programs that exhaust the arena will fail.
+- The allocator state lives in **LLVM module-level globals** for the current
+   heap cursor and current chunk end, so every function shares one arena.
+- Program entry allocates the first chunk from the OS with `mmap` (Linux) or
+   `VirtualAlloc` (Windows).
+- `Alloc(n)` and dynamic allocation paths bump the cursor inside the current
+   chunk. If `cursor + n` would overflow the chunk, the runtime allocates a new
+   4 MB chunk, links it to the previous chunk, and continues there.
+- Each chunk reserves its first 8 bytes for a `prev` pointer to the previous
+   chunk base. Allocations start after that header.
+- Ownership scopes in lowered IR save and restore arena watermarks. At scope
+   exit, `RestoreArenaState` resets the allocator to the saved cursor/end, and
+   `ReclaimArenaChunks` walks the chunk chain and releases abandoned chunks with
+   `munmap` or `VirtualFree`.
+- `Drop` is therefore not general per-object deallocation. For most owned heap
+   values it is a no-op; bulk reclamation happens through arena reset. Resource
+   types such as sockets still route `Drop` to explicit cleanup operations.
+
+### Runtime layouts
+
+- Dynamic strings use `[length:i64][bytes...]`. String literals may also be
+   emitted as read-only globals with the same in-memory layout instead of being
+   copied into the arena.
+- Heap closures are 24-byte records:
+   `[function-pointer:i64][env-pointer:i64][env-size:i64]`.
+- ADT values use `[tag:i64][field0:i64][field1:i64]...`.
+- Some temporary values also have stack-allocated forms during codegen
+   (notably closures and certain ADTs), so not every runtime value necessarily
+   originates from the arena.
+
+This model is still arena-based and non-GC, but it is no longer a single
+never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
+and whole OS chunks can be returned once they fall out of scope.
 
 ------------------------------------------------------------------------
 
