@@ -28,7 +28,7 @@ public sealed class Lowering
     private bool _usesAsync;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
-    // Source location tracking for debug info (Phase 0c)
+    // Source location tracking for debug info
     private string? _currentFilePath;
     private int[]? _lineStarts;
     private int _sourceLength;
@@ -143,7 +143,7 @@ public sealed class Lowering
 
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
-    // --- Ownership tracking (Phase 1: resources, Phase 2: all owned types, Phase 3: borrowing) ---
+    // --- Ownership tracking ---
     // Tracks owned bindings and their drop/borrow state.
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
@@ -159,7 +159,7 @@ public sealed class Lowering
         /// Number of live borrows of this value. The compiler infers borrows when
         /// an owned value is used without consuming ownership. By scope structure,
         /// all borrows are consumed before the owning scope exits and emits Drop —
-        /// this count is informational for future optimization passes (Phase 4).
+        /// this count is informational for future optimization passes.
         /// </summary>
         public int ActiveBorrows { get; set; }
     }
@@ -712,7 +712,7 @@ public sealed class Lowering
 
         RecordHoverType(GetSpan(v), v.Name, result.Type);
 
-        // Phase 3: Compiler-inferred borrowing.
+        // Compiler-inferred borrowing.
         // When an owned binding is accessed, emit a Borrow instruction.
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
@@ -1338,7 +1338,7 @@ public sealed class Lowering
         };
         _scopes.Push(child);
 
-        // Track owned bindings for deterministic cleanup (Phase 2: all owned types)
+        // Track owned bindings for deterministic cleanup
         PushOwnershipScope();
         var prunedValType = Prune(valType);
         var ownedTypeName = GetOwnedTypeName(prunedValType);
@@ -2733,10 +2733,10 @@ public sealed class Lowering
             // Arena reset: restore heap state to loop-iteration watermark before
             // jumping back.
             //
-            // Phase 2a: all args are copy types (Int, Float, Bool) → plain reset.
+            // All args are copy types (Int, Float, Bool) → plain reset.
             // No heap pointers escape, so reclaiming the iteration's allocations is safe.
             //
-            // Phase 2c: some args are heap types but all heap-type args can be copy-outed
+            // Some args are heap types but all heap-type args can be copied out
             // (TStr, or TList with copy-type element).  After the reset we copy each such
             // argument out to the fresh watermark position, then overwrite its param slot
             // with the copy pointer.  The previous iteration's cells lie BELOW the saved
@@ -2747,13 +2747,13 @@ public sealed class Lowering
 
                 if (newArgTypes.All(CanArenaReset))
                 {
-                    // Phase 2a: all copy types.
+                    // All copy types.
                     Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                 }
                 else
                 {
-                    // Phase 2c: check whether every heap-type arg can be copy-outed.
+                    // Check whether every heap-type arg can be copy-outed.
                     bool allCopyable = true;
                     for (int i = 0; i < newArgTypes.Length; i++)
                     {
@@ -2800,7 +2800,7 @@ public sealed class Lowering
                         }
                         Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     }
-                    // else: complex heap types — no arena reset (Phase 1 fallback).
+                    // else: complex heap types — no arena reset.
                 }
             }
 
@@ -2879,7 +2879,7 @@ public sealed class Lowering
             }
         }
 
-        // Phase 3: per-call arena watermark — save the heap cursor/end before
+        // Per-call arena watermark — save the heap cursor/end before
         // evaluating the callee and arguments so that intermediate allocations
         // (closures from partial application, temporary data structures inside
         // the callee, argument construction) can be reclaimed after the call
@@ -2949,7 +2949,7 @@ public sealed class Lowering
             currentType = Prune(fun.Ret);
         }
 
-        // Phase 3: restore arena after the call chain completes.
+        // Restore arena after the call chain completes.
         // - Copy-type result (Int, Float, Bool): all allocations from the call
         //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
         // - Self-contained heap result (String, List with safe element, Closure,
