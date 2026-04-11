@@ -407,20 +407,16 @@ public static class StateMachineTransform
             var writtenBefore = new HashSet<int>();
             for (int i = 0; i < awaitPos; i++)
             {
-                if (instructions[i] is IrInst.StoreLocal store)
-                {
-                    writtenBefore.Add(store.Slot);
-                }
+                foreach (int slot in GetWrittenLocalSlots(instructions[i]))
+                    writtenBefore.Add(slot);
             }
 
             // Collect locals read after the await point
             var readAfter = new HashSet<int>();
             for (int i = awaitPos + 1; i < instructions.Count; i++)
             {
-                if (instructions[i] is IrInst.LoadLocal load)
-                {
-                    readAfter.Add(load.Slot);
-                }
+                foreach (int slot in GetReadLocalSlots(instructions[i]))
+                    readAfter.Add(slot);
             }
 
             // Live across = written before AND read after
@@ -435,6 +431,36 @@ public static class StateMachineTransform
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns all local slots written (defined) by an instruction.
+    /// Includes explicit StoreLocal and implicit writes by arena instructions.
+    /// </summary>
+    private static IEnumerable<int> GetWrittenLocalSlots(IrInst inst)
+    {
+        return inst switch
+        {
+            IrInst.StoreLocal s => [s.Slot],
+            IrInst.SaveArenaState s => [s.CursorLocalSlot, s.EndLocalSlot],
+            IrInst.RestoreArenaState r => [r.PreRestoreEndSlot],
+            _ => []
+        };
+    }
+
+    /// <summary>
+    /// Returns all local slots read (used) by an instruction.
+    /// Includes explicit LoadLocal and implicit reads by arena instructions.
+    /// </summary>
+    private static IEnumerable<int> GetReadLocalSlots(IrInst inst)
+    {
+        return inst switch
+        {
+            IrInst.LoadLocal l => [l.Slot],
+            IrInst.RestoreArenaState r => [r.CursorLocalSlot, r.EndLocalSlot],
+            IrInst.ReclaimArenaChunks r => [r.SavedEndSlot, r.PreRestoreEndSlot],
+            _ => []
+        };
     }
     /// <summary>
     /// Returns all temps defined (written to) by an instruction.
