@@ -1,10 +1,21 @@
-#!/bin/bash
-# Mock compiler for integration tests.
-# Handles --version and common compiler subcommands.
-case "$1" in
-    --version) echo "0.0.1"; exit 0;;
-    compile)   echo "Compiled successfully"; exit 0;;
-    run)       echo "Running..."; exit 0;;
-    test)      echo "All tests passed"; exit 0;;
-    *)         exit 0;;
-esac
+#!/usr/bin/env node
+// Mock compiler for integration tests.
+// Handles --version and common compiler subcommands.
+const command = process.argv[2];
+
+switch (command) {
+    case '--version':
+        console.log('0.0.1');
+        process.exit(0);
+    case 'compile':
+        console.log('Compiled successfully');
+        process.exit(0);
+    case 'run':
+        console.log('Running...');
+        process.exit(0);
+    case 'test':
+        console.log('All tests passed');
+        process.exit(0);
+    default:
+        process.exit(0);
+}
