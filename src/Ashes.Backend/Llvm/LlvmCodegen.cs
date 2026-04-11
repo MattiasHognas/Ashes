@@ -502,7 +502,7 @@ internal static partial class LlvmCodegen
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutList or IrInst.CopyOutClosure;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutList or IrInst.CopyOutClosure or IrInst.CopyOutTcoListCell;
     }
 
     private static void EmitFunctionBody(
@@ -784,8 +784,9 @@ internal static partial class LlvmCodegen
             IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot),
             IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot),
             IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
-            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp)),
+            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy)),
             IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
+            IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }

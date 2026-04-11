@@ -177,18 +177,39 @@ public abstract record IrInst
     public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
 
     /// <summary>
+    /// Describes how head values are handled during deep list copy-out.
+    /// </summary>
+    public enum ListHeadCopyKind
+    {
+        /// <summary>Head is an inline copy-type value (Int, Float, Bool). No head copy needed.</summary>
+        Inline = 0,
+        /// <summary>Head is a string pointer. Each string is dynamically copied (8 + length bytes).</summary>
+        String = 1,
+        /// <summary>Head is an inner list pointer (with copy-type elements). Each inner list is deep-copied.</summary>
+        InnerList = 2,
+    }
+
+    /// <summary>
     /// Deep-copies an entire cons-cell chain out of the arena to fresh allocations.
     /// Each cons cell is 16 bytes: {head:i64, tail:i64}. The copy walks the tail
     /// pointers, allocating and copying each cell until a nil (0) tail is reached.
-    /// Head values must be copy types stored inline in the cell's head word. This
-    /// instruction copies cons cells only and does not copy or relocate heap objects
-    /// referenced by head values.
+    /// <para>
+    /// The <see cref="HeadCopy"/> parameter controls how head values are handled:
+    /// <list type="bullet">
+    ///   <item><b>Inline:</b> Head is a copy-type value stored directly in the cell's
+    ///     head word. No additional copy needed.</item>
+    ///   <item><b>String:</b> Head is a pointer to a string ({length, bytes}) that also
+    ///     resides in arena memory. Each string is copied to a fresh allocation.</item>
+    ///   <item><b>InnerList:</b> Head is a pointer to an inner cons-cell chain (with
+    ///     copy-type elements). Each inner list is deep-copied recursively.</item>
+    /// </list>
+    /// </para>
     /// <para>
     /// Emitted AFTER <see cref="RestoreArenaState"/> and BEFORE
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutList(int DestTemp, int SrcTemp) : IrInst;
+    public sealed record CopyOutList(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy = ListHeadCopyKind.Inline) : IrInst;
 
     /// <summary>
     /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its
@@ -206,6 +227,32 @@ public abstract record IrInst
     /// </para>
     /// </summary>
     public sealed record CopyOutClosure(int DestTemp, int SrcTemp) : IrInst;
+
+    /// <summary>
+    /// TCO-specific: copies a single cons cell (16 bytes) out of the arena and also
+    /// copies the head value according to <see cref="HeadCopy"/>. Used for TCO
+    /// accumulators of type <c>TList(TStr)</c> or <c>TList(TList(copy-type))</c>.
+    /// <para>
+    /// Only the top cons cell (created in the current TCO iteration) needs copying —
+    /// the tail pointer already references cells from previous iterations that are
+    /// safely below the arena watermark.
+    /// </para>
+    /// <para>
+    /// <b>String head (<see cref="ListHeadCopyKind.String"/>):</b> Copies the string
+    /// ({length, bytes}) to a fresh allocation, then copies the 16-byte cons cell
+    /// and updates its head field to point to the new string.
+    /// </para>
+    /// <para>
+    /// <b>InnerList head (<see cref="ListHeadCopyKind.InnerList"/>):</b> Deep-copies
+    /// the inner cons-cell chain (with copy-type elements) to fresh allocations, then
+    /// copies the 16-byte outer cons cell and updates its head to point to the new chain.
+    /// </para>
+    /// <para>
+    /// Emitted AFTER <see cref="RestoreArenaState"/> and BEFORE
+    /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
+    /// </para>
+    /// </summary>
+    public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
