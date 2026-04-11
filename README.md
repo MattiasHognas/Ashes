@@ -84,13 +84,17 @@ This repository contains the full toolchain:
 ### Bindings & Functions
 
 ```ash
+import Ashes.IO as io
+
 let double = fun (x) -> x + x
-in Ashes.IO.print(double(21))
+in io.print(double(21))
 ```
 
 ### Pattern Matching & ADTs
 
 ```ash
+import Ashes.IO as io
+
 type Color =
     | Red
     | Green
@@ -102,43 +106,47 @@ let name = fun (c) ->
         | Green -> "green"
         | Blue  -> "blue"
 
-in Ashes.IO.print(name(Green))
+in io.print(name(Green))
 ```
 
 ### Lists & Recursion
 
 ```ash
+import Ashes.IO as io
+
 let rec sum = fun (lst) -> fun (acc) ->
     match lst with
         | []        -> acc
         | x :: rest -> sum(rest)(acc + x)
 
-in Ashes.IO.print(sum([1, 2, 3, 4, 5])(0))
+in io.print(sum([1, 2, 3, 4, 5])(0))
 ```
 
 ### Pipelines
 
 ```ash
 import Ashes.Result as result
+import Ashes.IO as io
 
 "42"
 |> parseOr
 |> result.map(fun (n) -> n + 1)
 |> result.default(0)
-|> Ashes.IO.print
+|> io.print
 ```
 
 ### Async/Await
 
 ```ash
 import Ashes.Async as task
+import Ashes.IO as io
 
 let work = async
     let! a = task.fromResult(21)
     in
         let! b = task.fromResult(21)
         in a + b
-in task.run(work) |> Ashes.IO.print
+in task.run(work) |> io.print
 ```
 
 ### Polymorphism
@@ -146,12 +154,14 @@ in task.run(work) |> Ashes.IO.print
 Hindley-Milner let-polymorphism — use the same function at different types:
 
 ```ash
+import Ashes.IO as io
+
 let id = fun (x) -> x
 in
     let _ = id(42)
     in
         let _ = id("hello")
-        in Ashes.IO.print("ok")
+        in io.print("ok")
 ```
 
 ---
