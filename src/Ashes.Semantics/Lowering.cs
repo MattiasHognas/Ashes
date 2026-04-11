@@ -4435,8 +4435,8 @@ public sealed class Lowering
                 return CopyOutKind.List;
 
             case TypeRef.TFun:
-                staticSizeBytes = 0; // not used — closure+env copy at runtime
-                return CopyOutKind.Closure;
+                staticSizeBytes = 0;
+                return CopyOutKind.None;
 
             case TypeRef.TNamedType named:
                 return CanCopyOutAdt(named, out staticSizeBytes)
