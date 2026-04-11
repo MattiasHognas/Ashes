@@ -180,8 +180,9 @@ public abstract record IrInst
     /// Deep-copies an entire cons-cell chain out of the arena to fresh allocations.
     /// Each cons cell is 16 bytes: {head:i64, tail:i64}. The copy walks the tail
     /// pointers, allocating and copying each cell until a nil (0) tail is reached.
-    /// Head values must be copy types (inline i64) or self-contained (TStr — whose
-    /// data is inline with no internal heap pointers).
+    /// Head values must be copy types stored inline in the cell's head word. This
+    /// instruction copies cons cells only and does not copy or relocate heap objects
+    /// referenced by head values.
     /// <para>
     /// Emitted AFTER <see cref="RestoreArenaState"/> and BEFORE
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
