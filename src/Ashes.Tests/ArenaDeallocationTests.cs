@@ -474,7 +474,7 @@ public sealed class ArenaDeallocationTests
     {
         // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it
         // to acc. The inner list has copy-type elements, so the outer cell + inner chain
-        // can be copy-outed via CopyOutTcoListCell(InnerList).
+        // can be copied out via CopyOutTcoListCell(InnerList).
         var ir = LowerProgram(
             """
             let rec build = fun (n) -> fun (acc) ->
