@@ -19,6 +19,7 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     private StreamWriter? _lldbIn;
     private int _tokenCounter;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<string>> _pendingCommands = new();
+    private string _launchError = string.Empty;
 
     public event Action<string>? OnStopped;
     public event Action<int>? OnExited;
@@ -31,10 +32,31 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         {
             try
             {
-                _lldb = Process.Start(startInfo);
-                if (_lldb is not null)
+                var lldb = Process.Start(startInfo);
+                if (lldb is not null)
                 {
-                    break;
+                    if (await ExitedDuringStartupAsync(lldb))
+                    {
+                        lastError = await CreateStartupFailureAsync(startInfo, lldb);
+                        lldb.Dispose();
+                        continue;
+                    }
+
+                    _lldb = lldb;
+                    _lldbIn = _lldb.StandardInput;
+                    _lldbIn.AutoFlush = true;
+
+                    // Start reading LLDB output and draining stderr to prevent pipe buffer deadlocks.
+                    _ = Task.Run(() => ReadOutputAsync(_lldb.StandardOutput));
+                    _ = Task.Run(() => DrainStreamAsync(_lldb.StandardError));
+
+                    if (args is not null && args.Length > 0)
+                    {
+                        var escapedArgs = string.Join(" ", args.Select(EscapeArg));
+                        await SendCommandAsync($"-exec-arguments {escapedArgs}");
+                    }
+
+                    return;
                 }
 
                 lastError = new InvalidOperationException($"Failed to start LLDB using '{startInfo.FileName}'.");
@@ -48,23 +70,6 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         if (_lldb is null)
         {
             throw CreateStartFailure(debuggerPath, lastError);
-        }
-
-        _lldbIn = _lldb.StandardInput;
-        _lldbIn.AutoFlush = true;
-
-        // Start reading LLDB output and draining stderr to prevent pipe buffer deadlocks
-        _ = Task.Run(() => ReadOutputAsync(_lldb.StandardOutput));
-        _ = Task.Run(() => DrainStreamAsync(_lldb.StandardError));
-
-        // Wait for initial prompt
-        await Task.Delay(200);
-
-        // Set program arguments if provided
-        if (args is not null && args.Length > 0)
-        {
-            var escapedArgs = string.Join(" ", args.Select(EscapeArg));
-            await SendCommandAsync($"-exec-arguments {escapedArgs}");
         }
     }
 
@@ -154,19 +159,28 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     {
         if (_lldbIn is null)
         {
-            return "";
+            throw new InvalidOperationException("LLDB is not running.");
         }
 
         var token = Interlocked.Increment(ref _tokenCounter);
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingCommands[token] = tcs;
 
-        await _lldbIn.WriteLineAsync($"{token}{command}");
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
-            cts.Token.Register(() => tcs.TrySetResult(""));
+            await _lldbIn.WriteLineAsync($"{token}{command}");
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            throw CreateCommandFailure(command, ex);
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var registration = cts.Token.Register(
+            () => tcs.TrySetException(new TimeoutException($"Timed out waiting for LLDB response to '{command}'.")));
+
+        try
+        {
             var result = await tcs.Task;
             if (result.Contains("^error", StringComparison.Ordinal))
             {
@@ -174,10 +188,6 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
             }
 
             return result;
-        }
-        catch
-        {
-            return "";
         }
         finally
         {
@@ -266,6 +276,36 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     [GeneratedRegex(@"^(\d+)\^")]
     private static partial Regex ResultRecordRegex();
 
+    private static async Task<bool> ExitedDuringStartupAsync(Process process)
+    {
+        await Task.Delay(200);
+        return process.HasExited;
+    }
+
+    private async Task<InvalidOperationException> CreateStartupFailureAsync(ProcessStartInfo startInfo, Process process)
+    {
+        try
+        {
+            await process.WaitForExitAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            // Process already exited.
+        }
+
+        var stderr = await SafeReadToEndAsync(process.StandardError);
+        var stdout = await SafeReadToEndAsync(process.StandardOutput);
+        _launchError = FirstNonEmpty(stderr, stdout);
+
+        var message = $"LLDB exited immediately when started as '{BuildCommandDisplay(startInfo)}'.";
+        if (!string.IsNullOrWhiteSpace(_launchError))
+        {
+            message += $" {NormalizeDiagnostic(_launchError)}";
+        }
+
+        return new InvalidOperationException(message);
+    }
+
     private static ProcessStartInfo CreateProcessStartInfo(string debuggerPath, string program, string? cwd, bool useInterpreterMi2)
     {
         var psi = new ProcessStartInfo(debuggerPath)
@@ -296,11 +336,17 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     {
         if (!string.IsNullOrWhiteSpace(debuggerPath))
         {
-            return new InvalidOperationException($"Failed to start LLDB using '{debuggerPath}'.", lastError);
+            var message = $"Failed to start LLDB using '{debuggerPath}'.";
+            if (lastError is not null)
+            {
+                message += $" {lastError.Message}";
+            }
+
+            return new InvalidOperationException(message, lastError);
         }
 
         return new InvalidOperationException(
-            "Failed to start LLDB. Tried 'lldb-mi' and 'lldb --interpreter=mi2'. Install LLDB or set debuggerPath.",
+            "Failed to start LLDB. Tried 'lldb-mi' and 'lldb --interpreter=mi2'. Install 'lldb-mi' or set debuggerPath to an MI-compatible LLDB frontend.",
             lastError);
     }
 
@@ -325,6 +371,62 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     private static string BuildBreakpointInsertCommand(string filePath, int line)
     {
         return $"-break-insert --source {EscapeArg(filePath)} --line {line.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    private InvalidOperationException CreateCommandFailure(string command, Exception innerException)
+    {
+        if (_lldb is not null && _lldb.HasExited)
+        {
+            var message = $"LLDB exited before handling '{command}' (exit code {_lldb.ExitCode.ToString(CultureInfo.InvariantCulture)}).";
+            if (!string.IsNullOrWhiteSpace(_launchError))
+            {
+                message += $" {NormalizeDiagnostic(_launchError)}";
+            }
+
+            return new InvalidOperationException(message, innerException);
+        }
+
+        return new InvalidOperationException($"Failed to send command to LLDB: {command}", innerException);
+    }
+
+    private static async Task<string> SafeReadToEndAsync(StreamReader reader)
+    {
+        try
+        {
+            return await reader.ReadToEndAsync();
+        }
+        catch (ObjectDisposedException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string BuildCommandDisplay(ProcessStartInfo startInfo)
+    {
+        if (startInfo.ArgumentList.Count == 0)
+        {
+            return startInfo.FileName;
+        }
+
+        return string.Join(" ", new[] { startInfo.FileName }.Concat(startInfo.ArgumentList));
+    }
+
+    private static string NormalizeDiagnostic(string diagnostic)
+    {
+        return Regex.Replace(diagnostic.Trim(), "\\s+", " ");
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
     }
 
     private async Task<DapVariable?> CreateTypedVariableAsync(string localName, string fallbackValue)

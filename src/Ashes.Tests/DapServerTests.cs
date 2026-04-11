@@ -399,6 +399,26 @@ public sealed class DapServerTests
     }
 
     [Test]
+    public async Task Lldb_start_reports_candidate_startup_errors()
+    {
+        var debuggerPath = CreateFailingDebuggerScript();
+
+        try
+        {
+            using var backend = new LldbDebuggerBackend();
+            var ex = await Should.ThrowAsync<InvalidOperationException>(
+                () => backend.StartAsync("/tmp/test", null, null, debuggerPath));
+
+            ex.Message.ShouldContain("LLDB exited immediately");
+            ex.Message.ShouldContain("unknown option: --interpreter=mi2");
+        }
+        finally
+        {
+            DeleteDebuggerScript(debuggerPath);
+        }
+    }
+
+    [Test]
     public async Task Server_launch_with_gdb_type_uses_gdb_backend()
     {
         IDebuggerBackend? capturedBackend = null;
@@ -599,6 +619,39 @@ public sealed class DapServerTests
 
         inputStream.Position = 0;
         return (inputStream, new MemoryStream());
+    }
+
+    private static string CreateFailingDebuggerScript()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var path = Path.Combine(root, "lldb.cmd");
+            File.WriteAllText(path, "@echo error: unknown option: --interpreter=mi2 1>&2\r\n@exit /b 1\r\n");
+            return path;
+        }
+
+        var scriptPath = Path.Combine(root, "lldb");
+        File.WriteAllText(scriptPath, "#!/bin/sh\necho 'error: unknown option: --interpreter=mi2' >&2\nexit 1\n");
+        File.SetUnixFileMode(
+            scriptPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        return scriptPath;
+    }
+
+    private static void DeleteDebuggerScript(string debuggerPath)
+    {
+        var directory = Path.GetDirectoryName(debuggerPath);
+        if (directory is null || !Directory.Exists(directory))
+        {
+            return;
+        }
+
+        Directory.Delete(directory, recursive: true);
     }
 
     private static List<JsonElement> ParseDapOutput(MemoryStream outputStream)
