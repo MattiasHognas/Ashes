@@ -30,24 +30,7 @@ All original audit findings have been addressed:
 Every remaining optimization task, in recommended execution order.
 Each item builds on the previous ones.
 
-### 1. ~~Borrow elision pass~~ ✅ Done
-
-Implemented `ElideBorrowsForConstants` in `IrOptimizer.cs`.
-
-- ✅ Temp aliasing infrastructure: use-def chain tracking per temp (copy-type
-  producers via `LoadConst*` scan, per-temp use count via `CollectUsedTemps`).
-- ✅ Copy-type elision: `Borrow` instructions whose source is produced by
-  `LoadConstInt`/`LoadConstFloat`/`LoadConstBool` are removed; all uses of the
-  borrow target are remapped to the original source temp.
-- ✅ Single-use elision: non-copy `Borrow` instructions whose target is used
-  exactly once are also elided (single-use borrows are semantically equivalent
-  to a direct reference).
-- ✅ Transitive chain resolution: chains of borrows (Borrow(t2,t1) where t1 was
-  already remapped) are resolved to the root source via `ResolveTemp`.
-- ✅ `RemapSourceTemps` helper rewrites all source-temp references in any
-  `IrInst` variant using `with` record syntax.
-
-### 2. Drop elision pass
+### 1. Drop elision pass
 
 Implement `ElideRedundantDrops` in `IrOptimizer.cs` (currently no-op).
 
@@ -59,7 +42,7 @@ Implement `ElideRedundantDrops` in `IrOptimizer.cs` (currently no-op).
   hold OS resources.
 - Prerequisite: same use-def / ownership flow analysis as borrow elision.
 
-### 3. Escape analysis — stack-allocate non-escaping closures / ADTs
+### 2. Escape analysis — stack-allocate non-escaping closures / ADTs
 
 Analyze which closures and ADTs never escape their defining scope. Those
 can be stack-allocated (`alloca`) instead of arena-allocated, avoiding
@@ -71,7 +54,7 @@ arena pressure entirely.
   immediately — the ADT never escapes the match scope.
 - Enables further drop elision: stack-allocated values don't need drops.
 
-### 4. Decision tree pattern matching for large ADTs
+### 3. Decision tree pattern matching for large ADTs
 
 Replace the current linear chain of tag checks with a decision tree
 (jump table or balanced binary search) for ADTs with many constructors.
@@ -79,7 +62,7 @@ Replace the current linear chain of tag checks with a decision tree
 - Threshold: use linear scan for ≤ 4 constructors; decision tree above.
 - Reduces match complexity from O(n) to O(log n) or O(1) for dense tags.
 
-### 5. Runtime string interning
+### 4. Runtime string interning
 
 Add a runtime intern table for strings. `concat`, `substring`, and other
 string-producing operations check the table before allocating.
@@ -88,7 +71,7 @@ string-producing operations check the table before allocating.
 - Most valuable for programs that build many identical strings in loops.
 - Low priority — arena deallocation already handles most memory pressure.
 
-### 6. Mutual recursion TCO
+### 5. Mutual recursion TCO
 
 Extend tail call optimization to detect mutual recursion (e.g. `f` calls
 `g` in tail position, `g` calls `f` in tail position).
