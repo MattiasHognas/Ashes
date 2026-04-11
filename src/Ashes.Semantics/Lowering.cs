@@ -2736,7 +2736,7 @@ public sealed class Lowering
             // All args are copy types (Int, Float, Bool) → plain reset.
             // No heap pointers escape, so reclaiming the iteration's allocations is safe.
             //
-            // Some args are heap types but all heap-type args can be copy-outed
+            // Some args are heap types but all heap-type args can be copied out
             // (TStr, or TList with copy-type element).  After the reset we copy each such
             // argument out to the fresh watermark position, then overwrite its param slot
             // with the copy pointer.  The previous iteration's cells lie BELOW the saved
