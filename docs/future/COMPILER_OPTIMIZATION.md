@@ -13,7 +13,7 @@ All original audit findings have been addressed:
 |------|---------------|
 | **LLVM passes** | Targeted pipeline (mem2reg, instcombine, early-cse, reassociate, gvn, dce, inline, licm, dse) at O1–O3. PLT32 + PE relocation support. Freestanding builtins (memcpy, memset, strlen, memcmp, bcmp) emitted per module. |
 | **Memory allocator** | OS-backed `mmap`/`VirtualAlloc` chunks (4 MB each, on demand). Bounds checking with clean error. |
-| **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. |
+| **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type/TStr element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. |
 | **String operations** | `EmitCopyBytes` → `LLVMBuildMemCpy`. Comparison → `memcmp`/`bcmp`. Literals → `.rodata` global constants (no heap alloc). |
 | **Pattern matching** | Tag/zero/non-zero checks → single `CmpIntEq`/`CmpIntNe` + one conditional jump. |
 | **Function attributes** | `nounwind` on all functions. `willreturn`, `noalias`, `nonnull`, `readonly`, `memory(read)` on builtins. |
@@ -29,19 +29,21 @@ All original audit findings have been addressed:
 Every remaining optimization task, in recommended execution order.
 Each item builds on the previous ones.
 
-### 1. Extend copy-out to List, ADT, and closure (scope + call results)
+### 1. ~~Extend copy-out to List, ADT, and closure (scope + call results)~~ ✅
 
-Extend `CanCopyOutArena` in `Lowering.cs` beyond `TStr`.
+Extended copy-out in `Lowering.cs` beyond `TStr`.
 
-- **List:** Cons cell is 16 bytes `{head:i64, tail:i64}` — shallow copy.
-  `tail` always points below the watermark (parent scope / previous
-  iteration). Safe when element is copy-type or self-contained (e.g. `TStr`).
-- **Closure:** 16 bytes `{code:i64, env:i64}` — `code` is a function
-  pointer (never heap), `env` points to a parent scope environment.
-  Shallow copy is safe.
-- **ADT:** `(1 + fieldCount) * 8` bytes — shallow copy safe when all
-  fields are copy types, `TStr`, or already-copy-outed types. Requires
-  recursive type check of field types.
+- **List:** Deep cons-chain copy via `CopyOutList` IR instruction. Walks tail
+  pointers at runtime, allocating and relinking each cell. Safe when element is
+  copy-type or self-contained (`TStr`). Shallow 16-byte copy is NOT safe for
+  multi-cell chains (inner cells would be left in freed arena space).
+- **Closure:** Closure struct + env copy via `CopyOutClosure` IR instruction.
+  Closure layout changed from 16 to 24 bytes: `{code:i64, env:i64, env_size:i64}`.
+  Reads `env_size` at runtime to copy the env block. Shallow 16-byte copy is
+  NOT safe (env pointer would dangle).
+- **ADT:** `(1 + fieldCount) * 8` bytes — shallow `CopyOutArena` copy, safe when all
+  fields across all constructors are copy types (Int, Float, Bool) and all
+  constructors have the same arity.
 
 Applies to both let/match scope results (`PopOwnershipScope`) and
 per-call results (`LowerCall` post-`CallClosure`).

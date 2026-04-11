@@ -127,7 +127,7 @@ public sealed class Lowering
             public override TextSpan? DefinitionSpan => Span;
         }
 
-        public sealed record Self(string FuncLabel, TypeRef T, TextSpan? Span = null) : Binding(T)
+        public sealed record Self(string FuncLabel, TypeRef T, int EnvSizeBytes, TextSpan? Span = null) : Binding(T)
         {
             public override TextSpan? DefinitionSpan => Span;
         }
@@ -683,7 +683,7 @@ public sealed class Lowering
             case Binding.Self self:
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
-                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp));
+                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes));
                 result = (temp, self.Type);
                 break;
 
@@ -2395,7 +2395,7 @@ public sealed class Lowering
         }
         if (selfName is not null && selfType is not null)
         {
-            scope[selfName] = new Binding.Self(label, selfType, Lookup(selfName)?.DefinitionSpan);
+            scope[selfName] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
         }
 
         _scopes.Clear();
@@ -2501,9 +2501,10 @@ public sealed class Lowering
             _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
         }
 
-        // Produce closure object: alloc 16 bytes and store (code_ptr, env_ptr)
+        // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
-        Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp));
+        int envSizeBytes = captures.Count * 8;
+        Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
         return (closureTemp, funTy);
     }
 
@@ -2942,13 +2943,28 @@ public sealed class Lowering
             Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
             Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         }
-        else if (CanCopyOutArena(callResultType, out int callCopySize))
+        else
         {
-            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-            int copyDest = NewTemp();
-            Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
-            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
-            currentTemp = copyDest;
+            var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
+            if (callCopyOutKind != CopyOutKind.None)
+            {
+                Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+                int copyDest = NewTemp();
+                switch (callCopyOutKind)
+                {
+                    case CopyOutKind.Shallow:
+                        Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+                        break;
+                    case CopyOutKind.List:
+                        Emit(new IrInst.CopyOutList(copyDest, currentTemp));
+                        break;
+                    case CopyOutKind.Closure:
+                        Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
+                        break;
+                }
+                Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+                currentTemp = copyDest;
+            }
         }
 
         return (currentTemp, currentType);
@@ -3444,7 +3460,7 @@ public sealed class Lowering
         // then wrap it in a task struct via CreateTask.
         _usesClosures = true;
         int closureTemp = NewTemp();
-        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp));
+        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captures.Count * 8));
         int taskTemp = NewTemp();
         Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captures.Count));
         return (taskTemp, taskType);
@@ -4330,19 +4346,29 @@ public sealed class Lowering
                 Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
                 Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
             }
-            else if (hadAliveOwned && resultTemp >= 0 && CanCopyOutArena(resultType, out int staticSizeBytes))
+            else if (hadAliveOwned && resultTemp >= 0)
             {
-                // Heap-type result that is self-contained (e.g. String): restore arena
-                // watermark first (resets cursor/end but does NOT free OS chunks), then
-                // copy the result object to the freshly reset cursor position (source
-                // is still readable because chunks haven't been freed yet), then reclaim
-                // abandoned chunks.
-                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
-                int copyDest = NewTemp();
-                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
-                Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
-                _ownershipScopes.Pop();
-                return copyDest;
+                var copyOutKind = GetCopyOutKind(resultType, out int staticSizeBytes);
+                if (copyOutKind != CopyOutKind.None)
+                {
+                    Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+                    int copyDest = NewTemp();
+                    switch (copyOutKind)
+                    {
+                        case CopyOutKind.Shallow:
+                            Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
+                            break;
+                        case CopyOutKind.List:
+                            Emit(new IrInst.CopyOutList(copyDest, resultTemp));
+                            break;
+                        case CopyOutKind.Closure:
+                            Emit(new IrInst.CopyOutClosure(copyDest, resultTemp));
+                            break;
+                    }
+                    Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+                    _ownershipScopes.Pop();
+                    return copyDest;
+                }
             }
             // else: heap type that cannot be copy-outed, or no owned values to reclaim.
             // No arena action; the caller retains the original result pointer.
@@ -4364,51 +4390,73 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Returns true if the given type's heap representation can be safely copy-outed
-    /// after a RestoreArenaState using a shallow memcpy.
+    /// Describes the kind of arena copy-out to emit for a given result type.
+    /// </summary>
+    private enum CopyOutKind
+    {
+        /// <summary>Not eligible for copy-out.</summary>
+        None,
+        /// <summary>Shallow memcpy of a fixed or dynamic-size object (String, ADT).</summary>
+        Shallow,
+        /// <summary>Deep cons-chain walk for lists.</summary>
+        List,
+        /// <summary>Closure struct + env copy.</summary>
+        Closure,
+    }
+
+    /// <summary>
+    /// Determines whether the given type's heap representation can be safely copy-outed
+    /// after a RestoreArenaState, and what kind of copy-out is needed.
     /// <para>
     /// Handles:
     /// <list type="bullet">
-    ///   <item><b>String (TStr):</b> layout is {length:i64, bytes…}; all data is inline,
-    ///     no internal pointers. <paramref name="staticSizeBytes"/> is -1 (dynamic).</item>
-    ///   <item><b>List (TList):</b> cons cell is {head:i64, tail:i64} = 16 bytes.
-    ///     <c>tail</c> always points below the watermark (parent scope / previous
-    ///     iteration). Safe when element is a copy type (Int, Float, Bool) or TStr
-    ///     (self-contained).</item>
-    ///   <item><b>Closure (TFun):</b> {code:i64, env:i64} = 16 bytes.
-    ///     <c>code</c> is a function pointer (never heap), <c>env</c> points to a
-    ///     parent scope environment. Shallow copy is safe.</item>
-    ///   <item><b>ADT (TNamedType):</b> (1 + fieldCount) * 8 bytes. Shallow copy is safe
-    ///     when all fields across all constructors are copy types (Int, Float, Bool) —
-    ///     i.e. inline i64 values with no heap pointers. All constructors must have the
-    ///     same arity for static-size copy.</item>
+    ///   <item><b>String (TStr):</b> Shallow copy. Layout is {length:i64, bytes…}; all data
+    ///     is inline, no internal pointers. <c>staticSizeBytes</c> is -1 (dynamic).</item>
+    ///   <item><b>List (TList):</b> Deep cons-chain copy. Safe when element is a copy type
+    ///     (Int, Float, Bool) or TStr. Walks tail pointers to copy entire chain.</item>
+    ///   <item><b>Closure (TFun):</b> Closure + env copy. Copies the 24-byte closure struct
+    ///     and the env block it references.</item>
+    ///   <item><b>ADT (TNamedType):</b> Shallow copy of (1 + fieldCount) * 8 bytes. Safe
+    ///     when all fields across all constructors are copy types.</item>
     /// </list>
     /// </para>
     /// </summary>
-    private bool CanCopyOutArena(TypeRef type, out int staticSizeBytes)
+    private CopyOutKind GetCopyOutKind(TypeRef type, out int staticSizeBytes)
     {
         var pruned = Prune(type);
         switch (pruned)
         {
             case TypeRef.TStr:
                 staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
-                return true;
+                return CopyOutKind.Shallow;
 
             case TypeRef.TList list when IsCopyOutSafeElement(list.Element):
-                staticSizeBytes = 16; // cons cell: { head:i64, tail:i64 }
-                return true;
+                staticSizeBytes = 0; // not used — deep copy at runtime
+                return CopyOutKind.List;
 
             case TypeRef.TFun:
-                staticSizeBytes = 16; // closure: { code:i64, env:i64 }
-                return true;
+                staticSizeBytes = 0; // not used — closure+env copy at runtime
+                return CopyOutKind.Closure;
 
             case TypeRef.TNamedType named:
-                return CanCopyOutAdt(named, out staticSizeBytes);
+                return CanCopyOutAdt(named, out staticSizeBytes)
+                    ? CopyOutKind.Shallow
+                    : CopyOutKind.None;
 
             default:
                 staticSizeBytes = 0;
-                return false;
+                return CopyOutKind.None;
         }
+    }
+
+    /// <summary>
+    /// Legacy helper — returns true if the type can be copy-outed via shallow memcpy.
+    /// Used by <see cref="CanCopyOutTcoArg"/>.
+    /// </summary>
+    private bool CanCopyOutArena(TypeRef type, out int staticSizeBytes)
+    {
+        var kind = GetCopyOutKind(type, out staticSizeBytes);
+        return kind == CopyOutKind.Shallow;
     }
 
     /// <summary>

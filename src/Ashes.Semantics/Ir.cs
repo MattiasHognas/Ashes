@@ -66,7 +66,7 @@ public abstract record IrInst
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
 
-    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp) : IrInst; // alloc 16 bytes
+    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 24 bytes: {code, env, env_size}
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
 
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
@@ -175,6 +175,36 @@ public abstract record IrInst
     /// </para>
     /// </summary>
     public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+
+    /// <summary>
+    /// Deep-copies an entire cons-cell chain out of the arena to fresh allocations.
+    /// Each cons cell is 16 bytes: {head:i64, tail:i64}. The copy walks the tail
+    /// pointers, allocating and copying each cell until a nil (0) tail is reached.
+    /// Head values must be copy types (inline i64) or self-contained (TStr — whose
+    /// data is inline with no internal heap pointers).
+    /// <para>
+    /// Emitted AFTER <see cref="RestoreArenaState"/> and BEFORE
+    /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
+    /// </para>
+    /// </summary>
+    public sealed record CopyOutList(int DestTemp, int SrcTemp) : IrInst;
+
+    /// <summary>
+    /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its
+    /// environment out of the arena to a fresh allocation. Reads the env_size field
+    /// from the source closure at offset 16, allocates env_size bytes for the env
+    /// copy, then allocates 24 bytes for the closure copy. Relinks the env pointer
+    /// in the new closure to point to the new env copy.
+    /// <para>
+    /// If the env pointer is 0 (no captures), only the 24-byte closure struct is
+    /// copied (no env allocation needed).
+    /// </para>
+    /// <para>
+    /// Emitted AFTER <see cref="RestoreArenaState"/> and BEFORE
+    /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
+    /// </para>
+    /// </summary>
+    public sealed record CopyOutClosure(int DestTemp, int SrcTemp) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing

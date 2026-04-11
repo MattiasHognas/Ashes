@@ -22,12 +22,13 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildXor(state.Target.Builder, value, LlvmApi.ConstInt(state.I64, 1, 0), name);
     }
 
-    private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr)
+    private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
     {
-        LlvmValueHandle closurePtr = EmitAlloc(state, 16);
+        LlvmValueHandle closurePtr = EmitAlloc(state, 24); // {code, env, env_size}
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_env_size_store_{funcLabel}");
         return closurePtr;
     }
 

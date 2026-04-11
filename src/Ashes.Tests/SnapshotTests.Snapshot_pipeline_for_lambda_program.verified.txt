@@ -337,7 +337,8 @@
           },
           {
             Target: 2,
-            FuncLabel: lambda_1
+            FuncLabel: lambda_1,
+            EnvSizeBytes: 8
           },
           {
             Source: 2
@@ -358,5 +359,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: 2CA94595E21556ED9FA1CF0D0B3C4BECF5E1D6163D442D758C83095572C88CFD
+  ElfSha256: ACF1B167DC253D61A3A8224CDAE7AB3636D60374AE29EEBFED42CC674FBFBF79
 }

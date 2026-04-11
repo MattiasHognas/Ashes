@@ -414,6 +414,148 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Deep-copies an entire cons-cell chain out of the arena. Walks the linked list
+    /// from head to tail, allocating a fresh 16-byte cell for each node and relinking
+    /// tail pointers. Stops when a nil (0) tail is reached.
+    /// <para>
+    /// The loop structure:
+    /// <code>
+    /// result = 0; prevTailSlot = &amp;result;
+    /// cur = srcPtr;
+    /// while (cur != 0) {
+    ///     newCell = alloc(16);
+    ///     newCell[0] = cur[0];   // copy head (inline value)
+    ///     newCell[8] = 0;        // tail initialized to nil
+    ///     *prevTailSlot = newCell;
+    ///     prevTailSlot = &amp;newCell[8];
+    ///     cur = cur[8];          // follow source tail
+    /// }
+    /// </code>
+    /// </para>
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+
+        // Guard: if the source list is nil, return nil immediately.
+        LlvmValueHandle srcIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            srcPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_src_nil");
+        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_overall_result");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), overallResultSlot);
+        var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_start");
+        var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_final");
+        LlvmApi.BuildCondBr(builder, srcIsNil, copyListFinal, copyListStart);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
+
+        // Eager first-cell approach: allocate the first cell before entering the
+        // loop, then iterate from the source's second cell onward. This avoids
+        // needing a double-pointer (i64**) to track "where to write the next cell
+        // pointer", which is awkward with LLVM's opaque pointer model.
+
+        // prevCellSlot tracks the last allocated cell (to set its tail later).
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
+        LlvmValueHandle firstHead = LoadMemory(state, srcPtr, 0, "copy_list_first_head");
+        StoreMemory(state, firstCell, 0, firstHead, "copy_list_store_first_head");
+        StoreMemory(state, firstCell, 8, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_store_first_tail");
+
+        // prevCellSlot tracks the last allocated cell (to set its tail later).
+        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_prev");
+        LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
+
+        // curSlot tracks the source pointer. Start from srcPtr->tail.
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cur");
+        LlvmValueHandle firstSrcTail = LoadMemory(state, srcPtr, 8, "copy_list_first_src_tail");
+        LlvmApi.BuildStore(builder, firstSrcTail, curSlot);
+
+        var loopHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_loop");
+        var loopBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_body");
+        var loopEnd = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_done");
+        LlvmApi.BuildBr(builder, loopHead);
+
+        // Loop head: check if cur == 0 (end of source list)
+        LlvmApi.PositionBuilderAtEnd(builder, loopHead);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "copy_list_cur_val");
+        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            cur, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_nil_check");
+        LlvmApi.BuildCondBr(builder, isNil, loopEnd, loopBody);
+
+        // Loop body: allocate new cell, copy head, link previous tail
+        LlvmApi.PositionBuilderAtEnd(builder, loopBody);
+        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
+        LlvmValueHandle head = LoadMemory(state, cur, 0, "copy_list_head");
+        StoreMemory(state, newCell, 0, head, "copy_list_store_head");
+        StoreMemory(state, newCell, 8, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_store_tail");
+
+        // Link: prevCell.tail = newCell
+        LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, "copy_list_prev_val");
+        StoreMemory(state, prevCell, 8, newCell, "copy_list_link_tail");
+
+        // Advance: prevCell = newCell, cur = cur.tail
+        LlvmApi.BuildStore(builder, newCell, prevCellSlot);
+        LlvmValueHandle srcTail = LoadMemory(state, cur, 8, "copy_list_src_tail");
+        LlvmApi.BuildStore(builder, srcTail, curSlot);
+        LlvmApi.BuildBr(builder, loopHead);
+
+        // Done
+        LlvmApi.PositionBuilderAtEnd(builder, loopEnd);
+        LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
+        LlvmApi.BuildBr(builder, copyListFinal);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
+        return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_list_result_val");
+    }
+
+    /// <summary>
+    /// Copies a closure (24 bytes: {code, env, env_size}) and its environment
+    /// out of the arena. If the env pointer is non-nil, allocates a fresh env of
+    /// env_size bytes and memcpy's it, then allocates a fresh 24-byte closure and
+    /// stores the new env pointer.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutClosure(LlvmCodegenState state, int srcTemp)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+
+        // Load fields from source closure
+        LlvmValueHandle code = LoadMemory(state, srcPtr, 0, "copy_closure_code");
+        LlvmValueHandle envPtr = LoadMemory(state, srcPtr, 8, "copy_closure_env");
+        LlvmValueHandle envSize = LoadMemory(state, srcPtr, 16, "copy_closure_env_size");
+
+        // Alloca for the new env pointer (nil path: keep 0; non-nil path: new alloc)
+        LlvmValueHandle newEnvSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_env_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), newEnvSlot);
+
+        LlvmValueHandle envIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            envPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_env_nil");
+        var envCopyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_closure_env_copy");
+        var envMergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_closure_env_merge");
+        LlvmApi.BuildCondBr(builder, envIsNil, envMergeBlock, envCopyBlock);
+
+        // Non-nil env: allocate and copy
+        LlvmApi.PositionBuilderAtEnd(builder, envCopyBlock);
+        LlvmValueHandle newEnv = EmitAllocDynamic(state, envSize);
+        LlvmValueHandle envSrcBytes = LlvmApi.BuildIntToPtr(builder, envPtr, state.I8Ptr, "copy_closure_env_src");
+        LlvmValueHandle envDestBytes = LlvmApi.BuildIntToPtr(builder, newEnv, state.I8Ptr, "copy_closure_env_dest");
+        EmitCopyBytes(state, envDestBytes, envSrcBytes, envSize, "copy_closure_env");
+        LlvmApi.BuildStore(builder, newEnv, newEnvSlot);
+        LlvmApi.BuildBr(builder, envMergeBlock);
+
+        // Merge: allocate new closure struct
+        LlvmApi.PositionBuilderAtEnd(builder, envMergeBlock);
+        LlvmValueHandle newEnvPtr = LlvmApi.BuildLoad2(builder, state.I64, newEnvSlot, "copy_closure_new_env");
+        LlvmValueHandle closureSize = LlvmApi.ConstInt(state.I64, 24, 0);
+        LlvmValueHandle newClosure = EmitAllocDynamic(state, closureSize);
+        StoreMemory(state, newClosure, 0, code, "copy_closure_store_code");
+        StoreMemory(state, newClosure, 8, newEnvPtr, "copy_closure_store_env");
+        StoreMemory(state, newClosure, 16, envSize, "copy_closure_store_env_size");
+
+        return newClosure;
+    }
+
+    /// <summary>
     /// Frees an OS memory chunk previously allocated by <see cref="EmitAllocateOsMemory"/>.
     /// Linux: <c>munmap(ptr, size)</c> — syscall 11 (x86-64) / 215 (AArch64).
     /// Windows: <c>VirtualFree(ptr, 0, MEM_RELEASE)</c> — <c>dwSize</c> must be 0
