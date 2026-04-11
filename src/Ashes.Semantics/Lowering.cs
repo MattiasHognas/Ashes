@@ -4595,31 +4595,31 @@ public sealed class Lowering
                 return CopyOutKind.Shallow;
 
             case TypeRef.TList list:
-            {
-                var elemPruned = Prune(list.Element);
-                if (CanArenaReset(elemPruned))
                 {
-                    // Copy-type heads: inline values, single cell shallow copy (16 bytes).
-                    staticSizeBytes = 16;
-                    return CopyOutKind.Shallow;
-                }
-                if (elemPruned is TypeRef.TStr)
-                {
-                    // String heads: copy one cell + copy the string head value.
+                    var elemPruned = Prune(list.Element);
+                    if (CanArenaReset(elemPruned))
+                    {
+                        // Copy-type heads: inline values, single cell shallow copy (16 bytes).
+                        staticSizeBytes = 16;
+                        return CopyOutKind.Shallow;
+                    }
+                    if (elemPruned is TypeRef.TStr)
+                    {
+                        // String heads: copy one cell + copy the string head value.
+                        staticSizeBytes = 0;
+                        listHeadCopy = IrInst.ListHeadCopyKind.String;
+                        return CopyOutKind.TcoListCell;
+                    }
+                    if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+                    {
+                        // Inner list with copy-type elements: copy one cell + deep-copy inner list head.
+                        staticSizeBytes = 0;
+                        listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
+                        return CopyOutKind.TcoListCell;
+                    }
                     staticSizeBytes = 0;
-                    listHeadCopy = IrInst.ListHeadCopyKind.String;
-                    return CopyOutKind.TcoListCell;
+                    return CopyOutKind.None;
                 }
-                if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
-                {
-                    // Inner list with copy-type elements: copy one cell + deep-copy inner list head.
-                    staticSizeBytes = 0;
-                    listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
-                    return CopyOutKind.TcoListCell;
-                }
-                staticSizeBytes = 0;
-                return CopyOutKind.None;
-            }
 
             case TypeRef.TFun:
                 staticSizeBytes = 0;

@@ -13,7 +13,7 @@ All original audit findings have been addressed:
 |------|---------------|
 | **LLVM passes** | Targeted pipeline (mem2reg, instcombine, early-cse, reassociate, gvn, dce, inline, licm, dse) at O1–O3. PLT32 + PE relocation support. Freestanding builtins (memcpy, memset, strlen, memcmp, bcmp) emitted per module. |
 | **Memory allocator** | OS-backed `mmap`/`VirtualAlloc` chunks (4 MB each, on demand). Bounds checking with clean error. |
-| **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. |
+| **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. Phase 5: extended TCO copy-out — `CopyOutTcoListCell` for `TList(TStr)` and `TList(TList(copy-type))` args (single-cell + head copy), closure and ADT args via `CopyOutClosure`/`CopyOutArena`. |
 | **String operations** | `EmitCopyBytes` → `LLVMBuildMemCpy`. Comparison → `memcmp`/`bcmp`. Literals → `.rodata` global constants (no heap alloc). |
 | **Pattern matching** | Tag/zero/non-zero checks → single `CmpIntEq`/`CmpIntNe` + one conditional jump. |
 | **Function attributes** | `nounwind` on all functions. `willreturn`, `noalias`, `nonnull`, `readonly`, `memory(read)` on builtins. |
@@ -29,18 +29,19 @@ All original audit findings have been addressed:
 Every remaining optimization task, in recommended execution order.
 Each item builds on the previous ones.
 
-### 1. Extend TCO copy-out beyond TStr and TList(copy-type element)
+### 1. ~~Extend TCO copy-out beyond TStr and TList(copy-type element)~~ ✅
 
-Extend `CanCopyOutTcoArg` in `Lowering.cs`.
+**Completed.** Replaced `CanCopyOutTcoArg` with `GetTcoCopyOutKind` in `Lowering.cs`.
+Added `CopyOutTcoListCell` IR instruction for single-cell + head copy-out,
+and `ListHeadCopyKind` enum (`Inline`, `String`, `InnerList`).
 
-- **TList(TStr):** Cons cell is 16 bytes; `head` is a string pointer
-  (self-contained, no internal heap pointers). Copy the cons cell, then
-  copy the string.
-- **TList(TList(copy-type)):** Cons cell where `head` is a pointer to
-  another cons cell. Requires copying the head cons cell too — two-level
-  copy-out.
-- **Closure args:** Same 16-byte shallow copy as scope results.
-- **ADT args:** Same field-type recursive check as scope results.
+- **TList(TStr):** `CopyOutTcoListCell(String)` — copies one cons cell + copies the
+  string head to a fresh allocation.
+- **TList(TList(copy-type)):** `CopyOutTcoListCell(InnerList)` — copies one cons cell +
+  deep-copies the inner list chain via the three-phase count/cache/build algorithm.
+- **Closure args:** `CopyOutClosure` — copies 24-byte closure struct + env block.
+- **ADT args:** `CopyOutArena(staticSizeBytes)` — shallow copy, reusing the existing
+  `CanCopyOutAdt` field-type check.
 
 ### 2. Borrow elision pass
 
