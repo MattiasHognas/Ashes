@@ -13,6 +13,7 @@ internal static partial class LlvmImageLinker
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 35;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
+    private const ushort CoffRelocAmd64Addr64 = 0x0001;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
     private const ushort CoffRelocAmd64Rel32 = 0x0004;
     private const ushort CoffRelocAmd64Rel32_1 = 0x0005;
@@ -475,15 +476,21 @@ internal static partial class LlvmImageLinker
             int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
             ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
             CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
-            Span<byte> patch = textBytes.AsSpan(checked((int)relocationOffset), 4);
-            int addend = BinaryPrimitives.ReadInt32LittleEndian(patch);
+            ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
 
             switch (relocationType)
             {
+                case CoffRelocAmd64Addr64:
+                    Span<byte> patch64 = textBytes.AsSpan(checked((int)relocationOffset), 8);
+                    ulong addend64 = BinaryPrimitives.ReadUInt64LittleEndian(patch64);
+                    BinaryPrimitives.WriteUInt64LittleEndian(patch64, checked(targetVa + addend64));
+                    break;
                 case CoffRelocAmd64Addr32:
+                    Span<byte> addr32Patch = textBytes.AsSpan(checked((int)relocationOffset), 4);
+                    int addr32Addend = BinaryPrimitives.ReadInt32LittleEndian(addr32Patch);
                     BinaryPrimitives.WriteUInt32LittleEndian(
-                        patch,
-                        checked((uint)(checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas)) + addend)));
+                        addr32Patch,
+                        checked((uint)(checked((long)targetVa) + addr32Addend)));
                     break;
                 case CoffRelocAmd64Rel32:
                 case CoffRelocAmd64Rel32_1:
@@ -491,11 +498,13 @@ internal static partial class LlvmImageLinker
                 case CoffRelocAmd64Rel32_3:
                 case CoffRelocAmd64Rel32_4:
                 case CoffRelocAmd64Rel32_5:
+                    Span<byte> rel32Patch = textBytes.AsSpan(checked((int)relocationOffset), 4);
+                    int rel32Addend = BinaryPrimitives.ReadInt32LittleEndian(rel32Patch);
                     // REL32_N: displacement is relative to (relocation offset + 4 + N) where N = type - REL32.
                     int extraDisplacement = relocationType - CoffRelocAmd64Rel32;
                     long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + relocationOffset + 4 + (uint)extraDisplacement));
-                    long relativeTarget = checked((long)ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas) + addend - nextInstructionVa);
-                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)relativeTarget));
+                    long relativeTarget = checked((long)targetVa + rel32Addend - nextInstructionVa);
+                    BinaryPrimitives.WriteInt32LittleEndian(rel32Patch, checked((int)relativeTarget));
                     break;
                 default:
                     throw new InvalidOperationException($"LLVM COFF emitted unsupported .text relocation type 0x{relocationType:X4}.");

@@ -68,6 +68,18 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_compile_should_support_debug_info_programs()
+    {
+        var bytes = new WindowsX64LlvmBackend().Compile(
+            LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)"),
+            new BackendCompileOptions(BackendOptimizationLevel.O0, EmitDebugInfo: true));
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)'M');
+        bytes[1].ShouldBe((byte)'Z');
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_float_arithmetic_and_comparisons()
     {
         AssertWindowsLlvmCompiles(LowerExpression("if (1.5 + 2.5) == 4.0 then 42 else 0"));
