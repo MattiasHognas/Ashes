@@ -434,19 +434,19 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
-        bool foundPhase2c = false;
+        bool foundCopyOutSequence = false;
         for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
                 && insts[i + 1] is IrInst.CopyOutArena copyOut
                 && copyOut.StaticSizeBytes == 16)
             {
-                foundPhase2c = true;
+                foundCopyOutSequence = true;
                 break;
             }
         }
-        foundPhase2c.ShouldBeTrue(
-            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16) (Phase 2c).");
+        foundCopyOutSequence.ShouldBeTrue(
+            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16).");
     }
 
     [Test]
@@ -781,7 +781,7 @@ public sealed class ArenaDeallocationTests
         var insts = ir.EntryFunction.Instructions;
 
         HasCopyOutArena(insts).ShouldBeTrue(
-            "String result with owned binding should emit CopyOutArena (Phase 2b).");
+            "String result with owned binding should emit CopyOutArena.");
     }
 
     [Test]
