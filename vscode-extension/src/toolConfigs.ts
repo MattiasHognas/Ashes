@@ -4,7 +4,7 @@ import type { ToolConfig } from "./toolAcquisition";
 export const LSP_CONFIG: ToolConfig = {
   displayName: "Ashes language server",
   assetPrefix: "ashes-lsp",
-  executableBaseName: "Ashes.Lsp",
+  executableBaseName: "ashes-lsp",
   cacheSubdir: "lsp",
   bundledSubdir: "lsp-server",
   settingKey: "ashes.lspServerPath",

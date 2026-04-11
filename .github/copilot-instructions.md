@@ -29,7 +29,7 @@ If implementation conflicts with the spec, update the spec before code.
 
 # Compiler Architecture
 
-Ashes is split into language phases:
+Ashes is split into language phases and tooling projects:
 
 | Project | Responsibility |
 |--------|----------------|
@@ -40,6 +40,7 @@ Ashes is split into language phases:
 | Ashes.TestRunner | End-to-end `.ash` tests |
 | Ashes.Cli | Orchestration only (commands, UX, wiring) |
 | Ashes.Lsp | Language Server (diagnostics, formatting, completion) |
+| Ashes.Dap | Debug Adapter Protocol server for IDE debugging |
 | Ashes.Tests | Compiler-internal tests |
 | Ashes.Lsp.Tests | LSP-internal tests |
 
@@ -53,6 +54,7 @@ Ashes is split into language phases:
 - Ashes.Formatter depends on Ashes.Frontend only.
 - Ashes.TestRunner depends on Ashes.Backend.
 - Ashes.Lsp depends on Frontend + Semantics (+ Formatter).
+- Ashes.Dap has no dependencies on other Ashes projects.
 - Ashes.Lsp must NOT depend on Ashes.Backend.
 - Ashes.Cli may depend on Backend/Formatter/TestRunner only.
 - Ashes.Tests may reference any project.
@@ -192,6 +194,24 @@ Forbidden:
 - Implement syntax validation independently
 
 All semantics must originate from compiler phases.
+
+---
+
+# DAP Boundary Rules
+
+Ashes.Dap is a protocol adapter for IDE debugging, not a compiler phase.
+
+Allowed:
+- Translate DAP requests and events to debugger-specific commands
+- Launch or attach native debuggers and surface runtime state back to the IDE
+- Consume compiler-produced artifacts such as binaries and debug information
+
+Forbidden:
+- Implement parsing, type inference, lowering, or code generation logic
+- Duplicate language semantics inside the debug adapter
+- Bypass compiler phases when defining runtime behavior
+
+Compiled program behavior must still originate from the compiler pipeline.
 
 ---
 

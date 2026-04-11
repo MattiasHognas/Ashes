@@ -78,7 +78,7 @@ jobs:
           xvfb-run -a pnpm run test:integration
         env:
           ASHES_COMPILER_PATH: ${{ github.workspace }}/artifacts/extension-test/compiler/ashes
-          ASHES_LSP_PATH: ${{ github.workspace }}/artifacts/extension-test/lsp/Ashes.Lsp
+          ASHES_LSP_PATH: ${{ github.workspace }}/artifacts/extension-test/lsp/ashes-lsp
           ASHES_DAP_PATH: ${{ github.workspace }}/artifacts/extension-test/dap/ashes-dap
 
       - name: Publish Ashes CLI binaries

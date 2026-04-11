@@ -389,7 +389,7 @@ public sealed class LspProgramTests
 
     private static Process StartLspProcess()
     {
-        var lspAssemblyPath = Path.Combine(AppContext.BaseDirectory, "Ashes.Lsp.dll");
+        var lspAssemblyPath = Path.Combine(AppContext.BaseDirectory, "ashes-lsp.dll");
         File.Exists(lspAssemblyPath).ShouldBeTrue($"Expected LSP assembly at '{lspAssemblyPath}'");
 
         var startInfo = new ProcessStartInfo("dotnet", $"\"{lspAssemblyPath}\"")

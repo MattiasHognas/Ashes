@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>Ashes.Lsp</AssemblyName>
+    <AssemblyName>ashes-lsp</AssemblyName>
     <RootNamespace>Ashes.Lsp</RootNamespace>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

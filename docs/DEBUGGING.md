@@ -520,7 +520,7 @@ etc. If not, the binary was not compiled with `--debug`.
 ## Architecture
 
 ```
-┌──────────┐     DAP/stdio      ┌───────────┐     GDB-MI      ┌──────────┐     ptrace     ┌────────┐
+┌──────────┐     DAP/stdio       ┌───────────┐     GDB-MI       ┌──────────┐     ptrace     ┌────────┐
 │  VS Code │ ◄─────────────────► │ ashes-dap │ ◄──────────────► │ GDB or   │ ◄────────────► │ Binary │
 │  (IDE)   │                     │ (server)  │                  │ LLDB-MI  │                │ (DWARF)│
 └──────────┘                     └───────────┘                  └──────────┘                └────────┘

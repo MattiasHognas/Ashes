@@ -125,15 +125,15 @@ jobs:
         include:
           - project: src/Ashes.Lsp/Ashes.Lsp.csproj
             rid: linux-x64
-            binary: Ashes.Lsp
+            binary: ashes-lsp
             artifact: ashes-lsp-linux-x64
           - project: src/Ashes.Lsp/Ashes.Lsp.csproj
             rid: linux-arm64
-            binary: Ashes.Lsp
+            binary: ashes-lsp
             artifact: ashes-lsp-linux-arm64
           - project: src/Ashes.Lsp/Ashes.Lsp.csproj
             rid: win-x64
-            binary: Ashes.Lsp.exe
+            binary: ashes-lsp.exe
             artifact: ashes-lsp-win-x64
           - project: src/Ashes.Dap/Ashes.Dap.csproj
             rid: linux-x64
