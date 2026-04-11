@@ -470,11 +470,11 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_complex_heap_arg_does_not_emit_RestoreArenaState_before_jump()
+    public void TCO_loop_with_list_of_list_arg_emits_RestoreArenaState_and_CopyOutTcoListCell_before_jump()
     {
-        // A TCO arg that is a list of lists (nested heap type) is NOT safe for Phase 2c
-        // copy-out (copying a cons cell would leave the head pointer into reclaimed memory).
-        // No arena reset should be emitted in this case.
+        // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it
+        // to acc. The inner list has copy-type elements, so the outer cell + inner chain
+        // can be copied out via CopyOutTcoListCell(InnerList).
         var ir = LowerProgram(
             """
             let rec build = fun (n) -> fun (acc) ->
@@ -485,17 +485,47 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        for (int i = 0; i < insts.Count - 2; i++)
+        bool found = false;
+        for (int i = 0; i < insts.Count - 1; i++)
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.ReclaimArenaChunks
-                && insts[i + 2] is IrInst.Jump j
-                && j.Target.Contains("_body"))
+            if (insts[i] is not IrInst.RestoreArenaState)
             {
-                Assert.Fail(
-                    "TCO loop with nested-heap arg (List of List) should NOT emit RestoreArenaState before jump-back.");
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex == -1)
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < reclaimIndex; j++)
+            {
+                if (insts[j] is IrInst.CopyOutTcoListCell cell
+                    && cell.HeadCopy == IrInst.ListHeadCopyKind.InnerList)
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                break;
             }
         }
+
+        found.ShouldBeTrue(
+            "TCO loop with TList(TList(Int)) arg should emit CopyOutTcoListCell(InnerList) after RestoreArenaState and before ReclaimArenaChunks.");
     }
 
     [Test]
@@ -526,6 +556,217 @@ public sealed class ArenaDeallocationTests
         }
         foundTcoRestore.ShouldBeTrue(
             "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks before jump-back.");
+    }
+
+    // --- Extended TCO copy-out ---
+
+    [Test]
+    public void TCO_loop_with_list_of_string_arg_emits_RestoreArenaState_and_CopyOutTcoListCell()
+    {
+        // TList(TStr): each iteration creates a string and prepends it to acc.
+        // The cons cell head is a string pointer — CopyOutTcoListCell(String)
+        // copies the cell AND the string to new arena locations.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) ("x" :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        bool found = false;
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is not IrInst.RestoreArenaState)
+            {
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex == -1)
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < reclaimIndex; j++)
+            {
+                if (insts[j] is IrInst.CopyOutTcoListCell cell
+                    && cell.HeadCopy == IrInst.ListHeadCopyKind.String)
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                break;
+            }
+        }
+
+        found.ShouldBeTrue(
+            "TCO loop with TList(TStr) arg should emit CopyOutTcoListCell(String) after RestoreArenaState and before ReclaimArenaChunks.");
+    }
+
+    [Test]
+    public void TCO_loop_with_closure_arg_emits_RestoreArenaState_and_CopyOutClosure()
+    {
+        // TFun: the TCO accumulator is a closure. CopyOutClosure copies the 24-byte
+        // closure struct and its environment.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (f) ->
+                if n == 0 then f 0
+                else build (n - 1) (fun (x) -> x + n)
+            in build 5 (fun (x) -> x)
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        static bool IsJumpBackToBodyLabel(object inst)
+        {
+            var text = inst.ToString() ?? string.Empty;
+            return text.Contains("_body") && (text.Contains("Jump") || text.Contains("Branch") || text.Contains("Br"));
+        }
+
+        bool found = false;
+        for (int i = 0; i < insts.Count; i++)
+        {
+            if (insts[i] is not IrInst.RestoreArenaState)
+            {
+                continue;
+            }
+
+            int copyOutIndex = -1;
+            int reclaimIndex = -1;
+            int jumpBackIndex = -1;
+
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (copyOutIndex == -1 && insts[j] is IrInst.CopyOutClosure)
+                {
+                    copyOutIndex = j;
+                }
+
+                if (reclaimIndex == -1 && insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                }
+
+                if (jumpBackIndex == -1 && IsJumpBackToBodyLabel(insts[j]))
+                {
+                    jumpBackIndex = j;
+                }
+
+                if (reclaimIndex != -1 && jumpBackIndex != -1)
+                {
+                    break;
+                }
+            }
+
+            if (copyOutIndex != -1
+                && reclaimIndex != -1
+                && jumpBackIndex != -1
+                && copyOutIndex < reclaimIndex
+                && copyOutIndex < jumpBackIndex)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        found.ShouldBeTrue(
+            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
+    }
+
+    [Test]
+    public void TCO_loop_with_adt_copy_type_arg_emits_RestoreArenaState_and_CopyOutArena()
+    {
+        // TNamedType with copy-type fields: ADT can be shallow-copied.
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) (Box(n))
+            in build 5 (Box(0))
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        bool found = false;
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is not IrInst.RestoreArenaState)
+            {
+                continue;
+            }
+
+            var copyOutIndex = -1;
+            for (int j = i + 1; j < insts.Count - 1; j++)
+            {
+                if (insts[j] is IrInst.CopyOutArena c && c.StaticSizeBytes == 16)
+                {
+                    copyOutIndex = j;
+                    break;
+                }
+            }
+
+            if (copyOutIndex == -1)
+            {
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = copyOutIndex + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex != -1)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        found.ShouldBeTrue(
+            "TCO loop with ADT(Int) arg should emit RestoreArenaState -> CopyOutArena(16) before ReclaimArenaChunks.");
+    }
+
+    [Test]
+    public void CopyOutTcoListCell_instruction_has_correct_fields()
+    {
+        var inst = new IrInst.CopyOutTcoListCell(7, 3, IrInst.ListHeadCopyKind.String);
+        inst.DestTemp.ShouldBe(7);
+        inst.SrcTemp.ShouldBe(3);
+        inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.String);
+
+        var innerInst = new IrInst.CopyOutTcoListCell(10, 5, IrInst.ListHeadCopyKind.InnerList);
+        innerInst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.InnerList);
+    }
+
+    [Test]
+    public void CopyOutList_instruction_has_default_inline_head_copy()
+    {
+        var inst = new IrInst.CopyOutList(7, 3);
+        inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.Inline);
     }
 
     // --- Phase 2b: copy-out for String scope results ---
@@ -980,12 +1221,18 @@ public sealed class ArenaDeallocationTests
     }
 
     /// <summary>
-    /// Finds the lifted function containing the TCO body label (the innermost TCO lambda).
+    /// Finds the lifted function containing the TCO tail-call jump (the actual TCO loop function).
+    /// Identifies by the presence of a Jump instruction targeting a <c>_body</c> label.
+    /// <para>
+    /// Note: This relies on the label naming convention in <c>Lowering.cs</c> where TCO body
+    /// labels are named <c>{functionLabel}_body</c>. If that convention changes, this helper
+    /// must be updated accordingly.
+    /// </para>
     /// </summary>
     private static IrFunction FindTcoFunction(IrProgram ir)
     {
         return ir.Functions.First(f =>
-            f.Instructions.Any(i => i is IrInst.Label lbl && lbl.Name.Contains("_body")));
+            f.Instructions.Any(i => i is IrInst.Jump j && j.Target.Contains("_body")));
     }
 
     private static bool HasSaveArenaState(List<IrInst> instructions)
