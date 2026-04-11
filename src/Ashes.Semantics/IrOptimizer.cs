@@ -41,21 +41,198 @@ public static class IrOptimizer
         };
     }
 
-    // ── Pass 1: Elide borrows for constants and copy-type loads ─────────
-    // A Borrow of a LoadConstInt/LoadConstFloat/LoadConstBool is a no-op
-    // in the backend (simple value copy). The Borrow instruction exists for
-    // semantic completeness but copy types have no ownership semantics.
-    // Currently this pass is a no-op because the backend already handles
-    // Borrow as a trivial value copy that LLVM's codegen optimizes away.
-    // When temp aliasing / remapping is added, this pass will eliminate
-    // the Borrow instructions entirely for copy-type sources.
+    // ── Pass 1: Borrow elision ─────────────────────────────────────────
+    // Remove Borrow instructions and remap all uses of the borrow target
+    // back to the original source temp, eliminating the trivial value copy.
+    //
+    // Elidable borrows:
+    // (a) Copy-type sources: when the source temp is produced by
+    //     LoadConstInt / LoadConstFloat / LoadConstBool. Copy types have no
+    //     ownership semantics, so the borrow is semantically a no-op.
+    // (b) Single-use borrows: when the borrow target is used exactly once.
+    //     The borrowed reference is consumed at a single point, so it is safe
+    //     to substitute the original source directly.
+    //
+    // Chains of borrows (Borrow(t2, t1) where t1 itself was remapped) are
+    // resolved transitively so that all uses point back to the original source.
 
     private static List<IrInst> ElideBorrowsForConstants(List<IrInst> instructions)
     {
-        // Future: when temp aliasing infrastructure exists, remove Borrow
-        // instructions whose source is a copy-type constant and remap uses
-        // of the borrow target to the original source.
-        return instructions;
+        // Phase 1: Build use-def information.
+        // Track which temps are produced by copy-type constant instructions.
+        var copyTypeProducers = new HashSet<int>();
+
+        // Count how many times each temp is read as a source operand.
+        var useCount = new Dictionary<int, int>();
+        var tempBuf = new HashSet<int>();
+
+        foreach (var inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.LoadConstInt lci: copyTypeProducers.Add(lci.Target); break;
+                case IrInst.LoadConstFloat lcf: copyTypeProducers.Add(lcf.Target); break;
+                case IrInst.LoadConstBool lcb: copyTypeProducers.Add(lcb.Target); break;
+            }
+
+            tempBuf.Clear();
+            CollectUsedTemps(inst, tempBuf);
+            foreach (var t in tempBuf)
+            {
+                useCount[t] = useCount.GetValueOrDefault(t) + 1;
+            }
+        }
+
+        // Phase 2: Identify elidable Borrows and build a remap table.
+        var remap = new Dictionary<int, int>();
+
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.Borrow b)
+            {
+                // Follow chains: if the source was already remapped, resolve transitively.
+                int source = ResolveTemp(remap, b.SourceTemp);
+
+                bool isCopyTypeSource = copyTypeProducers.Contains(source);
+                bool isSingleUse = useCount.GetValueOrDefault(b.Target) <= 1;
+
+                if (isCopyTypeSource || isSingleUse)
+                {
+                    remap[b.Target] = source;
+                }
+            }
+        }
+
+        if (remap.Count == 0)
+        {
+            return instructions;
+        }
+
+        // Phase 3: Rewrite the instruction list — remove elided Borrows and
+        // remap all source-temp references to the original source.
+        var result = new List<IrInst>(instructions.Count);
+
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.Borrow b && remap.ContainsKey(b.Target))
+            {
+                continue; // elide this Borrow
+            }
+
+            result.Add(RemapSourceTemps(inst, remap));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Follows the remap chain for a temp index until a fixed point is reached.
+    /// If <paramref name="temp"/> → a → b exists, returns b.
+    /// Returns the original temp if it is not in the map.
+    /// </summary>
+    private static int ResolveTemp(Dictionary<int, int> remap, int temp)
+    {
+        while (remap.TryGetValue(temp, out int resolved))
+        {
+            temp = resolved;
+        }
+
+        return temp;
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="inst"/> with all source (read) temps
+    /// rewritten according to <paramref name="remap"/>. Target (write) temps are
+    /// left unchanged. Instructions with no source temps are returned as-is.
+    /// </summary>
+    private static IrInst RemapSourceTemps(IrInst inst, Dictionary<int, int> remap)
+    {
+        int R(int temp) => remap.TryGetValue(temp, out int resolved) ? resolved : temp;
+
+        return inst switch
+        {
+            // Binary arithmetic / comparison — remap Left and Right.
+            IrInst.AddInt a => a with { Left = R(a.Left), Right = R(a.Right) },
+            IrInst.SubInt s => s with { Left = R(s.Left), Right = R(s.Right) },
+            IrInst.MulInt m => m with { Left = R(m.Left), Right = R(m.Right) },
+            IrInst.DivInt d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.AddFloat a => a with { Left = R(a.Left), Right = R(a.Right) },
+            IrInst.SubFloat s => s with { Left = R(s.Left), Right = R(s.Right) },
+            IrInst.MulFloat m => m with { Left = R(m.Left), Right = R(m.Right) },
+            IrInst.DivFloat d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.CmpIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpIntLe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpIntEq c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpIntNe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatGe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatLe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatEq c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatNe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpStrEq c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpStrNe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.ConcatStr c => c with { Left = R(c.Left), Right = R(c.Right) },
+
+            // Memory operations.
+            IrInst.StoreLocal s => s with { Source = R(s.Source) },
+            IrInst.StoreMemOffset s => s with { BasePtr = R(s.BasePtr), Source = R(s.Source) },
+            IrInst.LoadMemOffset l => l with { BasePtr = R(l.BasePtr) },
+
+            // Closures.
+            IrInst.MakeClosure mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
+            IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
+
+            // ADTs.
+            IrInst.SetAdtField sf => sf with { Ptr = R(sf.Ptr), Source = R(sf.Source) },
+            IrInst.GetAdtTag gt => gt with { Ptr = R(gt.Ptr) },
+            IrInst.GetAdtField gf => gf with { Ptr = R(gf.Ptr) },
+
+            // I/O — remap source temps.
+            IrInst.PrintInt p => p with { Source = R(p.Source) },
+            IrInst.PrintStr p => p with { Source = R(p.Source) },
+            IrInst.PrintBool p => p with { Source = R(p.Source) },
+            IrInst.WriteStr w => w with { Source = R(w.Source) },
+            IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
+            IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.HttpGet h => h with { UrlTemp = R(h.UrlTemp) },
+            IrInst.HttpPost h => h with { UrlTemp = R(h.UrlTemp), BodyTemp = R(h.BodyTemp) },
+            IrInst.NetTcpConnect n => n with { HostTemp = R(n.HostTemp), PortTemp = R(n.PortTemp) },
+            IrInst.NetTcpSend n => n with { SocketTemp = R(n.SocketTemp), TextTemp = R(n.TextTemp) },
+            IrInst.NetTcpReceive n => n with { SocketTemp = R(n.SocketTemp), MaxBytesTemp = R(n.MaxBytesTemp) },
+            IrInst.NetTcpClose n => n with { SocketTemp = R(n.SocketTemp) },
+
+            // Ownership.
+            IrInst.Drop d => d with { SourceTemp = R(d.SourceTemp) },
+            IrInst.Borrow b => b with { SourceTemp = R(b.SourceTemp) },
+            IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
+            IrInst.CopyOutList co => co with { SrcTemp = R(co.SrcTemp) },
+            IrInst.CopyOutClosure co => co with { SrcTemp = R(co.SrcTemp) },
+            IrInst.CopyOutTcoListCell co => co with { SrcTemp = R(co.SrcTemp) },
+
+            // Async.
+            IrInst.CreateTask ct => ct with { ClosureTemp = R(ct.ClosureTemp) },
+            IrInst.CreateCompletedTask ct => ct with { ResultTemp = R(ct.ResultTemp) },
+            IrInst.AwaitTask at => at with { TaskTemp = R(at.TaskTemp) },
+            IrInst.RunTask rt => rt with { TaskTemp = R(rt.TaskTemp) },
+            IrInst.AsyncSleep sl => sl with { MillisecondsTemp = R(sl.MillisecondsTemp) },
+            IrInst.AsyncAll aa => aa with { TaskListTemp = R(aa.TaskListTemp) },
+            IrInst.AsyncRace ar => ar with { TaskListTemp = R(ar.TaskListTemp) },
+            IrInst.Suspend s => s with
+            {
+                StateStructTemp = R(s.StateStructTemp),
+                AwaitedTaskTemp = R(s.AwaitedTaskTemp),
+                SaveVars = s.SaveVars.Select(v => (v.SlotOffset, R(v.SourceTemp))).ToList(),
+            },
+            IrInst.Resume r => r with { StateStructTemp = R(r.StateStructTemp) },
+
+            // Control flow.
+            IrInst.PanicStr p => p with { Source = R(p.Source) },
+            IrInst.JumpIfFalse j => j with { CondTemp = R(j.CondTemp) },
+            IrInst.Return r => r with { Source = R(r.Source) },
+
+            // Instructions with no source temps — pass through unchanged.
+            _ => inst,
+        };
     }
 
     // ── Pass 2: Constant folding ────────────────────────────────────────

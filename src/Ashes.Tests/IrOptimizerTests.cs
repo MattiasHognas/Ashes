@@ -181,18 +181,102 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("Drop instructions must be preserved by the optimizer.");
     }
 
-    // ── Borrow preservation tests ───────────────────────────────────────
+    // ── Borrow elision tests ────────────────────────────────────────────
 
     [Test]
-    public void Optimizer_preserves_borrow_instructions()
+    public void Borrow_elision_removes_single_use_borrow()
     {
+        // A single-use borrow is elided — the borrow target is remapped
+        // to the original source, and the Borrow instruction is removed.
         var source = """
             let s = "hello" in Ashes.IO.print(s)
             """;
-        var optimized = LowerAndOptimize(source);
+        var unoptimized = Lower(source);
+        var borrowsBefore = unoptimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.Borrow);
+        borrowsBefore.ShouldBeGreaterThan(0, "Unoptimized IR should have Borrow instructions.");
+
+        var optimized = IrOptimizer.Optimize(unoptimized);
+        var borrowsAfter = optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.Borrow);
+        borrowsAfter.ShouldBeLessThan(borrowsBefore,
+            "Single-use Borrow instructions should be elided by the optimizer.");
+    }
+
+    [Test]
+    public void Borrow_elision_removes_copy_type_borrow()
+    {
+        // Borrows of copy-type temps (produced by LoadConstInt/Float/Bool)
+        // are always elidable, regardless of use count.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.Borrow(1, 0),          // copy-type source → elidable
+            new IrInst.PrintInt(1),
+            new IrInst.Return(1),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
         optimized.EntryFunction.Instructions
             .Any(i => i is IrInst.Borrow)
-            .ShouldBeTrue("Borrow instructions must be preserved by the optimizer.");
+            .ShouldBeFalse("Borrow of a copy-type constant should be elided.");
+
+        // The PrintInt and Return should now reference temp 0 (the original source)
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.PrintInt { Source: 0 })
+            .ShouldBeTrue("PrintInt should be remapped to the original source temp.");
+    }
+
+    [Test]
+    public void Borrow_elision_resolves_chains()
+    {
+        // Borrow(t1, t0), Borrow(t2, t1) should resolve t2 → t0.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.Borrow(1, 0),
+            new IrInst.Borrow(2, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeFalse("Chained borrows of copy-type source should all be elided.");
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.PrintInt { Source: 0 })
+            .ShouldBeTrue("PrintInt should be remapped through the chain to the original source.");
+    }
+
+    [Test]
+    public void Borrow_elision_preserves_multi_use_non_copy_borrow()
+    {
+        // A borrow whose target is used more than once and whose source is
+        // not a copy-type producer should NOT be elided.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),  // non-copy type
+            new IrInst.Borrow(1, 0),
+            new IrInst.PrintStr(1),          // use 1
+            new IrInst.PrintStr(1),          // use 2
+            new IrInst.Return(1),            // use 3
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeTrue("Multi-use non-copy borrow should be preserved.");
     }
 
     // ── End-to-end optimization correctness ─────────────────────────────

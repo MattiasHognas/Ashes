@@ -19,7 +19,7 @@ All original audit findings have been addressed:
 | **Pattern matching** | Tag/zero/non-zero checks → single `CmpIntEq`/`CmpIntNe` + one conditional jump. |
 | **Function attributes** | `nounwind` on all functions. `willreturn`, `noalias`, `nonnull`, `readonly`, `memory(read)` on builtins. |
 | **CPU targeting** | `--target-cpu` CLI flag; `native` auto-detects via `LLVMGetHostCPUName`/`LLVMGetHostCPUFeatures`. |
-| **IR optimizer** | Constant folding (with cross-label propagation), identity/strength reduction, unreachable code elimination, dead code elimination. |
+| **IR optimizer** | Constant folding (with cross-label propagation), identity/strength reduction, unreachable code elimination, dead code elimination. Borrow elision for copy-type sources and single-use borrows (temp aliasing with transitive remap chain resolution). |
 | **TCO** | IR-level tail recursion → loop. `LLVMSetTailCall` on tail-position calls. |
 | **Debug info** | `DW_TAG_auto_variable` for locals, `DW_TAG_formal_parameter` for lambda args. Custom DWARF language code `0x8001`. `isOptimized` wired to `-O` level. |
 
@@ -30,16 +30,22 @@ All original audit findings have been addressed:
 Every remaining optimization task, in recommended execution order.
 Each item builds on the previous ones.
 
-### 1. Borrow elision pass
+### 1. ~~Borrow elision pass~~ ✅ Done
 
-Implement `ElideBorrowsForConstants` in `IrOptimizer.cs` (currently no-op).
+Implemented `ElideBorrowsForConstants` in `IrOptimizer.cs`.
 
-- Add temp aliasing infrastructure: when a `Borrow` targets a copy-type
-  source (constants, `LoadConst*` results), remap all uses of the borrow
-  target to the original source temp and remove the `Borrow` instruction.
-- Extend to non-copy borrows that are provably single-use (the borrow
-  target is used exactly once before being dropped).
-- Prerequisite: use-def chain tracking per temp within each function.
+- ✅ Temp aliasing infrastructure: use-def chain tracking per temp (copy-type
+  producers via `LoadConst*` scan, per-temp use count via `CollectUsedTemps`).
+- ✅ Copy-type elision: `Borrow` instructions whose source is produced by
+  `LoadConstInt`/`LoadConstFloat`/`LoadConstBool` are removed; all uses of the
+  borrow target are remapped to the original source temp.
+- ✅ Single-use elision: non-copy `Borrow` instructions whose target is used
+  exactly once are also elided (single-use borrows are semantically equivalent
+  to a direct reference).
+- ✅ Transitive chain resolution: chains of borrows (Borrow(t2,t1) where t1 was
+  already remapped) are resolved to the root source via `ResolveTemp`.
+- ✅ `RemapSourceTemps` helper rewrites all source-temp references in any
+  `IrInst` variant using `with` record syntax.
 
 ### 2. Drop elision pass
 
