@@ -69,7 +69,7 @@
             "lldb"
           ],
           "default": "gdb",
-          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on Linux."
+          "description": "The native debugger backend used by the Ashes DAP server. Use 'gdb' (default) on Linux/Windows, or 'lldb' on Linux when an MI-compatible LLDB frontend is available."
         },
         "ashes.lspServerPath": {
           "type": "string",
@@ -165,7 +165,7 @@
               },
               "debuggerPath": {
                 "type": "string",
-                "description": "Path to the debugger binary. Defaults to 'gdb'. For debuggerType 'lldb', the DAP server first tries 'lldb-mi' and then falls back to 'lldb --interpreter=mi2'.",
+                "description": "Path to the debugger binary. Defaults to 'gdb'. For debuggerType 'lldb', the DAP server first tries 'lldb-mi' and then tries 'lldb --interpreter=mi2' on MI-capable LLDB builds.",
                 "default": ""
               },
               "debuggerType": {

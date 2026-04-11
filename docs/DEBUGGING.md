@@ -77,9 +77,10 @@ pacman -S mingw-w64-x86_64-gdb
 ### Installing LLDB
 
 The Ashes DAP server communicates with LLDB through the MI front-end. On
-modern Linux installs, plain `lldb` is sufficient because the backend starts
-it with `--interpreter=mi2`. If your distro also ships `lldb-mi`, the DAP
-server can use that as well.
+Linux, this requires either `lldb-mi` or an LLDB build whose CLI accepts
+`--interpreter=mi2`. If your distro only ships the standard `lldb` CLI
+without MI support, the Ashes LLDB backend cannot attach to it; use GDB or
+install an MI-compatible LLDB frontend instead.
 
 **Linux (Debian/Ubuntu):**
 
@@ -263,7 +264,7 @@ All properties for `type: "ashes"` launch configurations:
 | `cwd` | `string` | No | `${workspaceFolder}` | Working directory for the debugged program. |
 | `stopOnEntry` | `boolean` | No | `false` | When `true`, the debugger pauses at the program entry point before any user code runs. |
 | `debuggerType` | `string` | No | *(from setting)* | Native debugger backend: `"gdb"` or `"lldb"`. When omitted, the value of the `ashes.debugger` extension setting is used. |
-| `debuggerPath` | `string` | No | *(auto)* | Path to the debugger binary. Defaults to `gdb` when `debuggerType` is `"gdb"`. For `"lldb"`, the DAP server first tries `lldb-mi` and then falls back to `lldb --interpreter=mi2`. Set this if the binary is not on your `PATH`. |
+| `debuggerPath` | `string` | No | *(auto)* | Path to the debugger binary. Defaults to `gdb` when `debuggerType` is `"gdb"`. For `"lldb"`, the DAP server first tries `lldb-mi` and then tries `lldb --interpreter=mi2` on LLDB builds that support MI mode. Set this if the binary is not on your `PATH`. |
 
 ### Example Configurations
 
@@ -348,7 +349,7 @@ The Ashes DAP server supports two native debugger backends:
 | Backend | Binary | Best For | Notes |
 |---------|--------|----------|-------|
 | **GDB** | `gdb` | Linux, Windows (MSYS2) | Default. Mature MI support. |
-| **LLDB** | `lldb-mi` or `lldb` | Linux | Prefers `lldb-mi` when available, otherwise uses `lldb --interpreter=mi2`. |
+| **LLDB** | `lldb-mi` or MI-capable `lldb` | Linux | Requires an MI frontend. Plain `lldb` works only on builds that accept `--interpreter=mi2`. |
 
 ### Extension Setting
 
@@ -475,6 +476,7 @@ binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 
 - Verify the debugger is installed: `gdb --version`, `lldb --version`, or `lldb-mi --version`
 - If the binary is not on `PATH`, set `debuggerPath` in your launch configuration.
+- If LLDB reports `unknown option: --interpreter=mi2`, your `lldb` binary does not expose MI mode. Install `lldb-mi`, point `debuggerPath` at an MI-compatible LLDB frontend, or switch to GDB.
 
 ### Breakpoints not hitting
 
