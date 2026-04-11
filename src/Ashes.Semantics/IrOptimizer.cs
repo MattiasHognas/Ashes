@@ -28,7 +28,7 @@ public static class IrOptimizer
         var instructions = function.Instructions;
 
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
-        instructions = ElideBorrowsForConstants(instructions);
+        instructions = ElideTrivialBorrows(instructions);
         instructions = FoldConstants(instructions);
         instructions = ReduceIdentitiesAndStrength(instructions);
         instructions = ElideUnreachableCode(instructions);
@@ -41,9 +41,9 @@ public static class IrOptimizer
         };
     }
 
-    // ── Pass 1: Borrow elision ─────────────────────────────────────────
+    // ── Pass 1: Trivial borrow elision ─────────────────────────────────
     // Remove Borrow instructions and remap all uses of the borrow target
-    // back to the original source temp, eliminating the trivial value copy.
+    // back to the original source temp, eliminating trivial borrows.
     //
     // Elidable borrows:
     // (a) Copy-type sources: when the source temp is produced by
@@ -56,7 +56,7 @@ public static class IrOptimizer
     // Chains of borrows (Borrow(t2, t1) where t1 itself was remapped) are
     // resolved transitively so that all uses point back to the original source.
 
-    private static List<IrInst> ElideBorrowsForConstants(List<IrInst> instructions)
+    private static List<IrInst> ElideTrivialBorrows(List<IrInst> instructions)
     {
         // Phase 1: Build use-def information.
         // Track which temps are produced by copy-type constant instructions.
