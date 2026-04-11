@@ -1094,7 +1094,12 @@ public sealed class ArenaDeallocationTests
 
     /// <summary>
     /// Finds the lifted function containing the TCO tail-call jump (the actual TCO loop function).
-    /// Identifies by the presence of a Jump instruction targeting a _body label.
+    /// Identifies by the presence of a Jump instruction targeting a <c>_body</c> label.
+    /// <para>
+    /// Note: This relies on the label naming convention in <c>Lowering.cs</c> where TCO body
+    /// labels are named <c>{functionLabel}_body</c>. If that convention changes, this helper
+    /// must be updated accordingly.
+    /// </para>
     /// </summary>
     private static IrFunction FindTcoFunction(IrProgram ir)
     {

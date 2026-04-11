@@ -820,11 +820,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle oldTail = LoadMemory(state, srcPtr, 8, "tco_cell_old_tail");
 
         // Copy the head value according to the element type.
+        // CopyOutTcoListCell is only emitted for String or InnerList heads;
+        // Inline heads use CopyOutArena(16) instead, so Inline here is a bug.
         LlvmValueHandle newHead = headCopy switch
         {
             ListHeadCopyKind.String => EmitCopyOutStringValue(state, oldHead),
             ListHeadCopyKind.InnerList => EmitCopyOutListFromValue(state, oldHead),
-            _ => oldHead, // Inline: no copy needed (should not normally reach here)
+            _ => throw new InvalidOperationException(
+                $"CopyOutTcoListCell should not be emitted with HeadCopy={headCopy}; " +
+                "Inline heads use CopyOutArena(16) instead."),
         };
 
         // Allocate new 16-byte cons cell and populate.
