@@ -158,11 +158,14 @@
           Source: 5
         },
         {
-          Source: 5
+          Target: 6
+        },
+        {
+          Source: 6
         }
       ],
       LocalCount: 4,
-      TempCount: 6,
+      TempCount: 7,
       HasEnvAndArgParams: false,
       LocalNames: {
         2: x
@@ -175,5 +178,5 @@
     UsesClosures: false,
     UsesAsync: false
   },
-  ElfSha256: 43911DD69B624D3AE77E99CF251A11A146FBCEA2603C1E8CC5D8D961B987AC32
+  ElfSha256: E21BF43B091F20D05CE9BD4B188F866EF05297D07743D391B400D0E4F4D641EB
 }

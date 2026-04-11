@@ -260,27 +260,39 @@
           Source: 7
         },
         {
+          Target: 8
+        },
+        {
           Slot: 6,
-          Source: 7
-        },
-        {
-          Target: 8,
-          Slot: 2
-        },
-        {
-          SourceTemp: 8,
-          TypeName: Function
+          Source: 8
         },
         {
           Target: 9,
-          Slot: 6
+          Slot: 2
         },
         {
-          Source: 9
+          SourceTemp: 9,
+          TypeName: Function
+        },
+        {
+          EndLocalSlot: 1,
+          PreRestoreEndSlot: 7
+        },
+        {
+          DestTemp: 10,
+          SrcTemp: 8,
+          StaticSizeBytes: 8
+        },
+        {
+          SavedEndSlot: 1,
+          PreRestoreEndSlot: 7
+        },
+        {
+          Source: 10
         }
       ],
       LocalCount: 8,
-      TempCount: 10,
+      TempCount: 11,
       HasEnvAndArgParams: false,
       LocalNames: {
         2: add
@@ -346,5 +358,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: E1AEE8D42B3D1069D96EA4706A42258C878B05D9E74B1B021DF2420150D3BE06
+  ElfSha256: 2CA94595E21556ED9FA1CF0D0B3C4BECF5E1D6163D442D758C83095572C88CFD
 }

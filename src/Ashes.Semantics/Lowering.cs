@@ -1582,7 +1582,6 @@ public sealed class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (vTemp, vType) = LowerExpr(arg);
         var t = Prune(vType);
-        var unitType = _resolvedTypes["Unit"];
 
         if (t is TypeRef.TNever)
         {
@@ -1593,21 +1592,21 @@ public sealed class Lowering
         {
             _usesPrintInt = true;
             Emit(new IrInst.PrintInt(vTemp));
-            return (vTemp, unitType);
+            return LowerUnitValue();
         }
 
         if (t is TypeRef.TStr)
         {
             _usesPrintStr = true;
             Emit(new IrInst.PrintStr(vTemp));
-            return (vTemp, unitType);
+            return LowerUnitValue();
         }
 
         if (t is TypeRef.TBool)
         {
             _usesPrintBool = true;
             Emit(new IrInst.PrintBool(vTemp));
-            return (vTemp, unitType);
+            return LowerUnitValue();
         }
 
         ReportDiagnostic(GetSpan(arg), $"print() does not support type {Pretty(t)} yet.");
@@ -2933,10 +2932,11 @@ public sealed class Lowering
         // Phase 3: restore arena after the call chain completes.
         // - Copy-type result (Int, Float, Bool): all allocations from the call
         //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
-        // - String result: restore pointer → copy-out → reclaim chunks (source stays
-        //   readable until ReclaimArenaChunks frees the old OS chunks).
-        // - Other heap types (List, ADT, closure): skip — internal pointers may
-        //   reference memory within the watermark region.
+        // - Self-contained heap result (String, ADT with copy-type fields):
+        //   restore pointer → copy-out → reclaim chunks (source stays readable
+        //   until ReclaimArenaChunks frees the old OS chunks).
+        // - Other heap types (List, closure, ADT with pointer fields): skip —
+        //   internal pointers may reference memory within the watermark region.
         var callResultType = Prune(currentType);
         int callPreRestoreEndSlot = NewLocal();
         if (CanArenaReset(callResultType))
@@ -4301,9 +4301,10 @@ public sealed class Lowering
     /// <list type="bullet">
     ///   <item>Copy-type result (Int, Float, Bool): emits RestoreArenaState; returns
     ///     <paramref name="resultTemp"/> unchanged.</item>
-    ///   <item>Heap-type result that can be copy-outed (String) AND the scope contained alive
-    ///     owned values (so there is heap memory worth reclaiming): emits RestoreArenaState
-    ///     followed by CopyOutArena; returns the new copy-destination temp.</item>
+    ///   <item>Heap-type result that can be copy-outed (String, ADT with copy-type fields)
+    ///     AND the scope contained alive owned values (so there is heap memory worth
+    ///     reclaiming): emits RestoreArenaState followed by CopyOutArena; returns the
+    ///     new copy-destination temp.</item>
     ///   <item>All other heap types, or heap type with no alive owned values: no arena action;
     ///     returns <paramref name="resultTemp"/> unchanged.</item>
     /// </list>
@@ -4365,28 +4366,123 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Returns true if the given type's heap representation is fully self-contained
-    /// (no internal pointers to within-scope arena allocations) and can therefore be
-    /// safely copy-outed after a RestoreArenaState.
+    /// Returns true if the given type's heap representation can be safely copy-outed
+    /// after a RestoreArenaState using a shallow memcpy.
     /// <para>
-    /// Currently handles:
+    /// Handles:
     /// <list type="bullet">
     ///   <item><b>String (TStr):</b> layout is {length:i64, bytes…}; all data is inline,
     ///     no internal pointers. <paramref name="staticSizeBytes"/> is -1 (dynamic).</item>
+    ///   <item><b>ADT (TNamedType):</b> (1 + fieldCount) * 8 bytes. Shallow copy is safe
+    ///     when all fields across all constructors are copy types (Int, Float, Bool) —
+    ///     i.e. inline i64 values with no heap pointers. All constructors must have the
+    ///     same arity for static-size copy.</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Not currently handled (requires deeper copy mechanisms):
+    /// <list type="bullet">
+    ///   <item><b>List (TList):</b> The cons cell tail pointer may reference other
+    ///     cons cells within the same scope/call watermark region. Shallow copy of the
+    ///     outermost cell leaves inner cells in freed arena space.</item>
+    ///   <item><b>Closure (TFun):</b> The env pointer references an environment struct
+    ///     allocated within the same scope/call watermark region. Shallow copy of the
+    ///     16-byte closure leaves the env dangling.</item>
+    ///   <item><b>ADT with pointer fields (TStr, TList, TFun):</b> Field values are
+    ///     pointers to heap objects that may be within the freed arena region.</item>
     /// </list>
     /// </para>
     /// </summary>
     private bool CanCopyOutArena(TypeRef type, out int staticSizeBytes)
     {
         var pruned = Prune(type);
-        if (pruned is TypeRef.TStr)
+        switch (pruned)
         {
-            staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
-            return true;
+            case TypeRef.TStr:
+                staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
+                return true;
+
+            case TypeRef.TNamedType named:
+                return CanCopyOutAdt(named, out staticSizeBytes);
+
+            default:
+                staticSizeBytes = 0;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns true if an ADT type can be safely shallow-copied for arena copy-out.
+    /// Requires all constructors to have the same arity (for static-size copy) and
+    /// all field types across all constructors to be copy types (inline values, no
+    /// heap pointers). Type parameters are substituted with the concrete type arguments
+    /// from the instantiated <paramref name="named"/> type.
+    /// </summary>
+    private bool CanCopyOutAdt(TypeRef.TNamedType named, out int staticSizeBytes)
+    {
+        staticSizeBytes = 0;
+        var sym = named.Symbol;
+        if (sym.Constructors.Count == 0)
+        {
+            return false;
         }
 
-        staticSizeBytes = 0;
-        return false;
+        // All constructors must have the same arity for static-size copy.
+        int arity = sym.Constructors[0].Arity;
+        for (int i = 1; i < sym.Constructors.Count; i++)
+        {
+            if (sym.Constructors[i].Arity != arity)
+            {
+                return false;
+            }
+        }
+
+        // Build type parameter substitution map: TTypeParam → concrete TypeRef.
+        // Constructor parameter types use TTypeParam placeholders (e.g. Box(T) stores
+        // TTypeParam("T")), while the instantiated TNamedType has the concrete type
+        // arguments (e.g. TNamedType(Box, [TInt])).
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        // Check all field types across all constructors are copy types.
+        // Pointer-containing fields (TStr, TList, TFun, TNamedType) are not safe
+        // because the pointed-to data may be within the freed arena region.
+        foreach (var ctor in sym.Constructors)
+        {
+            foreach (var fieldType in ctor.ParameterTypes)
+            {
+                var resolved = ResolveFieldType(fieldType, typeParamMap);
+                if (!CanArenaReset(resolved))
+                {
+                    return false;
+                }
+            }
+        }
+
+        staticSizeBytes = (1 + arity) * 8;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a constructor field type by substituting type parameters with their
+    /// concrete type arguments, then pruning any remaining type variables.
+    /// </summary>
+    private TypeRef ResolveFieldType(TypeRef fieldType, Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap)
+    {
+        var pruned = Prune(fieldType);
+        if (pruned is TypeRef.TTypeParam tp && typeParamMap is not null
+            && typeParamMap.TryGetValue(tp.Symbol, out var concrete))
+        {
+            return Prune(concrete);
+        }
+        return pruned;
     }
 
     /// <summary>
