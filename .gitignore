@@ -50,6 +50,7 @@ CodeCoverage/
 
 # VS Code extension
 .pnpm-store/
+vscode-extension/package-lock.json
 vscode-extension/node_modules/
 vscode-extension/out/
 vscode-extension/compiler/linux-x64/
