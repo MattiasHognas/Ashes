@@ -167,32 +167,274 @@ public sealed class IrOptimizerTests
         optimized.UsesClosures.ShouldBe(unoptimized.UsesClosures);
     }
 
-    // ── Drop preservation tests ─────────────────────────────────────────
+    // ── Drop elision tests ──────────────────────────────────────────────
 
     [Test]
-    public void Optimizer_preserves_drop_instructions()
+    public void Drop_elision_removes_non_resource_string_drop()
     {
+        // String drops are no-ops in codegen (arena handles deallocation).
+        // The optimizer should elide them.
         var source = """
             let s = "hello" in Ashes.IO.print(s)
             """;
-        var optimized = LowerAndOptimize(source);
+        var unoptimized = Lower(source);
+        unoptimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .ShouldBeTrue("Unoptimized IR should have a String Drop.");
+
+        var optimized = IrOptimizer.Optimize(unoptimized);
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
-            .ShouldBeTrue("Drop instructions must be preserved by the optimizer.");
+            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .ShouldBeFalse("String Drop should be elided by the optimizer.");
     }
 
-    // ── Borrow preservation tests ───────────────────────────────────────
+    [Test]
+    public void Drop_elision_removes_non_resource_list_drop()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),   // dummy list ptr
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.Drop(1, "List"),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop)
+            .ShouldBeFalse("List Drop should be elided — not a resource type.");
+    }
 
     [Test]
-    public void Optimizer_preserves_borrow_instructions()
+    public void Drop_elision_removes_non_resource_function_drop()
     {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),   // dummy closure ptr
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.Drop(1, "Function"),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop)
+            .ShouldBeFalse("Function Drop should be elided — not a resource type.");
+    }
+
+    [Test]
+    public void Drop_elision_preserves_resource_type_drop()
+    {
+        // Socket drops must NEVER be elided — they route to TCP close.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),   // dummy socket handle
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.Drop(1, "Socket"),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop { TypeName: "Socket" })
+            .ShouldBeTrue("Socket Drop must be preserved — resource types need cleanup.");
+    }
+
+    [Test]
+    public void Drop_elision_also_removes_dead_load_local()
+    {
+        // When a Drop is elided, the LoadLocal feeding it should also be
+        // removed if its target is only used by the Drop.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),    // only used by the Drop below
+            new IrInst.Drop(1, "String"),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        // The LoadLocal for slot 0 was only used by the Drop, so both should be gone.
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { Slot: 0 })
+            .ShouldBeFalse("LoadLocal feeding an elided Drop should also be removed.");
+    }
+
+    [Test]
+    public void Drop_elision_removes_dead_store_local_when_slot_has_no_loads()
+    {
+        // When the Drop and its LoadLocal are removed, if no other LoadLocal reads
+        // from that slot, the StoreLocal is also dead and should be removed.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),
+            new IrInst.StoreLocal(0, 0),    // only load of slot 0 is the Drop below
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.Drop(1, "String"),
+            new IrInst.LoadConstInt(2, 42),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.StoreLocal { Slot: 0 })
+            .ShouldBeFalse("StoreLocal to a slot with no remaining loads should be removed.");
+    }
+
+    [Test]
+    public void Drop_elision_keeps_store_local_when_slot_has_other_loads()
+    {
+        // If the slot has other LoadLocals besides the one feeding the Drop,
+        // the StoreLocal must be preserved.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),      // used by PrintStr
+            new IrInst.PrintStr(1),
+            new IrInst.LoadLocal(2, 0),      // used only by the Drop
+            new IrInst.Drop(2, "String"),
+            new IrInst.LoadConstInt(3, 0),
+            new IrInst.Return(3),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 4, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        // Drop and its LoadLocal(2,0) should be removed.
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop)
+            .ShouldBeFalse("String Drop should be elided.");
+
+        // But StoreLocal and the other LoadLocal must remain.
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.StoreLocal { Slot: 0 })
+            .ShouldBeTrue("StoreLocal must remain — slot has other loads.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.PrintStr)
+            .ShouldBeTrue("PrintStr must remain — side effect.");
+    }
+
+    // ── Borrow elision tests ────────────────────────────────────────────
+
+    [Test]
+    public void Borrow_elision_removes_single_use_borrow()
+    {
+        // A single-use borrow is elided — the borrow target is remapped
+        // to the original source, and the Borrow instruction is removed.
         var source = """
             let s = "hello" in Ashes.IO.print(s)
             """;
-        var optimized = LowerAndOptimize(source);
+        var unoptimized = Lower(source);
+        var borrowsBefore = unoptimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.Borrow);
+        borrowsBefore.ShouldBeGreaterThan(0, "Unoptimized IR should have Borrow instructions.");
+
+        var optimized = IrOptimizer.Optimize(unoptimized);
+        var borrowsAfter = optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.Borrow);
+        borrowsAfter.ShouldBeLessThan(borrowsBefore,
+            "Single-use Borrow instructions should be elided by the optimizer.");
+    }
+
+    [Test]
+    public void Borrow_elision_removes_copy_type_borrow()
+    {
+        // Borrows of copy-type temps (produced by LoadConstInt/Float/Bool)
+        // are always elidable, regardless of use count.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.Borrow(1, 0),          // copy-type source → elidable
+            new IrInst.PrintInt(1),
+            new IrInst.Return(1),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
         optimized.EntryFunction.Instructions
             .Any(i => i is IrInst.Borrow)
-            .ShouldBeTrue("Borrow instructions must be preserved by the optimizer.");
+            .ShouldBeFalse("Borrow of a copy-type constant should be elided.");
+
+        // The PrintInt and Return should now reference temp 0 (the original source)
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.PrintInt { Source: 0 })
+            .ShouldBeTrue("PrintInt should be remapped to the original source temp.");
+    }
+
+    [Test]
+    public void Borrow_elision_resolves_chains()
+    {
+        // Borrow(t1, t0), Borrow(t2, t1) should resolve t2 → t0.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.Borrow(1, 0),
+            new IrInst.Borrow(2, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeFalse("Chained borrows of copy-type source should all be elided.");
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.PrintInt { Source: 0 })
+            .ShouldBeTrue("PrintInt should be remapped through the chain to the original source.");
+    }
+
+    [Test]
+    public void Borrow_elision_preserves_multi_use_non_copy_borrow()
+    {
+        // A borrow whose target is used more than once and whose source is
+        // not a copy-type producer should NOT be elided.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),  // non-copy type
+            new IrInst.Borrow(1, 0),
+            new IrInst.PrintStr(1),          // use 1
+            new IrInst.PrintStr(1),          // use 2
+            new IrInst.Return(1),            // use 3
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeTrue("Multi-use non-copy borrow should be preserved.");
     }
 
     // ── End-to-end optimization correctness ─────────────────────────────
