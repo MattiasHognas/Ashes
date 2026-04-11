@@ -454,7 +454,7 @@ internal static partial class LlvmCodegen
         // needing a double-pointer (i64**) to track "where to write the next cell
         // pointer", which is awkward with LLVM's opaque pointer model.
 
-        // prevCellSlot tracks the last allocated cell (to set its tail later).
+        // Allocate first cell eagerly from the source head.
         LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
         LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
         LlvmValueHandle firstHead = LoadMemory(state, srcPtr, 0, "copy_list_first_head");
