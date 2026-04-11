@@ -1,6 +1,7 @@
 .vscode/**
 src/**
 tsconfig.json
+tsconfig.test.json
 pnpm-lock.yaml
 **/*.ts
 **/*.map
@@ -8,3 +9,4 @@ node_modules/**
 .gitignore
 .gitattributes
 .editorconfig
+out/test/**

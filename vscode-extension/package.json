@@ -206,16 +206,21 @@
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
-    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js"
+    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
+    "pretest:integration": "tsc -p ./tsconfig.test.json && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
+    "test:integration": "node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^25.5.2",
     "@types/vscode": "^1.110.0",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.58.0",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.28.0",
     "eslint": "^10.2.0",
     "eslint-config-prettier": "^10.1.8",
+    "mocha": "^11.7.5",
     "prettier": "^3.8.1",
     "typescript": "^5.5.3"
   },
