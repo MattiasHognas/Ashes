@@ -9,6 +9,8 @@ namespace Ashes.Dap;
 /// </summary>
 public static partial class MiResponseParser
 {
+    public sealed record MiVariableObject(string Name, string Value, string Type);
+
     /// <summary>
     /// Parses a <c>-stack-list-frames</c> result record into DAP stack frames.
     /// <para>
@@ -82,6 +84,34 @@ public static partial class MiResponseParser
         }
 
         return [.. variables];
+    }
+
+    public static MiVariableObject? ParseVariableObject(string miResponse)
+    {
+        if (string.IsNullOrWhiteSpace(miResponse))
+        {
+            return null;
+        }
+
+        var name = ExtractField(miResponse, "name");
+        var value = ExtractField(miResponse, "value");
+        var type = ExtractField(miResponse, "type");
+        if (string.IsNullOrWhiteSpace(name) || value is null || string.IsNullOrWhiteSpace(type))
+        {
+            return null;
+        }
+
+        return new MiVariableObject(name, value, type);
+    }
+
+    public static string? ParseEvaluateExpressionValue(string miResponse)
+    {
+        if (string.IsNullOrWhiteSpace(miResponse))
+        {
+            return null;
+        }
+
+        return ExtractField(miResponse, "value");
     }
 
     private static string? ExtractField(string text, string fieldName)

@@ -368,7 +368,8 @@ public sealed record IrFunction(
     int TempCount,
     bool HasEnvAndArgParams, // true for lambdas (implicit env+arg params)
     CoroutineInfo? Coroutine = null, // non-null for async coroutine functions
-    IReadOnlyDictionary<int, string>? LocalNames = null // slot → source name (debug info)
+    IReadOnlyDictionary<int, string>? LocalNames = null, // slot → source name (debug info)
+    IReadOnlyDictionary<int, TypeRef>? LocalTypes = null // slot → inferred type (debug info)
 );
 
 public sealed record IrProgram(
