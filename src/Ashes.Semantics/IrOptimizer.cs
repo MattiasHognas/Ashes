@@ -202,6 +202,7 @@ public static class IrOptimizer
             IrInst.NetTcpClose n => n with { SocketTemp = R(n.SocketTemp) },
 
             // Ownership.
+            // NOTE: Keep these source-temp users in sync with CollectUsedTemps().
             IrInst.Drop d => d with { SourceTemp = R(d.SourceTemp) },
             IrInst.Borrow b => b with { SourceTemp = R(b.SourceTemp) },
             IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
