@@ -6,6 +6,7 @@
       "type": "ashes",
       "request": "launch",
       "program": "${workspaceFolder}/out/${workspaceFolderBasename}",
+      "debuggerPath": "lldb",
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "ashes: compile (debug)",
       "stopOnEntry": false
