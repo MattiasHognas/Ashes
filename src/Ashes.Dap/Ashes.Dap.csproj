@@ -7,4 +7,10 @@
     <AssemblyName>ashes-dap</AssemblyName>
     <RootNamespace>Ashes.Dap</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Ashes.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

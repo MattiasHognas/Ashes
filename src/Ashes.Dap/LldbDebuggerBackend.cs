@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -25,24 +26,30 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 
     public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
     {
-        var lldbPath = debuggerPath ?? "lldb-mi";
-        var psi = new ProcessStartInfo(lldbPath)
+        Exception? lastError = null;
+        foreach (var startInfo in CreateLaunchCandidates(program, cwd, debuggerPath))
         {
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("--interpreter=mi2");
-        psi.ArgumentList.Add(program);
+            try
+            {
+                _lldb = Process.Start(startInfo);
+                if (_lldb is not null)
+                {
+                    break;
+                }
 
-        if (cwd is not null)
-        {
-            psi.WorkingDirectory = cwd;
+                lastError = new InvalidOperationException($"Failed to start LLDB using '{startInfo.FileName}'.");
+            }
+            catch (Win32Exception ex)
+            {
+                lastError = ex;
+            }
         }
 
-        _lldb = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start LLDB-MI.");
+        if (_lldb is null)
+        {
+            throw CreateStartFailure(debuggerPath, lastError);
+        }
+
         _lldbIn = _lldb.StandardInput;
         _lldbIn.AutoFlush = true;
 
@@ -59,6 +66,20 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
             var escapedArgs = string.Join(" ", args.Select(EscapeArg));
             await SendCommandAsync($"-exec-arguments {escapedArgs}");
         }
+    }
+
+    internal static IReadOnlyList<ProcessStartInfo> CreateLaunchCandidates(string program, string? cwd, string? debuggerPath)
+    {
+        if (!string.IsNullOrWhiteSpace(debuggerPath))
+        {
+            return [CreateProcessStartInfo(debuggerPath, program, cwd, useInterpreterMi2: ShouldUseInterpreterMi2(debuggerPath))];
+        }
+
+        return
+        [
+            CreateProcessStartInfo("lldb-mi", program, cwd, useInterpreterMi2: false),
+            CreateProcessStartInfo("lldb", program, cwd, useInterpreterMi2: true),
+        ];
     }
 
     public async Task SetBreakpointAsync(string filePath, int line)
@@ -244,6 +265,50 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 
     [GeneratedRegex(@"^(\d+)\^")]
     private static partial Regex ResultRecordRegex();
+
+    private static ProcessStartInfo CreateProcessStartInfo(string debuggerPath, string program, string? cwd, bool useInterpreterMi2)
+    {
+        var psi = new ProcessStartInfo(debuggerPath)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        if (useInterpreterMi2)
+        {
+            psi.ArgumentList.Add("--interpreter=mi2");
+        }
+
+        psi.ArgumentList.Add(program);
+
+        if (cwd is not null)
+        {
+            psi.WorkingDirectory = cwd;
+        }
+
+        return psi;
+    }
+
+    private static InvalidOperationException CreateStartFailure(string? debuggerPath, Exception? lastError)
+    {
+        if (!string.IsNullOrWhiteSpace(debuggerPath))
+        {
+            return new InvalidOperationException($"Failed to start LLDB using '{debuggerPath}'.", lastError);
+        }
+
+        return new InvalidOperationException(
+            "Failed to start LLDB. Tried 'lldb-mi' and 'lldb --interpreter=mi2'. Install LLDB or set debuggerPath.",
+            lastError);
+    }
+
+    private static bool ShouldUseInterpreterMi2(string debuggerPath)
+    {
+        var fileName = Path.GetFileName(debuggerPath);
+        return !fileName.StartsWith("lldb-mi", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string? ExtractMiField(string miRecord, string fieldName)
     {

@@ -357,6 +357,48 @@ public sealed class DapServerTests
     }
 
     [Test]
+    public void Lldb_launch_candidates_try_lldb_mi_then_lldb_mi2_by_default()
+    {
+        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", "/tmp", null);
+
+        candidates.Count.ShouldBe(2);
+
+        candidates[0].FileName.ShouldBe("lldb-mi");
+        candidates[0].ArgumentList.Count.ShouldBe(1);
+        candidates[0].ArgumentList[0].ShouldBe("/tmp/test");
+        candidates[0].WorkingDirectory.ShouldBe("/tmp");
+
+        candidates[1].FileName.ShouldBe("lldb");
+        candidates[1].ArgumentList.Count.ShouldBe(2);
+        candidates[1].ArgumentList[0].ShouldBe("--interpreter=mi2");
+        candidates[1].ArgumentList[1].ShouldBe("/tmp/test");
+        candidates[1].WorkingDirectory.ShouldBe("/tmp");
+    }
+
+    [Test]
+    public void Lldb_launch_candidates_use_explicit_lldb_mi_without_mi2_flag()
+    {
+        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", null, "/usr/bin/lldb-mi-18");
+
+        candidates.Count.ShouldBe(1);
+        candidates[0].FileName.ShouldBe("/usr/bin/lldb-mi-18");
+        candidates[0].ArgumentList.Count.ShouldBe(1);
+        candidates[0].ArgumentList[0].ShouldBe("/tmp/test");
+    }
+
+    [Test]
+    public void Lldb_launch_candidates_use_explicit_lldb_with_mi2_flag()
+    {
+        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", null, "/usr/bin/lldb");
+
+        candidates.Count.ShouldBe(1);
+        candidates[0].FileName.ShouldBe("/usr/bin/lldb");
+        candidates[0].ArgumentList.Count.ShouldBe(2);
+        candidates[0].ArgumentList[0].ShouldBe("--interpreter=mi2");
+        candidates[0].ArgumentList[1].ShouldBe("/tmp/test");
+    }
+
+    [Test]
     public async Task Server_launch_with_gdb_type_uses_gdb_backend()
     {
         IDebuggerBackend? capturedBackend = null;
