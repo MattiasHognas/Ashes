@@ -867,6 +867,84 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void MakeClosureStack_instruction_has_EnvSizeBytes()
+    {
+        var inst = new IrInst.MakeClosureStack(1, "test_lambda", 2, 24);
+        inst.Target.ShouldBe(1);
+        inst.FuncLabel.ShouldBe("test_lambda");
+        inst.EnvPtrTemp.ShouldBe(2);
+        inst.EnvSizeBytes.ShouldBe(24);
+    }
+
+    [Test]
+    public void Closure_used_only_as_direct_callee_uses_stack_allocated_closure()
+    {
+        var ir = LowerProgram(
+            """
+            let add = fun (x) -> x + 1
+            in add(41)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(i => i is IrInst.MakeClosureStack).ShouldBeTrue(
+            "Direct-callee closure bindings should use MakeClosureStack.");
+        instructions.Any(i => i is IrInst.MakeClosure).ShouldBeFalse(
+            "The non-escaping closure binding should not use heap-backed MakeClosure.");
+    }
+
+    [Test]
+    public void Captured_closure_used_only_as_direct_callee_uses_stack_allocated_env_and_closure()
+    {
+        var ir = LowerProgram(
+            """
+            let z = 20
+            in let addZ = fun (x) -> x + z
+            in addZ(22)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(i => i is IrInst.AllocStack alloc && alloc.SizeBytes == 8).ShouldBeTrue(
+            "Non-escaping captured closures should stack-allocate their environment.");
+        instructions.Any(i => i is IrInst.MakeClosureStack).ShouldBeTrue(
+            "Non-escaping captured closures should stack-allocate the closure object.");
+    }
+
+    [Test]
+    public void Immediate_match_scrutinee_uses_stack_allocated_adt()
+    {
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            match Box(42) with
+            | Box(x) -> x
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(i => i is IrInst.AllocAdtStack).ShouldBeTrue(
+            "Immediately destructured constructor scrutinees should use AllocAdtStack.");
+        instructions.Any(i => i is IrInst.AllocAdt).ShouldBeFalse(
+            "Immediate constructor destructuring should avoid heap-backed AllocAdt.");
+    }
+
+    [Test]
+    public void Let_bound_adt_immediately_destructured_uses_stack_allocated_adt()
+    {
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            let box = Box(42)
+            in match box with
+            | Box(x) -> x
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(i => i is IrInst.AllocAdtStack).ShouldBeTrue(
+            "Let-bound ADTs that are immediately destructured should use AllocAdtStack.");
+    }
+
+    [Test]
     public void List_of_string_does_not_emit_CopyOutList()
     {
         // List(Str) should NOT emit CopyOutList — copying cons cells alone

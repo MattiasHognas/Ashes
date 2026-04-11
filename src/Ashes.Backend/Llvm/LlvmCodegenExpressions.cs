@@ -32,6 +32,16 @@ internal static partial class LlvmCodegen
         return closurePtr;
     }
 
+    private static LlvmValueHandle EmitMakeClosureStack(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
+    {
+        LlvmValueHandle closurePtr = EmitStackAlloc(state, 24, $"closure_stack_{funcLabel}");
+        LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_stack_code_{funcLabel}");
+        StoreMemory(state, closurePtr, 0, codePtr, $"closure_stack_code_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 8, envPtr, $"closure_stack_env_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_stack_env_size_store_{funcLabel}");
+        return closurePtr;
+    }
+
     private static LlvmValueHandle EmitCallClosure(LlvmCodegenState state, LlvmValueHandle closurePtr, LlvmValueHandle argValue, bool isTailCall = false)
     {
         LlvmValueHandle codePtr = LoadMemory(state, closurePtr, 0, "closure_code");

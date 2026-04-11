@@ -52,10 +52,25 @@ internal static partial class LlvmCodegen
         return cursor;
     }
 
+    private static LlvmValueHandle EmitStackAlloc(LlvmCodegenState state, int sizeBytes, string name)
+    {
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, (ulong)sizeBytes);
+        LlvmValueHandle bufferPtr = LlvmApi.BuildAlloca(state.Target.Builder, bufferType, name);
+        LlvmValueHandle bytePtr = LlvmApi.BuildBitCast(state.Target.Builder, bufferPtr, state.I8Ptr, name + "_i8");
+        return LlvmApi.BuildPtrToInt(state.Target.Builder, bytePtr, state.I64, name + "_addr");
+    }
+
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
     {
         LlvmValueHandle ptr = EmitAlloc(state, (1 + fieldCount) * 8);
         StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
+        return ptr;
+    }
+
+    private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
+    {
+        LlvmValueHandle ptr = EmitStackAlloc(state, (1 + fieldCount) * 8, $"adt_stack_{tag}");
+        StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_stack_tag_{tag}");
         return ptr;
     }
 
