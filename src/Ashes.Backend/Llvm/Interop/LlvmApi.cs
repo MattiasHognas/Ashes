@@ -339,6 +339,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildAlloca", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildAlloca(LlvmBuilderHandle b, LlvmTypeHandle type, string name);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildArrayAlloca", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle BuildArrayAlloca(LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle val, string name);
+
     [LibraryImport(Lib, EntryPoint = "LLVMBuildLoad2", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildLoad2(LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr, string name);
 
