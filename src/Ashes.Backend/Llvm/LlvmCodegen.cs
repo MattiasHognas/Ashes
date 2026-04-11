@@ -502,7 +502,7 @@ internal static partial class LlvmCodegen
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutList or IrInst.CopyOutClosure;
     }
 
     private static void EmitFunctionBody(
@@ -767,7 +767,7 @@ internal static partial class LlvmCodegen
             IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
             IrInst.PanicStr panicStr => EmitPanic(state, LoadTemp(state, panicStr.Source)),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
-            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp))),
+            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp), makeClosure.EnvSizeBytes)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
@@ -784,6 +784,8 @@ internal static partial class LlvmCodegen
             IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot),
             IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot),
             IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
+            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp)),
+            IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }
