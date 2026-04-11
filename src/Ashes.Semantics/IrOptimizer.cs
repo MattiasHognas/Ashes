@@ -1,7 +1,7 @@
 namespace Ashes.Semantics;
 
 /// <summary>
-/// IR-level optimization pass pipeline (Phase 4).
+/// IR-level optimization pass pipeline.
 /// Runs after semantic lowering, before the backend.
 /// All optimizations are invisible to the user — observable behaviour is identical.
 /// </summary>
@@ -41,7 +41,7 @@ public static class IrOptimizer
         };
     }
 
-    // ── Pass 1: Trivial borrow elision ─────────────────────────────────
+    // ── Trivial borrow elision ──────────────────────────────────────────
     // Remove Borrow instructions and remap all uses of the borrow target
     // back to the original source temp, eliminating trivial borrows.
     //
@@ -58,7 +58,7 @@ public static class IrOptimizer
 
     private static List<IrInst> ElideTrivialBorrows(List<IrInst> instructions)
     {
-        // Phase 1: Build use-def information.
+        // Build use-def information.
         // Track which temps are produced by copy-type constant instructions.
         var copyTypeProducers = new HashSet<int>();
 
@@ -83,7 +83,7 @@ public static class IrOptimizer
             }
         }
 
-        // Phase 2: Identify elidable Borrows and build a remap table.
+        // Identify elidable Borrows and build a remap table.
         var remap = new Dictionary<int, int>();
 
         foreach (var inst in instructions)
@@ -108,7 +108,7 @@ public static class IrOptimizer
             return instructions;
         }
 
-        // Phase 3: Rewrite the instruction list — remove elided Borrows and
+        // Rewrite the instruction list — remove elided Borrows and
         // remap all source-temp references to the original source.
         var result = new List<IrInst>(instructions.Count);
 
@@ -236,7 +236,7 @@ public static class IrOptimizer
         };
     }
 
-    // ── Pass 2: Constant folding ────────────────────────────────────────
+    // ── Constant folding ───────────────────────────────────────────────
     // Evaluate arithmetic on known constant operands at compile time.
     // Labels with a single predecessor preserve constant knowledge from
     // that predecessor, enabling folding across branch boundaries.
@@ -466,7 +466,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 2b: Identity elimination and strength reduction ─────────────
+    // ── Identity elimination and strength reduction ──────────────────────
     // Simplify arithmetic with known identity values:
     //   x + 0 → x, 0 + x → x, x - 0 → x
     //   x * 1 → x, 1 * x → x, x * 0 → 0, 0 * x → 0
@@ -642,7 +642,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 2c: Unreachable code elimination ───────────────────────────
+    // ── Unreachable code elimination ────────────────────────────────────
     // Remove instructions after unconditional jumps or returns until the
     // next label (which re-establishes reachability).
 
@@ -682,7 +682,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 3: Dead code elimination ───────────────────────────────────
+    // ── Dead code elimination ──────────────────────────────────────────
     // Remove LoadConst instructions whose target temp is never used,
     // and StoreLocal instructions whose slot is never loaded.
 
@@ -760,7 +760,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 4: Drop elision ────────────────────────────────────────────
+    // ── Drop elision ───────────────────────────────────────────────────
     // Remove Drop instructions that perform no useful work.
     //
     // Elidable drops:
@@ -778,7 +778,7 @@ public static class IrOptimizer
 
     private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
     {
-        // Phase 1: Build analysis data.
+        // Build analysis data.
 
         // Map: temp → instruction index of the instruction that defines it.
         var tempDefinedAt = new Dictionary<int, int>();
@@ -805,7 +805,7 @@ public static class IrOptimizer
             }
         }
 
-        // Phase 2: Identify elidable Drops and their feeding LoadLocals.
+        // Identify elidable Drops and their feeding LoadLocals.
         var toRemove = new HashSet<int>();
 
         for (int i = 0; i < instructions.Count; i++)
@@ -833,7 +833,7 @@ public static class IrOptimizer
             return instructions;
         }
 
-        // Phase 3: Check for StoreLocals to slots that have no remaining LoadLocals.
+        // Check for StoreLocals to slots that have no remaining LoadLocals.
         // After removing drop-related LoadLocals, some slots may have zero loads,
         // making their StoreLocals dead code.
         var slotLoadCount = new Dictionary<int, int>();
@@ -856,7 +856,7 @@ public static class IrOptimizer
             }
         }
 
-        // Phase 4: Rebuild the instruction list excluding removed instructions.
+        // Rebuild the instruction list excluding removed instructions.
         var result = new List<IrInst>(instructions.Count - toRemove.Count);
         for (int i = 0; i < instructions.Count; i++)
         {

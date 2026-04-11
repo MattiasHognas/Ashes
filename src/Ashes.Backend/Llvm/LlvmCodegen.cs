@@ -406,7 +406,7 @@ internal static partial class LlvmCodegen
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 
-        // Debug info setup (Phase 2b)
+        // Debug info setup
         using var dbg = CreateDebugInfoContext(target, options, program);
         if (dbg is not null)
         {

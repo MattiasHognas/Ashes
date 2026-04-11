@@ -638,7 +638,7 @@ internal static partial class LlvmCodegen
     /// Resource types (Socket) route to platform-specific close functions.
     /// Other owned types (String, List, ADTs, Closures) are no-ops in the
     /// current linear allocator — the IR records the drop for correctness;
-    /// actual deallocation will be added in Phase 4.
+    /// actual deallocation is handled by arena-based memory reclamation.
     /// Returns false because Drop does not terminate the current basic block.
     /// </summary>
     private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle value, string typeName)

@@ -761,7 +761,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMMetadataAsValue")]
     public static partial LlvmValueHandle MetadataAsValue(LlvmContextHandle context, LlvmMetadataHandle md);
 
-    // ── LLVM New Pass Manager (Phase 4: optimization pipeline) ────────
+    // ── LLVM New Pass Manager ─────────────────────────────────────────
 
     /// <summary>
     /// Run a pipeline of LLVM passes on the module.

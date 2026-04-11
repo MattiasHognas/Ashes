@@ -363,7 +363,7 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("1000\n");
     }
 
-    // --- Phase 3: per-call arena watermark end-to-end tests ---
+    // --- Per-call arena watermark end-to-end tests ---
 
     [Test]
     public async Task Function_call_returning_int_produces_correct_result()

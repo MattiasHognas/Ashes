@@ -419,7 +419,7 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void TCO_loop_with_list_of_int_arg_emits_RestoreArenaState_and_CopyOutArena_before_jump()
     {
-        // Phase 2c: when a tail-call argument is a TList(Int) (cons cell with copy-type head),
+        // When a tail-call argument is a TList(Int) (cons cell with copy-type head),
         // the cons cell is self-contained (head is a direct i64, tail points to pre-watermark
         // memory from the previous iteration). Emitting RestoreArenaState + CopyOutArena(16)
         // allows the iteration's arena to be reclaimed while the accumulator survives.
@@ -434,19 +434,19 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
-        bool foundPhase2c = false;
+        bool foundCopyOutSequence = false;
         for (int i = 0; i < insts.Count - 2; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
                 && insts[i + 1] is IrInst.CopyOutArena copyOut
                 && copyOut.StaticSizeBytes == 16)
             {
-                foundPhase2c = true;
+                foundCopyOutSequence = true;
                 break;
             }
         }
-        foundPhase2c.ShouldBeTrue(
-            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16) (Phase 2c).");
+        foundCopyOutSequence.ShouldBeTrue(
+            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16).");
     }
 
     [Test]
@@ -769,19 +769,19 @@ public sealed class ArenaDeallocationTests
         inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.Inline);
     }
 
-    // --- Phase 2b: copy-out for String scope results ---
+    // --- Copy-out for String scope results ---
 
     [Test]
     public void String_result_let_with_owned_binding_emits_CopyOutArena()
     {
         // let s = "hello" in s + " world"
         // s is an owned String binding. The body is a heap-allocated concat string.
-        // Phase 2b should emit RestoreArenaState + CopyOutArena(-1) for the string result.
+        // RestoreArenaState + CopyOutArena(-1) should be emitted for the string result.
         var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
         var insts = ir.EntryFunction.Instructions;
 
         HasCopyOutArena(insts).ShouldBeTrue(
-            "String result with owned binding should emit CopyOutArena (Phase 2b).");
+            "String result with owned binding should emit CopyOutArena.");
     }
 
     [Test]
@@ -809,7 +809,7 @@ public sealed class ArenaDeallocationTests
     public void String_body_let_without_owned_binding_does_not_emit_CopyOutArena()
     {
         // let x = 42 in "hello" — x is Int (not owned), no heap to reclaim.
-        // Phase 2b copy-out requires at least one owned value in scope.
+        // Copy-out requires at least one owned value in scope.
         var ir = LowerProgram("let x = 42 in \"hello\"");
         var insts = ir.EntryFunction.Instructions;
 
@@ -1034,7 +1034,7 @@ public sealed class ArenaDeallocationTests
             "CopyOutArena(16) should appear after CallClosure for Box(Int) result.");
     }
 
-    // --- Phase 3: per-function-call arena watermarks ---
+    // --- Per-call arena watermarks ---
 
     [Test]
     public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
