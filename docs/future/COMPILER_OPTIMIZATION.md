@@ -29,26 +29,7 @@ All original audit findings have been addressed:
 Every remaining optimization task, in recommended execution order.
 Each item builds on the previous ones.
 
-### 1. ~~Extend copy-out to List, ADT, and closure (scope + call results)~~ ✅
-
-Extended copy-out in `Lowering.cs` beyond `TStr`.
-
-- **List:** Deep cons-chain copy via `CopyOutList` IR instruction. Walks tail
-  pointers at runtime, allocating and relinking each cell. Safe when element is
-  copy-type or self-contained (`TStr`). Shallow 16-byte copy is NOT safe for
-  multi-cell chains (inner cells would be left in freed arena space).
-- **Closure:** Closure struct + env copy via `CopyOutClosure` IR instruction.
-  Closure layout changed from 16 to 24 bytes: `{code:i64, env:i64, env_size:i64}`.
-  Reads `env_size` at runtime to copy the env block. Shallow 16-byte copy is
-  NOT safe (env pointer would dangle).
-- **ADT:** `(1 + fieldCount) * 8` bytes — shallow `CopyOutArena` copy, safe when all
-  fields across all constructors are copy types (Int, Float, Bool) and all
-  constructors have the same arity.
-
-Applies to both let/match scope results (`PopOwnershipScope`) and
-per-call results (`LowerCall` post-`CallClosure`).
-
-### 2. Extend TCO copy-out beyond TStr and TList(copy-type element)
+### 1. Extend TCO copy-out beyond TStr and TList(copy-type element)
 
 Extend `CanCopyOutTcoArg` in `Lowering.cs`.
 
@@ -61,7 +42,7 @@ Extend `CanCopyOutTcoArg` in `Lowering.cs`.
 - **Closure args:** Same 16-byte shallow copy as scope results.
 - **ADT args:** Same field-type recursive check as scope results.
 
-### 3. Borrow elision pass
+### 2. Borrow elision pass
 
 Implement `ElideBorrowsForConstants` in `IrOptimizer.cs` (currently no-op).
 
@@ -72,7 +53,7 @@ Implement `ElideBorrowsForConstants` in `IrOptimizer.cs` (currently no-op).
   target is used exactly once before being dropped).
 - Prerequisite: use-def chain tracking per temp within each function.
 
-### 4. Drop elision pass
+### 3. Drop elision pass
 
 Implement `ElideRedundantDrops` in `IrOptimizer.cs` (currently no-op).
 
@@ -84,7 +65,7 @@ Implement `ElideRedundantDrops` in `IrOptimizer.cs` (currently no-op).
   hold OS resources.
 - Prerequisite: same use-def / ownership flow analysis as borrow elision.
 
-### 5. Escape analysis — stack-allocate non-escaping closures / ADTs
+### 4. Escape analysis — stack-allocate non-escaping closures / ADTs
 
 Analyze which closures and ADTs never escape their defining scope. Those
 can be stack-allocated (`alloca`) instead of arena-allocated, avoiding
@@ -96,7 +77,7 @@ arena pressure entirely.
   immediately — the ADT never escapes the match scope.
 - Enables further drop elision: stack-allocated values don't need drops.
 
-### 6. Decision tree pattern matching for large ADTs
+### 5. Decision tree pattern matching for large ADTs
 
 Replace the current linear chain of tag checks with a decision tree
 (jump table or balanced binary search) for ADTs with many constructors.
@@ -104,7 +85,7 @@ Replace the current linear chain of tag checks with a decision tree
 - Threshold: use linear scan for ≤ 4 constructors; decision tree above.
 - Reduces match complexity from O(n) to O(log n) or O(1) for dense tags.
 
-### 7. Runtime string interning
+### 6. Runtime string interning
 
 Add a runtime intern table for strings. `concat`, `substring`, and other
 string-producing operations check the table before allocating.
@@ -113,7 +94,7 @@ string-producing operations check the table before allocating.
 - Most valuable for programs that build many identical strings in loops.
 - Low priority — arena deallocation already handles most memory pressure.
 
-### 8. Mutual recursion TCO
+### 7. Mutual recursion TCO
 
 Extend tail call optimization to detect mutual recursion (e.g. `f` calls
 `g` in tail position, `g` calls `f` in tail position).
