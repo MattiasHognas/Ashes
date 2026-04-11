@@ -115,13 +115,25 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
     return await File.ReadAllTextAsync(inputFile);
 }
 
-static byte[] CompileToImage(string source, string targetId, BackendCompileOptions? backendOptions = null, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
+static byte[] CompileToImage(
+    string source,
+    string targetId,
+    BackendCompileOptions? backendOptions = null,
+    IReadOnlySet<string>? importedStdModules = null,
+    IReadOnlyDictionary<string, string>? moduleAliases = null,
+    CombinedCompilationLayout? sourceLayout = null)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
     diag.ThrowIfAny();
 
-    var ir = new Lowering(diag, importedStdModules, moduleAliases).Lower(program);
+    var lowering = new Lowering(diag, importedStdModules, moduleAliases);
+    if (sourceLayout is { } layout)
+    {
+        lowering.SetSourceContext(layout);
+    }
+
+    var ir = lowering.Lower(program);
     diag.ThrowIfAny();
 
     // Run IR-level optimization passes before backend codegen
@@ -132,23 +144,22 @@ static byte[] CompileToImage(string source, string targetId, BackendCompileOptio
     return backend.Compile(ir, effectiveOptions);
 }
 
-static (string Source, IReadOnlySet<string>? ImportedStdModules, IReadOnlyDictionary<string, string>? ModuleAliases) PrepareStandaloneCompilationSource(string source, string displayPath)
+static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModules, IReadOnlyDictionary<string, string>? ModuleAliases) PrepareStandaloneCompilationSource(string source, string displayPath)
 {
     var parsed = ProjectSupport.ParseImportHeader(source, displayPath);
-    var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+    var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, displayPath);
     var importedStdModules = parsed.ImportNames
         .Where(ProjectSupport.IsStdModule)
         .ToHashSet(StringComparer.Ordinal);
 
-    return (layout.Source, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+    return (layout, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
 }
 
 static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null)
 {
     var plan = ProjectSupport.BuildCompilationPlan(project);
-
-    var projectSource = ProjectSupport.BuildCompilationSource(plan);
-    return CompileToImage(projectSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
+    var layout = ProjectSupport.BuildCompilationLayout(plan);
+    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
@@ -550,7 +561,7 @@ async Task<int> RunCompileAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases);
+            image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -668,7 +679,7 @@ async Task<int> RunRunAsync(string[] a)
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            image = CompileToImage(prepared.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases);
+            image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
         }
         catch (CompileDiagnosticException ex)
         {
