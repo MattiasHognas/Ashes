@@ -4,13 +4,13 @@ type Color =
     | Green
     | Blue
 
-let describe =
-    fun (c) ->
+let describe = 
+    fun (c) -> 
         match c with
-        | Red -> "red"
-        | Green -> "green"
-        | Blue -> "blue"
-in
+            | Red -> "red"
+            | Green -> "green"
+            | Blue -> "blue"
+in 
     Red
     |> describe
     |> Ashes.IO.print

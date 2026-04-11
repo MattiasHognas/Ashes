@@ -65,11 +65,21 @@ jobs:
           pnpm run format:check
           pnpm run compile
 
+      - name: Publish toolchain for extension integration tests
+        run: |
+          dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/extension-test/compiler
+          dotnet publish src/Ashes.Lsp/Ashes.Lsp.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/extension-test/lsp
+          dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/extension-test/dap
+
       - name: VS Code extension integration tests
         run: |
           cd vscode-extension
           pnpm run pretest:integration
           xvfb-run -a pnpm run test:integration
+        env:
+          ASHES_COMPILER_PATH: ${{ github.workspace }}/artifacts/extension-test/compiler/ashes
+          ASHES_LSP_PATH: ${{ github.workspace }}/artifacts/extension-test/lsp/Ashes.Lsp
+          ASHES_DAP_PATH: ${{ github.workspace }}/artifacts/extension-test/dap/ashes-dap
 
       - name: Publish Ashes CLI binaries
         run: |

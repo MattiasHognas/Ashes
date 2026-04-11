@@ -13,14 +13,34 @@ async function main(): Promise<void> {
     `ashes-test-workspace-${randomUUID()}.code-workspace`,
   );
 
+  // Build workspace settings from environment variables when available.
+  // CI publishes real compiler/LSP/DAP binaries and exposes their paths
+  // via ASHES_COMPILER_PATH, ASHES_LSP_PATH, and ASHES_DAP_PATH.
+  const settings: Record<string, unknown> = {
+    "ashes.autoStartLanguageServer": false,
+  };
+
+  const compilerPath = process.env.ASHES_COMPILER_PATH;
+  const lspPath = process.env.ASHES_LSP_PATH;
+  const dapPath = process.env.ASHES_DAP_PATH;
+
+  if (compilerPath) {
+    settings["ashes.compilerPath"] = compilerPath;
+  }
+  if (lspPath) {
+    settings["ashes.lspServerPath"] = lspPath;
+    settings["ashes.autoStartLanguageServer"] = true;
+  }
+  if (dapPath) {
+    settings["ashes.dapServerPath"] = dapPath;
+  }
+
   fs.writeFileSync(
     testWorkspaceFile,
     JSON.stringify(
       {
         folders: [{ path: testWorkspace }],
-        settings: {
-          "ashes.autoStartLanguageServer": false,
-        },
+        settings,
       },
       null,
       2,
