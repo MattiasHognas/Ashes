@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -218,5 +219,49 @@ public sealed class DebugInfoTests
     {
         var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "-g", "--expr", "42");
         startInfo.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Compile_with_debug_emits_binary_successfully()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "ashes-debug-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        var sourcePath = Path.Combine(tempRoot, "main.ash");
+        var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "main.exe" : "main");
+        await File.WriteAllTextAsync(sourcePath, "42");
+
+        try
+        {
+            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+
+            exitCode.ShouldBe(0, stderr);
+            File.Exists(outputPath).ShouldBeTrue($"Expected compiled output at '{outputPath}'. Stdout: {stdout}{Environment.NewLine}Stderr: {stderr}");
+            stdout.ShouldContain("Debug:");
+            stdout.ShouldContain("yes");
+            stderr.ShouldBeEmpty();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch
+            {
+                // Ignore test cleanup failures for temp artifacts.
+            }
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(ProcessStartInfo startInfo)
+    {
+        using var process = Process.Start(startInfo)!;
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 }

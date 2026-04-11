@@ -735,7 +735,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMSetCurrentDebugLocation2")]
     public static partial void SetCurrentDebugLocation2(LlvmBuilderHandle builder, LlvmMetadataHandle loc);
 
-    [LibraryImport(Lib, EntryPoint = "LLVMCreateDebugLocation")]
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateDebugLocation")]
     public static partial LlvmMetadataHandle CreateDebugLocation(
         LlvmContextHandle ctx,
         uint line,
