@@ -626,12 +626,9 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_of_string_does_not_emit_CopyOutList()
+    public void List_of_string_emits_CopyOutList()
     {
-        // List(Str) has Str elements that are pointers — currently not safe
-        // for deep copy (would need to also deep-copy each string element).
-        // Actually, TStr IS a safe element type — strings are self-contained.
-        // This test verifies that List(Str) DOES emit CopyOutList.
+        // List(Str) should emit CopyOutList because strings are self-contained.
         var ir = LowerProgram("let s = \"hello\" in [\"a\", \"b\"]");
         ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
             "List(Str) should emit CopyOutList (strings are self-contained).");
