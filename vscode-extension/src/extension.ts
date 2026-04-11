@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -142,6 +143,30 @@ export async function deactivate(): Promise<void> {
   disposeCommands();
 }
 
+function getDefaultDebugProgramPath(filePath: string): string {
+  const parsedPath = path.parse(filePath);
+  const executableExtension = process.platform === "win32" ? ".exe" : "";
+  return path.join(
+    parsedPath.dir,
+    `${parsedPath.name}${executableExtension}`,
+  );
+}
+
+function resolveDebugProgramPath(
+  folder: vscode.WorkspaceFolder | undefined,
+  program: string,
+): string {
+  if (path.isAbsolute(program)) {
+    return program;
+  }
+
+  if (folder) {
+    return path.join(folder.uri.fsPath, program);
+  }
+
+  return path.resolve(program);
+}
+
 class AshesDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   private readonly context: vscode.ExtensionContext;
 
@@ -197,8 +222,8 @@ class AshesDebugConfigurationProvider
         config.type = "ashes";
         config.name = "Ashes: Launch";
         config.request = "launch";
-        config.program = "${workspaceFolder}/out/${workspaceFolderBasename}";
-        config.cwd = "${workspaceFolder}";
+        config.program = getDefaultDebugProgramPath(editor.document.uri.fsPath);
+        config.cwd = path.dirname(editor.document.uri.fsPath);
         config.stopOnEntry = false;
       }
     }
@@ -219,6 +244,39 @@ class AshesDebugConfigurationProvider
         .getConfiguration("ashes")
         .get<string>("debugger", "gdb");
       config.debuggerType = setting;
+    }
+
+    return config;
+  }
+
+  async resolveDebugConfigurationWithSubstitutedVariables(
+    folder: vscode.WorkspaceFolder | undefined,
+    config: vscode.DebugConfiguration,
+    _token?: vscode.CancellationToken,
+  ): Promise<vscode.DebugConfiguration | undefined> {
+    if (!config.program || typeof config.program !== "string") {
+      return config;
+    }
+
+    const resolvedProgramPath = resolveDebugProgramPath(folder, config.program);
+
+    try {
+      const fileInfo = await vscode.workspace.fs.stat(
+        vscode.Uri.file(resolvedProgramPath),
+      );
+
+      if ((fileInfo.type & vscode.FileType.Directory) !== 0) {
+        throw new Error("Program path points to a directory.");
+      }
+    } catch {
+      const displayPath = folder
+        ? path.relative(folder.uri.fsPath, resolvedProgramPath) || "."
+        : resolvedProgramPath;
+
+      void vscode.window.showErrorMessage(
+        `Cannot start debugging: program '${displayPath}' does not exist. Compile with '--debug' first, or set launch.json \"program\" to the compiled binary.`,
+      );
+      return undefined;
     }
 
     return config;

@@ -211,6 +211,7 @@
     "test:integration": "node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.5.2",
     "@types/vscode": "^1.110.0",
@@ -225,6 +226,7 @@
     "typescript": "^5.5.3"
   },
   "dependencies": {
+    "adm-zip": "^0.5.17",
     "vscode-languageclient": "^9.0.1"
   },
   "overrides": {

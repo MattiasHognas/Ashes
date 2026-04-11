@@ -71,11 +71,5 @@ examples/*.exe
 *.received.txt
 runtimes
 
-
-# Personal files
-PLANNED_ISSUES*.md
-ROADMAP.md
-LLVM_*.md
-
 # Git
 .git/
