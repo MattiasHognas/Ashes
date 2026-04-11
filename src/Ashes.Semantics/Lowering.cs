@@ -2932,11 +2932,9 @@ public sealed class Lowering
         // Phase 3: restore arena after the call chain completes.
         // - Copy-type result (Int, Float, Bool): all allocations from the call
         //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
-        // - Self-contained heap result (String, ADT with copy-type fields):
-        //   restore pointer → copy-out → reclaim chunks (source stays readable
-        //   until ReclaimArenaChunks frees the old OS chunks).
-        // - Other heap types (List, closure, ADT with pointer fields): skip —
-        //   internal pointers may reference memory within the watermark region.
+        // - Self-contained heap result (String, List with safe element, Closure,
+        //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
+        //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
         var callResultType = Prune(currentType);
         int callPreRestoreEndSlot = NewLocal();
         if (CanArenaReset(callResultType))
@@ -4301,10 +4299,10 @@ public sealed class Lowering
     /// <list type="bullet">
     ///   <item>Copy-type result (Int, Float, Bool): emits RestoreArenaState; returns
     ///     <paramref name="resultTemp"/> unchanged.</item>
-    ///   <item>Heap-type result that can be copy-outed (String, ADT with copy-type fields)
-    ///     AND the scope contained alive owned values (so there is heap memory worth
-    ///     reclaiming): emits RestoreArenaState followed by CopyOutArena; returns the
-    ///     new copy-destination temp.</item>
+    ///   <item>Heap-type result that can be copy-outed (String, List with safe element,
+    ///     Closure, ADT with copy-type fields) AND the scope contained alive owned values
+    ///     (so there is heap memory worth reclaiming): emits RestoreArenaState followed
+    ///     by CopyOutArena; returns the new copy-destination temp.</item>
     ///   <item>All other heap types, or heap type with no alive owned values: no arena action;
     ///     returns <paramref name="resultTemp"/> unchanged.</item>
     /// </list>
@@ -4373,23 +4371,17 @@ public sealed class Lowering
     /// <list type="bullet">
     ///   <item><b>String (TStr):</b> layout is {length:i64, bytes…}; all data is inline,
     ///     no internal pointers. <paramref name="staticSizeBytes"/> is -1 (dynamic).</item>
+    ///   <item><b>List (TList):</b> cons cell is {head:i64, tail:i64} = 16 bytes.
+    ///     <c>tail</c> always points below the watermark (parent scope / previous
+    ///     iteration). Safe when element is a copy type (Int, Float, Bool) or TStr
+    ///     (self-contained).</item>
+    ///   <item><b>Closure (TFun):</b> {code:i64, env:i64} = 16 bytes.
+    ///     <c>code</c> is a function pointer (never heap), <c>env</c> points to a
+    ///     parent scope environment. Shallow copy is safe.</item>
     ///   <item><b>ADT (TNamedType):</b> (1 + fieldCount) * 8 bytes. Shallow copy is safe
     ///     when all fields across all constructors are copy types (Int, Float, Bool) —
     ///     i.e. inline i64 values with no heap pointers. All constructors must have the
     ///     same arity for static-size copy.</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// Not currently handled (requires deeper copy mechanisms):
-    /// <list type="bullet">
-    ///   <item><b>List (TList):</b> The cons cell tail pointer may reference other
-    ///     cons cells within the same scope/call watermark region. Shallow copy of the
-    ///     outermost cell leaves inner cells in freed arena space.</item>
-    ///   <item><b>Closure (TFun):</b> The env pointer references an environment struct
-    ///     allocated within the same scope/call watermark region. Shallow copy of the
-    ///     16-byte closure leaves the env dangling.</item>
-    ///   <item><b>ADT with pointer fields (TStr, TList, TFun):</b> Field values are
-    ///     pointers to heap objects that may be within the freed arena region.</item>
     /// </list>
     /// </para>
     /// </summary>
@@ -4402,6 +4394,14 @@ public sealed class Lowering
                 staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
                 return true;
 
+            case TypeRef.TList list when IsCopyOutSafeElement(list.Element):
+                staticSizeBytes = 16; // cons cell: { head:i64, tail:i64 }
+                return true;
+
+            case TypeRef.TFun:
+                staticSizeBytes = 16; // closure: { code:i64, env:i64 }
+                return true;
+
             case TypeRef.TNamedType named:
                 return CanCopyOutAdt(named, out staticSizeBytes);
 
@@ -4409,6 +4409,17 @@ public sealed class Lowering
                 staticSizeBytes = 0;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Returns true if a list element type is safe for shallow cons-cell copy-out.
+    /// Safe elements are copy types (inline i64 values) or TStr (self-contained,
+    /// no internal heap pointers — the string struct contains all its data inline).
+    /// </summary>
+    private bool IsCopyOutSafeElement(TypeRef elementType)
+    {
+        var pruned = Prune(elementType);
+        return CanArenaReset(pruned) || pruned is TypeRef.TStr;
     }
 
     /// <summary>
