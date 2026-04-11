@@ -8,6 +8,7 @@ import Ashes.IO as io
 import Ashes.List as list
 import Ashes.Result as result
 import Ashes.Async as task
+
 type Shape =
     | Circle(Float)
     | Rect(Float, Float)
