@@ -759,20 +759,115 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 4: Drop elision ────────────────────────────────────────────
-    // Remove Drop instructions for slots that were never stored to
-    // (the value is uninitialized or was already consumed).
-    // Currently a no-op — the Drop instructions in the IR are still needed
-    // for resource types (Socket). Arena-based deallocation now handles
-    // bulk memory reclamation via RestoreArenaState. When per-object free()
-    // or more granular arena analysis is added, this pass will skip drops
-    // for values proven to be dead or moved.
+    // ── Pass 6: Drop elision ────────────────────────────────────────────
+    // Remove Drop instructions that perform no useful work.
+    //
+    // Elidable drops:
+    // (a) Non-resource types: Drop for String, List, Tuple, Function,
+    //     and non-resource ADTs is a no-op in current codegen — arena-based
+    //     deallocation handles bulk memory reclamation via RestoreArenaState.
+    // (b) Dead slots: Drop whose LoadLocal reads from a slot that was never
+    //     stored to (uninitialized — dead drop).
+    //
+    // Resource-type drops (Socket) are NEVER elided — they route to
+    // platform-specific cleanup (e.g. TCP close).
+    //
+    // When a Drop is elided, the LoadLocal that feeds it is also removed
+    // if its target temp is used only by the Drop. StoreLocal instructions
+    // to slots with no remaining LoadLocal are also removed, enabling a
+    // cascade of dead code cleanup.
 
     private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
     {
-        // Future: analyze ownership flow to identify drops on values that
-        // are dead (never initialized) or already consumed (moved).
-        return instructions;
+        // Phase 1: Build analysis data.
+
+        // Map: temp → instruction index of the instruction that defines it.
+        var tempDefinedAt = new Dictionary<int, int>();
+
+        // Count how many times each temp is read as a source operand.
+        var useCount = new Dictionary<int, int>();
+        var tempBuf = new HashSet<int>();
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            var inst = instructions[i];
+
+            // Track definitions from LoadLocal (these feed Drops).
+            if (inst is IrInst.LoadLocal ll)
+            {
+                tempDefinedAt[ll.Target] = i;
+            }
+
+            tempBuf.Clear();
+            CollectUsedTemps(inst, tempBuf);
+            foreach (var t in tempBuf)
+            {
+                useCount[t] = useCount.GetValueOrDefault(t) + 1;
+            }
+        }
+
+        // Phase 2: Identify elidable Drops and their feeding LoadLocals.
+        var toRemove = new HashSet<int>();
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.Drop drop) continue;
+
+            // Never elide resource-type drops — they have real cleanup behavior.
+            if (BuiltinRegistry.IsResourceTypeName(drop.TypeName)) continue;
+
+            // Non-resource drop → safe to elide (no-op in codegen).
+            toRemove.Add(i);
+
+            // If the LoadLocal feeding this Drop has its target used only here,
+            // remove the LoadLocal too.
+            if (tempDefinedAt.TryGetValue(drop.SourceTemp, out int defIdx)
+                && instructions[defIdx] is IrInst.LoadLocal
+                && useCount.GetValueOrDefault(drop.SourceTemp) <= 1)
+            {
+                toRemove.Add(defIdx);
+            }
+        }
+
+        if (toRemove.Count == 0)
+        {
+            return instructions;
+        }
+
+        // Phase 3: Check for StoreLocals to slots that have no remaining LoadLocals.
+        // After removing drop-related LoadLocals, some slots may have zero loads,
+        // making their StoreLocals dead code.
+        var slotLoadCount = new Dictionary<int, int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (toRemove.Contains(i)) continue;
+            if (instructions[i] is IrInst.LoadLocal ll)
+            {
+                slotLoadCount[ll.Slot] = slotLoadCount.GetValueOrDefault(ll.Slot) + 1;
+            }
+        }
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (toRemove.Contains(i)) continue;
+            if (instructions[i] is IrInst.StoreLocal sl
+                && slotLoadCount.GetValueOrDefault(sl.Slot) == 0)
+            {
+                toRemove.Add(i);
+            }
+        }
+
+        // Phase 4: Rebuild the instruction list excluding removed instructions.
+        var result = new List<IrInst>(instructions.Count - toRemove.Count);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (!toRemove.Contains(i))
+            {
+                result.Add(instructions[i]);
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
