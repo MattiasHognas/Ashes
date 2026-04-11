@@ -485,19 +485,47 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        bool foundTcoListCell = false;
+        bool found = false;
         for (int i = 0; i < insts.Count - 1; i++)
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts.Skip(i + 1).Any(inst => inst is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.InnerList))
+            if (insts[i] is not IrInst.RestoreArenaState)
             {
-                foundTcoListCell = true;
+                continue;
+            }
+
+            var reclaimIndex = -1;
+            for (int j = i + 1; j < insts.Count; j++)
+            {
+                if (insts[j] is IrInst.ReclaimArenaChunks)
+                {
+                    reclaimIndex = j;
+                    break;
+                }
+            }
+
+            if (reclaimIndex == -1)
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < reclaimIndex; j++)
+            {
+                if (insts[j] is IrInst.CopyOutTcoListCell cell
+                    && cell.HeadCopy == IrInst.ListHeadCopyKind.InnerList)
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
                 break;
             }
         }
-        foundTcoListCell.ShouldBeTrue(
-            "TCO loop with TList(TList(Int)) arg should emit RestoreArenaState + CopyOutTcoListCell(InnerList).");
+
+        found.ShouldBeTrue(
+            "TCO loop with TList(TList(Int)) arg should emit CopyOutTcoListCell(InnerList) after RestoreArenaState and before ReclaimArenaChunks.");
     }
 
     [Test]
