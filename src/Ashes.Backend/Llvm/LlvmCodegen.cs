@@ -548,6 +548,10 @@ internal static partial class LlvmCodegen
 
         LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(target.Context, llvmFunction, "entry");
         LlvmApi.PositionBuilderAtEnd(target.Builder, entryBlock);
+        if (debugContext is not null)
+        {
+            debugContext.ClearDebugLocation(target.Builder);
+        }
 
         LlvmValueHandle entryStackPointer = isEntry && IsLinuxFlavor(flavor)
             ? LlvmApi.GetParam(llvmFunction, 0)

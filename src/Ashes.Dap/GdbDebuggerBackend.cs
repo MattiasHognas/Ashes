@@ -62,7 +62,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 
     public async Task SetBreakpointAsync(string filePath, int line)
     {
-        await SendCommandAsync($"-break-insert {EscapeGdbArg(filePath)}:{line}");
+        await SendCommandAsync(BuildBreakpointInsertCommand(filePath, line));
     }
 
     public async Task ContinueAsync()
@@ -135,7 +135,13 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         try
         {
             cts.Token.Register(() => tcs.TrySetResult(""));
-            return await tcs.Task;
+            var result = await tcs.Task;
+            if (result.Contains("^error", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(ExtractGdbField(result, "msg") ?? result);
+            }
+
+            return result;
         }
         catch
         {
@@ -238,6 +244,11 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
     private static string EscapeGdbArg(string arg)
     {
         return "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string BuildBreakpointInsertCommand(string filePath, int line)
+    {
+        return $"-break-insert --source {EscapeGdbArg(filePath)} --line {line.ToString(CultureInfo.InvariantCulture)}";
     }
 
     public void Dispose()

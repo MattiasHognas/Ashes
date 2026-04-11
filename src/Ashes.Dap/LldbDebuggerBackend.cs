@@ -63,7 +63,7 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 
     public async Task SetBreakpointAsync(string filePath, int line)
     {
-        await SendCommandAsync($"-break-insert {EscapeArg(filePath)}:{line}");
+        await SendCommandAsync(BuildBreakpointInsertCommand(filePath, line));
     }
 
     public async Task ContinueAsync()
@@ -136,7 +136,13 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         try
         {
             cts.Token.Register(() => tcs.TrySetResult(""));
-            return await tcs.Task;
+            var result = await tcs.Task;
+            if (result.Contains("^error", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(ExtractMiField(result, "msg") ?? result);
+            }
+
+            return result;
         }
         catch
         {
@@ -239,6 +245,11 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
     private static string EscapeArg(string arg)
     {
         return "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string BuildBreakpointInsertCommand(string filePath, int line)
+    {
+        return $"-break-insert --source {EscapeArg(filePath)} --line {line.ToString(CultureInfo.InvariantCulture)}";
     }
 
     public void Dispose()

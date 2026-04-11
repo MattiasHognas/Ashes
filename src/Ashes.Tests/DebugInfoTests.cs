@@ -205,6 +205,36 @@ public sealed class DebugInfoTests
         entryOffset.EndOffset.ShouldBeGreaterThanOrEqualTo(entryOffset.StartOffset);
     }
 
+    [Test]
+    public void Standalone_layout_uses_explicit_entry_file_path()
+    {
+        var source = "42";
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(source, [], "/tmp/example.ash");
+
+        layout.ModuleOffsets[^1].FilePath.ShouldBe("/tmp/example.ash");
+    }
+
+    [Test]
+    public void Lowering_with_combined_layout_tags_entry_file_path()
+    {
+        var source = "let x = 42 in x";
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(source, [], "/tmp/example.ash");
+        var diag = new Diagnostics();
+        var program = new Parser(layout.Source, diag).ParseProgram();
+        diag.Errors.Count.ShouldBe(0);
+
+        var lowering = new Lowering(diag);
+        lowering.SetSourceContext(layout);
+        var ir = lowering.Lower(program);
+
+        var locatedInstructions = ir.EntryFunction.Instructions
+            .Where(inst => inst.Location is not null)
+            .ToList();
+
+        locatedInstructions.Count.ShouldBeGreaterThan(0);
+        locatedInstructions.ShouldAllBe(inst => inst.Location!.Value.FilePath == "/tmp/example.ash");
+    }
+
     // ── CLI flag parsing tests ───────────────────────────────────────────
 
     [Test]
@@ -230,6 +260,40 @@ public sealed class DebugInfoTests
         var sourcePath = Path.Combine(tempRoot, "main.ash");
         var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "main.exe" : "main");
         await File.WriteAllTextAsync(sourcePath, "42");
+
+        try
+        {
+            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+
+            exitCode.ShouldBe(0, stderr);
+            File.Exists(outputPath).ShouldBeTrue($"Expected compiled output at '{outputPath}'. Stdout: {stdout}{Environment.NewLine}Stderr: {stderr}");
+            stdout.ShouldContain("Debug:");
+            stdout.ShouldContain("yes");
+            stderr.ShouldBeEmpty();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch
+            {
+                // Ignore test cleanup failures for temp artifacts.
+            }
+        }
+    }
+
+    [Test]
+    public async Task Compile_with_debug_handles_lambda_functions()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "ashes-debug-lambda-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        var sourcePath = Path.Combine(tempRoot, "lambda.ash");
+        var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "lambda.exe" : "lambda");
+        await File.WriteAllTextAsync(sourcePath, "let f = fun (x) -> x + 1 in f(41)");
 
         try
         {

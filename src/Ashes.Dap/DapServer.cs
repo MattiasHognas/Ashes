@@ -187,6 +187,15 @@ public sealed class DapServer : IDisposable
             _transport.SendEvent("exited", new DapExitedEventBody { ExitCode = exitCode });
             _transport.SendEvent("terminated", new DapTerminatedEventBody());
         };
+
+        backend.OnOutput += text =>
+        {
+            _transport.SendEvent("output", new
+            {
+                category = "console",
+                output = text,
+            });
+        };
     }
 
     private async Task HandleSetBreakpointsAsync(DapRequest request)

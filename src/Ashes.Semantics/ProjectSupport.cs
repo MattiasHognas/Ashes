@@ -392,14 +392,17 @@ public static class ProjectSupport
         return BuildCompilationLayoutCore(plan.OrderedModules, plan.EntryModule, entrySourceOverride);
     }
 
-    public static CombinedCompilationLayout BuildStandaloneCompilationLayout(string sourceWithoutImports, IReadOnlyList<string> importNames)
+    public static CombinedCompilationLayout BuildStandaloneCompilationLayout(
+        string sourceWithoutImports,
+        IReadOnlyList<string> importNames,
+        string entryFilePath = "<memory>")
     {
         var orderedModules = new List<ProjectModule>();
         var seenModules = new HashSet<string>(StringComparer.Ordinal);
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var traversal = new Stack<ProjectModule>();
 
-        var entryModule = new ProjectModule("Main", "<memory>", sourceWithoutImports, importNames.ToList(), new Dictionary<string, string>());
+        var entryModule = new ProjectModule("Main", entryFilePath, sourceWithoutImports, importNames.ToList(), new Dictionary<string, string>());
         orderedModules.Add(entryModule);
 
         foreach (var importName in importNames)
