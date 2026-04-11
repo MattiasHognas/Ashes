@@ -4318,7 +4318,8 @@ public sealed class Lowering
     ///   <item>Heap-type result that can be copy-outed (String, List with safe element,
     ///     Closure, ADT with copy-type fields) AND the scope contained alive owned values
     ///     (so there is heap memory worth reclaiming): emits RestoreArenaState followed
-    ///     by CopyOutArena; returns the new copy-destination temp.</item>
+    ///     by the appropriate copy-out instruction (CopyOutArena, CopyOutList, or
+    ///     CopyOutClosure); returns the new copy-destination temp.</item>
     ///   <item>All other heap types, or heap type with no alive owned values: no arena action;
     ///     returns <paramref name="resultTemp"/> unchanged.</item>
     /// </list>
