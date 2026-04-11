@@ -767,16 +767,14 @@ public static class IrOptimizer
     // (a) Non-resource types: Drop for String, List, Tuple, Function,
     //     and non-resource ADTs is a no-op in current codegen — arena-based
     //     deallocation handles bulk memory reclamation via RestoreArenaState.
-    // (b) Dead slots: Drop whose LoadLocal reads from a slot that was never
-    //     stored to (uninitialized — dead drop).
     //
     // Resource-type drops (Socket) are NEVER elided — they route to
     // platform-specific cleanup (e.g. TCP close).
     //
     // When a Drop is elided, the LoadLocal that feeds it is also removed
     // if its target temp is used only by the Drop. StoreLocal instructions
-    // to slots with no remaining LoadLocal are also removed, enabling a
-    // cascade of dead code cleanup.
+    // to slots with no remaining LoadLocal are also removed by subsequent
+    // dead code cleanup, enabling a cascade of instruction elimination.
 
     private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
     {
