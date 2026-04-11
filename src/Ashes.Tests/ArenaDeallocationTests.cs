@@ -626,12 +626,13 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_of_string_emits_CopyOutList()
+    public void List_of_string_does_not_emit_CopyOutList()
     {
-        // List(Str) should emit CopyOutList because strings are self-contained.
+        // List(Str) should NOT emit CopyOutList — copying cons cells alone
+        // would leave dangling string pointers after arena reclaim.
         var ir = LowerProgram("let s = \"hello\" in [\"a\", \"b\"]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List(Str) should emit CopyOutList (strings are self-contained).");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeFalse(
+            "List(Str) should NOT emit CopyOutList (string elements are not copy types).");
     }
 
     [Test]
@@ -752,12 +753,13 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Closure_let_result_emits_CopyOutClosure()
+    public void Closure_let_result_does_not_emit_CopyOutClosure()
     {
-        // Closures are deep-copied (closure struct + env) via CopyOutClosure.
+        // Closures may capture heap pointers in their env, so copy-out is
+        // unsafe until escape analysis / recursive copy-out is implemented.
         var ir = LowerProgram("let s = \"hello\" in fun (y) -> y + 1");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeTrue(
-            "Closure result with owned binding should emit CopyOutClosure.");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
+            "Closure result should NOT emit CopyOutClosure (env may contain heap pointers).");
     }
 
     [Test]
@@ -943,10 +945,10 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_closure_emits_RestoreArenaState_and_CopyOutClosure_after_call()
+    public void Call_returning_closure_does_not_emit_CopyOutClosure_after_call()
     {
-        // Partial application returns a closure — per-call watermark should
-        // emit RestoreArenaState + CopyOutClosure for closure+env copy-out.
+        // Closure copy-out is disabled until escape analysis is implemented,
+        // because env may contain heap pointers that would dangle after reclaim.
         var ir = LowerProgram(
             """
             let add = fun (x) -> fun (y) -> x + y
@@ -960,10 +962,8 @@ public sealed class ArenaDeallocationTests
         firstCallIdx.ShouldBeGreaterThan(-1);
 
         var afterFirstCall = instructions.Skip(firstCallIdx + 1).ToList();
-        afterFirstCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
-            "Closure result should trigger per-call RestoreArenaState.");
-        afterFirstCall.Any(i => i is IrInst.CopyOutClosure).ShouldBeTrue(
-            "Closure result should trigger per-call CopyOutClosure.");
+        afterFirstCall.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
+            "Closure result should NOT trigger per-call CopyOutClosure.");
     }
 
     // --- Helpers ---

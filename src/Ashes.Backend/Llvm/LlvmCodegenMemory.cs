@@ -423,12 +423,13 @@ internal static partial class LlvmCodegen
     /// result = 0; prevTailSlot = &amp;result;
     /// cur = srcPtr;
     /// while (cur != 0) {
+    ///     h = cur[0]; t = cur[8]; // read source BEFORE alloc (overlap-safe)
     ///     newCell = alloc(16);
-    ///     newCell[0] = cur[0];   // copy head (inline value)
-    ///     newCell[8] = 0;        // tail initialized to nil
+    ///     newCell[0] = h;         // copy head (inline value)
+    ///     newCell[8] = 0;         // tail initialized to nil
     ///     *prevTailSlot = newCell;
     ///     prevTailSlot = &amp;newCell[8];
-    ///     cur = cur[8];          // follow source tail
+    ///     cur = t;                // follow source tail
     /// }
     /// </code>
     /// </para>
@@ -454,10 +455,14 @@ internal static partial class LlvmCodegen
         // needing a double-pointer (i64**) to track "where to write the next cell
         // pointer", which is awkward with LLVM's opaque pointer model.
 
-        // Allocate first cell eagerly from the source head.
+        // Read source head and tail BEFORE allocating, because the new cell
+        // may overlap the source cell after RestoreArenaState resets the cursor.
         LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
-        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
         LlvmValueHandle firstHead = LoadMemory(state, srcPtr, 0, "copy_list_first_head");
+        LlvmValueHandle firstSrcTail = LoadMemory(state, srcPtr, 8, "copy_list_first_src_tail");
+
+        // Allocate first cell eagerly from the source head.
+        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
         StoreMemory(state, firstCell, 0, firstHead, "copy_list_store_first_head");
         StoreMemory(state, firstCell, 8, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_store_first_tail");
 
@@ -467,7 +472,6 @@ internal static partial class LlvmCodegen
 
         // curSlot tracks the source pointer. Start from srcPtr->tail.
         LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cur");
-        LlvmValueHandle firstSrcTail = LoadMemory(state, srcPtr, 8, "copy_list_first_src_tail");
         LlvmApi.BuildStore(builder, firstSrcTail, curSlot);
 
         var loopHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_loop");
@@ -482,10 +486,11 @@ internal static partial class LlvmCodegen
             cur, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_nil_check");
         LlvmApi.BuildCondBr(builder, isNil, loopEnd, loopBody);
 
-        // Loop body: allocate new cell, copy head, link previous tail
+        // Loop body: read source data before alloc (overlap-safe), then copy
         LlvmApi.PositionBuilderAtEnd(builder, loopBody);
-        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
         LlvmValueHandle head = LoadMemory(state, cur, 0, "copy_list_head");
+        LlvmValueHandle srcTail = LoadMemory(state, cur, 8, "copy_list_src_tail");
+        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
         StoreMemory(state, newCell, 0, head, "copy_list_store_head");
         StoreMemory(state, newCell, 8, LlvmApi.ConstInt(state.I64, 0, 0), "copy_list_store_tail");
 
@@ -493,9 +498,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, "copy_list_prev_val");
         StoreMemory(state, prevCell, 8, newCell, "copy_list_link_tail");
 
-        // Advance: prevCell = newCell, cur = cur.tail
+        // Advance: prevCell = newCell, cur = saved source tail
         LlvmApi.BuildStore(builder, newCell, prevCellSlot);
-        LlvmValueHandle srcTail = LoadMemory(state, cur, 8, "copy_list_src_tail");
         LlvmApi.BuildStore(builder, srcTail, curSlot);
         LlvmApi.BuildBr(builder, loopHead);
 
