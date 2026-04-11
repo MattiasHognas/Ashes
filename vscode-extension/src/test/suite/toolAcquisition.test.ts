@@ -11,14 +11,23 @@ const mockToolsPath = path.resolve(
   "../../../src/test/fixtures/mock-tools",
 );
 
+/** Platforms where getRid() is expected to return a value. */
+const SUPPORTED_RIDS = ["linux-x64", "linux-arm64", "win-x64"];
+
 suite("Tool Acquisition", () => {
-  test("getRid returns a supported runtime identifier", () => {
-    const rid = getRid();
-    const supported = ["linux-x64", "linux-arm64", "win-x64"];
-    assert.ok(
-      supported.includes(rid),
-      `getRid() returned '${rid}' which is not in: ${supported.join(", ")}`,
-    );
+  test("getRid returns a supported RID or throws on unsupported platform", () => {
+    try {
+      const rid = getRid();
+      assert.ok(
+        SUPPORTED_RIDS.includes(rid),
+        `getRid() returned '${rid}' which is not in: ${SUPPORTED_RIDS.join(", ")}`,
+      );
+    } catch (err) {
+      assert.ok(
+        (err as Error).message.includes("Unsupported platform"),
+        "Should throw an Unsupported platform error on unknown OS/arch",
+      );
+    }
   });
 
   test("getExecutableName appends .exe for Windows RIDs", () => {

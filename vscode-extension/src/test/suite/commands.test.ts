@@ -1,4 +1,6 @@
 import * as assert from "assert";
+import * as fs from "fs";
+import * as os from "os";
 import * as vscode from "vscode";
 import * as path from "path";
 
@@ -17,10 +19,23 @@ function hasRealBinary(settingKey: string): boolean {
   return value.length > 0 && !value.includes("mock-");
 }
 
+/**
+ * Create a temporary sentinel file path for the mock compiler to write to.
+ * The mock writes the subcommand name (e.g. "compile") into this file,
+ * letting the test verify that the command was actually dispatched.
+ */
+function createSentinelPath(): string {
+  return path.join(
+    os.tmpdir(),
+    `ashes-test-sentinel-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+}
+
 suite("Command Execution — mock tools", () => {
   let savedCompilerPath: string | undefined;
   let savedLspPath: string | undefined;
   let savedDapPath: string | undefined;
+  let sentinelPath: string | undefined;
 
   suiteSetup(async () => {
     const config = vscode.workspace.getConfiguration("ashes");
@@ -52,6 +67,19 @@ suite("Command Execution — mock tools", () => {
     await vscode.window.showTextDocument(doc);
   });
 
+  setup(() => {
+    sentinelPath = createSentinelPath();
+    process.env.ASHES_MOCK_SENTINEL = sentinelPath;
+  });
+
+  teardown(() => {
+    if (sentinelPath && fs.existsSync(sentinelPath)) {
+      fs.unlinkSync(sentinelPath);
+    }
+    delete process.env.ASHES_MOCK_SENTINEL;
+    sentinelPath = undefined;
+  });
+
   suiteTeardown(async () => {
     const config = vscode.workspace.getConfiguration("ashes");
     await config.update(
@@ -71,12 +99,32 @@ suite("Command Execution — mock tools", () => {
     );
   });
 
-  test("ashes.compile executes with mock compiler", async () => {
+  test("ashes.compile dispatches the compile subcommand", async () => {
     await vscode.commands.executeCommand("ashes.compile");
+    assert.ok(sentinelPath, "sentinelPath should be set");
+    assert.ok(
+      fs.existsSync(sentinelPath),
+      "Mock compiler should have written a sentinel file",
+    );
+    assert.strictEqual(
+      fs.readFileSync(sentinelPath, "utf8"),
+      "compile",
+      "Sentinel should contain 'compile'",
+    );
   });
 
-  test("ashes.test executes with mock compiler", async () => {
+  test("ashes.test dispatches the test subcommand", async () => {
     await vscode.commands.executeCommand("ashes.test");
+    assert.ok(sentinelPath, "sentinelPath should be set");
+    assert.ok(
+      fs.existsSync(sentinelPath),
+      "Mock compiler should have written a sentinel file",
+    );
+    assert.strictEqual(
+      fs.readFileSync(sentinelPath, "utf8"),
+      "test",
+      "Sentinel should contain 'test'",
+    );
   });
 
   test("ashes.installToolchain acquires all tools via overrides", async () => {

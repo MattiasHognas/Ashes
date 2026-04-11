@@ -36,6 +36,45 @@ async function waitForLspReady(timeoutMs = 20_000): Promise<boolean> {
   return diags.length > 0;
 }
 
+/**
+ * Wait for diagnostic stability on a URI: watch for diagnostic change events
+ * and return the diagnostics once they have not changed for `quietMs`.
+ * Falls back to the current diagnostics after `timeoutMs`.
+ */
+async function waitForStableDiagnostics(
+  uri: vscode.Uri,
+  quietMs = 2_000,
+  timeoutMs = 15_000,
+): Promise<readonly vscode.Diagnostic[]> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = setTimeout(() => {
+      disposable.dispose();
+      clearTimeout(timer);
+      resolve(vscode.languages.getDiagnostics(uri));
+    }, timeoutMs);
+
+    const resetQuietTimer = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        clearTimeout(deadline);
+        disposable.dispose();
+        resolve(vscode.languages.getDiagnostics(uri));
+      }, quietMs);
+    };
+
+    const disposable = vscode.languages.onDidChangeDiagnostics((e) => {
+      if (e.uris.some((u) => u.toString() === uri.toString())) {
+        resetQuietTimer();
+      }
+    });
+
+    // Start the initial quiet timer in case the LSP already processed
+    // this document before we subscribed.
+    resetQuietTimer();
+  });
+}
+
 suite("LSP Activation — real server", () => {
   suiteSetup(function () {
     // Only run when a real LSP server is configured via CI env vars.
@@ -65,15 +104,12 @@ suite("LSP Activation — real server", () => {
     // First ensure LSP is active by opening the error file
     await waitForLspReady();
 
-    // Now open a valid file and give the LSP time to process it
+    // Now open a valid file and wait for diagnostics to stabilise
     const validUri = vscode.Uri.file(path.join(fixturesPath, "hello.ash"));
     const doc = await vscode.workspace.openTextDocument(validUri);
     await vscode.window.showTextDocument(doc);
 
-    // Wait a bit for the LSP to process the document
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-
-    const diags = vscode.languages.getDiagnostics(validUri);
+    const diags = await waitForStableDiagnostics(validUri);
     assert.strictEqual(
       diags.length,
       0,
