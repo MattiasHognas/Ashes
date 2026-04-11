@@ -58,6 +58,7 @@ vscode-extension/compiler/win-x64/
 vscode-extension/server/linux-x64/
 vscode-extension/server/win-x64/
 *.vsix
+.vscode-test/
 
 # Publish output
 dist/
@@ -70,6 +71,7 @@ examples/*.exe
 /*.txt
 *.received.txt
 runtimes
+out
 
 # Git
 .git/

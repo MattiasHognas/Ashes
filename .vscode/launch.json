@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ashes: Launch",
+      "type": "ashes",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/${workspaceFolderBasename}",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "ashes: compile (debug)",
+      "stopOnEntry": false
+    }
+  ]
+}
