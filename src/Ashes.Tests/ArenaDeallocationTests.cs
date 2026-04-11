@@ -579,12 +579,12 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_body_let_does_not_emit_CopyOutArena()
+    public void List_body_let_emits_CopyOutList()
     {
-        // Lists are not self-contained (tail is a pointer chain) — no copy-out for let scope.
+        // Lists are deep-copied (entire cons chain) via CopyOutList.
         var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
-        HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse(
-            "List result should NOT emit CopyOutArena from a let scope.");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
+            "List(Int) result with owned binding should emit CopyOutList from a let scope.");
     }
 
     [Test]
@@ -597,6 +597,200 @@ public sealed class ArenaDeallocationTests
 
         var fixedInst = new IrInst.CopyOutArena(10, 5, 16);
         fixedInst.StaticSizeBytes.ShouldBe(16);
+    }
+
+    [Test]
+    public void CopyOutList_instruction_has_correct_fields()
+    {
+        var inst = new IrInst.CopyOutList(7, 3);
+        inst.DestTemp.ShouldBe(7);
+        inst.SrcTemp.ShouldBe(3);
+    }
+
+    [Test]
+    public void CopyOutClosure_instruction_has_correct_fields()
+    {
+        var inst = new IrInst.CopyOutClosure(7, 3);
+        inst.DestTemp.ShouldBe(7);
+        inst.SrcTemp.ShouldBe(3);
+    }
+
+    [Test]
+    public void MakeClosure_instruction_has_EnvSizeBytes()
+    {
+        var inst = new IrInst.MakeClosure(1, "test_lambda", 2, 24);
+        inst.Target.ShouldBe(1);
+        inst.FuncLabel.ShouldBe("test_lambda");
+        inst.EnvPtrTemp.ShouldBe(2);
+        inst.EnvSizeBytes.ShouldBe(24);
+    }
+
+    [Test]
+    public void List_of_string_does_not_emit_CopyOutList()
+    {
+        // List(Str) should NOT emit CopyOutList — copying cons cells alone
+        // would leave dangling string pointers after arena reclaim.
+        var ir = LowerProgram("let s = \"hello\" in [\"a\", \"b\"]");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeFalse(
+            "List(Str) should NOT emit CopyOutList (string elements are not copy types).");
+    }
+
+    [Test]
+    public void List_of_list_does_not_emit_CopyOutList()
+    {
+        // List(List(Int)) — the head elements are list pointers, which are
+        // not copy-type or TStr. Deep copy of the outer chain doesn't help
+        // because inner lists may also be in the arena.
+        var ir = LowerProgram("let s = \"hello\" in [[1, 2], [3, 4]]");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeFalse(
+            "List(List(Int)) should NOT emit CopyOutList (nested list heads are not safe).");
+    }
+
+    // --- Extended copy-out: ADT ---
+
+    [Test]
+    public void Adt_with_copy_type_fields_let_result_emits_CopyOutArena()
+    {
+        // ADT with Int field: (1 + 1) * 8 = 16 bytes → safe for shallow copy.
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            let s = "hello" in Box(42)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeTrue(
+            "ADT(Int) result with owned binding should emit CopyOutArena.");
+    }
+
+    [Test]
+    public void Adt_with_copy_type_fields_emits_correct_static_size()
+    {
+        // ADT with 2 Int fields: (1 + 2) * 8 = 24 bytes.
+        var ir = LowerProgram(
+            """
+            type Pair =
+                | Pair(Int, Int)
+            let s = "hello" in Pair(1)(2)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 24);
+        found.ShouldBeTrue("Pair(Int, Int) result should emit CopyOutArena with StaticSizeBytes == 24.");
+    }
+
+    [Test]
+    public void Adt_nullary_constructor_let_result_emits_CopyOutArena()
+    {
+        // Nullary ADT: (1 + 0) * 8 = 8 bytes → safe (just a tag, no pointers).
+        var ir = LowerProgram(
+            """
+            type Color =
+                | Red
+                | Green
+                | Blue
+            let s = "hello" in Red
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeTrue(
+            "Nullary ADT result with owned binding should emit CopyOutArena.");
+    }
+
+    [Test]
+    public void Adt_nullary_constructor_emits_correct_static_size()
+    {
+        // All-nullary ADT: (1 + 0) * 8 = 8 bytes.
+        var ir = LowerProgram(
+            """
+            type Color =
+                | Red
+                | Green
+                | Blue
+            let s = "hello" in Red
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 8);
+        found.ShouldBeTrue("Nullary ADT result should emit CopyOutArena with StaticSizeBytes == 8.");
+    }
+
+    [Test]
+    public void Adt_with_string_field_does_not_emit_CopyOutArena()
+    {
+        // ADT with Str field: the field is a pointer to a string that may be in the
+        // freed arena region → not safe for shallow copy.
+        var ir = LowerProgram(
+            """
+            type Named =
+                | Named(Str)
+            let s = "hello" in Named("world")
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "ADT(Str) result should NOT emit CopyOutArena (pointer field).");
+    }
+
+    [Test]
+    public void Adt_with_variable_arity_constructors_does_not_emit_CopyOutArena()
+    {
+        // Maybe: None (0 fields) vs Some (1 field) — variable arity → not safe for
+        // static-size copy.
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            let s = "hello" in match Box(1) with | Box(x) -> Some(x)
+            """);
+        var insts = ir.EntryFunction.Instructions;
+
+        // The result type is Maybe(Int) — None has 0 fields, Some has 1 field.
+        // Variable arity means we can't determine a static copy size.
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "ADT with variable-arity constructors should NOT emit CopyOutArena.");
+    }
+
+    [Test]
+    public void Closure_let_result_does_not_emit_CopyOutClosure()
+    {
+        // Closures may capture heap pointers in their env, so copy-out is
+        // unsafe until escape analysis / recursive copy-out is implemented.
+        var ir = LowerProgram("let s = \"hello\" in fun (y) -> y + 1");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
+            "Closure result should NOT emit CopyOutClosure (env may contain heap pointers).");
+    }
+
+    [Test]
+    public void List_of_int_let_result_emits_CopyOutList()
+    {
+        // List(Int): deep cons-chain copy via CopyOutList.
+        var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
+            "List(Int) result with owned binding should emit CopyOutList.");
+    }
+
+    [Test]
+    public void Call_returning_adt_with_copy_fields_emits_CopyOutArena()
+    {
+        // Function returning an ADT with Int field → per-call copy-out with static size.
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Box(Int)
+            let wrap = fun (x) -> Box(x)
+            in wrap(42)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        lastCallIdx.ShouldBeGreaterThan(-1, "Program should contain a CallClosure.");
+
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+        afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
+            "RestoreArenaState should appear after CallClosure for ADT(Int) result.");
+        afterCall.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 16).ShouldBeTrue(
+            "CopyOutArena(16) should appear after CallClosure for Box(Int) result.");
     }
 
     // --- Phase 3: per-function-call arena watermarks ---
@@ -730,10 +924,10 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_list_does_not_emit_RestoreArenaState_after_call()
+    public void Call_returning_list_emits_RestoreArenaState_and_CopyOutList_after_call()
     {
-        // identity function returning a list — per-call watermark should NOT
-        // emit RestoreArenaState because lists have internal pointers.
+        // identity function returning a list — per-call watermark should
+        // emit RestoreArenaState + CopyOutList for deep cons-chain copy-out.
         var ir = LowerProgram(
             """
             let id = fun (xs) -> xs
@@ -743,26 +937,19 @@ public sealed class ArenaDeallocationTests
         var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
         lastCallIdx.ShouldBeGreaterThan(-1, "Program should contain a CallClosure.");
 
-        // After the last CallClosure in the call chain, there should be no
-        // RestoreArenaState that uses the per-call watermark slots.
-        // (The let scope's own watermark may still emit RestoreArenaState if the
-        // overall let result is a copy type, but we check specifically the
-        // per-call watermark by looking for a Restore immediately after the call.)
         var afterCallInstructions = instructions.Skip(lastCallIdx + 1).ToList();
-        // The first instruction after CallClosure should NOT be RestoreArenaState
-        // (for list result, the per-call watermark is skipped).
-        if (afterCallInstructions.Count > 0)
-        {
-            var firstAfterCall = afterCallInstructions[0];
-            firstAfterCall.ShouldNotBeOfType<IrInst.RestoreArenaState>(
-                "List result should not trigger per-call RestoreArenaState immediately after CallClosure.");
-        }
+        afterCallInstructions.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
+            "List result should trigger per-call RestoreArenaState after CallClosure.");
+        afterCallInstructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
+            "List result should trigger per-call CopyOutList after CallClosure.");
     }
 
     [Test]
-    public void Call_returning_closure_does_not_emit_RestoreArenaState_after_call()
+    public void Call_returning_closure_does_not_emit_CopyOutClosure_after_call()
     {
-        // Partial application returns a closure — should NOT restore arena.
+        // Closure copy-out is disabled until escape analysis is implemented,
+        // because env may contain heap pointers that would dangle after reclaim.
+        // Arena restoration should still occur for non-copy-out-eligible types.
         var ir = LowerProgram(
             """
             let add = fun (x) -> fun (y) -> x + y
@@ -775,15 +962,9 @@ public sealed class ArenaDeallocationTests
         var firstCallIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
         firstCallIdx.ShouldBeGreaterThan(-1);
 
-        // The instruction after the first CallClosure should NOT be
-        // RestoreArenaState (the result is a closure, not a copy type).
-        // Note: there may be other instructions between calls.
         var afterFirstCall = instructions.Skip(firstCallIdx + 1).ToList();
-        if (afterFirstCall.Count > 0)
-        {
-            afterFirstCall[0].ShouldNotBeOfType<IrInst.RestoreArenaState>(
-                "Closure result should not trigger per-call RestoreArenaState.");
-        }
+        afterFirstCall.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
+            "Closure result should NOT trigger per-call CopyOutClosure.");
     }
 
     // --- Helpers ---
