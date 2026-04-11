@@ -1034,7 +1034,7 @@ public sealed class ArenaDeallocationTests
             "CopyOutArena(16) should appear after CallClosure for Box(Int) result.");
     }
 
-    // --- Per-function-call arena watermarks ---
+    // --- Per-call arena watermarks ---
 
     [Test]
     public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
