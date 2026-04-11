@@ -1,4 +1,6 @@
 using Ashes.Backend.Llvm.Interop;
+using Ashes.Semantics;
+using static Ashes.Semantics.IrInst;
 
 namespace Ashes.Backend.Llvm;
 
@@ -403,6 +405,17 @@ internal static partial class LlvmCodegen
         // Dynamic size (strings): source is never nil — Ashes strings are always
         // heap-allocated {length, bytes} structs; the type system has no nullable
         // string representation, so every TStr value is a valid non-zero pointer.
+        return EmitCopyOutStringValue(state, srcPtr);
+    }
+
+    /// <summary>
+    /// Copies a string value ({length:i64, bytes…}) from the arena to a fresh allocation.
+    /// Reads the length field to determine total size (8 + length), allocates that many bytes,
+    /// and memcpy's the entire string. The source pointer must be non-nil.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
         LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
 
@@ -428,11 +441,14 @@ internal static partial class LlvmCodegen
     /// </para>
     /// <para>
     /// <b>Phase 3 — Build:</b> Allocate N fresh 16-byte arena cells, populating each
-    /// from the cached head values and linking tail pointers. Arena allocations here
-    /// may overlap with source cells, but we never read from source cells again.
+    /// from the cached head values and linking tail pointers. When
+    /// <paramref name="headCopy"/> is <see cref="ListHeadCopyKind.String"/>, each
+    /// cached head (a string pointer) is also copied to a fresh allocation. When
+    /// <paramref name="headCopy"/> is <see cref="ListHeadCopyKind.InnerList"/>, each
+    /// cached head (an inner list pointer) is deep-copied recursively with inline heads.
     /// </para>
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp)
+    private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp, ListHeadCopyKind headCopy)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
@@ -521,8 +537,9 @@ internal static partial class LlvmCodegen
         // Eagerly allocate the first cell from headBuf[0].
         LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { zero }, "copy_list_first_head_slot");
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_list_first_head_val");
+        LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
         LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, firstCell, 0, firstHeadVal, "copy_list_store_first_head");
+        StoreMemory(state, firstCell, 0, firstHeadCopied, "copy_list_store_first_head");
         StoreMemory(state, firstCell, 8, zero, "copy_list_store_first_tail");
         LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
         LlvmApi.BuildStore(builder, one, buildIdxSlot);
@@ -541,8 +558,9 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, buildBody);
         LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { buildIdx }, "copy_list_build_head_slot");
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_list_build_head_val");
+        LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
         LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, newCell, 0, buildHeadVal, "copy_list_store_head");
+        StoreMemory(state, newCell, 0, buildHeadCopied, "copy_list_store_head");
         StoreMemory(state, newCell, 8, zero, "copy_list_store_tail");
 
         // Link: prevCell.tail = newCell
@@ -562,6 +580,162 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
         return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_list_result_val");
+    }
+
+    /// <summary>
+    /// Copies a list head value according to the specified <paramref name="headCopy"/> kind.
+    /// For <see cref="ListHeadCopyKind.Inline"/>, returns the value unchanged.
+    /// For <see cref="ListHeadCopyKind.String"/>, copies the string to a fresh allocation.
+    /// For <see cref="ListHeadCopyKind.InnerList"/>, deep-copies the inner cons-cell chain
+    /// (with inline/copy-type heads) via the same three-phase algorithm.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutListHead(LlvmCodegenState state, LlvmValueHandle headVal, ListHeadCopyKind headCopy)
+    {
+        switch (headCopy)
+        {
+            case ListHeadCopyKind.Inline:
+                return headVal;
+
+            case ListHeadCopyKind.String:
+                return EmitCopyOutStringValue(state, headVal);
+
+            case ListHeadCopyKind.InnerList:
+                return EmitCopyOutListFromValue(state, headVal);
+
+            default:
+                return headVal;
+        }
+    }
+
+    /// <summary>
+    /// Deep-copies a cons-cell chain starting from the given pointer value (not a temp slot).
+    /// Uses the same three-phase count/cache/build algorithm as <see cref="EmitCopyOutList"/>
+    /// but with inline (copy-type) head values only. Used for inner list elements in
+    /// <see cref="ListHeadCopyKind.InnerList"/> copy-out.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutListFromValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+
+        // Guard: if the source list is nil, return nil immediately.
+        LlvmValueHandle srcIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            srcPtr, zero, "copy_inner_src_nil");
+        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_overall_result");
+        LlvmApi.BuildStore(builder, zero, overallResultSlot);
+        var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_start");
+        var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_final");
+        LlvmApi.BuildCondBr(builder, srcIsNil, copyListFinal, copyListStart);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
+
+        // ── Phase 1: Count source cells ─────────────────────────────────
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count");
+        LlvmApi.BuildStore(builder, zero, countSlot);
+        LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count_cur");
+        LlvmApi.BuildStore(builder, srcPtr, countCurSlot);
+
+        var countHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_head");
+        var countBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_body");
+        var countDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_done");
+        LlvmApi.BuildBr(builder, countHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countHead);
+        LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, "copy_inner_count_cur_val");
+        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            countCur, zero, "copy_inner_count_nil");
+        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countBody);
+        LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_count_old");
+        LlvmValueHandle newCount = LlvmApi.BuildAdd(builder, oldCount, one, "copy_inner_count_inc");
+        LlvmApi.BuildStore(builder, newCount, countSlot);
+        LlvmValueHandle countTail = LoadMemory(state, countCur, 8, "copy_inner_count_tail");
+        LlvmApi.BuildStore(builder, countTail, countCurSlot);
+        LlvmApi.BuildBr(builder, countHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countDone);
+        LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_total_cells");
+
+        // ── Phase 2: Cache head values into a stack-allocated buffer ────
+        LlvmValueHandle headBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, "copy_inner_head_buf");
+        LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_cur");
+        LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
+        LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_idx");
+        LlvmApi.BuildStore(builder, zero, cacheIdxSlot);
+
+        var cacheHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_head");
+        var cacheBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_body");
+        var cacheDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_done");
+        LlvmApi.BuildBr(builder, cacheHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheHead);
+        LlvmValueHandle cacheCur = LlvmApi.BuildLoad2(builder, state.I64, cacheCurSlot, "copy_inner_cache_cur_val");
+        LlvmValueHandle cacheIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            cacheCur, zero, "copy_inner_cache_nil");
+        LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
+        LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, "copy_inner_cache_head_val");
+        LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, "copy_inner_cache_idx_val");
+        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { cacheIdx }, "copy_inner_buf_slot");
+        LlvmApi.BuildStore(builder, headVal, bufSlot);
+        LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, "copy_inner_cache_idx_inc");
+        LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
+        LlvmValueHandle cacheTail = LoadMemory(state, cacheCur, 8, "copy_inner_cache_tail");
+        LlvmApi.BuildStore(builder, cacheTail, cacheCurSlot);
+        LlvmApi.BuildBr(builder, cacheHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
+
+        // ── Phase 3: Build destination list from cached head values ─────
+        LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_build_idx");
+        LlvmApi.BuildStore(builder, zero, buildIdxSlot);
+        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_prev");
+        LlvmApi.BuildStore(builder, zero, prevCellSlot);
+
+        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { zero }, "copy_inner_first_head_slot");
+        LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_inner_first_head_val");
+        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
+        StoreMemory(state, firstCell, 0, firstHeadVal, "copy_inner_store_first_head");
+        StoreMemory(state, firstCell, 8, zero, "copy_inner_store_first_tail");
+        LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
+        LlvmApi.BuildStore(builder, one, buildIdxSlot);
+
+        var buildHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_head");
+        var buildBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_body");
+        var buildDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_done");
+        LlvmApi.BuildBr(builder, buildHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildHead);
+        LlvmValueHandle buildIdx = LlvmApi.BuildLoad2(builder, state.I64, buildIdxSlot, "copy_inner_build_idx_val");
+        LlvmValueHandle buildDoneCheck = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge,
+            buildIdx, totalCells, "copy_inner_build_done_check");
+        LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildBody);
+        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { buildIdx }, "copy_inner_build_head_slot");
+        LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_inner_build_head_val");
+        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
+        StoreMemory(state, newCell, 0, buildHeadVal, "copy_inner_store_head");
+        StoreMemory(state, newCell, 8, zero, "copy_inner_store_tail");
+
+        LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, "copy_inner_prev_val");
+        StoreMemory(state, prevCell, 8, newCell, "copy_inner_link_tail");
+
+        LlvmApi.BuildStore(builder, newCell, prevCellSlot);
+        LlvmValueHandle nextBuildIdx = LlvmApi.BuildAdd(builder, buildIdx, one, "copy_inner_build_idx_inc");
+        LlvmApi.BuildStore(builder, nextBuildIdx, buildIdxSlot);
+        LlvmApi.BuildBr(builder, buildHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildDone);
+        LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
+        LlvmApi.BuildBr(builder, copyListFinal);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
+        return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_inner_result_val");
     }
 
     /// <summary>
@@ -609,6 +783,59 @@ internal static partial class LlvmCodegen
         StoreMemory(state, newClosure, 16, envSize, "copy_closure_store_env_size");
 
         return newClosure;
+    }
+
+    /// <summary>
+    /// TCO-specific: copies a single cons cell (16 bytes) out of the arena and
+    /// copies or deep-copies the head value according to <paramref name="headCopy"/>.
+    /// <para>
+    /// In TCO loops, only the top cons cell (created in the current iteration) is above
+    /// the arena watermark. The tail pointer references pre-watermark memory from previous
+    /// iterations and is preserved unchanged.
+    /// </para>
+    /// <para>
+    /// For nil source pointers (empty list), returns 0 immediately.
+    /// </para>
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutTcoListCell(LlvmCodegenState state, int srcTemp, ListHeadCopyKind headCopy)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+
+        // Nil guard: empty list → return 0.
+        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            srcPtr, zero, "tco_cell_nil_check");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tco_cell_result_slot");
+        LlvmApi.BuildStore(builder, zero, resultSlot);
+        var copyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tco_cell_copy");
+        var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tco_cell_merge");
+        LlvmApi.BuildCondBr(builder, isNil, mergeBlock, copyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
+
+        // Read head and tail from the source cell.
+        LlvmValueHandle oldHead = LoadMemory(state, srcPtr, 0, "tco_cell_old_head");
+        LlvmValueHandle oldTail = LoadMemory(state, srcPtr, 8, "tco_cell_old_tail");
+
+        // Copy the head value according to the element type.
+        LlvmValueHandle newHead = headCopy switch
+        {
+            ListHeadCopyKind.String => EmitCopyOutStringValue(state, oldHead),
+            ListHeadCopyKind.InnerList => EmitCopyOutListFromValue(state, oldHead),
+            _ => oldHead, // Inline: no copy needed (should not normally reach here)
+        };
+
+        // Allocate new 16-byte cons cell and populate.
+        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
+        StoreMemory(state, newCell, 0, newHead, "tco_cell_store_head");
+        StoreMemory(state, newCell, 8, oldTail, "tco_cell_store_tail");
+        LlvmApi.BuildStore(builder, newCell, resultSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "tco_cell_result");
     }
 
     /// <summary>

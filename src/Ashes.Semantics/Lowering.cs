@@ -2757,7 +2757,8 @@ public sealed class Lowering
                     bool allCopyable = true;
                     for (int i = 0; i < newArgTypes.Length; i++)
                     {
-                        if (!CanArenaReset(newArgTypes[i]) && !CanCopyOutTcoArg(newArgTypes[i], out _))
+                        if (!CanArenaReset(newArgTypes[i])
+                            && GetTcoCopyOutKind(newArgTypes[i], out _, out _) == CopyOutKind.None)
                         {
                             allCopyable = false;
                             break;
@@ -2772,12 +2773,30 @@ public sealed class Lowering
                         Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                         for (int i = 0; i < newArgTypes.Length; i++)
                         {
-                            if (!CanArenaReset(newArgTypes[i]) && CanCopyOutTcoArg(newArgTypes[i], out int sizeBytes))
+                            if (CanArenaReset(newArgTypes[i]))
+                                continue;
+
+                            var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
+                            if (kind == CopyOutKind.None)
+                                continue;
+
+                            int copyDest = NewTemp();
+                            switch (kind)
                             {
-                                int copyDest = NewTemp();
-                                Emit(new IrInst.CopyOutArena(copyDest, newArgTemps[i], sizeBytes));
-                                Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
+                                case CopyOutKind.Shallow:
+                                    Emit(new IrInst.CopyOutArena(copyDest, newArgTemps[i], sizeBytes));
+                                    break;
+                                case CopyOutKind.List:
+                                    Emit(new IrInst.CopyOutList(copyDest, newArgTemps[i], headCopy));
+                                    break;
+                                case CopyOutKind.Closure:
+                                    Emit(new IrInst.CopyOutClosure(copyDest, newArgTemps[i]));
+                                    break;
+                                case CopyOutKind.TcoListCell:
+                                    Emit(new IrInst.CopyOutTcoListCell(copyDest, newArgTemps[i], headCopy));
+                                    break;
                             }
+                            Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
                         }
                         Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     }
@@ -4397,12 +4416,14 @@ public sealed class Lowering
     {
         /// <summary>Not eligible for copy-out.</summary>
         None,
-        /// <summary>Shallow memcpy of a fixed or dynamic-size object (String, ADT).</summary>
+        /// <summary>Shallow memcpy of a fixed or dynamic-size object (String, ADT, single cons cell).</summary>
         Shallow,
         /// <summary>Deep cons-chain walk for lists.</summary>
         List,
         /// <summary>Closure struct + env copy.</summary>
         Closure,
+        /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
+        TcoListCell,
     }
 
     /// <summary>
@@ -4452,7 +4473,6 @@ public sealed class Lowering
 
     /// <summary>
     /// Legacy helper — returns true if the type can be copy-outed via shallow memcpy.
-    /// Used by <see cref="CanCopyOutTcoArg"/>.
     /// </summary>
     private bool CanCopyOutArena(TypeRef type, out int staticSizeBytes)
     {
@@ -4547,30 +4567,72 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Returns true if the given type can be copy-outed safely after a TCO arena reset.
+    /// Returns true if the given type can be copy-outed safely after a TCO arena reset,
+    /// and determines the appropriate copy-out kind and IR instruction parameters.
+    /// <para>
     /// Safe types for TCO copy-out:
     /// <list type="bullet">
-    ///   <item><b>String (TStr):</b> self-contained — no internal heap pointers.</item>
+    ///   <item><b>String (TStr):</b> Shallow copy — self-contained, no internal heap pointers.</item>
     ///   <item><b>List with copy-type element (TList where element is Int/Float/Bool):</b>
-    ///     The cons cell is {head:i64, tail:i64} where head is a direct i64 value (not a
-    ///     pointer) and tail points to the previous iteration's copy-outed cell, which is
-    ///     below the current watermark and therefore not reclaimed.</item>
+    ///     Deep cons-chain copy with inline head values.</item>
+    ///   <item><b>List with string element (TList(TStr)):</b>
+    ///     Deep cons-chain copy; each string head is also copied.</item>
+    ///   <item><b>List with inner-list element (TList(TList(copy-type))):</b>
+    ///     Deep cons-chain copy; each inner list is deep-copied recursively.</item>
+    ///   <item><b>Closure (TFun):</b> Closure struct + env copy (24 bytes + env block).</item>
+    ///   <item><b>ADT (TNamedType):</b> Shallow copy when all fields are copy types.</item>
     /// </list>
+    /// </para>
     /// </summary>
-    private bool CanCopyOutTcoArg(TypeRef type, out int staticSizeBytes)
+    private CopyOutKind GetTcoCopyOutKind(TypeRef type, out int staticSizeBytes, out IrInst.ListHeadCopyKind listHeadCopy)
     {
         var pruned = Prune(type);
+        listHeadCopy = IrInst.ListHeadCopyKind.Inline;
         switch (pruned)
         {
             case TypeRef.TStr:
                 staticSizeBytes = -1; // dynamic: 8 + length
-                return true;
-            case TypeRef.TList list when CanArenaReset(list.Element):
-                staticSizeBytes = 16; // cons cell: { head:i64, tail:i64 }
-                return true;
+                return CopyOutKind.Shallow;
+
+            case TypeRef.TList list:
+            {
+                var elemPruned = Prune(list.Element);
+                if (CanArenaReset(elemPruned))
+                {
+                    // Copy-type heads: inline values, single cell shallow copy (16 bytes).
+                    staticSizeBytes = 16;
+                    return CopyOutKind.Shallow;
+                }
+                if (elemPruned is TypeRef.TStr)
+                {
+                    // String heads: copy one cell + copy the string head value.
+                    staticSizeBytes = 0;
+                    listHeadCopy = IrInst.ListHeadCopyKind.String;
+                    return CopyOutKind.TcoListCell;
+                }
+                if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+                {
+                    // Inner list with copy-type elements: copy one cell + deep-copy inner list head.
+                    staticSizeBytes = 0;
+                    listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
+                    return CopyOutKind.TcoListCell;
+                }
+                staticSizeBytes = 0;
+                return CopyOutKind.None;
+            }
+
+            case TypeRef.TFun:
+                staticSizeBytes = 0;
+                return CopyOutKind.Closure;
+
+            case TypeRef.TNamedType named:
+                return CanCopyOutAdt(named, out staticSizeBytes)
+                    ? CopyOutKind.Shallow
+                    : CopyOutKind.None;
+
             default:
                 staticSizeBytes = 0;
-                return false;
+                return CopyOutKind.None;
         }
     }
 
