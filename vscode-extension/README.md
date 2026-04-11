@@ -63,29 +63,29 @@ pre-download the compiler, language server, and debug adapter in one step.
      "stopOnEntry": false,
    }
    ```
-     Optional pre-launch task:
-     ```jsonc
-     {
-         "label": "ashes: compile (debug)",
-         "type": "shell",
-         "command": "${command:ashes.getCompilerPath}",
-         "args": [
-             "compile",
-             "--debug",
-             "${file}",
-             "-o",
-             "${workspaceFolder}/out/${workspaceFolderBasename}"
-         ],
-         "group": {
-             "kind": "build",
-             "isDefault": true
-         },
-         "problemMatcher": []
-     }
-     ```
-     The `${command:ashes.getCompilerPath}` variable lets the extension provide
-     the configured, bundled, or downloaded compiler path without requiring
-     `ashes` to be installed on your shell `PATH`.
+   Optional pre-launch task:
+   ```jsonc
+   {
+     "label": "ashes: compile (debug)",
+     "type": "shell",
+     "command": "${command:ashes.getCompilerPath}",
+     "args": [
+       "compile",
+       "--debug",
+       "${file}",
+       "-o",
+       "${workspaceFolder}/out/${workspaceFolderBasename}",
+     ],
+     "group": {
+       "kind": "build",
+       "isDefault": true,
+     },
+     "problemMatcher": [],
+   }
+   ```
+   The `${command:ashes.getCompilerPath}` variable lets the extension provide
+   the configured, bundled, or downloaded compiler path without requiring
+   `ashes` to be installed on your shell `PATH`.
 3. Press **F5** to start debugging.
 
 ## A Taste of Ashes
