@@ -16,7 +16,7 @@ jobs:
 
       - name: Restore Runtimes Cache
         id: cache-runtimes
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: runtimes
           key: runtimes-22
@@ -28,7 +28,7 @@ jobs:
 
       - name: Save Runtimes Cache
         if: steps.cache-runtimes.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: runtimes
           key: runtimes-22
@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Restore Runtimes Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: runtimes
           key: runtimes-22
@@ -153,7 +153,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Restore Runtimes Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: runtimes
           key: runtimes-22
