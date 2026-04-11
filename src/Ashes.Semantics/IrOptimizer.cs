@@ -759,7 +759,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Pass 6: Drop elision ────────────────────────────────────────────
+    // ── Pass 4: Drop elision ────────────────────────────────────────────
     // Remove Drop instructions that perform no useful work.
     //
     // Elidable drops:
