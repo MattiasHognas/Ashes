@@ -125,13 +125,56 @@ public abstract record IrInst
 
     /// <summary>
     /// Restores the heap allocator state (cursor and end pointers) from two local
-    /// slots previously saved by <see cref="SaveArenaState"/>. This effectively
-    /// frees all heap memory allocated since the matching SaveArenaState by
-    /// resetting the bump pointer. Only emitted at scope exit when the scope's
-    /// result is a copy type (Int, Float, Bool) and no heap-allocated values
-    /// escape the scope.
+    /// slots previously saved by <see cref="SaveArenaState"/>. Resets the bump
+    /// pointer to the saved watermark, but does NOT free OS chunks — that is handled
+    /// separately by <see cref="ReclaimArenaChunks"/>.
+    ///
+    /// <para>
+    /// Before resetting, the current heap end pointer is saved to
+    /// <see cref="PreRestoreEndSlot"/> so that a subsequent
+    /// <see cref="ReclaimArenaChunks"/> can determine which chunks to free.
+    /// </para>
     /// </summary>
-    public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst;
+    public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot, int PreRestoreEndSlot) : IrInst;
+
+    /// <summary>
+    /// Frees OS chunks that were allocated between the saved watermark and the
+    /// pre-restore heap state. Emitted AFTER <see cref="RestoreArenaState"/> and
+    /// any <see cref="CopyOutArena"/> instructions, ensuring that copy-out reads
+    /// complete before source chunks are unmapped.
+    ///
+    /// <para>
+    /// Compares the saved end (<see cref="SavedEndSlot"/>) with the pre-restore end
+    /// (<see cref="PreRestoreEndSlot"/>). If they differ, walks the chunk linked
+    /// list from the pre-restore chunk back to the saved chunk, calling
+    /// <c>munmap</c> (Linux) or <c>VirtualFree</c> (Windows) on each intermediate chunk.
+    /// </para>
+    /// </summary>
+    public sealed record ReclaimArenaChunks(int SavedEndSlot, int PreRestoreEndSlot) : IrInst;
+
+    /// <summary>
+    /// Copies a heap object out of the arena to a fresh allocation, emitted AFTER
+    /// <see cref="RestoreArenaState"/> but BEFORE <see cref="ReclaimArenaChunks"/>.
+    /// The arena cursor has been reset to the scope-entry watermark W, but OS chunks
+    /// have not yet been freed, so the source bytes at <paramref name="SrcTemp"/>
+    /// are still physically readable. The copy is allocated starting from the reset
+    /// cursor (at or below the source address), so a forward memcpy is always safe:
+    /// dest ≤ src, no destructive overlap.
+    ///
+    /// <para>
+    /// <b>String (<see cref="StaticSizeBytes"/> == -1):</b>
+    /// The total size is read at runtime from the source object's length field
+    /// (8 bytes at offset 0): <c>total = 8 + *src</c>. Allocates that many bytes
+    /// and memcpy's the entire string (length word + inline bytes).
+    /// </para>
+    /// <para>
+    /// <b>Fixed-size objects (<see cref="StaticSizeBytes"/> &gt; 0):</b>
+    /// Allocates exactly <see cref="StaticSizeBytes"/> bytes and memcpy's them.
+    /// Used for cons cells (16 bytes: head + tail) when the head is a copy type,
+    /// ensuring the tail pointer to a pre-watermark cell is preserved.
+    /// </para>
+    /// </summary>
+    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing

@@ -321,6 +321,136 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
     }
 
+    // --- TCO arena reset end-to-end tests ---
+
+    [Test]
+    public async Task TCO_loop_with_arena_reset_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Sum 1..10000 using tail-recursive accumulator — all args are copy types,
+        // so arena reset fires on every iteration, keeping heap usage constant.
+        var src = """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in Ashes.IO.print(sum 10000 0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("50005000\n");
+    }
+
+    [Test]
+    public async Task TCO_loop_with_string_intermediates_and_copy_args_runs_correctly()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Even though the body creates intermediate heap allocations (let binding
+        // with string), the tail-call args are all Int → arena resets safely.
+        var src = """
+            let rec count = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else
+                    let tag = "iter" in
+                    count (n - 1) (acc + 1)
+            in Ashes.IO.print(count 1000 0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1000\n");
+    }
+
+    // --- Phase 3: per-call arena watermark end-to-end tests ---
+
+    [Test]
+    public async Task Function_call_returning_int_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Curried call add(10)(32) returns Int — arena reset reclaims
+        // intermediate closures, result must still be correct.
+        var src = """
+            let add = fun (x) -> fun (y) -> x + y
+            in Ashes.IO.print(add(10)(32))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Nested_function_calls_returning_int_produce_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // f(g(x)) where both return Int — nested per-call watermarks.
+        var src = """
+            let double = fun (x) -> x + x
+            in let inc = fun (x) -> x + 1
+            in Ashes.IO.print(double(inc(20)))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Function_call_returning_string_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Function returning String — per-call arena reset + copy-out.
+        var src = """
+            let greet = fun (name) -> "hello " + name
+            in Ashes.IO.print(greet("world"))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("hello world\n");
+    }
+
+    [Test]
+    public async Task Function_call_returning_list_produces_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Function returning List — per-call arena skip (conservative);
+        // list must survive and be usable.
+        var src = """
+            let makeList = fun (x) -> x :: [2, 3]
+            in match makeList(1) with
+                | hd :: _ -> Ashes.IO.print(hd)
+                | [] -> Ashes.IO.print(0)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Multiple_calls_in_expression_produce_correct_result()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // f(x) + g(y) — two independent call watermarks in one expression.
+        var src = """
+            let f = fun (x) -> x * 2
+            in let g = fun (y) -> y * 3
+            in Ashes.IO.print(f(7) + g(7))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("35\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

@@ -19,6 +19,7 @@ internal static partial class LlvmCodegen
     private const long SyscallOpen = 2;
     private const long SyscallClose = 3;
     private const long SyscallMmap = 9;
+    private const long SyscallMunmap = 11;
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
@@ -31,6 +32,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallOpenat = 56;
     private const long Arm64SyscallLseek = 62;
     private const long Arm64SyscallMmap = 222;
+    private const long Arm64SyscallMunmap = 215;
     private const long Arm64SyscallRead = 63;
     private const long Arm64SyscallWrite = 64;
     private const long Arm64SyscallExit = 93;
@@ -270,6 +272,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsCommandLineToArgvImport = default;
         LlvmValueHandle windowsSleepImport = default;
         LlvmValueHandle windowsVirtualAllocImport = default;
+        LlvmValueHandle windowsVirtualFreeImport = default;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
@@ -343,6 +346,8 @@ internal static partial class LlvmCodegen
         {
             windowsVirtualAllocImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualAlloc");
             LlvmApi.SetLinkage(windowsVirtualAllocImport, LlvmLinkage.External);
+            windowsVirtualFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualFree");
+            LlvmApi.SetLinkage(windowsVirtualFreeImport, LlvmLinkage.External);
         }
 
         if (usesWindowsSleep)
@@ -443,6 +448,7 @@ internal static partial class LlvmCodegen
             windowsCommandLineToArgvImport,
             windowsSleepImport,
             windowsVirtualAllocImport,
+            windowsVirtualFreeImport,
             isEntry: true,
             debugContext: dbg);
 
@@ -479,6 +485,7 @@ internal static partial class LlvmCodegen
                 windowsCommandLineToArgvImport,
                 windowsSleepImport,
                 windowsVirtualAllocImport,
+                windowsVirtualFreeImport,
                 isEntry: false,
                 debugContext: dbg);
         }
@@ -495,7 +502,7 @@ internal static partial class LlvmCodegen
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena;
     }
 
     private static void EmitFunctionBody(
@@ -529,6 +536,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsCommandLineToArgvImport,
         LlvmValueHandle windowsSleepImport,
         LlvmValueHandle windowsVirtualAllocImport,
+        LlvmValueHandle windowsVirtualFreeImport,
         bool isEntry,
         DebugInfoContext? debugContext = null)
     {
@@ -620,6 +628,7 @@ internal static partial class LlvmCodegen
             windowsCommandLineToArgvImport,
             windowsSleepImport,
             windowsVirtualAllocImport,
+            windowsVirtualFreeImport,
             flavor,
             usesProgramArgs,
             isEntry);
@@ -772,7 +781,9 @@ internal static partial class LlvmCodegen
             IrInst.Return ret => EmitReturn(state, ret.Source),
             // Arena deallocation: save/restore heap cursor and end pointers
             IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot),
-            IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot),
+            IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot),
+            IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot),
+            IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
     }
@@ -850,6 +861,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsCommandLineToArgvImport,
         LlvmValueHandle WindowsSleepImport,
         LlvmValueHandle WindowsVirtualAllocImport,
+        LlvmValueHandle WindowsVirtualFreeImport,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)
@@ -1172,6 +1184,7 @@ internal static partial class LlvmCodegen
             SyscallOpen => Arm64SyscallOpenat,
             SyscallClose => Arm64SyscallClose,
             SyscallMmap => Arm64SyscallMmap,
+            SyscallMunmap => Arm64SyscallMunmap,
             SyscallLseek => Arm64SyscallLseek,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,

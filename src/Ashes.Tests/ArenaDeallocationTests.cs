@@ -17,11 +17,20 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void RestoreArenaState_has_cursor_and_end_slots()
+    public void RestoreArenaState_has_cursor_end_and_pre_restore_end_slots()
     {
-        var restore = new IrInst.RestoreArenaState(5, 6);
+        var restore = new IrInst.RestoreArenaState(5, 6, 7);
         restore.CursorLocalSlot.ShouldBe(5);
         restore.EndLocalSlot.ShouldBe(6);
+        restore.PreRestoreEndSlot.ShouldBe(7);
+    }
+
+    [Test]
+    public void ReclaimArenaChunks_has_saved_end_and_pre_restore_end_slots()
+    {
+        var reclaim = new IrInst.ReclaimArenaChunks(6, 7);
+        reclaim.SavedEndSlot.ShouldBe(6);
+        reclaim.PreRestoreEndSlot.ShouldBe(7);
     }
 
     // --- SaveArenaState emitted at ownership scope entry ---
@@ -272,20 +281,21 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        // Find a cleanup path: Label followed by RestoreArenaState followed by Jump
+        // Find a cleanup path: Label followed by RestoreArenaState + ReclaimArenaChunks followed by Jump
         bool foundCleanupPath = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.Label
                 && insts[i + 1] is IrInst.RestoreArenaState
-                && insts[i + 2] is IrInst.Jump)
+                && insts[i + 2] is IrInst.ReclaimArenaChunks
+                && insts[i + 3] is IrInst.Jump)
             {
                 foundCleanupPath = true;
                 break;
             }
         }
         foundCleanupPath.ShouldBeTrue(
-            "Match arm should have a cleanup path: Label → RestoreArenaState → Jump.");
+            "Match arm should have a cleanup path: Label → RestoreArenaState → ReclaimArenaChunks → Jump.");
     }
 
     [Test]
@@ -316,6 +326,466 @@ public sealed class ArenaDeallocationTests
         }
     }
 
+    // --- TCO loop iteration arena reset ---
+
+    [Test]
+    public void TCO_loop_with_int_args_emits_SaveArenaState_after_body_label()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the body label (contains "_body")
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
+
+        // SaveArenaState should appear right after the body label
+        var nextInst = insts[bodyLabelIdx + 1];
+        nextInst.ShouldBeOfType<IrInst.SaveArenaState>(
+            "SaveArenaState should be emitted immediately after the TCO body label.");
+    }
+
+    [Test]
+    public void TCO_loop_with_int_args_emits_RestoreArenaState_before_jump_back()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the tail-call jump back: RestoreArenaState + ReclaimArenaChunks followed by Jump to body label
+        bool foundTcoRestore = false;
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                foundTcoRestore = true;
+                break;
+            }
+        }
+        foundTcoRestore.ShouldBeTrue(
+            "TCO loop with copy-type args should emit RestoreArenaState + ReclaimArenaChunks before jumping back.");
+    }
+
+    [Test]
+    public void TCO_loop_with_int_args_save_restore_slots_match()
+    {
+        var ir = LowerProgram(
+            """
+            let rec sum = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else sum (n - 1) (acc + n)
+            in sum 100 0
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the SaveArenaState after body label
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        var save = (IrInst.SaveArenaState)insts[bodyLabelIdx + 1];
+
+        // Find RestoreArenaState + ReclaimArenaChunks before the jump back
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState restore
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                restore.CursorLocalSlot.ShouldBe(save.CursorLocalSlot,
+                    "TCO arena Save and Restore should use matching cursor slots.");
+                restore.EndLocalSlot.ShouldBe(save.EndLocalSlot,
+                    "TCO arena Save and Restore should use matching end slots.");
+                return;
+            }
+        }
+        Assert.Fail("Expected RestoreArenaState before TCO jump-back.");
+    }
+
+    [Test]
+    public void TCO_loop_with_list_of_int_arg_emits_RestoreArenaState_and_CopyOutArena_before_jump()
+    {
+        // Phase 2c: when a tail-call argument is a TList(Int) (cons cell with copy-type head),
+        // the cons cell is self-contained (head is a direct i64, tail points to pre-watermark
+        // memory from the previous iteration). Emitting RestoreArenaState + CopyOutArena(16)
+        // allows the iteration's arena to be reclaimed while the accumulator survives.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) (n :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
+        bool foundPhase2c = false;
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.CopyOutArena copyOut
+                && copyOut.StaticSizeBytes == 16)
+            {
+                foundPhase2c = true;
+                break;
+            }
+        }
+        foundPhase2c.ShouldBeTrue(
+            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16) (Phase 2c).");
+    }
+
+    [Test]
+    public void TCO_loop_with_list_arg_still_emits_SaveArenaState_after_body_label()
+    {
+        // SaveArenaState is always emitted at loop body start for the per-iteration watermark.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) (n :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
+        insts[bodyLabelIdx + 1].ShouldBeOfType<IrInst.SaveArenaState>(
+            "SaveArenaState should be emitted immediately after the TCO body label.");
+    }
+
+    [Test]
+    public void TCO_loop_with_complex_heap_arg_does_not_emit_RestoreArenaState_before_jump()
+    {
+        // A TCO arg that is a list of lists (nested heap type) is NOT safe for Phase 2c
+        // copy-out (copying a cons cell would leave the head pointer into reclaimed memory).
+        // No arena reset should be emitted in this case.
+        var ir = LowerProgram(
+            """
+            let rec build = fun (n) -> fun (acc) ->
+                if n == 0 then acc
+                else build (n - 1) ([n] :: acc)
+            in build 5 []
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                Assert.Fail(
+                    "TCO loop with nested-heap arg (List of List) should NOT emit RestoreArenaState before jump-back.");
+            }
+        }
+    }
+
+    [Test]
+    public void TCO_single_param_with_int_arg_emits_RestoreArenaState()
+    {
+        // Single-parameter TCO: let rec countdown = fun n -> if n == 0 then 0 else countdown (n - 1)
+        var ir = LowerProgram(
+            """
+            let rec countdown = fun (n) ->
+                if n == 0 then 0
+                else countdown (n - 1)
+            in countdown 100
+            """);
+        var tcoFunc = FindTcoFunction(ir);
+        var insts = tcoFunc.Instructions;
+
+        bool foundTcoRestore = false;
+        for (int i = 0; i < insts.Count - 2; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.ReclaimArenaChunks
+                && insts[i + 2] is IrInst.Jump j
+                && j.Target.Contains("_body"))
+            {
+                foundTcoRestore = true;
+                break;
+            }
+        }
+        foundTcoRestore.ShouldBeTrue(
+            "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks before jump-back.");
+    }
+
+    // --- Phase 2b: copy-out for String scope results ---
+
+    [Test]
+    public void String_result_let_with_owned_binding_emits_CopyOutArena()
+    {
+        // let s = "hello" in s + " world"
+        // s is an owned String binding. The body is a heap-allocated concat string.
+        // Phase 2b should emit RestoreArenaState + CopyOutArena(-1) for the string result.
+        var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeTrue(
+            "String result with owned binding should emit CopyOutArena (Phase 2b).");
+    }
+
+    [Test]
+    public void String_result_let_with_owned_binding_emits_RestoreArenaState_before_CopyOutArena()
+    {
+        var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        bool foundSequence = false;
+        for (int i = 0; i < insts.Count - 1; i++)
+        {
+            if (insts[i] is IrInst.RestoreArenaState
+                && insts[i + 1] is IrInst.CopyOutArena c
+                && c.StaticSizeBytes == -1)
+            {
+                foundSequence = true;
+                break;
+            }
+        }
+        foundSequence.ShouldBeTrue(
+            "String result copy-out should follow RestoreArenaState with StaticSizeBytes == -1.");
+    }
+
+    [Test]
+    public void String_body_let_without_owned_binding_does_not_emit_CopyOutArena()
+    {
+        // let x = 42 in "hello" — x is Int (not owned), no heap to reclaim.
+        // Phase 2b copy-out requires at least one owned value in scope.
+        var ir = LowerProgram("let x = 42 in \"hello\"");
+        var insts = ir.EntryFunction.Instructions;
+
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "String result with no owned bindings should NOT emit CopyOutArena.");
+        HasRestoreArenaState(insts).ShouldBeFalse(
+            "String result with no owned bindings should NOT emit RestoreArenaState.");
+    }
+
+    [Test]
+    public void List_body_let_does_not_emit_CopyOutArena()
+    {
+        // Lists are not self-contained (tail is a pointer chain) — no copy-out for let scope.
+        var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
+        HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse(
+            "List result should NOT emit CopyOutArena from a let scope.");
+    }
+
+    [Test]
+    public void CopyOutArena_instruction_has_correct_fields()
+    {
+        var inst = new IrInst.CopyOutArena(7, 3, -1);
+        inst.DestTemp.ShouldBe(7);
+        inst.SrcTemp.ShouldBe(3);
+        inst.StaticSizeBytes.ShouldBe(-1);
+
+        var fixedInst = new IrInst.CopyOutArena(10, 5, 16);
+        fixedInst.StaticSizeBytes.ShouldBe(16);
+    }
+
+    // --- Phase 3: per-function-call arena watermarks ---
+
+    [Test]
+    public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
+    {
+        // add(10)(32) returns Int — per-call watermark should save+restore.
+        var ir = LowerProgram(
+            """
+            let add = fun (x) -> fun (y) -> x + y
+            in add(10)(32)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        // There should be a CallClosure (for the function call)
+        instructions.Any(i => i is IrInst.CallClosure).ShouldBeTrue(
+            "Program should contain at least one CallClosure.");
+
+        // Find the CallClosure instructions and check that they are bracketed
+        // by SaveArenaState ... RestoreArenaState (per-call watermark)
+        var callIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+        var savesBefore = instructions.Take(callIdx)
+            .Where(i => i is IrInst.SaveArenaState).ToList();
+        savesBefore.Count.ShouldBeGreaterThan(0,
+            "SaveArenaState should appear before the first CallClosure.");
+
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var restoresAfter = instructions.Skip(lastCallIdx + 1)
+            .Where(i => i is IrInst.RestoreArenaState).ToList();
+        restoresAfter.Count.ShouldBeGreaterThan(0,
+            "RestoreArenaState should appear after the last CallClosure for Int result.");
+    }
+
+    [Test]
+    public void Call_returning_int_has_matching_save_restore_slots()
+    {
+        var ir = LowerProgram(
+            """
+            let inc = fun (x) -> x + 1
+            in inc(5)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var callIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+
+        // Find the SaveArenaState immediately before the call chain
+        var saveBefore = instructions.Take(callIdx)
+            .OfType<IrInst.SaveArenaState>().Last();
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var restoreAfter = instructions.Skip(lastCallIdx + 1)
+            .OfType<IrInst.RestoreArenaState>().First();
+
+        saveBefore.CursorLocalSlot.ShouldBe(restoreAfter.CursorLocalSlot);
+        saveBefore.EndLocalSlot.ShouldBe(restoreAfter.EndLocalSlot);
+    }
+
+    [Test]
+    public void Call_returning_string_emits_CopyOutArena()
+    {
+        // toString returns String — per-call watermark should save+restore+copy-out.
+        var ir = LowerProgram(
+            """
+            let toString = fun (x) -> "result"
+            in toString(42)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        instructions.Any(i => i is IrInst.CallClosure).ShouldBeTrue(
+            "Program should contain a CallClosure.");
+
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+        afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
+            "RestoreArenaState should appear after CallClosure for String result.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeTrue(
+            "CopyOutArena should appear after CallClosure for String result.");
+
+        // RestoreArenaState must precede CopyOutArena
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
+        restoreIdx.ShouldBeLessThan(copyOutIdx,
+            "RestoreArenaState must come before CopyOutArena.");
+    }
+
+    [Test]
+    public void Call_returning_string_emits_ReclaimArenaChunks_after_CopyOutArena()
+    {
+        // Sequence should be: RestoreArenaState → CopyOutArena → ReclaimArenaChunks
+        var ir = LowerProgram(
+            """
+            let toString = fun (x) -> "result"
+            in toString(42)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
+        var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
+
+        restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
+        copyOutIdx.ShouldBeGreaterThanOrEqualTo(0, "CopyOutArena should be present.");
+        reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
+
+        restoreIdx.ShouldBeLessThan(copyOutIdx,
+            "RestoreArenaState must come before CopyOutArena.");
+        copyOutIdx.ShouldBeLessThan(reclaimIdx,
+            "CopyOutArena must come before ReclaimArenaChunks (source must be readable before chunks are freed).");
+    }
+
+    [Test]
+    public void Call_returning_int_emits_ReclaimArenaChunks_after_RestoreArenaState()
+    {
+        // Copy-type result: RestoreArenaState → ReclaimArenaChunks (no CopyOutArena).
+        var ir = LowerProgram(
+            """
+            let inc = fun (x) -> x + 1
+            in inc(5)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
+
+        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
+        var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
+
+        restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
+        reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
+        restoreIdx.ShouldBeLessThan(reclaimIdx,
+            "RestoreArenaState must come before ReclaimArenaChunks.");
+    }
+
+    [Test]
+    public void Call_returning_list_does_not_emit_RestoreArenaState_after_call()
+    {
+        // identity function returning a list — per-call watermark should NOT
+        // emit RestoreArenaState because lists have internal pointers.
+        var ir = LowerProgram(
+            """
+            let id = fun (xs) -> xs
+            in id([1, 2, 3])
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+        var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
+        lastCallIdx.ShouldBeGreaterThan(-1, "Program should contain a CallClosure.");
+
+        // After the last CallClosure in the call chain, there should be no
+        // RestoreArenaState that uses the per-call watermark slots.
+        // (The let scope's own watermark may still emit RestoreArenaState if the
+        // overall let result is a copy type, but we check specifically the
+        // per-call watermark by looking for a Restore immediately after the call.)
+        var afterCallInstructions = instructions.Skip(lastCallIdx + 1).ToList();
+        // The first instruction after CallClosure should NOT be RestoreArenaState
+        // (for list result, the per-call watermark is skipped).
+        if (afterCallInstructions.Count > 0)
+        {
+            var firstAfterCall = afterCallInstructions[0];
+            firstAfterCall.ShouldNotBeOfType<IrInst.RestoreArenaState>(
+                "List result should not trigger per-call RestoreArenaState immediately after CallClosure.");
+        }
+    }
+
+    [Test]
+    public void Call_returning_closure_does_not_emit_RestoreArenaState_after_call()
+    {
+        // Partial application returns a closure — should NOT restore arena.
+        var ir = LowerProgram(
+            """
+            let add = fun (x) -> fun (y) -> x + y
+            in let adder = add(5)
+            in adder(10)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        // Find the first CallClosure (partial application: add(5))
+        var firstCallIdx = instructions.FindIndex(i => i is IrInst.CallClosure);
+        firstCallIdx.ShouldBeGreaterThan(-1);
+
+        // The instruction after the first CallClosure should NOT be
+        // RestoreArenaState (the result is a closure, not a copy type).
+        // Note: there may be other instructions between calls.
+        var afterFirstCall = instructions.Skip(firstCallIdx + 1).ToList();
+        if (afterFirstCall.Count > 0)
+        {
+            afterFirstCall[0].ShouldNotBeOfType<IrInst.RestoreArenaState>(
+                "Closure result should not trigger per-call RestoreArenaState.");
+        }
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
@@ -328,6 +798,15 @@ public sealed class ArenaDeallocationTests
         return ir;
     }
 
+    /// <summary>
+    /// Finds the lifted function containing the TCO body label (the innermost TCO lambda).
+    /// </summary>
+    private static IrFunction FindTcoFunction(IrProgram ir)
+    {
+        return ir.Functions.First(f =>
+            f.Instructions.Any(i => i is IrInst.Label lbl && lbl.Name.Contains("_body")));
+    }
+
     private static bool HasSaveArenaState(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.SaveArenaState);
@@ -336,6 +815,11 @@ public sealed class ArenaDeallocationTests
     private static bool HasRestoreArenaState(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.RestoreArenaState);
+    }
+
+    private static bool HasCopyOutArena(List<IrInst> instructions)
+    {
+        return instructions.Any(i => i is IrInst.CopyOutArena);
     }
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
