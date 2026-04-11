@@ -178,12 +178,20 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Allocates the initial heap chunk at program entry via mmap (Linux) or VirtualAlloc (Windows).
     /// Sets __ashes_heap_cursor and __ashes_heap_end globals.
+    /// The first 8 bytes of each chunk store the base address of the previous chunk (0 for the
+    /// first chunk). This linked-list header enables RestoreArenaState to walk back and reclaim
+    /// OS chunks that are no longer reachable after an arena reset.
     /// </summary>
     private static void EmitHeapChunkInit(LlvmCodegenState state)
     {
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
-        LlvmApi.BuildStore(state.Target.Builder, chunkBase, state.HeapCursorSlot);
+        // Write prev_base = 0 into the chunk header (first chunk has no predecessor).
+        StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "init_heap_prev_base");
+        // Allocations start at offset 8 (after the header).
+        LlvmValueHandle cursorStart = LlvmApi.BuildAdd(state.Target.Builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, 8, 0), "init_heap_cursor_start");
+        LlvmApi.BuildStore(state.Target.Builder, cursorStart, state.HeapCursorSlot);
         LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(state.Target.Builder, chunkBase,
             LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap_end");
         LlvmApi.BuildStore(state.Target.Builder, chunkEnd, state.HeapEndSlot);
@@ -222,14 +230,24 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Allocates a new heap chunk from the OS and updates cursor/end globals.
-    /// The old chunk remains valid (bump allocator never frees).
+    /// Writes the current chunk's base address into the new chunk's header so that
+    /// <see cref="EmitRestoreArenaState"/> can walk back and reclaim abandoned chunks.
     /// </summary>
     private static void EmitHeapGrow(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        // Capture the current chunk's base before allocating the new one.
+        LlvmValueHandle prevEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "grow_heap_prev_end");
+        LlvmValueHandle prevBase = LlvmApi.BuildSub(builder, prevEnd,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_prev_base");
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
-        LlvmApi.BuildStore(builder, chunkBase, state.HeapCursorSlot);
+        // Store prevBase into the new chunk's header (linked-list link).
+        StoreMemory(state, chunkBase, 0, prevBase, "grow_heap_prev_base_hdr");
+        // Allocations start at offset 8 (after the header).
+        LlvmValueHandle cursorStart = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, 8, 0), "grow_heap_cursor_start");
+        LlvmApi.BuildStore(builder, cursorStart, state.HeapCursorSlot);
         LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
             LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_end");
         LlvmApi.BuildStore(builder, chunkEnd, state.HeapEndSlot);
@@ -254,15 +272,183 @@ internal static partial class LlvmCodegen
     /// by <see cref="EmitSaveArenaState"/>. This resets the bump allocator to the
     /// scope-entry watermark, effectively freeing all heap memory allocated since
     /// the matching SaveArenaState.
+    ///
+    /// <para>
+    /// Before resetting, the current heap end is saved to <paramref name="preRestoreEndSlot"/>
+    /// so that a subsequent <see cref="EmitReclaimArenaChunks"/> can determine which
+    /// OS chunks to free. This instruction does NOT free OS chunks itself — that is
+    /// deferred to <see cref="EmitReclaimArenaChunks"/> so that any intervening
+    /// <see cref="EmitCopyOutArena"/> can safely read from the not-yet-freed chunks.
+    /// </para>
     /// </summary>
-    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot)
+    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot, int preRestoreEndSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[cursorLocalSlot], "arena_restore_cursor");
-        LlvmApi.BuildStore(builder, cursor, state.HeapCursorSlot);
-        LlvmValueHandle end = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[endLocalSlot], "arena_restore_end");
-        LlvmApi.BuildStore(builder, end, state.HeapEndSlot);
+
+        // Save the current heap end before resetting — needed by ReclaimArenaChunks.
+        LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_pre_restore_end");
+        LlvmApi.BuildStore(builder, currentEnd, state.LocalSlots[preRestoreEndSlot]);
+
+        // Reset cursor and end globals to the saved watermark.
+        LlvmValueHandle savedCursor = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[cursorLocalSlot], "arena_restore_cursor");
+        LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[endLocalSlot], "arena_restore_end");
+        LlvmApi.BuildStore(builder, savedCursor, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, savedEnd, state.HeapEndSlot);
         return false;
+    }
+
+    /// <summary>
+    /// Frees OS chunks that were allocated between the saved watermark and the
+    /// pre-restore heap state. Called AFTER <see cref="EmitRestoreArenaState"/> and
+    /// any <see cref="EmitCopyOutArena"/> instructions.
+    ///
+    /// <para>
+    /// When the pre-restore end matches the saved end (same chunk — fast path),
+    /// no chunks need to be freed. When they differ (slow path), walks the chunk
+    /// linked list from the pre-restore chunk back to the saved chunk, calling
+    /// <c>munmap</c> (Linux) or <c>VirtualFree</c> (Windows) on each abandoned chunk.
+    /// </para>
+    /// </summary>
+    private static bool EmitReclaimArenaChunks(LlvmCodegenState state, int savedEndSlot, int preRestoreEndSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[savedEndSlot], "reclaim_saved_end");
+        LlvmValueHandle preRestoreEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[preRestoreEndSlot], "reclaim_pre_restore_end");
+
+        // Fast path: same chunk — nothing to free.
+        LlvmValueHandle sameChunk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, preRestoreEnd, savedEnd, "reclaim_same_chunk");
+
+        var freeChunksBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_free_chunks");
+        var reclaimDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_done");
+        LlvmApi.BuildCondBr(builder, sameChunk, reclaimDoneBlock, freeChunksBlock);
+
+        // Slow path: abandoned chunks exist — walk the linked list and free them.
+        LlvmApi.PositionBuilderAtEnd(builder, freeChunksBlock);
+        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "reclaim_cur_end_slot");
+        LlvmApi.BuildStore(builder, preRestoreEnd, curEndSlot);
+        var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_free_loop");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "reclaim_loop_cur_end");
+        LlvmValueHandle curBase = LlvmApi.BuildSub(builder, curEnd, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_cur_base");
+        // Read prev_base from the chunk header (first 8 bytes of the chunk), then free the chunk.
+        LlvmValueHandle prevBase = LoadMemory(state, curBase, 0, "reclaim_loop_prev_base");
+        EmitFreeOsMemory(state, curBase, HeapChunkBytes, "reclaim_free_chunk");
+        LlvmValueHandle nextEnd = LlvmApi.BuildAdd(builder, prevBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_next_end");
+        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
+        LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "reclaim_loop_done");
+        LlvmApi.BuildCondBr(builder, doneFreeing, reclaimDoneBlock, loopBlock);
+
+        // Merge point.
+        LlvmApi.PositionBuilderAtEnd(builder, reclaimDoneBlock);
+        return false;
+    }
+
+    /// <summary>
+    /// Copies a heap object to a fresh allocation starting at the arena watermark.
+    /// Called AFTER <see cref="EmitRestoreArenaState"/> but BEFORE
+    /// <see cref="EmitReclaimArenaChunks"/>: the cursor is at the watermark W, and
+    /// OS chunks have not yet been freed, so the source bytes at
+    /// <paramref name="srcTemp"/> are still physically readable. Because dest ≤ src,
+    /// a forward memcpy is always safe with no destructive overlap.
+    ///
+    /// <para>
+    /// For strings (<paramref name="staticSizeBytes"/> == -1): reads the length field
+    /// from the source object and allocates <c>8 + length</c> bytes.
+    /// For fixed-size objects (<paramref name="staticSizeBytes"/> &gt; 0): allocates
+    /// exactly <paramref name="staticSizeBytes"/> bytes (e.g. 16 for a cons cell).
+    /// A nil (0) source pointer is passed through unchanged — this handles empty
+    /// lists in TCO copy-out where the tail pointer is nil.
+    /// </para>
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutArena(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+
+        // Fixed-size objects (e.g. cons cells) may have a nil source pointer —
+        // for example, an empty list tail in a TCO iteration. Guard against
+        // copying from address 0 by branching around the alloc+memcpy.
+        if (staticSizeBytes > 0)
+        {
+            LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+                srcPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_out_nil_check");
+
+            // Alloca to hold the result across both paths — no phi node binding
+            // available; mem2reg promotes this to a phi automatically.
+            LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_out_result_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+            var copyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_out_do");
+            var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_out_merge");
+            LlvmApi.BuildCondBr(builder, isNil, mergeBlock, copyBlock);
+
+            // Non-nil path: allocate and copy.
+            LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
+            LlvmValueHandle sizeBytes = LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0);
+            LlvmValueHandle destPtr = EmitAllocDynamic(state, sizeBytes);
+            LlvmValueHandle srcPtrBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
+            LlvmValueHandle destPtrBytes = LlvmApi.BuildIntToPtr(builder, destPtr, state.I8Ptr, "copy_out_dest_ptr");
+            EmitCopyBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
+            LlvmApi.BuildStore(builder, destPtr, resultSlot);
+            LlvmApi.BuildBr(builder, mergeBlock);
+
+            // Merge: load result (0 for nil path, destPtr for copy path).
+            LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+            return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "copy_out_result");
+        }
+
+        // Dynamic size (strings): source is never nil — Ashes strings are always
+        // heap-allocated {length, bytes} structs; the type system has no nullable
+        // string representation, so every TStr value is a valid non-zero pointer.
+        LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
+        LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
+
+        LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize);
+        LlvmValueHandle dynSrcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
+        LlvmValueHandle dynDestBytes = LlvmApi.BuildIntToPtr(builder, dynDest, state.I8Ptr, "copy_out_dest_ptr");
+        EmitCopyBytes(state, dynDestBytes, dynSrcBytes, dynSize, "copy_out");
+        return dynDest;
+    }
+
+    /// <summary>
+    /// Frees an OS memory chunk previously allocated by <see cref="EmitAllocateOsMemory"/>.
+    /// Linux: <c>munmap(ptr, size)</c> — syscall 11 (x86-64) / 215 (AArch64).
+    /// Windows: <c>VirtualFree(ptr, 0, MEM_RELEASE)</c> — <c>dwSize</c> must be 0
+    ///   for <c>MEM_RELEASE</c>.
+    /// </summary>
+    private static void EmitFreeOsMemory(LlvmCodegenState state, LlvmValueHandle basePtr, long sizeBytes, string prefix)
+    {
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            EmitLinuxSyscall(state, SyscallMunmap,
+                basePtr,
+                LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0), // unused third arg
+                prefix + "_munmap");
+        }
+        else
+        {
+            LlvmBuilderHandle builder = state.Target.Builder;
+            const uint memRelease = 0x8000; // MEM_RELEASE
+            LlvmTypeHandle virtualFreeType = LlvmApi.FunctionType(state.I32, [state.I64, state.I64, state.I32]);
+            LlvmValueHandle virtualFreePtr = LlvmApi.BuildLoad2(builder,
+                LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+                state.WindowsVirtualFreeImport,
+                prefix + "_vf_ptr");
+            LlvmApi.BuildCall2(builder,
+                virtualFreeType,
+                virtualFreePtr,
+                new[]
+                {
+                    basePtr,                                          // lpAddress
+                    LlvmApi.ConstInt(state.I64, 0, 0),               // dwSize = 0 (MEM_RELEASE requirement)
+                    LlvmApi.ConstInt(state.I32, memRelease, 0)        // dwFreeType = MEM_RELEASE
+                },
+                prefix + "_vf_call");
+        }
     }
 
     /// <summary>

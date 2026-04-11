@@ -75,6 +75,12 @@ public sealed class Lowering
         public List<string> ParamNames { get; init; } = [];
         public List<int> ParamSlots { get; init; } = [];
         public bool InTailPosition { get; set; }
+
+        // Arena watermark for per-iteration reset in TCO loops.
+        // Saved right after the loop body label; restored before jumping back
+        // when all tail-call arguments are copy types (no heap pointers escape).
+        public int ArenaCursorSlot { get; set; } = -1;
+        public int ArenaEndSlot { get; set; } = -1;
     }
 
     private TcoContext? _tcoCtx;
@@ -1363,18 +1369,27 @@ public sealed class Lowering
         // Only emit result preservation when there are alive owned values to drop
         if (HasAliveOwnedValuesInCurrentScope())
         {
+            // Save the result pointer in a local slot so it survives drop instructions.
             int resultSlot = NewLocal();
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopOwnershipScope(bodyType);
+            int finalTemp = PopOwnershipScope(bodyType, bodyTemp);
+            _scopes.Pop();
+            if (finalTemp != bodyTemp)
+            {
+                // Copy-out occurred: finalTemp is the freshly allocated copy.
+                return (finalTemp, bodyType);
+            }
+            // No copy-out: reload from the preserved slot (standard path).
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-            _scopes.Pop();
             return (resultTemp, bodyType);
         }
 
-        PopOwnershipScope(bodyType);
-        _scopes.Pop();
-        return (bodyTemp, bodyType);
+        {
+            int finalTemp = PopOwnershipScope(bodyType, bodyTemp);
+            _scopes.Pop();
+            return (finalTemp, bodyType);
+        }
     }
 
     private (int, TypeRef) LowerLetResult(Expr.LetResult letResult)
@@ -2444,6 +2459,13 @@ public sealed class Lowering
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
+
+            // Save arena watermark at loop body start so per-iteration heap
+            // allocations can be reclaimed before jumping back to the next iteration.
+            tco.ArenaCursorSlot = NewLocal();
+            tco.ArenaEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+
             tco.InTailPosition = true;
         }
 
@@ -2686,6 +2708,7 @@ public sealed class Lowering
             tco.InTailPosition = false;
 
             var newArgTemps = new int[collectedArgs.Count];
+            var newArgTypes = new TypeRef[collectedArgs.Count];
             // Type-check: resolve self binding and unify arg types with param types
             var selfBinding = Lookup(tco.SelfName);
             var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
@@ -2693,6 +2716,7 @@ public sealed class Lowering
             {
                 var (argTemp, argType) = LowerExpr(collectedArgs[i]);
                 newArgTemps[i] = argTemp;
+                newArgTypes[i] = argType;
                 if (curType is TypeRef.TFun funType)
                 {
                     Unify(funType.Arg, argType);
@@ -2704,6 +2728,61 @@ public sealed class Lowering
             for (int i = 0; i < tco.ParamSlots.Count; i++)
             {
                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
+            }
+
+            // Arena reset: restore heap state to loop-iteration watermark before
+            // jumping back.
+            //
+            // Phase 2a: all args are copy types (Int, Float, Bool) → plain reset.
+            // No heap pointers escape, so reclaiming the iteration's allocations is safe.
+            //
+            // Phase 2c: some args are heap types but all heap-type args can be copy-outed
+            // (TStr, or TList with copy-type element).  After the reset we copy each such
+            // argument out to the fresh watermark position, then overwrite its param slot
+            // with the copy pointer.  The previous iteration's cells lie BELOW the saved
+            // watermark and are therefore never reclaimed.
+            if (tco.ArenaCursorSlot >= 0)
+            {
+                int tcoPreRestoreEndSlot = NewLocal();
+
+                if (newArgTypes.All(CanArenaReset))
+                {
+                    // Phase 2a: all copy types.
+                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                    Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                }
+                else
+                {
+                    // Phase 2c: check whether every heap-type arg can be copy-outed.
+                    bool allCopyable = true;
+                    for (int i = 0; i < newArgTypes.Length; i++)
+                    {
+                        if (!CanArenaReset(newArgTypes[i]) && !CanCopyOutTcoArg(newArgTypes[i], out _))
+                        {
+                            allCopyable = false;
+                            break;
+                        }
+                    }
+
+                    if (allCopyable)
+                    {
+                        // Emit arena reset (pointer reset only, no chunk freeing), then
+                        // copy-out for each heap-type arg (source still readable because
+                        // chunks haven't been freed yet), then reclaim abandoned chunks.
+                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                        for (int i = 0; i < newArgTypes.Length; i++)
+                        {
+                            if (!CanArenaReset(newArgTypes[i]) && CanCopyOutTcoArg(newArgTypes[i], out int sizeBytes))
+                            {
+                                int copyDest = NewTemp();
+                                Emit(new IrInst.CopyOutArena(copyDest, newArgTemps[i], sizeBytes));
+                                Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
+                            }
+                        }
+                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                    }
+                    // else: complex heap types — no arena reset (Phase 1 fallback).
+                }
             }
 
             // Jump back to loop start
@@ -2781,6 +2860,16 @@ public sealed class Lowering
             }
         }
 
+        // Phase 3: per-call arena watermark — save the heap cursor/end before
+        // evaluating the callee and arguments so that intermediate allocations
+        // (closures from partial application, temporary data structures inside
+        // the callee, argument construction) can be reclaimed after the call
+        // chain completes.  The watermark is managed independently of the
+        // _arenaWatermarks / _ownershipScopes stacks to avoid unbalancing them.
+        int callWmCursorSlot = NewLocal();
+        int callWmEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(callWmCursorSlot, callWmEndSlot));
+
         // For non-TCO calls, sub-expressions are NOT in tail position
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
@@ -2839,6 +2928,29 @@ public sealed class Lowering
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
             currentTemp = target;
             currentType = Prune(fun.Ret);
+        }
+
+        // Phase 3: restore arena after the call chain completes.
+        // - Copy-type result (Int, Float, Bool): all allocations from the call
+        //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
+        // - String result: restore pointer → copy-out → reclaim chunks (source stays
+        //   readable until ReclaimArenaChunks frees the old OS chunks).
+        // - Other heap types (List, ADT, closure): skip — internal pointers may
+        //   reference memory within the watermark region.
+        var callResultType = Prune(currentType);
+        int callPreRestoreEndSlot = NewLocal();
+        if (CanArenaReset(callResultType))
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        }
+        else if (CanCopyOutArena(callResultType, out int callCopySize))
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            int copyDest = NewTemp();
+            Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            currentTemp = copyDest;
         }
 
         return (currentTemp, currentType);
@@ -3080,16 +3192,23 @@ public sealed class Lowering
                 }
             }
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            PopOwnershipScope(bodyType);
+            int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
+            if (armFinalTemp != bodyTemp)
+            {
+                // Copy-out occurred: update the result slot with the freshly allocated copy.
+                Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
+            }
             Emit(new IrInst.Jump(endLabel));
 
-            // Arm cleanup path (Label → RestoreArenaState → Jump): when pattern/guard
-            // fails, restore the arena watermark to reclaim any heap allocations made
-            // during pattern matching or guard evaluation. This is always safe on the
-            // failure path because no result escapes from a failed arm — all allocations
-            // between the watermark and the current cursor are unreachable garbage.
+            // Arm cleanup path (Label → RestoreArenaState → ReclaimArenaChunks → Jump):
+            // when pattern/guard fails, restore the arena watermark to reclaim any heap
+            // allocations made during pattern matching or guard evaluation. This is always
+            // safe on the failure path because no result escapes from a failed arm — all
+            // allocations between the watermark and the current cursor are unreachable garbage.
+            int armCleanupPreRestoreEndSlot = NewLocal();
             Emit(new IrInst.Label(armCleanupLabel));
-            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot));
+            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot, armCleanupPreRestoreEndSlot));
+            Emit(new IrInst.ReclaimArenaChunks(armEndSlot, armCleanupPreRestoreEndSlot));
             Emit(new IrInst.Jump(caseFailLabel));
 
             _scopes.Pop();
@@ -4177,26 +4296,61 @@ public sealed class Lowering
     }
 
     /// <summary>
-    /// Pops an ownership scope, emitting Drop instructions for any remaining alive owned values.
-    /// When <paramref name="resultType"/> is a copy type (Int, Float, Bool), emits
-    /// RestoreArenaState to reset the bump allocator to the scope-entry watermark,
-    /// effectively freeing all heap memory allocated within the scope.
+    /// Pops an ownership scope, emitting Drop instructions for any remaining alive owned values,
+    /// and optionally emitting arena-reset and/or copy-out instructions.
+    /// <list type="bullet">
+    ///   <item>Copy-type result (Int, Float, Bool): emits RestoreArenaState; returns
+    ///     <paramref name="resultTemp"/> unchanged.</item>
+    ///   <item>Heap-type result that can be copy-outed (String) AND the scope contained alive
+    ///     owned values (so there is heap memory worth reclaiming): emits RestoreArenaState
+    ///     followed by CopyOutArena; returns the new copy-destination temp.</item>
+    ///   <item>All other heap types, or heap type with no alive owned values: no arena action;
+    ///     returns <paramref name="resultTemp"/> unchanged.</item>
+    /// </list>
     /// </summary>
-    private void PopOwnershipScope(TypeRef? resultType = null)
+    /// <param name="resultType">The scope result type, used to decide arena action.</param>
+    /// <param name="resultTemp">The IR temp holding the scope result (pointer or value).
+    ///   Pass -1 if the result temp is unavailable or irrelevant.</param>
+    /// <returns>The IR temp to use as the scope result after cleanup.
+    ///   For copy-out, this is a newly allocated temp that differs from
+    ///   <paramref name="resultTemp"/>. Otherwise it equals <paramref name="resultTemp"/>.</returns>
+    private int PopOwnershipScope(TypeRef? resultType = null, int resultTemp = -1)
     {
+        bool hadAliveOwned = HasAliveOwnedValuesInCurrentScope();
         EmitDropsForCurrentScope();
 
         var (cursorSlot, endSlot) = _arenaWatermarks.Pop();
 
-        // Arena reset is safe when the scope result is a copy type — no heap-allocated
-        // values escape the scope. All owned heap values were dropped above, so the
-        // memory between the watermark and the current cursor is unreachable garbage.
-        if (resultType is not null && CanArenaReset(resultType))
+        if (resultType is not null)
         {
-            Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot));
+            int preRestoreEndSlot = NewLocal();
+
+            if (CanArenaReset(resultType))
+            {
+                // Copy-type result: arena reset is always safe. No heap values escape.
+                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+                Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+            }
+            else if (hadAliveOwned && resultTemp >= 0 && CanCopyOutArena(resultType, out int staticSizeBytes))
+            {
+                // Heap-type result that is self-contained (e.g. String): restore arena
+                // watermark first (resets cursor/end but does NOT free OS chunks), then
+                // copy the result object to the freshly reset cursor position (source
+                // is still readable because chunks haven't been freed yet), then reclaim
+                // abandoned chunks.
+                Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+                int copyDest = NewTemp();
+                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
+                Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+                _ownershipScopes.Pop();
+                return copyDest;
+            }
+            // else: heap type that cannot be copy-outed, or no owned values to reclaim.
+            // No arena action; the caller retains the original result pointer.
         }
 
         _ownershipScopes.Pop();
+        return resultTemp;
     }
 
     /// <summary>
@@ -4208,6 +4362,59 @@ public sealed class Lowering
     {
         var pruned = Prune(type);
         return pruned is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
+    }
+
+    /// <summary>
+    /// Returns true if the given type's heap representation is fully self-contained
+    /// (no internal pointers to within-scope arena allocations) and can therefore be
+    /// safely copy-outed after a RestoreArenaState.
+    /// <para>
+    /// Currently handles:
+    /// <list type="bullet">
+    ///   <item><b>String (TStr):</b> layout is {length:i64, bytes…}; all data is inline,
+    ///     no internal pointers. <paramref name="staticSizeBytes"/> is -1 (dynamic).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private bool CanCopyOutArena(TypeRef type, out int staticSizeBytes)
+    {
+        var pruned = Prune(type);
+        if (pruned is TypeRef.TStr)
+        {
+            staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
+            return true;
+        }
+
+        staticSizeBytes = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true if the given type can be copy-outed safely after a TCO arena reset.
+    /// Safe types for TCO copy-out:
+    /// <list type="bullet">
+    ///   <item><b>String (TStr):</b> self-contained — no internal heap pointers.</item>
+    ///   <item><b>List with copy-type element (TList where element is Int/Float/Bool):</b>
+    ///     The cons cell is {head:i64, tail:i64} where head is a direct i64 value (not a
+    ///     pointer) and tail points to the previous iteration's copy-outed cell, which is
+    ///     below the current watermark and therefore not reclaimed.</item>
+    /// </list>
+    /// </summary>
+    private bool CanCopyOutTcoArg(TypeRef type, out int staticSizeBytes)
+    {
+        var pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TStr:
+                staticSizeBytes = -1; // dynamic: 8 + length
+                return true;
+            case TypeRef.TList list when CanArenaReset(list.Element):
+                staticSizeBytes = 16; // cons cell: { head:i64, tail:i64 }
+                return true;
+            default:
+                staticSizeBytes = 0;
+                return false;
+        }
     }
 
     /// <summary>

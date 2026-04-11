@@ -218,6 +218,10 @@
           Source: 1
         },
         {
+          CursorLocalSlot: 3,
+          EndLocalSlot: 4
+        },
+        {
           Target: 2,
           Slot: 2
         },
@@ -244,10 +248,19 @@
           ArgTemp: 6
         },
         {
+          CursorLocalSlot: 3,
+          EndLocalSlot: 4,
+          PreRestoreEndSlot: 5
+        },
+        {
+          SavedEndSlot: 4,
+          PreRestoreEndSlot: 5
+        },
+        {
           Source: 7
         },
         {
-          Slot: 3,
+          Slot: 6,
           Source: 7
         },
         {
@@ -260,13 +273,13 @@
         },
         {
           Target: 9,
-          Slot: 3
+          Slot: 6
         },
         {
           Source: 9
         }
       ],
-      LocalCount: 4,
+      LocalCount: 8,
       TempCount: 10,
       HasEnvAndArgParams: false,
       LocalNames: {
@@ -333,5 +346,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: 3693341F54602F17AC6366C15E07265FB302F12A6E48B5514FFFDD3057009F51
+  ElfSha256: E1AEE8D42B3D1069D96EA4706A42258C878B05D9E74B1B021DF2420150D3BE06
 }
