@@ -949,6 +949,7 @@ public sealed class ArenaDeallocationTests
     {
         // Closure copy-out is disabled until escape analysis is implemented,
         // because env may contain heap pointers that would dangle after reclaim.
+        // Arena restoration should still occur for non-copy-out-eligible types.
         var ir = LowerProgram(
             """
             let add = fun (x) -> fun (y) -> x + y
