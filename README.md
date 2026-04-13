@@ -57,8 +57,8 @@ This repository contains the full toolchain:
 - Test runner
 - Language server
 - Debugger
-- Package manager
 - VS Code extension
+- Package manager
 
 ### Design Principles
 
@@ -239,7 +239,7 @@ semantic tokens, and completions.
 
 For local development:
 
-```powershell
+```sh
 .\scripts\install-vscode-extension-local.sh
 ```
 
@@ -323,7 +323,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 
 ## Why "Ashes"?
 
-The name comes from my beloved dog. Her enthusiasm for trying anything new
+Ashes is the name of my beloved dog. Her enthusiasm for trying anything new
 mirrors the spirit of this project — an experiment, a learning journey, and
 a personal exploration of functional language design.
 
