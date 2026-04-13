@@ -55,12 +55,12 @@ resolved source roots.
 
 | Area | File | Why it matters |
 |------|------|----------------|
-| Manifest/CLI surface | `/home/runner/work/Ashes/Ashes/src/Ashes.Cli/Program.cs` | `RunAdd`, `RunRemove`, and `RunInstall` currently only edit/list JSON. |
-| Project model | `/home/runner/work/Ashes/Ashes/src/Ashes.Semantics/ProjectSupport.cs` | `AshesProject` and `LoadProject()` currently ignore dependencies entirely. |
-| Module resolution | `/home/runner/work/Ashes/Ashes/src/Ashes.Semantics/ProjectSupport.cs` | `BuildCompilationPlan()` resolves imports from `SourceRoots.Concat(Include)` plus shipped `lib/`. |
-| LSP project analysis | `/home/runner/work/Ashes/Ashes/src/Ashes.Lsp/DocumentService.cs` | Reuses `LoadProject()` and `BuildCompilationPlan()`, so package support must flow through the shared project model. |
-| Test runner | `/home/runner/work/Ashes/Ashes/src/Ashes.TestRunner/Runner.cs` | Reconstructs `AshesProject` instances for project-mode tests. |
-| Compiler tests | `/home/runner/work/Ashes/Ashes/src/Ashes.Tests/ImportTests.cs` and `/home/runner/work/Ashes/Ashes/src/Ashes.Tests/ProjectSupportTests.cs` | These will need updates if the project model grows new dependency fields or effective include roots. |
+| Manifest/CLI surface | `src/Ashes.Cli/Program.cs` | `RunAdd`, `RunRemove`, and `RunInstall` currently only edit/list JSON. |
+| Project model | `src/Ashes.Semantics/ProjectSupport.cs` | `AshesProject` and `LoadProject()` currently ignore dependencies entirely. |
+| Module resolution | `src/Ashes.Semantics/ProjectSupport.cs` | `BuildCompilationPlan()` resolves imports from `SourceRoots.Concat(Include)` plus shipped `lib/`. |
+| LSP project analysis | `src/Ashes.Lsp/DocumentService.cs` | Reuses `LoadProject()` and `BuildCompilationPlan()`, so package support must flow through the shared project model. |
+| Test runner | `src/Ashes.TestRunner/Runner.cs` | Reconstructs `AshesProject` instances for project-mode tests. |
+| Compiler tests | `src/Ashes.Tests/ImportTests.cs` and `src/Ashes.Tests/ProjectSupportTests.cs` | These will need updates if the project model grows new dependency fields or effective include roots. |
 
 ### Key implementation observation
 
@@ -111,8 +111,7 @@ This keeps the existing import resolver intact.
 ### Recommended implementation shape
 
 1. **Spec update first**
-   - Update `/home/runner/work/Ashes/Ashes/docs/PROJECT_SPEC.md` and
-     `/home/runner/work/Ashes/Ashes/docs/COMPILER_CLI_SPEC.md`.
+   - Update `docs/PROJECT_SPEC.md` and `docs/COMPILER_CLI_SPEC.md`.
    - Define a local-dependency representation that includes a filesystem
      path.
    - Do not force step 1 through registry-style version strings only; the
@@ -120,8 +119,7 @@ This keeps the existing import resolver intact.
      package on disk.
 
 2. **Project model**
-   - Extend `AshesProject` in
-     `/home/runner/work/Ashes/Ashes/src/Ashes.Semantics/ProjectSupport.cs`
+   - Extend `AshesProject` in `src/Ashes.Semantics/ProjectSupport.cs`
      with dependency data or with precomputed effective package roots.
    - Update `LoadProject()` to parse dependency entries and resolve them
      relative to the project directory.
@@ -141,21 +139,21 @@ This keeps the existing import resolver intact.
 
 5. **CLI**
    - Update `RunAdd` / `RunRemove` / `RunInstall` in
-     `/home/runner/work/Ashes/Ashes/src/Ashes.Cli/Program.cs` so the CLI
+     `src/Ashes.Cli/Program.cs` so the CLI
      edits and displays the new dependency shape instead of a bare `"*"`.
    - `install` in step 1 should validate and materialize local dependency
      metadata, not talk to a registry.
 
 ### Most likely files to change in step 1
 
-- `/home/runner/work/Ashes/Ashes/docs/PROJECT_SPEC.md`
-- `/home/runner/work/Ashes/Ashes/docs/COMPILER_CLI_SPEC.md`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Cli/Program.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Semantics/ProjectSupport.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Lsp/DocumentService.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.TestRunner/Runner.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Tests/PackageManagementCliTests.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Tests/ProjectSupportTests.cs`
+- `docs/PROJECT_SPEC.md`
+- `docs/COMPILER_CLI_SPEC.md`
+- `src/Ashes.Cli/Program.cs`
+- `src/Ashes.Semantics/ProjectSupport.cs`
+- `src/Ashes.Lsp/DocumentService.cs`
+- `src/Ashes.TestRunner/Runner.cs`
+- `src/Ashes.Tests/PackageManagementCliTests.cs`
+- `src/Ashes.Tests/ProjectSupportTests.cs`
 
 ------------------------------------------------------------------------
 
@@ -241,7 +239,7 @@ Ashes language grammar or expression semantics.
 
 The most important implementation center is:
 
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Semantics/ProjectSupport.cs`
+- `src/Ashes.Semantics/ProjectSupport.cs`
 
 not the frontend parser.
 
@@ -267,8 +265,8 @@ The shared project-loading path should remain the source of truth for:
 `AshesProject` is manually constructed in multiple places, including tests
 and runner code. Any new dependency-related field will require updates in:
 
-- `/home/runner/work/Ashes/Ashes/src/Ashes.TestRunner/Runner.cs`
-- `/home/runner/work/Ashes/Ashes/src/Ashes.Tests/ImportTests.cs`
+- `src/Ashes.TestRunner/Runner.cs`
+- `src/Ashes.Tests/ImportTests.cs`
 - project/LSP call sites using `project with { ... }`
 
 ### 5. Let ambiguity diagnostics do real work
