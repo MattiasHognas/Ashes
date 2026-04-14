@@ -1,6 +1,6 @@
 # Ashes
 
-A small, **pure functional language** in the ML family — compiled directly to
+A small, **pure functional language** in the ML family - compiled directly to
 native executables without runtime dependencies.
 
 ```ash
