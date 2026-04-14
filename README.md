@@ -48,7 +48,7 @@ No GC. No runtime. Just a native binary.
 
 Ashes compiles `.ash` source files to **standalone native executables**
 (ELF on Linux, PE on Windows) using a compiler written in .NET. The
-produced binaries have **zero runtime dependencies** — no external
+produced binaries have **zero runtime dependencies** - no external
 assembler, toolchain, or garbage collector required - and are optimized trough LLVM.
 
 This repository contains the full toolchain:
@@ -67,16 +67,16 @@ This repository contains the full toolchain:
 | **Pure** | No mutation, no side effects in expressions |
 | **Immutable** | All bindings are immutable, lists are linked lists |
 | **Expression-based** | Everything evaluates to a value — no statements |
-| **Strictly evaluated** | No lazy evaluation — arguments evaluated before calls |
+| **Strictly evaluated** | No lazy evaluation - arguments evaluated before calls |
 | **Recursion-based** | Recursion and pattern matching replace loops |
-| **Type-inferred** | Hindley-Milner type inference — types without annotations |
+| **Type-inferred** | Hindley-Milner type inference - types without annotations |
 
 ### Inspirations
 
-- **ML / OCaml / F#** — algebraic data types, pattern matching, type inference
-- **Elm** — simplicity and explicit data modeling
-- **Haskell** — purity and type-driven design
-- **Rust** — deterministic memory management without a GC
+- **ML / OCaml / F#** - algebraic data types, pattern matching, type inference
+- **Elm** - simplicity and explicit data modeling
+- **Haskell** - purity and type-driven design
+- **Rust** - deterministic memory management without a GC
 
 ---
 
@@ -152,7 +152,7 @@ in task.run(work) |> io.print
 
 ### Polymorphism
 
-Hindley-Milner let-polymorphism — use the same function at different types:
+Hindley-Milner let-polymorphism - use the same function at different types:
 
 ```ash
 import Ashes.IO as io
