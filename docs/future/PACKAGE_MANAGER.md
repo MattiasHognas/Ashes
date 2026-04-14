@@ -13,7 +13,7 @@ A registry is a large piece of product and infrastructure work. The current
 compiler codebase is much better aligned with **local dependency wiring
 first**, then graph resolution, and only then a registry.
 
-------------------------------------------------------------------------
+---
 
 ## Current State in the Repository
 
@@ -49,7 +49,7 @@ module resolver already works over **directories**. The easiest package
 manager implementation is therefore to turn dependencies into additional
 resolved source roots.
 
-------------------------------------------------------------------------
+---
 
 ## Relevant Code Paths
 
@@ -75,7 +75,7 @@ That means the package manager should preferably feed **resolved package
 roots** into project loading, instead of teaching `ResolveImport()` about
 registries, versions, or archives directly.
 
-------------------------------------------------------------------------
+---
 
 ## Recommended Rollout
 
@@ -155,7 +155,7 @@ This keeps the existing import resolver intact.
 - `src/Ashes.Tests/PackageManagementCliTests.cs`
 - `src/Ashes.Tests/ProjectSupportTests.cs`
 
-------------------------------------------------------------------------
+---
 
 ### Step 2 — Lock File and Transitive Resolution
 
@@ -192,10 +192,10 @@ A lock file solves that problem in a registry-independent way.
 ### Important constraint
 
 Do not bake transitive graph walking directly into ad hoc compile-time
-search logic. The compiler should receive a resolved, deterministic set of
-roots; it should not become the dependency solver.
+search logic. The compiler's 'compile' should receive a resolved, deterministic set of
+roots, that was created at 'install'; it should not become the dependency solver.
 
-------------------------------------------------------------------------
+---
 
 ### Step 3 — Registry
 
@@ -228,7 +228,7 @@ In other words, by step 3 the registry becomes an **input source** to an
 existing package system, rather than the thing that defines the package
 system.
 
-------------------------------------------------------------------------
+---
 
 ## Implementation Advice
 
