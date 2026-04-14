@@ -66,7 +66,7 @@ This repository contains the full toolchain:
 |---|---|
 | **Pure** | No mutation, no side effects in expressions |
 | **Immutable** | All bindings are immutable, lists are linked lists |
-| **Expression-based** | Everything evaluates to a value — no statements |
+| **Expression-based** | Everything evaluates to a value - no statements |
 | **Strictly evaluated** | No lazy evaluation - arguments evaluated before calls |
 | **Recursion-based** | Recursion and pattern matching replace loops |
 | **Type-inferred** | Hindley-Milner type inference - types without annotations |
@@ -324,7 +324,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 ## Why "Ashes"?
 
 Ashes is the name of my beloved dog. Her enthusiasm for trying anything new
-mirrors the spirit of this project — an experiment, a learning journey, and
+mirrors the spirit of this project - an experiment, a learning journey, and
 a personal exploration of functional language design.
 
 ---
