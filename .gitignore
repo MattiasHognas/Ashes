@@ -53,10 +53,9 @@ CodeCoverage/
 vscode-extension/package-lock.json
 vscode-extension/node_modules/
 vscode-extension/out/
-vscode-extension/compiler/linux-x64/
-vscode-extension/compiler/win-x64/
-vscode-extension/server/linux-x64/
-vscode-extension/server/win-x64/
+vscode-extension/compiler/
+vscode-extension/lsp-server/
+vscode-extension/dap-server/
 *.vsix
 .vscode-test/
 

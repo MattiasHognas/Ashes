@@ -217,6 +217,12 @@ public static class IrOptimizer
             IrInst.AwaitTask at => at with { TaskTemp = R(at.TaskTemp) },
             IrInst.RunTask rt => rt with { TaskTemp = R(rt.TaskTemp) },
             IrInst.AsyncSleep sl => sl with { MillisecondsTemp = R(sl.MillisecondsTemp) },
+            IrInst.CreateTcpConnectTask t => t with { HostTemp = R(t.HostTemp), PortTemp = R(t.PortTemp) },
+            IrInst.CreateTcpSendTask t => t with { SocketTemp = R(t.SocketTemp), TextTemp = R(t.TextTemp) },
+            IrInst.CreateTcpReceiveTask t => t with { SocketTemp = R(t.SocketTemp), MaxBytesTemp = R(t.MaxBytesTemp) },
+            IrInst.CreateTcpCloseTask t => t with { SocketTemp = R(t.SocketTemp) },
+            IrInst.CreateHttpGetTask t => t with { UrlTemp = R(t.UrlTemp) },
+            IrInst.CreateHttpPostTask t => t with { UrlTemp = R(t.UrlTemp), BodyTemp = R(t.BodyTemp) },
             IrInst.AsyncAll aa => aa with { TaskListTemp = R(aa.TaskListTemp) },
             IrInst.AsyncRace ar => ar with { TaskListTemp = R(ar.TaskListTemp) },
             IrInst.Suspend s => s with
@@ -926,6 +932,12 @@ public static class IrOptimizer
             case IrInst.AwaitTask at: usedTemps.Add(at.TaskTemp); break;
             case IrInst.RunTask rt: usedTemps.Add(rt.TaskTemp); break;
             case IrInst.AsyncSleep sl: usedTemps.Add(sl.MillisecondsTemp); break;
+            case IrInst.CreateTcpConnectTask t: usedTemps.Add(t.HostTemp); usedTemps.Add(t.PortTemp); break;
+            case IrInst.CreateTcpSendTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.TextTemp); break;
+            case IrInst.CreateTcpReceiveTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.MaxBytesTemp); break;
+            case IrInst.CreateTcpCloseTask t: usedTemps.Add(t.SocketTemp); break;
+            case IrInst.CreateHttpGetTask t: usedTemps.Add(t.UrlTemp); break;
+            case IrInst.CreateHttpPostTask t: usedTemps.Add(t.UrlTemp); usedTemps.Add(t.BodyTemp); break;
             case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
             case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
             case IrInst.Suspend s:

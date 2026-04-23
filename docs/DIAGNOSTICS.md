@@ -19,6 +19,7 @@ Current codes:
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
 | `ASH010` | `await` used outside an `async` block |
 | `ASH011` | Conflicting error types inside an `async` block |
+| `ASH012` | Async-only networking API used outside an `async` block |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.

@@ -1,4 +1,5 @@
 // expect: https not supported
-match Ashes.Http.get("https://example.com") with
-    | Ok(text) -> Ashes.IO.print(text)
-    | Error(err) -> Ashes.IO.print(err)
+Ashes.IO.print(match Ashes.Async.run(async
+    await Ashes.Http.get("https://example.com")) with
+    | Ok(text) -> text
+    | Error(err) -> err)

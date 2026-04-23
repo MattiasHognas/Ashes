@@ -54,9 +54,10 @@ public sealed class BuiltinModuleRegistryTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            match Ashes.Http.get("http://example.com") with
-                | Error(_) -> Ashes.IO.print("fail")
-                | Ok(text) -> Ashes.IO.print(text)
+            Ashes.IO.print(match Ashes.Async.run(async
+                await Ashes.Http.get("http://example.com")) with
+                | Error(_) -> "fail"
+                | Ok(text) -> text)
             """,
             diag).ParseProgram();
         var lowering = new Lowering(diag);
@@ -72,12 +73,13 @@ public sealed class BuiltinModuleRegistryTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            match Ashes.Net.Tcp.connect("127.0.0.1")(80) with
-                | Error(_) -> Ashes.IO.print("fail")
-                | Ok(sock) ->
-                    match Ashes.Net.Tcp.close(sock) with
-                        | Ok(_) -> Ashes.IO.print("ok")
-                        | Error(_) -> Ashes.IO.print("fail")
+            Ashes.IO.print(match Ashes.Async.run(async
+                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
+                in
+                    let _ = await Ashes.Net.Tcp.close(sock)
+                    in "ok") with
+                | Error(_) -> "fail"
+                | Ok(text) -> text)
             """,
             diag).ParseProgram();
         var lowering = new Lowering(diag);

@@ -31,6 +31,127 @@ public sealed class ExampleSocketFixtureTests
     }
 
     [Test]
+    public async Task Async_all_should_preserve_input_order_for_http_tasks_against_loopback_fixture()
+    {
+        const string source = """
+Ashes.IO.print(match Ashes.Async.run(async
+    let responses = await Ashes.Async.all([
+        Ashes.Http.get("http://127.0.0.1:8080/first"),
+        Ashes.Http.get("http://127.0.0.1:8080/second")
+    ])
+    in match responses with
+        | a :: b :: [] -> a + "," + b
+        | _ -> "bad-shape") with
+    | Ok(text) -> text
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 2,
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                var request = await ReadTextAsync(stream, 4096);
+                var responseBody = request.Contains("GET /first HTTP/1.1", StringComparison.Ordinal)
+                    ? "first"
+                    : request.Contains("GET /second HTTP/1.1", StringComparison.Ordinal)
+                        ? "second"
+                        : "unexpected";
+
+                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            expectedStdout: "first,second\n");
+    }
+
+    [Test]
+    public async Task Async_race_should_return_first_completed_http_task_against_loopback_fixture()
+    {
+        const string source = """
+Ashes.IO.print(match Ashes.Async.run(async
+    await Ashes.Async.race([
+        Ashes.Http.get("http://127.0.0.1:8080/slow"),
+        Ashes.Http.get("http://127.0.0.1:8080/fast")
+    ])) with
+    | Ok(text) -> text
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 2,
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                var request = await ReadTextAsync(stream, 4096);
+                var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
+                if (isSlow)
+                {
+                    await Task.Delay(250);
+                }
+
+                var responseBody = isSlow ? "slow" : "fast";
+                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            expectedStdout: "fast\n");
+    }
+
+    [Test]
+    public async Task Tcp_close_should_release_socket_and_allow_async_program_to_continue_against_loopback_fixture()
+    {
+        const string source = """
+Ashes.IO.print(match Ashes.Async.run(async
+    let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(8080)
+    in let _ = await Ashes.Net.Tcp.close(sock)
+    in "cleanup-ok") with
+    | Ok(text) -> text
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                await Task.Delay(200);
+                var buffer = new byte[64];
+                var bytesRead = await stream.ReadAsync(buffer);
+                bytesRead.ShouldBe(0);
+            },
+            expectedStdout: "cleanup-ok\n");
+    }
+
+    [Test]
+    public async Task Awaited_http_failure_should_propagate_error_through_async_program_against_loopback_fixture()
+    {
+        const string source = """
+Ashes.IO.print(match Ashes.Async.run(async
+    let response = await Ashes.Http.get("http://127.0.0.1:8080/fail")
+    in "unreachable:" + response) with
+    | Ok(text) -> text
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
+            async client =>
+            {
+                await using var stream = client.GetStream();
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\nserver exploded");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            expectedStdout: "HTTP 500\n");
+    }
+
+    [Test]
     public async Task Tcp_connect_example_should_run_against_loopback_fixture()
     {
         await RunExampleWithServerAsync(
@@ -87,38 +208,80 @@ public sealed class ExampleSocketFixtureTests
     {
         var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
         File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var tempExamplePath = await CreatePortSpecificExampleAsync(examplePath, port);
-        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempExamplePath);
+        await RunPathWithServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout);
+    }
+
+    private static async Task RunSourceWithServerAsync(string source, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N") + ".ash");
+        Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
 
         try
         {
-            var serverTask = RunServerAsync(listener, handleClientAsync);
+            await File.WriteAllTextAsync(tempPath, source);
+            await RunPathWithServerAsync(tempPath, expectedClientCount, handleClientAsync, expectedStdout);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
+    }
+
+    private static async Task RunPathWithServerAsync(string sourcePath, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port);
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath);
+
+        try
+        {
+            var serverTask = RunServerAsync(listener, expectedClientCount, handleClientAsync);
             var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
             var serverException = await serverTask;
 
-            serverException.ShouldBeNull(serverException?.ToString());
+            var serverDiagnostic = serverException is null
+                ? null
+                : $"{serverException}{Environment.NewLine}exit={exitCode}{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}";
+            serverException.ShouldBeNull(serverDiagnostic);
             exitCode.ShouldBe(0, stderr);
             stdout.ShouldBe(expectedStdout, customMessage: stderr);
             stderr.ShouldBeEmpty();
         }
         finally
         {
-            TryDeleteFile(tempExamplePath);
+            TryDeleteFile(tempSourcePath);
         }
     }
 
-    private static async Task<Exception?> RunServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
+    private static async Task<Exception?> RunServerAsync(TcpListener listener, int expectedClientCount, Func<TcpClient, Task> handleClientAsync)
     {
         try
         {
-            using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
-            using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
-            client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
-            client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
-            await handleClientAsync(client);
+            var clients = new List<TcpClient>(expectedClientCount);
+
+            try
+            {
+                for (var index = 0; index < expectedClientCount; index++)
+                {
+                    using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
+                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
+                    client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
+                    clients.Add(client);
+                }
+
+                await Task.WhenAll(clients.Select(handleClientAsync));
+            }
+            finally
+            {
+                foreach (var client in clients)
+                {
+                    client.Dispose();
+                }
+            }
+
             return null;
         }
         catch (Exception ex)

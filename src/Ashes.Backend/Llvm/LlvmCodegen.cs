@@ -23,9 +23,20 @@ internal static partial class LlvmCodegen
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
+    private const long SyscallFcntl = 72;
+    private const long SyscallEpollCtl = 233;
+    private const long SyscallEpollWait = 232;
+    private const long SyscallEpollCreate1 = 291;
     private const long SyscallNanosleep = 35;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
+    private const long LinuxErrWouldBlock = -11;
+    private const long LinuxErrAlready = -114;
+    private const long LinuxErrInProgress = -115;
+    private const long LinuxErrIsConnected = -106;
+    private const long LinuxFcntlGetFlags = 3;
+    private const long LinuxFcntlSetFlags = 4;
+    private const long LinuxOpenNonBlocking = 0x800;
 
     // AArch64 Linux syscall numbers
     private const long Arm64SyscallClose = 57;
@@ -38,8 +49,21 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallExit = 93;
     private const long Arm64SyscallSocket = 198;
     private const long Arm64SyscallConnect = 203;
+    private const long Arm64SyscallFcntl = 25;
+    private const long Arm64SyscallEpollCreate1 = 20;
+    private const long Arm64SyscallEpollCtl = 21;
+    private const long Arm64SyscallEpollPwait = 22;
     private const long Arm64SyscallNanosleep = 101;
     private const long Arm64SyscallClockGettime = 113;
+    private const uint WindowsFionBio = 0x8004667E;
+    private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
+    private const int WindowsWsaErrorWouldBlock = 10035;
+    private const int WindowsWsaErrorInProgress = 10036;
+    private const int WindowsWsaErrorAlready = 10037;
+    private const int WindowsWsaErrorIsConnected = 10056;
+    private const int WindowsErrorIoPending = 997;
+    private const int WindowsSolSocket = unchecked((int)0xFFFF);
+    private const int WindowsSoUpdateConnectContext = 0x7010;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -54,6 +78,18 @@ internal static partial class LlvmCodegen
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
+
+    private static class WindowsIocpOperationLayout
+    {
+        internal const int Status = 0;
+        internal const int BytesTransferred = 8;
+        internal const int Overlapped = 16;
+        internal const int TotalSize = 48;
+
+        internal const long StatePending = 0;
+        internal const long StateCompleted = 1;
+        internal const long StateFailed = 2;
+    }
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
     {
@@ -240,19 +276,31 @@ internal static partial class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program));
+        bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
+            || ProgramUsesInstruction<IrInst.HttpPost>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.RunTask>(program)
+            || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+            || ProgramUsesInstruction<IrInst.AsyncAll>(program)
+            || ProgramUsesInstruction<IrInst.AsyncRace>(program)
+            || ProgramUsesInstruction<IrInst.Drop>(program);
         bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
-            && (ProgramUsesInstruction<IrInst.HttpGet>(program)
-                || ProgramUsesInstruction<IrInst.HttpPost>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program));
+            && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.RunTask>(program)
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
-                || ProgramUsesInstruction<IrInst.AsyncRace>(program));
+                || ProgramUsesInstruction<IrInst.AsyncRace>(program)
+                || usesNetworkingRuntimeAbi);
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -265,6 +313,16 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSendImport = default;
         LlvmValueHandle windowsRecvImport = default;
         LlvmValueHandle windowsCloseSocketImport = default;
+        LlvmValueHandle windowsIoctlSocketImport = default;
+        LlvmValueHandle windowsWsaGetLastErrorImport = default;
+        LlvmValueHandle windowsWsaPollImport = default;
+        LlvmValueHandle windowsBindImport = default;
+        LlvmValueHandle windowsSetSockOptImport = default;
+        LlvmValueHandle windowsWsaIoctlImport = default;
+        LlvmValueHandle windowsWsaSendImport = default;
+        LlvmValueHandle windowsWsaRecvImport = default;
+        LlvmValueHandle windowsCreateIoCompletionPortImport = default;
+        LlvmValueHandle windowsGetQueuedCompletionStatusImport = default;
         LlvmValueHandle windowsExitProcessImport = default;
         LlvmValueHandle windowsGetCommandLineImport = default;
         LlvmValueHandle windowsWideCharToMultiByteImport = default;
@@ -273,6 +331,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSleepImport = default;
         LlvmValueHandle windowsVirtualAllocImport = default;
         LlvmValueHandle windowsVirtualFreeImport = default;
+        LlvmValueHandle windowsIocpPortGlobal = default;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
@@ -300,15 +359,18 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsReadFileImport, LlvmLinkage.External);
         }
 
+        if (usesWindowsFileOps || usesWindowsSockets)
+        {
+            windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
+            LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
+        }
+
         if (usesWindowsFileOps)
         {
             LlvmTypeHandle createFileType = LlvmApi.FunctionType(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
-            LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(i32, [i64]);
             LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(i32, [i8Ptr]);
             windowsCreateFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateFileA");
             LlvmApi.SetLinkage(windowsCreateFileImport, LlvmLinkage.External);
-            windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
-            LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
             windowsGetFileAttributesImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetFileAttributesA");
             LlvmApi.SetLinkage(windowsGetFileAttributesImport, LlvmLinkage.External);
         }
@@ -321,6 +383,9 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle sendType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
             LlvmTypeHandle recvType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
             LlvmTypeHandle closeSocketType = LlvmApi.FunctionType(i32, [i64]);
+            LlvmTypeHandle ioctlSocketType = LlvmApi.FunctionType(i32, [i64, i32, i64Ptr]);
+            LlvmTypeHandle wsaGetLastErrorType = LlvmApi.FunctionType(i32, []);
+            LlvmTypeHandle wsaPollType = LlvmApi.FunctionType(i32, [i8Ptr, i32, i32]);
             windowsWsaStartupImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAStartup");
             LlvmApi.SetLinkage(windowsWsaStartupImport, LlvmLinkage.External);
             windowsSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_socket");
@@ -333,6 +398,29 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsRecvImport, LlvmLinkage.External);
             windowsCloseSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_closesocket");
             LlvmApi.SetLinkage(windowsCloseSocketImport, LlvmLinkage.External);
+            windowsIoctlSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ioctlsocket");
+            LlvmApi.SetLinkage(windowsIoctlSocketImport, LlvmLinkage.External);
+            windowsWsaGetLastErrorImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAGetLastError");
+            LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
+            windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
+            LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            windowsBindImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_bind");
+            LlvmApi.SetLinkage(windowsBindImport, LlvmLinkage.External);
+            windowsSetSockOptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_setsockopt");
+            LlvmApi.SetLinkage(windowsSetSockOptImport, LlvmLinkage.External);
+            windowsWsaIoctlImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAIoctl");
+            LlvmApi.SetLinkage(windowsWsaIoctlImport, LlvmLinkage.External);
+            windowsWsaSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSASend");
+            LlvmApi.SetLinkage(windowsWsaSendImport, LlvmLinkage.External);
+            windowsWsaRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSARecv");
+            LlvmApi.SetLinkage(windowsWsaRecvImport, LlvmLinkage.External);
+            windowsCreateIoCompletionPortImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateIoCompletionPort");
+            LlvmApi.SetLinkage(windowsCreateIoCompletionPortImport, LlvmLinkage.External);
+            windowsGetQueuedCompletionStatusImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetQueuedCompletionStatus");
+            LlvmApi.SetLinkage(windowsGetQueuedCompletionStatusImport, LlvmLinkage.External);
+            windowsIocpPortGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_windows_iocp_port");
+            LlvmApi.SetLinkage(windowsIocpPortGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(windowsIocpPortGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
 
         if (usesWindowsExitProcess)
@@ -383,18 +471,60 @@ internal static partial class LlvmCodegen
         EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
         EmitBuiltinBcmp(target, i8, i64, i8Ptr);
 
+        // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
+        // point and lifted closures. The current runtime ABI layer does not unwind.
+        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
+        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
+
+        if (usesNetworkingRuntimeAbi)
+        {
+            EmitNetworkingRuntimeAbi(
+                target,
+                flavor,
+                i32,
+                i32Ptr,
+                heapCursorGlobal,
+                heapEndGlobal,
+                windowsGetStdHandleImport,
+                windowsWriteFileImport,
+                windowsReadFileImport,
+                windowsCreateFileImport,
+                windowsCloseHandleImport,
+                windowsGetFileAttributesImport,
+                windowsWsaStartupImport,
+                windowsSocketImport,
+                windowsConnectImport,
+                windowsSendImport,
+                windowsRecvImport,
+                windowsCloseSocketImport,
+                windowsIoctlSocketImport,
+                windowsWsaGetLastErrorImport,
+                windowsWsaPollImport,
+                windowsBindImport,
+                windowsSetSockOptImport,
+                windowsWsaIoctlImport,
+                windowsWsaSendImport,
+                windowsWsaRecvImport,
+                windowsCreateIoCompletionPortImport,
+                windowsGetQueuedCompletionStatusImport,
+                windowsIocpPortGlobal,
+                windowsExitProcessImport,
+                windowsGetCommandLineImport,
+                windowsWideCharToMultiByteImport,
+                windowsLocalFreeImport,
+                windowsCommandLineToArgvImport,
+                windowsSleepImport,
+                windowsVirtualAllocImport,
+                windowsVirtualFreeImport,
+                nounwindAttr);
+        }
+
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             IsLinuxFlavor(flavor)
                 ? LlvmApi.FunctionType(voidType, [i64])
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
-
-        // Apply nounwind to Ashes-generated functions — the entry point and lifted
-        // closures. Ashes has no exceptions / unwind semantics, so LLVM can skip
-        // unwind table generation for smaller, faster code.
-        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
-        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
 
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
@@ -441,6 +571,17 @@ internal static partial class LlvmCodegen
             windowsSendImport,
             windowsRecvImport,
             windowsCloseSocketImport,
+            windowsIoctlSocketImport,
+            windowsWsaGetLastErrorImport,
+            windowsWsaPollImport,
+            windowsBindImport,
+            windowsSetSockOptImport,
+            windowsWsaIoctlImport,
+            windowsWsaSendImport,
+            windowsWsaRecvImport,
+            windowsCreateIoCompletionPortImport,
+            windowsGetQueuedCompletionStatusImport,
+            windowsIocpPortGlobal,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -478,6 +619,17 @@ internal static partial class LlvmCodegen
                 windowsSendImport,
                 windowsRecvImport,
                 windowsCloseSocketImport,
+                windowsIoctlSocketImport,
+                windowsWsaGetLastErrorImport,
+                windowsWsaPollImport,
+                windowsBindImport,
+                windowsSetSockOptImport,
+                windowsWsaIoctlImport,
+                windowsWsaSendImport,
+                windowsWsaRecvImport,
+                windowsCreateIoCompletionPortImport,
+                windowsGetQueuedCompletionStatusImport,
+                windowsIocpPortGlobal,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -529,6 +681,17 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSendImport,
         LlvmValueHandle windowsRecvImport,
         LlvmValueHandle windowsCloseSocketImport,
+        LlvmValueHandle windowsIoctlSocketImport,
+        LlvmValueHandle windowsWsaGetLastErrorImport,
+        LlvmValueHandle windowsWsaPollImport,
+        LlvmValueHandle windowsBindImport,
+        LlvmValueHandle windowsSetSockOptImport,
+        LlvmValueHandle windowsWsaIoctlImport,
+        LlvmValueHandle windowsWsaSendImport,
+        LlvmValueHandle windowsWsaRecvImport,
+        LlvmValueHandle windowsCreateIoCompletionPortImport,
+        LlvmValueHandle windowsGetQueuedCompletionStatusImport,
+        LlvmValueHandle windowsIocpPortGlobal,
         LlvmValueHandle windowsExitProcessImport,
         LlvmValueHandle windowsGetCommandLineImport,
         LlvmValueHandle windowsWideCharToMultiByteImport,
@@ -625,6 +788,17 @@ internal static partial class LlvmCodegen
             windowsSendImport,
             windowsRecvImport,
             windowsCloseSocketImport,
+            windowsIoctlSocketImport,
+            windowsWsaGetLastErrorImport,
+            windowsWsaPollImport,
+            windowsBindImport,
+            windowsSetSockOptImport,
+            windowsWsaIoctlImport,
+            windowsWsaSendImport,
+            windowsWsaRecvImport,
+            windowsCreateIoCompletionPortImport,
+            windowsGetQueuedCompletionStatusImport,
+            windowsIocpPortGlobal,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -708,12 +882,12 @@ internal static partial class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
-            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpRequest(state, LoadTemp(state, httpGet.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), hasBody: false)),
-            IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpRequest(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp), hasBody: true)),
-            IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnect(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
-            IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
-            IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
-            IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpGetAbiCall(state, LoadTemp(state, httpGet.UrlTemp))),
+            IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpPostAbiCall(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp))),
+            IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnectAbiCall(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
+            IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSendAbiCall(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
+            IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceiveAbiCall(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
+            IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
             IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
@@ -733,6 +907,18 @@ internal static partial class LlvmCodegen
             // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
+            IrInst.CreateTcpConnectTask tcpConnectTask => StoreTemp(state, tcpConnectTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpConnect, LoadTemp(state, tcpConnectTask.HostTemp), LoadTemp(state, tcpConnectTask.PortTemp), "tcp_connect_task")),
+            IrInst.CreateTcpSendTask tcpSendTask => StoreTemp(state, tcpSendTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpSend, LoadTemp(state, tcpSendTask.SocketTemp), LoadTemp(state, tcpSendTask.TextTemp), "tcp_send_task")),
+            IrInst.CreateTcpReceiveTask tcpReceiveTask => StoreTemp(state, tcpReceiveTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpReceive, LoadTemp(state, tcpReceiveTask.SocketTemp), LoadTemp(state, tcpReceiveTask.MaxBytesTemp), "tcp_receive_task")),
+            IrInst.CreateTcpCloseTask tcpCloseTask => StoreTemp(state, tcpCloseTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpClose, LoadTemp(state, tcpCloseTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_task")),
+            IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
+            IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpPost, LoadTemp(state, httpPostTask.UrlTemp), LoadTemp(state, httpPostTask.BodyTemp), "http_post_task")),
             // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
@@ -864,6 +1050,17 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsSendImport,
         LlvmValueHandle WindowsRecvImport,
         LlvmValueHandle WindowsCloseSocketImport,
+        LlvmValueHandle WindowsIoctlSocketImport,
+        LlvmValueHandle WindowsWsaGetLastErrorImport,
+        LlvmValueHandle WindowsWsaPollImport,
+        LlvmValueHandle WindowsBindImport,
+        LlvmValueHandle WindowsSetSockOptImport,
+        LlvmValueHandle WindowsWsaIoctlImport,
+        LlvmValueHandle WindowsWsaSendImport,
+        LlvmValueHandle WindowsWsaRecvImport,
+        LlvmValueHandle WindowsCreateIoCompletionPortImport,
+        LlvmValueHandle WindowsGetQueuedCompletionStatusImport,
+        LlvmValueHandle WindowsIocpPortGlobal,
         LlvmValueHandle WindowsExitProcessImport,
         LlvmValueHandle WindowsGetCommandLineImport,
         LlvmValueHandle WindowsWideCharToMultiByteImport,
@@ -907,6 +1104,9 @@ internal static partial class LlvmCodegen
 
     private static bool IsLinuxFlavor(LlvmCodegenFlavor flavor) =>
         flavor is LlvmCodegenFlavor.LinuxX64 or LlvmCodegenFlavor.LinuxArm64;
+
+    private static bool IsLinuxArm64Flavor(LlvmCodegenFlavor flavor) =>
+        flavor == LlvmCodegenFlavor.LinuxArm64;
 
     /// <summary>
     /// Emits local <c>memcpy</c> and <c>memset</c> function implementations so that LLVM's
@@ -1198,6 +1398,10 @@ internal static partial class LlvmCodegen
             SyscallLseek => Arm64SyscallLseek,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,
+            SyscallFcntl => Arm64SyscallFcntl,
+            SyscallEpollCtl => Arm64SyscallEpollCtl,
+            SyscallEpollWait => Arm64SyscallEpollPwait,
+            SyscallEpollCreate1 => Arm64SyscallEpollCreate1,
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,

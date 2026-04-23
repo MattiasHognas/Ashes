@@ -163,5 +163,5 @@ Invoke-Step "Compiling extension" {
 }
 
 Invoke-Step "Packaging VSIX" {
-    & $pnpmCmd dlx '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' '--config.ignoredBuiltDependencies[]=keytar' @vscode/vsce@3.7.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
+    & $pnpmCmd dlx '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' '--config.ignoredBuiltDependencies[]=keytar' @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
 }
