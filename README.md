@@ -220,16 +220,16 @@ dotnet run --project src/Ashes.Cli -- compile --target linux-arm64 hello.ash -o 
 ### CLI
 
 ```sh
-ashes compile hello.ash              # compile to native binary
-ashes run hello.ash                   # compile and run
-ashes run -- arg1 arg2               # pass arguments
-ashes repl                            # interactive REPL
-ashes test tests                      # run end-to-end test suite
-ashes fmt examples -w                 # auto-format in place
-ashes init                            # create a new project
-ashes add json-parser                 # add a dependency
-ashes remove json-parser              # remove a dependency
-ashes install                         # list project dependencies
+ashes compile hello.ash     # compile to native binary
+ashes run hello.ash         # compile and run
+ashes run -- arg1 arg2      # pass arguments
+ashes repl                  # interactive REPL
+ashes test tests            # run end-to-end test suite
+ashes fmt examples -w       # auto-format in place
+ashes init                  # create a new project
+ashes add json-parser       # add a dependency
+ashes remove json-parser    # remove a dependency
+ashes install               # list project dependencies
 ```
 
 ### VS Code Extension
@@ -340,7 +340,7 @@ dotnet run --project src/Ashes.Cli -- test tests
 Use the documents in [`docs/`](docs/) as the source of truth before changing
 language or CLI behavior.
 
-------------------------------------------------------------------------
+---
 
 ## License
 
