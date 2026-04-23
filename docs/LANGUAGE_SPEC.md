@@ -58,8 +58,8 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`
-- `Ashes.Async.run(task)` returning `Result(Str, 'a)`
-- `Ashes.Async.fromResult(result)` returning `Task(Str, 'a)`
+- `Ashes.Async.run(task)` returning `Result(E, A)`
+- `Ashes.Async.fromResult(result)` returning `Task(E, A)`
 - `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
 - `Ashes.Async.all(tasks)` returning `Task(E, List(A))`
 - `Ashes.Async.race(tasks)` returning `Task(E, A)`
