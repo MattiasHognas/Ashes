@@ -167,6 +167,363 @@ internal static partial class LlvmCodegen
             name);
     }
 
+    private static LlvmValueHandle EmitWindowsBind(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle sockaddrPtr, int sockaddrLen, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle bindType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32]);
+        LlvmValueHandle bindPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsBindImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            bindType,
+            bindPtr,
+            [
+                socket,
+                sockaddrPtr,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)sockaddrLen), 0)
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsSetSockOpt(LlvmCodegenState state, LlvmValueHandle socket, int level, int optionName, LlvmValueHandle optionValuePtr, int optionLength, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle setSockOptType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I32, state.I8Ptr, state.I32]);
+        LlvmValueHandle setSockOptPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsSetSockOptImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            setSockOptType,
+            setSockOptPtr,
+            [
+                socket,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)level), 1),
+                LlvmApi.ConstInt(state.I32, unchecked((uint)optionName), 0),
+                optionValuePtr,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)optionLength), 0)
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsWsaIoctl(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle controlCode, LlvmValueHandle inputBuffer, int inputLength, LlvmValueHandle outputBuffer, int outputLength, LlvmValueHandle bytesReturnedPtr, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle wsaIoctlType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I8Ptr, state.I32, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle wsaIoctlPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWsaIoctlImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            wsaIoctlType,
+            wsaIoctlPtr,
+            [
+                socket,
+                LlvmApi.BuildTrunc(builder, controlCode, state.I32, name + "_code"),
+                inputBuffer,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)inputLength), 0),
+                outputBuffer,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)outputLength), 0),
+                bytesReturnedPtr,
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_overlapped"),
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_completion")
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsCreateIocp(LlvmCodegenState state, LlvmValueHandle fileHandle, LlvmValueHandle existingPort, LlvmValueHandle completionKey, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle createIocpType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I32]);
+        LlvmValueHandle createIocpPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsCreateIoCompletionPortImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            createIocpType,
+            createIocpPtr,
+            [
+                fileHandle,
+                existingPort,
+                completionKey,
+                LlvmApi.ConstInt(state.I32, 0, 0)
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsEnsureIocpPort(LlvmCodegenState state, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle portSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_port_slot");
+        LlvmApi.BuildStore(builder, LoadMemory(state, state.WindowsIocpPortGlobal, 0, name + "_existing_port"), portSlot);
+        LlvmValueHandle hasPort = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            LlvmApi.BuildLoad2(builder, state.I64, portSlot, name + "_port_value"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            name + "_has_port");
+
+        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_create");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_done");
+        LlvmApi.BuildCondBr(builder, hasPort, doneBlock, createBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createBlock);
+        LlvmValueHandle createdPort = EmitWindowsCreateIocp(
+            state,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            name + "_create_call");
+        StoreMemory(state, state.WindowsIocpPortGlobal, 0, createdPort, name + "_store_global");
+        LlvmApi.BuildStore(builder, createdPort, portSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, portSlot, name + "_result");
+    }
+
+    private static void EmitWindowsAssociateSocketWithIocp(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmValueHandle port = EmitWindowsEnsureIocpPort(state, name + "_ensure_port");
+        _ = EmitWindowsCreateIocp(state, socket, port, LlvmApi.ConstInt(state.I64, 0, 0), name + "_associate");
+    }
+
+    private static LlvmValueHandle EmitWindowsCreateIocpOperationContext(LlvmCodegenState state, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle context = EmitAllocDynamic(state, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.TotalSize, 0));
+        StoreMemory(state, context, WindowsIocpOperationLayout.Status, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), name + "_status_init");
+        StoreMemory(state, context, WindowsIocpOperationLayout.BytesTransferred, LlvmApi.ConstInt(state.I64, 0, 0), name + "_bytes_init");
+        StoreMemory(state, context, WindowsIocpOperationLayout.Overlapped + 0, LlvmApi.ConstInt(state.I64, 0, 0), name + "_ov0");
+        StoreMemory(state, context, WindowsIocpOperationLayout.Overlapped + 8, LlvmApi.ConstInt(state.I64, 0, 0), name + "_ov1");
+        StoreMemory(state, context, WindowsIocpOperationLayout.Overlapped + 16, LlvmApi.ConstInt(state.I64, 0, 0), name + "_ov2");
+        StoreMemory(state, context, WindowsIocpOperationLayout.Overlapped + 24, LlvmApi.ConstInt(state.I64, 0, 0), name + "_ov3");
+        return context;
+    }
+
+    private static LlvmValueHandle EmitWindowsIocpOverlappedPtr(LlvmCodegenState state, LlvmValueHandle operationContext, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return LlvmApi.BuildIntToPtr(builder,
+            LlvmApi.BuildAdd(builder, operationContext, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.Overlapped, 0), name + "_addr"),
+            state.I8Ptr,
+            name + "_ptr");
+    }
+
+    private static LlvmValueHandle EmitWindowsIocpOperationStatus(LlvmCodegenState state, LlvmValueHandle operationContext, string name)
+        => LoadMemory(state, operationContext, WindowsIocpOperationLayout.Status, name + "_status");
+
+    private static LlvmValueHandle EmitWindowsIocpBytesTransferred(LlvmCodegenState state, LlvmValueHandle operationContext, string name)
+        => LoadMemory(state, operationContext, WindowsIocpOperationLayout.BytesTransferred, name + "_bytes");
+
+    private static LlvmValueHandle EmitWindowsLoadConnectExPointer(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle guidType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle guidStorage = LlvmApi.BuildAlloca(builder, guidType, name + "_guid_storage");
+        LlvmValueHandle guidBytes = GetArrayElementPointer(state, guidType, guidStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_guid_bytes");
+        LlvmValueHandle functionPointerSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_function_ptr_slot");
+        LlvmValueHandle bytesReturnedSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_bytes_returned_slot");
+        LlvmApi.BuildStore(builder,
+            LlvmApi.ConstInt(state.I64, 0x4660DDF325A207B9, 0),
+            LlvmApi.BuildBitCast(builder, guidBytes, state.I64Ptr, name + "_guid_head_ptr"));
+        LlvmApi.BuildStore(builder,
+            LlvmApi.ConstInt(state.I64, 0x3E06748CE576E98E, 0),
+            LlvmApi.BuildBitCast(builder,
+                LlvmApi.BuildGEP2(builder, state.I8, guidBytes, [LlvmApi.ConstInt(state.I64, 8, 0)], name + "_guid_tail_bytes"),
+                state.I64Ptr,
+                name + "_guid_tail_ptr"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), functionPointerSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReturnedSlot);
+
+        LlvmValueHandle guidPtr = LlvmApi.BuildBitCast(builder, guidBytes, state.I8Ptr, name + "_guid_ptr");
+        LlvmValueHandle outputPtr = LlvmApi.BuildBitCast(builder, functionPointerSlot, state.I8Ptr, name + "_output_ptr");
+        LlvmValueHandle ioctlResult = EmitWindowsWsaIoctl(
+            state,
+            socket,
+            LlvmApi.ConstInt(state.I64, WindowsSioGetExtensionFunctionPointer, 0),
+            guidPtr,
+            16,
+            outputPtr,
+            8,
+            bytesReturnedSlot,
+            name + "_ioctl");
+        LlvmValueHandle ok = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, ioctlResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_ok");
+        return LlvmApi.BuildSelect(builder,
+            ok,
+            LlvmApi.BuildLoad2(builder, state.I64, functionPointerSlot, name + "_function_ptr"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            name + "_result");
+    }
+
+    private static LlvmValueHandle EmitWindowsBindIpv4Any(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, name + "_sockaddr");
+        LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_bytes");
+        LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+        LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, state.I64Ptr, name + "_head_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 8, 0)], name + "_tail"),
+            state.I64Ptr,
+            name + "_tail_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(i16, 2, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, i16Ptr, name + "_family_ptr"));
+        return EmitWindowsBind(state, socket, sockaddrBytes, 16, name + "_bind");
+    }
+
+    private static void EmitWindowsUpdateConnectContext(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        EmitWindowsSetSockOpt(
+            state,
+            socket,
+            WindowsSolSocket,
+            WindowsSoUpdateConnectContext,
+            LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_null_opt"),
+            0,
+            name + "_setsockopt");
+    }
+
+    private static LlvmValueHandle EmitWindowsConnectEx(LlvmCodegenState state, LlvmValueHandle connectExPtrValue, LlvmValueHandle socket, LlvmValueHandle sockaddrPtr, LlvmValueHandle overlappedPtr, LlvmValueHandle bytesSentSlot, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle connectExType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
+        LlvmValueHandle connectExPtr = LlvmApi.BuildIntToPtr(builder, connectExPtrValue, LlvmApi.PointerTypeInContext(state.Target.Context, 0), name + "_fn_ptr");
+        return LlvmApi.BuildCall2(builder,
+            connectExType,
+            connectExPtr,
+            [
+                socket,
+                sockaddrPtr,
+                LlvmApi.ConstInt(state.I32, 16, 0),
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_send_buffer"),
+                LlvmApi.ConstInt(state.I32, 0, 0),
+                bytesSentSlot,
+                overlappedPtr
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsIssueWsaSend(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle buffer, LlvmValueHandle len, LlvmValueHandle overlappedPtr, LlvmValueHandle bytesSentSlot, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle wsabufType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle wsabufStorage = LlvmApi.BuildAlloca(builder, wsabufType, name + "_wsabuf_storage");
+        LlvmValueHandle wsabufPtr = GetArrayElementPointer(state, wsabufType, wsabufStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_wsabuf_ptr");
+        LlvmTypeHandle wsaSendType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I32, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle wsaSendPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWsaSendImport,
+            name + "_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, len, state.I32, name + "_len_i32"), LlvmApi.BuildBitCast(builder, wsabufPtr, state.I32Ptr, name + "_len_ptr"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, buffer, state.I64, name + "_buffer_addr"), LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, wsabufPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], name + "_buffer_byte"),
+            state.I64Ptr,
+            name + "_buffer_ptr"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesSentSlot);
+        return LlvmApi.BuildCall2(builder,
+            wsaSendType,
+            wsaSendPtr,
+            [
+                socket,
+                LlvmApi.BuildBitCast(builder, wsabufPtr, state.I8Ptr, name + "_wsabuf_i8"),
+                LlvmApi.ConstInt(state.I32, 1, 0),
+                bytesSentSlot,
+                LlvmApi.ConstInt(state.I32, 0, 0),
+                overlappedPtr,
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_completion")
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsIssueWsaRecv(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle buffer, LlvmValueHandle len, LlvmValueHandle overlappedPtr, LlvmValueHandle bytesReceivedSlot, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle wsabufType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle wsabufStorage = LlvmApi.BuildAlloca(builder, wsabufType, name + "_wsabuf_storage");
+        LlvmValueHandle wsabufPtr = GetArrayElementPointer(state, wsabufType, wsabufStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_wsabuf_ptr");
+        LlvmValueHandle flagsSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_flags_slot");
+        LlvmTypeHandle wsaRecvType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I32Ptr, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle wsaRecvPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWsaRecvImport,
+            name + "_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, len, state.I32, name + "_len_i32"), LlvmApi.BuildBitCast(builder, wsabufPtr, state.I32Ptr, name + "_len_ptr"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, buffer, state.I64, name + "_buffer_addr"), LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, wsabufPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], name + "_buffer_byte"),
+            state.I64Ptr,
+            name + "_buffer_ptr"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), flagsSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesReceivedSlot);
+        return LlvmApi.BuildCall2(builder,
+            wsaRecvType,
+            wsaRecvPtr,
+            [
+                socket,
+                LlvmApi.BuildBitCast(builder, wsabufPtr, state.I8Ptr, name + "_wsabuf_i8"),
+                LlvmApi.ConstInt(state.I32, 1, 0),
+                bytesReceivedSlot,
+                flagsSlot,
+                overlappedPtr,
+                LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_completion")
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsWaitForIocpCompletion(LlvmCodegenState state, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle port = EmitWindowsEnsureIocpPort(state, name + "_ensure_port");
+        LlvmValueHandle operationContextSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_operation_context_slot");
+        LlvmValueHandle bytesSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_bytes_slot");
+        LlvmValueHandle completionKeySlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_completion_key_slot");
+        LlvmValueHandle overlappedSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, name + "_overlapped_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), operationContextSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), completionKeySlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_null_overlapped"), overlappedSlot);
+
+        LlvmTypeHandle getQueuedCompletionStatusType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32Ptr, state.I64Ptr, LlvmApi.PointerTypeInContext(state.Target.Context, 0), state.I32]);
+        LlvmValueHandle getQueuedCompletionStatusPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsGetQueuedCompletionStatusImport,
+            name + "_ptr");
+        LlvmValueHandle waitResult = LlvmApi.BuildCall2(builder,
+            getQueuedCompletionStatusType,
+            getQueuedCompletionStatusPtr,
+            [
+                port,
+                bytesSlot,
+                completionKeySlot,
+                overlappedSlot,
+                LlvmApi.ConstInt(state.I32, unchecked((uint)(-1)), 1)
+            ],
+            name + "_call");
+
+        LlvmValueHandle overlappedPtr = LlvmApi.BuildLoad2(builder, state.I8Ptr, overlappedSlot, name + "_overlapped_value");
+        LlvmValueHandle overlappedValue = LlvmApi.BuildPtrToInt(builder, overlappedPtr, state.I64, name + "_overlapped_i64");
+        LlvmValueHandle hasOverlapped = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, overlappedValue, LlvmApi.ConstInt(state.I64, 0, 0), name + "_has_overlapped");
+        LlvmBasicBlockHandle updateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_update");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_done");
+        LlvmApi.BuildCondBr(builder, hasOverlapped, updateBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, updateBlock);
+        LlvmValueHandle operationContext = LlvmApi.BuildSub(builder, overlappedValue, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.Overlapped, 0), name + "_context_addr");
+        LlvmApi.BuildStore(builder, operationContext, operationContextSlot);
+        LlvmValueHandle completedState = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success"),
+            LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateCompleted, 0),
+            LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateFailed, 0),
+            name + "_state_value");
+        StoreMemory(state, operationContext, WindowsIocpOperationLayout.Status, completedState, name + "_store_status");
+        StoreMemory(state, operationContext, WindowsIocpOperationLayout.BytesTransferred, LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesSlot, name + "_bytes_value"), state.I64, name + "_bytes_i64"), name + "_store_bytes");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, operationContextSlot, name + "_operation_context");
+    }
+
     private static LlvmValueHandle EmitWindowsCreateFile(LlvmCodegenState state, LlvmValueHandle pathCstr, int desiredAccess, int shareMode, int creationDisposition, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

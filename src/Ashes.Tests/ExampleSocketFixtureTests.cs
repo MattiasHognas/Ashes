@@ -241,7 +241,10 @@ Ashes.IO.print(match Ashes.Async.run(async
             var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
             var serverException = await serverTask;
 
-            serverException.ShouldBeNull(serverException?.ToString());
+            var serverDiagnostic = serverException is null
+                ? null
+                : $"{serverException}{Environment.NewLine}exit={exitCode}{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}";
+            serverException.ShouldBeNull(serverDiagnostic);
             exitCode.ShouldBe(0, stderr);
             stdout.ShouldBe(expectedStdout, customMessage: stderr);
             stderr.ShouldBeEmpty();

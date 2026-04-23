@@ -628,6 +628,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsIoctlSocketImport,
         LlvmValueHandle windowsWsaGetLastErrorImport,
         LlvmValueHandle windowsWsaPollImport,
+        LlvmValueHandle windowsBindImport,
+        LlvmValueHandle windowsSetSockOptImport,
+        LlvmValueHandle windowsWsaIoctlImport,
+        LlvmValueHandle windowsWsaSendImport,
+        LlvmValueHandle windowsWsaRecvImport,
+        LlvmValueHandle windowsCreateIoCompletionPortImport,
+        LlvmValueHandle windowsGetQueuedCompletionStatusImport,
+        LlvmValueHandle windowsIocpPortGlobal,
         LlvmValueHandle windowsExitProcessImport,
         LlvmValueHandle windowsGetCommandLineImport,
         LlvmValueHandle windowsWideCharToMultiByteImport,
@@ -780,6 +788,14 @@ internal static partial class LlvmCodegen
                 windowsIoctlSocketImport,
                 windowsWsaGetLastErrorImport,
                 windowsWsaPollImport,
+                windowsBindImport,
+                windowsSetSockOptImport,
+                windowsWsaIoctlImport,
+                windowsWsaSendImport,
+                windowsWsaRecvImport,
+                windowsCreateIoCompletionPortImport,
+                windowsGetQueuedCompletionStatusImport,
+                windowsIocpPortGlobal,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -903,6 +919,11 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStepTcpConnectTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            return EmitStepTcpConnectTaskWindowsIocp(state, taskPtr);
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle hostRef = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_connect_host");
         LlvmValueHandle port = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_connect_port");
@@ -1057,6 +1078,11 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStepTcpSendTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            return EmitStepTcpSendTaskWindowsIocp(state, taskPtr);
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_send_socket");
         LlvmValueHandle textRef = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_send_text");
@@ -1145,6 +1171,11 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStepTcpReceiveTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            return EmitStepTcpReceiveTaskWindowsIocp(state, taskPtr);
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_receive_socket");
         LlvmValueHandle maxBytes = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_receive_max");
@@ -1242,6 +1273,452 @@ internal static partial class LlvmCodegen
             taskPtr,
             EmitTcpClose(state, LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_close_socket")),
             "step_tcp_close_complete");
+    }
+
+    private static LlvmValueHandle EmitStepTcpConnectTaskWindowsIocp(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_connect_win_status_slot");
+        LlvmValueHandle errorRefSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_connect_win_error_ref_slot");
+        LlvmValueHandle socketSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_connect_win_socket_slot");
+        LlvmValueHandle addrSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_connect_win_addr_slot");
+        LlvmValueHandle pendingContextSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_connect_win_pending_context_slot");
+        LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_connect_win_wait_context");
+        LlvmValueHandle hostRef = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_connect_win_host");
+        LlvmValueHandle port = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_connect_win_port");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+        LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, TcpConnectFailedMessage), errorRefSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_connect_win_cached_socket"), socketSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tcp_connect_win_cached_addr"), addrSlot);
+        LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
+
+        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume");
+        LlvmBasicBlockHandle setupBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_setup");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_done");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_has_context"),
+            resumeBlock,
+            setupBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
+        LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_connect_win_resume");
+        LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_connect_win_resume_pending");
+        LlvmBasicBlockHandle resumeCompletedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume_completed");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_fail");
+        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_pending");
+        LlvmApi.BuildCondBr(builder, resumePending, pendingBlock, resumeCompletedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeCompletedBlock);
+        LlvmValueHandle resumeSucceeded = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateCompleted, 0), "step_tcp_connect_win_resume_succeeded");
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_success");
+        LlvmBasicBlockHandle resumeFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume_fail");
+        LlvmApi.BuildCondBr(builder, resumeSucceeded, successBlock, resumeFailBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeFailBlock);
+        LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: IOCP completion failed"), errorRefSlot);
+        LlvmApi.BuildBr(builder, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, setupBlock);
+        LlvmValueHandle resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "step_tcp_connect_win_resolve");
+        LlvmValueHandle resolveTag = LoadMemory(state, resolveResult, 0, "step_tcp_connect_win_resolve_tag");
+        LlvmValueHandle resolveFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, resolveTag, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_resolve_failed");
+        LlvmBasicBlockHandle validatePortBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_validate_port");
+        LlvmApi.BuildCondBr(builder, resolveFailed, failBlock, validatePortBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, validatePortBlock);
+        LlvmValueHandle validPort = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, port, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_port_gt_zero"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, port, LlvmApi.ConstInt(state.I64, 65535, 0), "step_tcp_connect_win_port_le_max"),
+            "step_tcp_connect_win_port_valid");
+        LlvmBasicBlockHandle openSocketBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_open_socket");
+        LlvmApi.BuildCondBr(builder, validPort, openSocketBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, openSocketBlock);
+        LlvmTypeHandle wsadataType = LlvmApi.ArrayType2(state.I8, 512);
+        LlvmValueHandle wsadata = LlvmApi.BuildAlloca(builder, wsadataType, "step_tcp_connect_win_wsadata");
+        EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_wsadata_ptr"), "step_tcp_connect_win_wsastartup");
+        LlvmValueHandle socket = EmitWindowsSocket(state, 2, 1, 6, "step_tcp_connect_win_socket_call");
+        LlvmApi.BuildStore(builder, socket, socketSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, resolveResult, 8, "step_tcp_connect_win_addr_value"), addrSlot);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, socket, "step_tcp_connect_win_store_socket");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1, LoadMemory(state, resolveResult, 8, "step_tcp_connect_win_store_addr_value"), "step_tcp_connect_win_store_addr");
+
+        LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, "step_tcp_connect_win_sockaddr");
+        LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_sockaddr_bytes");
+        LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+        LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, state.I64Ptr, "step_tcp_connect_win_sockaddr_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 8, 0)], "step_tcp_connect_win_sockaddr_tail"),
+            state.I64Ptr,
+            "step_tcp_connect_win_sockaddr_tail_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(i16, 2, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, i16Ptr, "step_tcp_connect_win_family_ptr"));
+        LlvmValueHandle portPtr = LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 2, 0)], "step_tcp_connect_win_port_ptr_byte");
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildTrunc(builder, EmitByteSwap16(state, port, "step_tcp_connect_win_port_network"), i16, "step_tcp_connect_win_port_i16"),
+            LlvmApi.BuildBitCast(builder, portPtr, i16Ptr, "step_tcp_connect_win_port_ptr"));
+        LlvmValueHandle addrPtr = LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 4, 0)], "step_tcp_connect_win_addr_ptr_byte");
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildTrunc(builder, LlvmApi.BuildLoad2(builder, state.I64, addrSlot, "step_tcp_connect_win_addr_loaded"), state.I32, "step_tcp_connect_win_addr_i32"),
+            LlvmApi.BuildBitCast(builder, addrPtr, state.I32Ptr, "step_tcp_connect_win_addr_ptr"));
+
+        EmitWindowsAssociateSocketWithIocp(state, socket, "step_tcp_connect_win_associate");
+        LlvmValueHandle connectExPtr = EmitWindowsLoadConnectExPointer(state, socket, "step_tcp_connect_win_connectex");
+        LlvmValueHandle hasConnectEx = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectExPtr, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_has_connectex");
+        LlvmBasicBlockHandle bindBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_bind_any");
+        LlvmBasicBlockHandle missingConnectExBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_missing_connectex");
+        LlvmApi.BuildCondBr(builder, hasConnectEx, bindBlock, missingConnectExBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, missingConnectExBlock);
+        LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: ConnectEx unavailable"), errorRefSlot);
+        LlvmApi.BuildBr(builder, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bindBlock);
+        LlvmValueHandle bindResult = EmitWindowsBindIpv4Any(state, socket, "step_tcp_connect_win_bind_any");
+        LlvmValueHandle bindSucceeded = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bindResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_connect_win_bind_ok");
+        LlvmBasicBlockHandle connectIssueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_issue_connect");
+        LlvmBasicBlockHandle bindFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_bind_fail");
+        LlvmApi.BuildCondBr(builder, bindSucceeded, connectIssueBlock, bindFailBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bindFailBlock);
+        LlvmValueHandle bindError = LlvmApi.BuildZExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_connect_win_bind_error_code"), state.I64, "step_tcp_connect_win_bind_error_i64");
+        LlvmValueHandle bindErrorText = EmitStringConcat(
+            state,
+            EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: bind "),
+            EmitNonNegativeIntToString(state, bindError, "step_tcp_connect_win_bind_error_text"));
+        LlvmApi.BuildStore(builder, bindErrorText, errorRefSlot);
+        LlvmApi.BuildBr(builder, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, connectIssueBlock);
+        LlvmValueHandle operationContext = EmitWindowsCreateIocpOperationContext(state, "step_tcp_connect_win_op_context");
+        LlvmValueHandle bytesSentSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tcp_connect_win_bytes_sent_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesSentSlot);
+        LlvmValueHandle connectResult = EmitWindowsConnectEx(state, connectExPtr, socket, sockaddrBytes, EmitWindowsIocpOverlappedPtr(state, operationContext, "step_tcp_connect_win_overlapped"), bytesSentSlot, "step_tcp_connect_win_connectex_call");
+        LlvmValueHandle connectImmediate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_connect_win_connect_immediate");
+        LlvmBasicBlockHandle connectErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_connect_error");
+        LlvmApi.BuildCondBr(builder, connectImmediate, successBlock, connectErrorBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, connectErrorBlock);
+        LlvmValueHandle connectError = LlvmApi.BuildZExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_connect_win_connect_error_code"), state.I64, "step_tcp_connect_win_connect_error_i64");
+        LlvmValueHandle isIoPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, connectError, LlvmApi.ConstInt(state.I64, WindowsErrorIoPending, 0), "step_tcp_connect_win_is_io_pending");
+        LlvmBasicBlockHandle queuePendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_queue_pending");
+        LlvmBasicBlockHandle connectImmediateFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_connect_immediate_fail");
+        LlvmApi.BuildCondBr(builder, isIoPending, queuePendingBlock, connectImmediateFailBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, connectImmediateFailBlock);
+        LlvmValueHandle connectErrorText = EmitStringConcat(
+            state,
+            EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: ConnectEx "),
+            EmitNonNegativeIntToString(state, connectError, "step_tcp_connect_win_connect_error_text"));
+        LlvmApi.BuildStore(builder, connectErrorText, errorRefSlot);
+        LlvmApi.BuildBr(builder, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, queuePendingBlock);
+        LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
+        LlvmApi.BuildBr(builder, pendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
+        LlvmValueHandle connectedSocket = LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "step_tcp_connect_win_socket_ok");
+        EmitWindowsUpdateConnectContext(state, connectedSocket, "step_tcp_connect_win_update_context");
+        EmitSetSocketNonBlocking(state, connectedSocket, "step_tcp_connect_win_nonblocking");
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, connectedSocket), "step_tcp_connect_win_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
+        LlvmApi.BuildStore(builder,
+            EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketWrite, LlvmApi.BuildLoad2(builder, state.I64, pendingContextSlot, "step_tcp_connect_win_pending_context"), "step_tcp_connect_win_pending_store"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, LlvmApi.BuildLoad2(builder, state.I64, errorRefSlot, "step_tcp_connect_win_error_ref")), "step_tcp_connect_win_fail_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_connect_win_status");
+    }
+
+    private static LlvmValueHandle EmitStepTcpSendTaskWindowsIocp(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_send_win_socket");
+        LlvmValueHandle textRef = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_send_win_text");
+        LlvmValueHandle totalLen = LoadStringLength(state, textRef, "step_tcp_send_win_total_len");
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_send_win_status_slot");
+        LlvmValueHandle sentSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_send_win_sent_slot");
+        LlvmValueHandle pendingContextSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_send_win_pending_context_slot");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_send_win_sent_cached"), sentSlot);
+        LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_send_win_wait_context");
+        LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
+
+        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_resume");
+        LlvmBasicBlockHandle loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_loop_check");
+        LlvmBasicBlockHandle issueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_issue");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_done");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_fail");
+        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_pending");
+        LlvmBasicBlockHandle completeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_complete");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_has_context"),
+            resumeBlock,
+            loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
+        LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_send_win_resume");
+        LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_send_win_resume_pending");
+        LlvmBasicBlockHandle resumeCompletedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_resume_completed");
+        LlvmApi.BuildCondBr(builder, resumePending, pendingBlock, resumeCompletedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeCompletedBlock);
+        LlvmValueHandle resumeSucceeded = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateCompleted, 0), "step_tcp_send_win_resume_succeeded");
+        LlvmBasicBlockHandle applyCompletionBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_apply_completion");
+        LlvmApi.BuildCondBr(builder, resumeSucceeded, applyCompletionBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, applyCompletionBlock);
+        LlvmValueHandle completedBytes = EmitWindowsIocpBytesTransferred(state, waitContext, "step_tcp_send_win_resume");
+        LlvmValueHandle completedPositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, completedBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_completed_positive");
+        LlvmBasicBlockHandle applyPositiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_apply_positive");
+        LlvmApi.BuildCondBr(builder, completedPositive, applyPositiveBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, applyPositiveBlock);
+        LlvmValueHandle resumedSent = LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, sentSlot, "step_tcp_send_win_sent_value"), completedBytes, "step_tcp_send_win_sent_after_resume");
+        LlvmApi.BuildStore(builder, resumedSent, sentSlot);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, resumedSent, "step_tcp_send_win_store_sent_after_resume");
+        EmitClearLeafTaskWait(state, taskPtr, "step_tcp_send_win_clear_wait_after_resume");
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
+        LlvmValueHandle currentSent = LlvmApi.BuildLoad2(builder, state.I64, sentSlot, "step_tcp_send_win_current_sent");
+        LlvmValueHandle remaining = LlvmApi.BuildSub(builder, totalLen, currentSent, "step_tcp_send_win_remaining");
+        LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, remaining, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_is_done");
+        LlvmApi.BuildCondBr(builder, isDone, completeBlock, issueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, issueBlock);
+        LlvmValueHandle cursorPtr = LlvmApi.BuildIntToPtr(builder,
+            LlvmApi.BuildAdd(builder, GetStringBytesAddress(state, textRef, "step_tcp_send_win_base"), currentSent, "step_tcp_send_win_cursor_addr"),
+            state.I8Ptr,
+            "step_tcp_send_win_cursor_ptr");
+        LlvmValueHandle chunkLen = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, remaining, LlvmApi.ConstInt(state.I64, int.MaxValue, 0), "step_tcp_send_win_chunk_gt_max"),
+            LlvmApi.ConstInt(state.I64, int.MaxValue, 0),
+            remaining,
+            "step_tcp_send_win_chunk_len");
+        LlvmValueHandle sentRaw = LlvmApi.BuildSExt(builder,
+            EmitWindowsSend(state, socket, cursorPtr, LlvmApi.BuildTrunc(builder, chunkLen, state.I32, "step_tcp_send_win_chunk_i32"), "step_tcp_send_win_sync_send"),
+            state.I64,
+            "step_tcp_send_win_sync_sent_raw");
+        LlvmValueHandle sentPositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, sentRaw, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_sync_positive");
+        LlvmBasicBlockHandle syncSentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_sync_sent");
+        LlvmBasicBlockHandle syncPendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_sync_pending_check");
+        LlvmApi.BuildCondBr(builder, sentPositive, syncSentBlock, syncPendingCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, syncSentBlock);
+        LlvmValueHandle nextSent = LlvmApi.BuildAdd(builder, currentSent, sentRaw, "step_tcp_send_win_next_sent");
+        LlvmApi.BuildStore(builder, nextSent, sentSlot);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, nextSent, "step_tcp_send_win_store_sent_sync");
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, syncPendingCheckBlock);
+        LlvmValueHandle syncError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_send_win_sync_error"), state.I64, "step_tcp_send_win_sync_error_i64");
+        LlvmValueHandle syncWouldBlock = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, syncError, LlvmApi.ConstInt(state.I64, WindowsWsaErrorWouldBlock, 0), "step_tcp_send_win_sync_would_block");
+        LlvmBasicBlockHandle issueOverlappedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_issue_overlapped");
+        LlvmApi.BuildCondBr(builder, syncWouldBlock, issueOverlappedBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, issueOverlappedBlock);
+        EmitWindowsAssociateSocketWithIocp(state, socket, "step_tcp_send_win_associate");
+        LlvmValueHandle operationContext = EmitWindowsCreateIocpOperationContext(state, "step_tcp_send_win_op_context");
+        LlvmValueHandle bytesSentSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tcp_send_win_bytes_sent_slot");
+        LlvmValueHandle overlappedResult = EmitWindowsIssueWsaSend(state, socket, cursorPtr, chunkLen, EmitWindowsIocpOverlappedPtr(state, operationContext, "step_tcp_send_win_overlapped"), bytesSentSlot, "step_tcp_send_win_issue_wsa_send");
+        LlvmValueHandle overlappedImmediate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, overlappedResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_send_win_overlapped_immediate");
+        LlvmBasicBlockHandle overlappedImmediateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_overlapped_immediate");
+        LlvmBasicBlockHandle overlappedErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_overlapped_error");
+        LlvmApi.BuildCondBr(builder, overlappedImmediate, overlappedImmediateBlock, overlappedErrorBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overlappedImmediateBlock);
+        LlvmValueHandle immediateBytes = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesSentSlot, "step_tcp_send_win_immediate_bytes"), state.I64, "step_tcp_send_win_immediate_bytes_i64");
+        LlvmValueHandle immediatePositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, immediateBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_immediate_positive");
+        LlvmBasicBlockHandle applyImmediateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_apply_immediate");
+        LlvmApi.BuildCondBr(builder, immediatePositive, applyImmediateBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, applyImmediateBlock);
+        LlvmValueHandle nextImmediateSent = LlvmApi.BuildAdd(builder, currentSent, immediateBytes, "step_tcp_send_win_next_immediate_sent");
+        LlvmApi.BuildStore(builder, nextImmediateSent, sentSlot);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, nextImmediateSent, "step_tcp_send_win_store_sent_immediate");
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overlappedErrorBlock);
+        LlvmValueHandle overlappedError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_send_win_overlapped_error_code"), state.I64, "step_tcp_send_win_overlapped_error_i64");
+        LlvmValueHandle overlappedPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, overlappedError, LlvmApi.ConstInt(state.I64, WindowsErrorIoPending, 0), "step_tcp_send_win_overlapped_pending");
+        LlvmBasicBlockHandle storePendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_store_pending");
+        LlvmApi.BuildCondBr(builder, overlappedPending, storePendingBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, storePendingBlock);
+        LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
+        LlvmApi.BuildBr(builder, pendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, completeBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, totalLen), "step_tcp_send_win_complete_result"), statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
+        LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketWrite, LlvmApi.BuildLoad2(builder, state.I64, pendingContextSlot, "step_tcp_send_win_pending_context"), "step_tcp_send_win_pending_store"), statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpSendFailedMessage)), "step_tcp_send_win_fail_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_send_win_status");
+    }
+
+    private static LlvmValueHandle EmitStepTcpReceiveTaskWindowsIocp(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_receive_win_socket");
+        LlvmValueHandle maxBytes = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_receive_win_max");
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_receive_win_status_slot");
+        LlvmValueHandle readCountSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_receive_win_read_count_slot");
+        LlvmValueHandle pendingContextSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_receive_win_pending_context_slot");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readCountSlot);
+
+        LlvmValueHandle positiveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, maxBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_positive_max");
+        LlvmBasicBlockHandle allocateBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_allocate_buffer");
+        LlvmBasicBlockHandle failMaxBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail_max");
+        LlvmBasicBlockHandle afterBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_after_buffer");
+        LlvmBasicBlockHandle handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_handle_read");
+        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_finish");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail");
+        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_pending");
+        LlvmApi.BuildCondBr(builder, positiveMax, allocateBufferBlock, failMaxBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failMaxBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidMaxBytesMessage)), "step_tcp_receive_win_invalid_max"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, allocateBufferBlock);
+        LlvmValueHandle bufferRef = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_buffer_ref");
+        LlvmValueHandle hasBuffer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, bufferRef, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_has_buffer");
+        LlvmBasicBlockHandle reuseBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_reuse_buffer");
+        LlvmBasicBlockHandle createBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_create_buffer");
+        LlvmApi.BuildCondBr(builder, hasBuffer, reuseBufferBlock, createBufferBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createBufferBlock);
+        LlvmValueHandle newBufferRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tcp_receive_win_buffer_size"));
+        StoreMemory(state, newBufferRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_buffer_len_init");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, newBufferRef, "step_tcp_receive_win_store_buffer");
+        LlvmApi.BuildBr(builder, afterBufferBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reuseBufferBlock);
+        LlvmApi.BuildBr(builder, afterBufferBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterBufferBlock);
+        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_active_buffer");
+        LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_receive_win_wait_context");
+        LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
+        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_resume");
+        LlvmBasicBlockHandle readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_read_block");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_has_context"),
+            resumeBlock,
+            readBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
+        LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_receive_win_resume");
+        LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_receive_win_resume_pending");
+        LlvmBasicBlockHandle resumeCompletedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_resume_completed");
+        LlvmApi.BuildCondBr(builder, resumePending, pendingBlock, resumeCompletedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resumeCompletedBlock);
+        LlvmValueHandle resumeSucceeded = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateCompleted, 0), "step_tcp_receive_win_resume_succeeded");
+        LlvmBasicBlockHandle applyCompletionBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_apply_completion");
+        LlvmApi.BuildCondBr(builder, resumeSucceeded, applyCompletionBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, applyCompletionBlock);
+        LlvmApi.BuildStore(builder, EmitWindowsIocpBytesTransferred(state, waitContext, "step_tcp_receive_win_resume"), readCountSlot);
+        EmitClearLeafTaskWait(state, taskPtr, "step_tcp_receive_win_clear_wait_after_resume");
+        LlvmApi.BuildBr(builder, handleReadBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, readBlock);
+        LlvmValueHandle syncReadCount = LlvmApi.BuildSExt(builder, EmitWindowsRecv(state, socket, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_bytes"), LlvmApi.BuildTrunc(builder, maxBytes, state.I32, "step_tcp_receive_win_max_i32"), "step_tcp_receive_win_sync_recv"), state.I64, "step_tcp_receive_win_sync_read_count");
+        LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, syncReadCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_sync_ok");
+        LlvmBasicBlockHandle syncPendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_sync_pending_check");
+        LlvmBasicBlockHandle syncReadSuccessBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_sync_read_success");
+        LlvmApi.BuildCondBr(builder, readOk, syncReadSuccessBlock, syncPendingCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, syncReadSuccessBlock);
+        LlvmApi.BuildStore(builder, syncReadCount, readCountSlot);
+        LlvmApi.BuildBr(builder, handleReadBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, handleReadBlock);
+        LlvmValueHandle readCount = LlvmApi.BuildLoad2(builder, state.I64, readCountSlot, "step_tcp_receive_win_read_count_value");
+        StoreMemory(state, activeBuffer, 0, readCount, "step_tcp_receive_win_store_len");
+        LlvmValueHandle emptyRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_empty");
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_success");
+        LlvmBasicBlockHandle validateUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_validate_utf8");
+        LlvmApi.BuildCondBr(builder, emptyRead, successBlock, validateUtf8Block);
+
+        LlvmApi.PositionBuilderAtEnd(builder, validateUtf8Block);
+        LlvmValueHandle utf8Valid = EmitValidateUtf8(state, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_validate_bytes"), readCount, "step_tcp_receive_win_utf8");
+        LlvmValueHandle validUtf8 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_valid_utf8");
+        LlvmBasicBlockHandle invalidUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_invalid_utf8");
+        LlvmApi.BuildCondBr(builder, validUtf8, successBlock, invalidUtf8Block);
+
+        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, activeBuffer), "step_tcp_receive_win_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, invalidUtf8Block);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidUtf8Message)), "step_tcp_receive_win_invalid_utf8_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, syncPendingCheckBlock);
+        LlvmValueHandle syncError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_receive_win_sync_error"), state.I64, "step_tcp_receive_win_sync_error_i64");
+        LlvmValueHandle syncWouldBlock = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, syncError, LlvmApi.ConstInt(state.I64, WindowsWsaErrorWouldBlock, 0), "step_tcp_receive_win_sync_would_block");
+        LlvmBasicBlockHandle issueOverlappedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_issue_overlapped");
+        LlvmApi.BuildCondBr(builder, syncWouldBlock, issueOverlappedBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, issueOverlappedBlock);
+        EmitWindowsAssociateSocketWithIocp(state, socket, "step_tcp_receive_win_associate");
+        LlvmValueHandle operationContext = EmitWindowsCreateIocpOperationContext(state, "step_tcp_receive_win_op_context");
+        LlvmValueHandle bytesReceivedSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tcp_receive_win_bytes_received_slot");
+        LlvmValueHandle overlappedResult = EmitWindowsIssueWsaRecv(state, socket, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_overlapped_bytes"), maxBytes, EmitWindowsIocpOverlappedPtr(state, operationContext, "step_tcp_receive_win_overlapped"), bytesReceivedSlot, "step_tcp_receive_win_issue_wsa_recv");
+        LlvmValueHandle overlappedImmediate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, overlappedResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_receive_win_overlapped_immediate");
+        LlvmBasicBlockHandle overlappedImmediateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_overlapped_immediate");
+        LlvmBasicBlockHandle overlappedErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_overlapped_error");
+        LlvmApi.BuildCondBr(builder, overlappedImmediate, overlappedImmediateBlock, overlappedErrorBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overlappedImmediateBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReceivedSlot, "step_tcp_receive_win_immediate_bytes"), state.I64, "step_tcp_receive_win_immediate_bytes_i64"), readCountSlot);
+        LlvmApi.BuildBr(builder, handleReadBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overlappedErrorBlock);
+        LlvmValueHandle overlappedError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_receive_win_overlapped_error_code"), state.I64, "step_tcp_receive_win_overlapped_error_i64");
+        LlvmValueHandle overlappedPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, overlappedError, LlvmApi.ConstInt(state.I64, WindowsErrorIoPending, 0), "step_tcp_receive_win_overlapped_pending");
+        LlvmBasicBlockHandle storePendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_store_pending");
+        LlvmApi.BuildCondBr(builder, overlappedPending, storePendingBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, storePendingBlock);
+        LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
+        LlvmApi.BuildBr(builder, pendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
+        LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketRead, LlvmApi.BuildLoad2(builder, state.I64, pendingContextSlot, "step_tcp_receive_win_pending_context"), "step_tcp_receive_win_pending_store"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpReceiveFailedMessage)), "step_tcp_receive_win_fail_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_receive_win_status");
     }
 
     private static LlvmValueHandle EmitStepHttpGetTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
