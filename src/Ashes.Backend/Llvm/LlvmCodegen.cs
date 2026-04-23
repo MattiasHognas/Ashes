@@ -283,7 +283,8 @@ internal static partial class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.RunTask>(program)
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
-                || ProgramUsesInstruction<IrInst.AsyncRace>(program));
+                || ProgramUsesInstruction<IrInst.AsyncRace>(program)
+                || usesNetworkingRuntimeAbi);
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;

@@ -440,6 +440,288 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, prefix + "_status");
     }
 
+    private static LlvmValueHandle EmitStepTaskUntilPendingOrDone(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_status_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), statusSlot);
+
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
+        LlvmBasicBlockHandle notDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_not_done");
+        LlvmBasicBlockHandle leafBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_leaf");
+        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
+        LlvmBasicBlockHandle suspendedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_suspended");
+        LlvmBasicBlockHandle awaitedDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_awaited_done");
+        LlvmBasicBlockHandle leafPendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_leaf_pending");
+        LlvmBasicBlockHandle awaitedPendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_awaited_pending");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle stateIdx = LoadMemory(state, taskPtr, TaskStructLayout.StateIndex, prefix + "_state_idx");
+        LlvmValueHandle completedConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1);
+        LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, completedConst, prefix + "_is_done");
+        LlvmApi.BuildCondBr(builder, isDone, doneBlock, notDoneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, notDoneBlock);
+        LlvmValueHandle isLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, prefix + "_is_leaf");
+        LlvmApi.BuildCondBr(builder, isLeaf, leafBlock, stepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
+        LlvmValueHandle leafStatus = EmitStepLeafTask(state, taskPtr, prefix + "_leaf_step");
+        LlvmValueHandle leafCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, leafStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_leaf_completed");
+        LlvmApi.BuildCondBr(builder, leafCompleted, doneBlock, leafPendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
+        EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_before_step");
+        LlvmValueHandle coroutineFn = LoadMemory(state, taskPtr, TaskStructLayout.CoroutineFn, prefix + "_coroutine_fn");
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle coroutineFnPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, coroutineFnPtrType, prefix + "_fn_ptr");
+        LlvmValueHandle stepStatus = LlvmApi.BuildCall2(
+            builder,
+            coroutineFnType,
+            typedFnPtr,
+            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
+            prefix + "_step_status");
+        LlvmValueHandle suspended = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stepStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_is_suspended");
+        LlvmApi.BuildCondBr(builder, suspended, suspendedBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, suspendedBlock);
+        LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
+        LlvmValueHandle awaitedStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [awaitedTask], prefix + "_awaited_status");
+        LlvmValueHandle awaitedCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaitedStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_awaited_completed");
+        LlvmApi.BuildCondBr(builder, awaitedCompleted, awaitedDoneBlock, awaitedPendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, awaitedDoneBlock);
+        EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_after_await");
+        LlvmValueHandle awaitedResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, prefix + "_awaited_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, awaitedResult, prefix + "_awaited_result_store");
+        LlvmApi.BuildBr(builder, stepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, leafPendingBlock);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, awaitedPendingBlock);
+        LlvmValueHandle waitKind = LoadMemory(state, awaitedTask, TaskStructLayout.WaitKind, prefix + "_awaited_wait_kind");
+        LlvmValueHandle waitHandle = LoadMemory(state, awaitedTask, TaskStructLayout.WaitHandle, prefix + "_awaited_wait_handle");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, waitKind, prefix + "_mirror_wait_kind");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle, waitHandle, prefix + "_mirror_wait_handle");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmValueHandle finalStateIdx = LoadMemory(state, taskPtr, TaskStructLayout.StateIndex, prefix + "_final_state_idx");
+        LlvmValueHandle finalDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, finalStateIdx, completedConst, prefix + "_final_done");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildZExt(builder, finalDone, state.I64, prefix + "_final_done_i64"), statusSlot);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, prefix + "_status");
+    }
+
+    private static LlvmValueHandle EmitWaitForPendingTaskList(LlvmCodegenState state, LlvmValueHandle taskListPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_slot");
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cursor_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+        LlvmApi.BuildStore(builder, taskListPtr, cursorSlot);
+
+        LlvmBasicBlockHandle countCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_check");
+        LlvmBasicBlockHandle countBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_body");
+        LlvmBasicBlockHandle countIncrementBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_increment");
+        LlvmBasicBlockHandle countAdvanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_advance");
+        LlvmBasicBlockHandle afterCountBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_count");
+        LlvmApi.BuildBr(builder, countCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countCheckBlock);
+        LlvmValueHandle countCursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, prefix + "_count_cursor");
+        LlvmValueHandle countDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countCursor, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_count_done");
+        LlvmApi.BuildCondBr(builder, countDone, afterCountBlock, countBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countBodyBlock);
+        LlvmValueHandle countTask = LoadMemory(state, countCursor, 0, prefix + "_count_task");
+        LlvmValueHandle countTail = LoadMemory(state, countCursor, 8, prefix + "_count_tail");
+        LlvmValueHandle countWaitKind = LoadMemory(state, countTask, TaskStructLayout.WaitKind, prefix + "_count_wait_kind");
+        LlvmValueHandle countIsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), prefix + "_count_is_read");
+        LlvmValueHandle countIsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), prefix + "_count_is_write");
+        LlvmValueHandle countShould = LlvmApi.BuildOr(builder, countIsRead, countIsWrite, prefix + "_count_should");
+        LlvmApi.BuildCondBr(builder, countShould, countIncrementBlock, countAdvanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countIncrementBlock);
+        LlvmValueHandle pendingCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_pending_count");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, pendingCount, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_pending_count_next"), countSlot);
+        LlvmApi.BuildBr(builder, countAdvanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countAdvanceBlock);
+        LlvmApi.BuildStore(builder, countTail, cursorSlot);
+        LlvmApi.BuildBr(builder, countCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterCountBlock);
+        LlvmValueHandle totalPending = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_total_pending");
+        LlvmValueHandle hasPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, totalPending, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_pending");
+        LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        LlvmApi.BuildCondBr(builder, hasPending, waitBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
+            LlvmValueHandle eventStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_event_storage");
+            LlvmValueHandle eventPtr = GetArrayElementPointer(state, epollEventType, eventStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_event_ptr");
+            LlvmValueHandle waitEventStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_wait_event_storage");
+            LlvmValueHandle waitEventPtr = GetArrayElementPointer(state, epollEventType, waitEventStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_event_ptr");
+            LlvmValueHandle epollFd = EmitLinuxSyscall(state, SyscallEpollCreate1, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_create");
+            LlvmValueHandle registerCursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_register_cursor_slot");
+            LlvmApi.BuildStore(builder, taskListPtr, registerCursorSlot);
+            LlvmBasicBlockHandle registerCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_register_check");
+            LlvmBasicBlockHandle registerBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_register_body");
+            LlvmBasicBlockHandle registerStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_register_store");
+            LlvmBasicBlockHandle registerAdvanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_register_advance");
+            LlvmBasicBlockHandle afterRegisterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_register");
+            LlvmApi.BuildBr(builder, registerCheckBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, registerCheckBlock);
+            LlvmValueHandle registerCursor = LlvmApi.BuildLoad2(builder, state.I64, registerCursorSlot, prefix + "_register_cursor");
+            LlvmValueHandle registerDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, registerCursor, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_register_done");
+            LlvmApi.BuildCondBr(builder, registerDone, afterRegisterBlock, registerBodyBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, registerBodyBlock);
+            LlvmValueHandle registerTask = LoadMemory(state, registerCursor, 0, prefix + "_register_task");
+            LlvmValueHandle registerTail = LoadMemory(state, registerCursor, 8, prefix + "_register_tail");
+            LlvmValueHandle registerWaitKind = LoadMemory(state, registerTask, TaskStructLayout.WaitKind, prefix + "_register_wait_kind");
+            LlvmValueHandle registerHandle = LoadMemory(state, registerTask, TaskStructLayout.WaitHandle, prefix + "_register_wait_handle");
+            LlvmValueHandle registerIsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, registerWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), prefix + "_register_is_read");
+            LlvmValueHandle registerIsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, registerWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), prefix + "_register_is_write");
+            LlvmValueHandle registerShould = LlvmApi.BuildOr(builder, registerIsRead, registerIsWrite, prefix + "_register_should");
+            LlvmApi.BuildCondBr(builder, registerShould, registerStoreBlock, registerAdvanceBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, registerStoreBlock);
+            LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder,
+                registerIsRead,
+                LlvmApi.ConstInt(state.I32, 0x001, 0),
+                LlvmApi.ConstInt(state.I32, 0x004, 0),
+                prefix + "_event_mask");
+            LlvmApi.BuildStore(builder, eventMask, LlvmApi.BuildBitCast(builder, eventPtr, state.I32Ptr, prefix + "_event_mask_ptr"));
+            LlvmApi.BuildStore(builder,
+                registerHandle,
+                LlvmApi.BuildBitCast(builder,
+                    LlvmApi.BuildGEP2(builder, state.I8, eventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_event_data_byte"),
+                    state.I64Ptr,
+                    prefix + "_event_data_ptr"));
+            EmitLinuxSyscall4(state,
+                SyscallEpollCtl,
+                epollFd,
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                registerHandle,
+                LlvmApi.BuildPtrToInt(builder, eventPtr, state.I64, prefix + "_event_arg"),
+                prefix + "_epoll_ctl");
+            LlvmApi.BuildBr(builder, registerAdvanceBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, registerAdvanceBlock);
+            LlvmApi.BuildStore(builder, registerTail, registerCursorSlot);
+            LlvmApi.BuildBr(builder, registerCheckBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, afterRegisterBlock);
+            if (IsLinuxArm64Flavor(state.Flavor))
+            {
+                EmitLinuxSyscall6(state,
+                    Arm64SyscallEpollPwait,
+                    epollFd,
+                    LlvmApi.BuildPtrToInt(builder, waitEventPtr, state.I64, prefix + "_wait_event_arg"),
+                    LlvmApi.ConstInt(state.I64, 1, 0),
+                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    LlvmApi.ConstInt(state.I64, 0, 0),
+                    LlvmApi.ConstInt(state.I64, 0, 0),
+                    prefix + "_epoll_wait");
+            }
+            else
+            {
+                EmitLinuxSyscall4(state,
+                    SyscallEpollWait,
+                    epollFd,
+                    LlvmApi.BuildPtrToInt(builder, waitEventPtr, state.I64, prefix + "_wait_event_arg"),
+                    LlvmApi.ConstInt(state.I64, 1, 0),
+                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    prefix + "_epoll_wait");
+            }
+
+            EmitLinuxSyscall(state, SyscallClose, epollFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_close");
+        }
+        else
+        {
+            LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+            LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+            LlvmValueHandle pollfdBuffer = EmitAllocDynamic(state, LlvmApi.BuildMul(builder, totalPending, LlvmApi.ConstInt(state.I64, 16, 0), prefix + "_pollfd_size"));
+            LlvmValueHandle fillCursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_fill_cursor_slot");
+            LlvmValueHandle fillIndexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_fill_index_slot");
+            LlvmApi.BuildStore(builder, taskListPtr, fillCursorSlot);
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fillIndexSlot);
+            LlvmBasicBlockHandle fillCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fill_check");
+            LlvmBasicBlockHandle fillBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fill_body");
+            LlvmBasicBlockHandle fillStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fill_store");
+            LlvmBasicBlockHandle fillAdvanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fill_advance");
+            LlvmBasicBlockHandle afterFillBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_fill");
+            LlvmApi.BuildBr(builder, fillCheckBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, fillCheckBlock);
+            LlvmValueHandle fillCursor = LlvmApi.BuildLoad2(builder, state.I64, fillCursorSlot, prefix + "_fill_cursor");
+            LlvmValueHandle fillDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fillCursor, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_fill_done");
+            LlvmApi.BuildCondBr(builder, fillDone, afterFillBlock, fillBodyBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, fillBodyBlock);
+            LlvmValueHandle fillTask = LoadMemory(state, fillCursor, 0, prefix + "_fill_task");
+            LlvmValueHandle fillTail = LoadMemory(state, fillCursor, 8, prefix + "_fill_tail");
+            LlvmValueHandle fillWaitKind = LoadMemory(state, fillTask, TaskStructLayout.WaitKind, prefix + "_fill_wait_kind");
+            LlvmValueHandle fillHandle = LoadMemory(state, fillTask, TaskStructLayout.WaitHandle, prefix + "_fill_wait_handle");
+            LlvmValueHandle fillIsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fillWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), prefix + "_fill_is_read");
+            LlvmValueHandle fillIsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fillWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), prefix + "_fill_is_write");
+            LlvmValueHandle fillShould = LlvmApi.BuildOr(builder, fillIsRead, fillIsWrite, prefix + "_fill_should");
+            LlvmApi.BuildCondBr(builder, fillShould, fillStoreBlock, fillAdvanceBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, fillStoreBlock);
+            LlvmValueHandle fillIndex = LlvmApi.BuildLoad2(builder, state.I64, fillIndexSlot, prefix + "_fill_index");
+            LlvmValueHandle entryBase = LlvmApi.BuildAdd(builder, pollfdBuffer, LlvmApi.BuildMul(builder, fillIndex, LlvmApi.ConstInt(state.I64, 16, 0), prefix + "_entry_offset"), prefix + "_entry_base");
+            StoreMemory(state, entryBase, 0, fillHandle, prefix + "_pollfd_fd");
+            LlvmValueHandle entryPtr = LlvmApi.BuildIntToPtr(builder, entryBase, state.I8Ptr, prefix + "_entry_ptr");
+            LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder,
+                fillIsRead,
+                LlvmApi.ConstInt(i16, 0x0100, 0),
+                LlvmApi.ConstInt(i16, 0x0010, 0),
+                prefix + "_pollfd_events");
+            LlvmApi.BuildStore(builder,
+                eventMask,
+                LlvmApi.BuildBitCast(builder,
+                    LlvmApi.BuildGEP2(builder, state.I8, entryPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_events_byte_ptr"),
+                    i16Ptr,
+                    prefix + "_events_ptr"));
+            LlvmApi.BuildStore(builder,
+                LlvmApi.ConstInt(i16, 0, 0),
+                LlvmApi.BuildBitCast(builder,
+                    LlvmApi.BuildGEP2(builder, state.I8, entryPtr, [LlvmApi.ConstInt(state.I64, 10, 0)], prefix + "_revents_byte_ptr"),
+                    i16Ptr,
+                    prefix + "_revents_ptr"));
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, fillIndex, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_fill_index_next"), fillIndexSlot);
+            LlvmApi.BuildBr(builder, fillAdvanceBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, fillAdvanceBlock);
+            LlvmApi.BuildStore(builder, fillTail, fillCursorSlot);
+            LlvmApi.BuildBr(builder, fillCheckBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, afterFillBlock);
+            EmitWindowsWsaPoll(
+                state,
+                LlvmApi.BuildIntToPtr(builder, pollfdBuffer, state.I8Ptr, prefix + "_pollfd_ptr"),
+                totalPending,
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                prefix + "_wsapoll");
+        }
+
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
     /// <summary>
     /// RunTask: synchronously drive a task to completion.
     /// Algorithm:
@@ -971,101 +1253,123 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Allocas for loop state
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_res");
         LlvmValueHandle listSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_list");
-        LlvmValueHandle revSrcSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rsrc");
-        LlvmValueHandle revDstSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rdst");
-        LlvmValueHandle taskResSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_task_res");
+        LlvmValueHandle pendingCountSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_pending_count");
         LlvmValueHandle failureSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_failure");
+        LlvmValueHandle revSrcSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rev_src");
+        LlvmValueHandle revDstSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rev_dst");
 
-        // Initialize: acc = 0 (Nil), list = input
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildStore(builder, taskListPtr, listSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pendingCountSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), failureSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot);
 
-        // Create all blocks
-        LlvmBasicBlockHandle chkBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_chk");
-        LlvmBasicBlockHandle bodyBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_body");
-        LlvmBasicBlockHandle afterRunBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_after_run");
-        LlvmBasicBlockHandle errorBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_error");
-        LlvmBasicBlockHandle consBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_cons");
-        LlvmBasicBlockHandle revIBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revi");
-        LlvmBasicBlockHandle revCBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revc");
-        LlvmBasicBlockHandle revBBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revb");
-        LlvmBasicBlockHandle doneBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_done");
+        LlvmBasicBlockHandle scanCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_scan_check");
+        LlvmBasicBlockHandle scanBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_scan_body");
+        LlvmBasicBlockHandle pendingIncrementBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_pending_increment");
+        LlvmBasicBlockHandle inspectResultBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_inspect_result");
+        LlvmBasicBlockHandle failureBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_failure_block");
+        LlvmBasicBlockHandle afterScanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_after_scan");
+        LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_wait");
+        LlvmBasicBlockHandle buildInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_build_init");
+        LlvmBasicBlockHandle buildCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_build_check");
+        LlvmBasicBlockHandle buildBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_build_body");
+        LlvmBasicBlockHandle reverseInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_reverse_init");
+        LlvmBasicBlockHandle reverseCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_reverse_check");
+        LlvmBasicBlockHandle reverseBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_reverse_body");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_done");
 
-        LlvmApi.BuildBr(builder, chkBlk);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
 
-        // --- Check: is current list Nil (== 0)? ---
-        LlvmApi.PositionBuilderAtEnd(builder, chkBlk);
-        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "all_cur");
-        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "all_is_nil");
-        LlvmApi.BuildCondBr(builder, isNil, revIBlk, bodyBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, scanCheckBlock);
+        LlvmValueHandle scanCursor = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "all_scan_cursor");
+        LlvmValueHandle scanDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCursor, LlvmApi.ConstInt(state.I64, 0, 0), "all_scan_done");
+        LlvmApi.BuildCondBr(builder, scanDone, afterScanBlock, scanBodyBlock);
 
-        // --- Body: extract head (offset 0) and tail (offset 8), run task ---
-        LlvmApi.PositionBuilderAtEnd(builder, bodyBlk);
-        LlvmValueHandle curBody = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "all_cur_body");
-        LlvmValueHandle headTask = LoadMemory(state, curBody, 0, "all_head");
-        LlvmValueHandle tailList = LoadMemory(state, curBody, 8, "all_tail");
+        LlvmApi.PositionBuilderAtEnd(builder, scanBodyBlock);
+        LlvmValueHandle scanNode = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "all_scan_node");
+        LlvmValueHandle headTask = LoadMemory(state, scanNode, 0, "all_head_task");
+        LlvmValueHandle tailList = LoadMemory(state, scanNode, 8, "all_tail_list");
         LlvmApi.BuildStore(builder, tailList, listSlot);
+        EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [headTask], "all_step_task");
+        LlvmValueHandle headState = LoadMemory(state, headTask, TaskStructLayout.StateIndex, "all_head_state");
+        LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, headState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "all_head_done");
+        LlvmApi.BuildCondBr(builder, isDone, inspectResultBlock, pendingIncrementBlock);
 
-        // Run the head task. EmitRunTask creates blocks and leaves builder at run_task_done.
-        LlvmValueHandle taskResult = EmitRunTask(state, headTask);
-        // Builder is now at run_task_done block. Store result and branch to afterRun.
-        LlvmApi.BuildStore(builder, taskResult, taskResSlot);
-        LlvmApi.BuildBr(builder, afterRunBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, pendingIncrementBlock);
+        LlvmValueHandle pendingCount = LlvmApi.BuildLoad2(builder, state.I64, pendingCountSlot, "all_pending_count_value");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, pendingCount, LlvmApi.ConstInt(state.I64, 1, 0), "all_pending_count_next"), pendingCountSlot);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
 
-        // --- After run: propagate Error immediately, otherwise cons the Ok payload ---
-        LlvmApi.PositionBuilderAtEnd(builder, afterRunBlk);
-        LlvmValueHandle taskRes = LlvmApi.BuildLoad2(builder, state.I64, taskResSlot, "all_task_res_val");
-        LlvmValueHandle taskResTag = LoadMemory(state, taskRes, 0, "all_task_res_tag");
-        LlvmValueHandle isError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, taskResTag, LlvmApi.ConstInt(state.I64, 0, 0), "all_task_res_is_error");
-        LlvmApi.BuildCondBr(builder, isError, errorBlk, consBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, inspectResultBlock);
+        LlvmValueHandle taskResult = LoadMemory(state, headTask, TaskStructLayout.ResultSlot, "all_task_result");
+        LlvmValueHandle taskTag = LoadMemory(state, taskResult, 0, "all_task_tag");
+        LlvmValueHandle isError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, taskTag, LlvmApi.ConstInt(state.I64, 0, 0), "all_task_is_error");
+        LlvmApi.BuildCondBr(builder, isError, failureBlock, scanCheckBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, errorBlk);
-        LlvmApi.BuildStore(builder, taskRes, failureSlot);
-        LlvmApi.BuildBr(builder, doneBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, failureBlock);
+        LlvmApi.BuildStore(builder, taskResult, failureSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, consBlk);
-        LlvmValueHandle taskResValue = LoadMemory(state, taskRes, 8, "all_task_res_ok_value");
-        LlvmValueHandle prevAcc = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "all_prev_acc");
-        // Cons cell: [head @0, tail @8] = 16 bytes
-        LlvmValueHandle consNode = EmitAlloc(state, 16);
-        StoreMemory(state, consNode, 0, taskResValue, "all_cons_head");
-        StoreMemory(state, consNode, 8, prevAcc, "all_cons_tail");
-        LlvmApi.BuildStore(builder, consNode, resultSlot);
-        LlvmApi.BuildBr(builder, chkBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, afterScanBlock);
+        LlvmValueHandle pendingAfterScan = LlvmApi.BuildLoad2(builder, state.I64, pendingCountSlot, "all_pending_after_scan");
+        LlvmValueHandle hasPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, pendingAfterScan, LlvmApi.ConstInt(state.I64, 0, 0), "all_has_pending");
+        LlvmApi.BuildCondBr(builder, hasPending, waitBlock, buildInitBlock);
 
-        // --- Rev init: start reversing the accumulated (reversed) list ---
-        LlvmApi.PositionBuilderAtEnd(builder, revIBlk);
-        LlvmValueHandle revSrc = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "all_rev_src_init");
-        LlvmApi.BuildStore(builder, revSrc, revSrcSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot); // Nil
-        LlvmApi.BuildBr(builder, revCBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        EmitNetworkingRuntimeCall(state, "ashes_wait_pending_task_list", [taskListPtr], "all_wait_pending");
+        LlvmApi.BuildStore(builder, taskListPtr, listSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pendingCountSlot);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
 
-        // --- Rev check: is source Nil (== 0)? ---
-        LlvmApi.PositionBuilderAtEnd(builder, revCBlk);
-        LlvmValueHandle rsCur = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_rs_cur");
-        LlvmValueHandle rsIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, rsCur, LlvmApi.ConstInt(state.I64, 0, 0), "all_rs_nil");
-        LlvmApi.BuildCondBr(builder, rsIsNil, doneBlk, revBBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, buildInitBlock);
+        LlvmApi.BuildStore(builder, taskListPtr, revSrcSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot);
+        LlvmApi.BuildBr(builder, buildCheckBlock);
 
-        // --- Rev body: move head from src to dst ---
-        LlvmApi.PositionBuilderAtEnd(builder, revBBlk);
-        LlvmValueHandle rbSrc = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_rb_src");
-        LlvmValueHandle rbHead = LoadMemory(state, rbSrc, 0, "all_rb_head");
-        LlvmValueHandle rbTail = LoadMemory(state, rbSrc, 8, "all_rb_tail");
-        LlvmValueHandle rbDst = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_rb_dst");
-        LlvmValueHandle rbCons = EmitAlloc(state, 16);
-        StoreMemory(state, rbCons, 0, rbHead, "all_rb_cons_head");
-        StoreMemory(state, rbCons, 8, rbDst, "all_rb_cons_tail");
-        LlvmApi.BuildStore(builder, rbTail, revSrcSlot);
-        LlvmApi.BuildStore(builder, rbCons, revDstSlot);
-        LlvmApi.BuildBr(builder, revCBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, buildCheckBlock);
+        LlvmValueHandle buildCursor = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_build_cursor");
+        LlvmValueHandle buildDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, buildCursor, LlvmApi.ConstInt(state.I64, 0, 0), "all_build_done");
+        LlvmApi.BuildCondBr(builder, buildDone, reverseInitBlock, buildBodyBlock);
 
-        // --- Done: wrap reversed list in Ok(...) and return a completed task ---
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, buildBodyBlock);
+        LlvmValueHandle buildNode = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_build_node");
+        LlvmValueHandle buildTask = LoadMemory(state, buildNode, 0, "all_build_task");
+        LlvmValueHandle buildTail = LoadMemory(state, buildNode, 8, "all_build_tail");
+        LlvmValueHandle buildResult = LoadMemory(state, buildTask, TaskStructLayout.ResultSlot, "all_build_result");
+        LlvmValueHandle buildValue = LoadMemory(state, buildResult, 8, "all_build_value");
+        LlvmValueHandle buildAcc = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_build_acc");
+        LlvmValueHandle buildCons = EmitAlloc(state, 16);
+        StoreMemory(state, buildCons, 0, buildValue, "all_build_cons_head");
+        StoreMemory(state, buildCons, 8, buildAcc, "all_build_cons_tail");
+        LlvmApi.BuildStore(builder, buildTail, revSrcSlot);
+        LlvmApi.BuildStore(builder, buildCons, revDstSlot);
+        LlvmApi.BuildBr(builder, buildCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reverseInitBlock);
+        LlvmValueHandle reverseSource = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_reverse_source");
+        LlvmApi.BuildStore(builder, reverseSource, revSrcSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot);
+        LlvmApi.BuildBr(builder, reverseCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reverseCheckBlock);
+        LlvmValueHandle reverseCursor = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_reverse_cursor");
+        LlvmValueHandle reverseDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, reverseCursor, LlvmApi.ConstInt(state.I64, 0, 0), "all_reverse_done");
+        LlvmApi.BuildCondBr(builder, reverseDone, doneBlock, reverseBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reverseBodyBlock);
+        LlvmValueHandle reverseNode = LlvmApi.BuildLoad2(builder, state.I64, revSrcSlot, "all_reverse_node");
+        LlvmValueHandle reverseHead = LoadMemory(state, reverseNode, 0, "all_reverse_head");
+        LlvmValueHandle reverseTail = LoadMemory(state, reverseNode, 8, "all_reverse_tail");
+        LlvmValueHandle reverseAcc = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_reverse_acc");
+        LlvmValueHandle reverseCons = EmitAlloc(state, 16);
+        StoreMemory(state, reverseCons, 0, reverseHead, "all_reverse_cons_head");
+        StoreMemory(state, reverseCons, 8, reverseAcc, "all_reverse_cons_tail");
+        LlvmApi.BuildStore(builder, reverseTail, revSrcSlot);
+        LlvmApi.BuildStore(builder, reverseCons, revDstSlot);
+        LlvmApi.BuildBr(builder, reverseCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         LlvmValueHandle failureResult = LlvmApi.BuildLoad2(builder, state.I64, failureSlot, "all_failure_result");
         LlvmValueHandle hasFailure = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, failureResult, LlvmApi.ConstInt(state.I64, 0, 0), "all_has_failure");
         LlvmValueHandle finalList = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_final_list");
@@ -1088,38 +1392,61 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Alloca to hold the result across block boundaries
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_res");
+        LlvmValueHandle listSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_list");
+        LlvmValueHandle pendingCountSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_pending_count");
 
-        // Check if list is Nil (== 0)
-        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, taskListPtr, LlvmApi.ConstInt(state.I64, 0, 0), "race_is_nil");
-
-        LlvmBasicBlockHandle emptyBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_empty");
-        LlvmBasicBlockHandle nonEmptyBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_nonempty");
-        LlvmBasicBlockHandle afterRunBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_after_run");
-        LlvmBasicBlockHandle doneBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_done");
-
-        LlvmApi.BuildCondBr(builder, isNil, emptyBlk, nonEmptyBlk);
-
-        // --- Empty list: result = Ok(Unit) ---
-        LlvmApi.PositionBuilderAtEnd(builder, emptyBlk);
         LlvmApi.BuildStore(builder, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), resultSlot);
-        LlvmApi.BuildBr(builder, doneBlk);
+        LlvmApi.BuildStore(builder, taskListPtr, listSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pendingCountSlot);
 
-        // --- Non-empty: extract and run first task (head @offset 0) ---
-        LlvmApi.PositionBuilderAtEnd(builder, nonEmptyBlk);
-        LlvmValueHandle firstTask = LoadMemory(state, taskListPtr, 0, "race_first");
-        LlvmValueHandle taskResult = EmitRunTask(state, firstTask);
-        // Builder is now at run_task_done block
-        LlvmApi.BuildStore(builder, taskResult, resultSlot);
-        LlvmApi.BuildBr(builder, afterRunBlk);
+        LlvmBasicBlockHandle scanCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_scan_check");
+        LlvmBasicBlockHandle scanBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_scan_body");
+        LlvmBasicBlockHandle pendingIncrementBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_pending_increment");
+        LlvmBasicBlockHandle resultBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_result");
+        LlvmBasicBlockHandle afterScanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_after_scan");
+        LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_wait");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_done");
 
-        // --- After run: merge with empty path ---
-        LlvmApi.PositionBuilderAtEnd(builder, afterRunBlk);
-        LlvmApi.BuildBr(builder, doneBlk);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
 
-        // --- Done: wrap in completed task ---
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlk);
+        LlvmApi.PositionBuilderAtEnd(builder, scanCheckBlock);
+        LlvmValueHandle scanCursor = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "race_scan_cursor");
+        LlvmValueHandle scanDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCursor, LlvmApi.ConstInt(state.I64, 0, 0), "race_scan_done");
+        LlvmApi.BuildCondBr(builder, scanDone, afterScanBlock, scanBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scanBodyBlock);
+        LlvmValueHandle scanNode = LlvmApi.BuildLoad2(builder, state.I64, listSlot, "race_scan_node");
+        LlvmValueHandle raceTask = LoadMemory(state, scanNode, 0, "race_task");
+        LlvmValueHandle raceTail = LoadMemory(state, scanNode, 8, "race_tail");
+        LlvmApi.BuildStore(builder, raceTail, listSlot);
+        EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [raceTask], "race_step_task");
+        LlvmValueHandle raceState = LoadMemory(state, raceTask, TaskStructLayout.StateIndex, "race_state");
+        LlvmValueHandle raceDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, raceState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "race_task_done");
+        LlvmApi.BuildCondBr(builder, raceDone, resultBlock, pendingIncrementBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingIncrementBlock);
+        LlvmValueHandle pendingCount = LlvmApi.BuildLoad2(builder, state.I64, pendingCountSlot, "race_pending_count_value");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, pendingCount, LlvmApi.ConstInt(state.I64, 1, 0), "race_pending_count_next"), pendingCountSlot);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resultBlock);
+        LlvmValueHandle raceResult = LoadMemory(state, raceTask, TaskStructLayout.ResultSlot, "race_task_result");
+        LlvmApi.BuildStore(builder, raceResult, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterScanBlock);
+        LlvmValueHandle pendingAfterScan = LlvmApi.BuildLoad2(builder, state.I64, pendingCountSlot, "race_pending_after_scan");
+        LlvmValueHandle hasPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, pendingAfterScan, LlvmApi.ConstInt(state.I64, 0, 0), "race_has_pending");
+        LlvmApi.BuildCondBr(builder, hasPending, waitBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        EmitNetworkingRuntimeCall(state, "ashes_wait_pending_task_list", [taskListPtr], "race_wait_pending");
+        LlvmApi.BuildStore(builder, taskListPtr, listSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pendingCountSlot);
+        LlvmApi.BuildBr(builder, scanCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         LlvmValueHandle finalResult = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "race_final");
         return EmitCreateCompletedTask(state, finalResult);
     }
