@@ -1071,8 +1071,8 @@ The built-in `Ashes.IO` module exports:
 
 - `print(expr)` - prints the evaluated expression to standard output.
 - `panic("message")` - prints the message and aborts with a non-zero exit code.
-  `panic` - has Never/Bottom behavior, so it typechecks in any expression context.
-- `args` - a `List<String>` containing command-line arguments passed to the
+  Has Never/Bottom behavior, so it typechecks in any expression context.
+- `args` - a `List(Str)` containing command-line arguments passed to the
   compiled program (excluding the executable path/name at `argv[0]`).
 - `write("text")` - writes a string to standard output without adding a newline.
 - `writeLine("text")` - writes a string to standard output and then writes `\n`.
