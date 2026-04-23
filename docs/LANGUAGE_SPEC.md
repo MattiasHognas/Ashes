@@ -60,6 +60,23 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`
 - `Ashes.Async.run(task)` returning `Result(Str, 'a)`
 - `Ashes.Async.fromResult(result)` returning `Task(Str, 'a)`
+- `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
+- `Ashes.Async.all(tasks)` returning `Task(E, List(A))`
+- `Ashes.Async.race(tasks)` returning `Task(E, A)`
+
+Shipped standard-library modules under the reserved `Ashes` namespace also include:
+
+- `Ashes.List`
+- `Ashes.Maybe`
+- `Ashes.Result`
+- `Ashes.Test`
+
+Built-in runtime types available without import include:
+
+- `Unit`
+- `Maybe(T)`
+- `Result(E, A)`
+- `Task(E, A)`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
