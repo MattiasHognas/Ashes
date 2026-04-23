@@ -6,11 +6,12 @@ blocks with `await`.
 
 The current implementation now includes explicit task wait metadata, a
 pending-leaf wait path in the task runner, shared task-list scheduling
-for `Ashes.Async.all` / `race`, and staged HTTP leaf tasks built on top
-of TCP leaf tasks. Linux leaf networking still uses the older blocking
-TCP helper path, and the remaining roadmap is finishing that
-cross-platform runtime work, tightening networking behavior under task
-combinators, and closing the remaining verification gaps.
+for `Ashes.Async.all` / `race`, staged HTTP leaf tasks built on top of
+TCP leaf tasks, non-blocking TCP stepping on Linux and Windows, and
+deterministic fixture coverage for cleanup, error propagation, and
+networking under task combinators. The remaining roadmap is now focused
+on replacing the current Windows `WSAPoll` bridge with the intended IO
+completion port runtime.
 
 ------------------------------------------------------------------------
 
@@ -34,58 +35,41 @@ The async-only API redesign is partially complete:
 | **Task runtime integration** | The LLVM task runner now recognizes negative-state leaf tasks for sleep, TCP, and HTTP operations, stores task arguments in the task header, completes those tasks through the ABI layer, and propagates awaited leaf-task results back into parent coroutines. |
 | **Task wait metadata** | The task header now carries explicit wait metadata (`WaitKind`, `WaitHandle`, `WaitData0`, `WaitData1`) so leaf tasks can preserve readiness state and incremental progress across steps. |
 | **Pending-leaf wait path** | The LLVM task runner now blocks on registered pending leaf waits instead of immediately busy-rechecking leaf tasks in the root-task and awaited-subtask run loops. |
+| **Linux pending TCP stepping** | The Linux TCP connect/send/receive leaf-step helpers now preserve per-task progress, switch sockets into non-blocking mode, return pending on would-block conditions, and resume through `epoll` readiness waits instead of completing through the older blocking helper path. |
 | **Windows pending TCP stepping** | The Windows TCP connect/send/receive leaf-step helpers now preserve per-task progress, switch sockets into non-blocking mode, return pending on would-block conditions, and resume through socket-readiness waits instead of always completing inline. |
 | **Platform readiness scaffolding** | The backend now carries the Linux syscall and Windows import/link scaffolding needed for readiness waits (`epoll` syscalls on Linux; non-blocking Winsock plus `WSAPoll` support on Windows). |
 | **Shared combinator scheduler** | `Ashes.Async.all` and `Ashes.Async.race` now step tasks incrementally through shared runtime helpers that can drive arbitrary tasks until they are pending or complete, then wait on any registered pending task in the list before resuming the scan. |
 | **Staged HTTP leaf tasks** | HTTP get/post leaf tasks no longer call the old direct blocking helper path; they now advance through connect, send, receive, and close stages on top of TCP leaf tasks and parse the final HTTP response once the staged transport work completes. |
 | **Backend compatibility path** | The existing `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, and `NetTcpClose` IR instructions remain intact and still call through the runtime ABI, but the public async networking surface now lowers through the dedicated leaf-task IR path instead of wrapping those instructions in coroutines. |
 | **Test migration** | The HTTP and TCP end-to-end tests were rewritten to use `async`, `await`, and `Ashes.Async.run`, and compile-error coverage was added for using HTTP/TCP outside `async`. |
+| **Concurrency-focused fixture tests** | The socket fixture suite now covers async cleanup after `Tcp.close`, HTTP error propagation across `await`, and deterministic HTTP composition under `Ashes.Async.all` / `Ashes.Async.race`. |
+| **Full verification rerun** | `Ashes.Tests`, `Ashes.Lsp.Tests`, the full `.ash` suite, and `dotnet format Ashes.slnx --verify-no-changes` were rerun after the runtime and test changes and now pass together. |
 | **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the async-only API surface as complete while leaving the non-blocking runtime optimization as future work. |
 
 ------------------------------------------------------------------------
 
 ## Ordered Roadmap — Next Work Items
 
-Each roadmap section below is still incomplete. The leaf-task IR path,
-the runtime ABI boundary, the task-level leaf-step ABI boundary, task
-wait metadata, and the first pending-aware TCP step path are now in
-place, so the remaining work is finishing the shared readiness runtime
-across platforms and task combinators.
+The public async networking surface, cross-platform non-blocking TCP
+leaf stepping, combinator behavior, and current verification gaps are
+now addressed. The only substantial runtime item still open is swapping
+the current Windows readiness bridge for the intended IO completion port
+implementation.
 
-### 1. Replace blocking networking with non-blocking readiness I/O
+### 1. Replace the Windows `WSAPoll` bridge with an IOCP runtime
 
-Finish the move from "blocking call during leaf-task completion" to a
-fully shared async networking runtime backed by readiness-aware I/O.
+The current Windows backend uses non-blocking Winsock sockets together
+with `WSAPoll` to wait for readiness. That is sufficient for the current
+leaf-task runtime, but it is still a bridge rather than the intended
+completion-port-based implementation.
 
-- Finish the Linux `epoll` runtime and convert Linux TCP leaf tasks off
-    the current blocking helper path.
 - Replace the current Windows non-blocking-socket + `WSAPoll` bridge with
     the intended IO completion port runtime.
-- Finish non-blocking connect, send, receive, and close for TCP on all
-    supported backends.
-- Validate and, where needed, tighten networking behavior when HTTP/TCP
-    tasks are composed under `Ashes.Async.all` and `Ashes.Async.race`.
-
-### 2. Add concurrency-focused networking tests
-
-The current test set validates the async-only API surface, but it does
-not yet prove the behavior expected from a non-blocking runtime.
-
-- Add explicit async resource-cleanup coverage.
-- Add error-propagation-across-await coverage for networking failures.
-- Add concurrency-focused coverage for networking under `all` / `race`
-    once the remaining combinator/runtime behavior is fully verified.
-- Keep the existing outside-async and compile-error tests.
-
-### 3. Re-run full verification after the runtime work lands
-
-The runtime and ABI changes cross multiple compiler layers and must be
-validated as a full stack, not only with targeted tests.
-
-- Run `dotnet run --project src/Ashes.Tests -- --no-progress`.
-- Run `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`.
-- Run `dotnet run --project src/Ashes.Cli -- test tests`.
-- Run `dotnet format Ashes.slnx --verify-no-changes`.
+- Preserve the current task-header wait metadata and shared task-list
+    scheduler surface while moving the Windows wait backend underneath it.
+- Re-run the full verification stack once the IOCP backend lands:
+    `Ashes.Tests`, `Ashes.Lsp.Tests`, `Ashes.Cli -- test tests`, and
+    `dotnet format Ashes.slnx --verify-no-changes`.
 
 ------------------------------------------------------------------------
 
@@ -96,9 +80,6 @@ as done:
 
 - The current runtime ABI symbols are compiler-emitted helper functions,
     not a separately packaged shared runtime yet.
-- Linux TCP/HTTP operations still use the older blocking helper path.
-- No full `epoll`/IOCP networking runtime has landed yet; the current
-    Windows readiness bridge uses non-blocking Winsock plus `WSAPoll`,
-    and Linux has only the syscall scaffolding so far.
-- The current test suite still lacks stable concurrency-focused coverage
-    for networking composed under `Ashes.Async.all` / `race`.
+- No Windows IO completion port runtime has landed yet; the current
+    Windows readiness bridge still uses non-blocking Winsock plus
+    `WSAPoll`.
