@@ -176,12 +176,28 @@ Build and install the extension locally:
 bash scripts/install-vscode-extension-local.sh
 ```
 
-This publishes the compiler, language server, and debug adapter, then
-packages and installs the VSIX. Use `--skip-install` to package without
-installing:
+By default this publishes the compiler, language server, and debug
+adapter for the current RID only, then packages and installs the VSIX.
+Use `--skip-install` to package without installing:
 
 ```sh
 bash scripts/install-vscode-extension-local.sh --skip-install
+```
+
+Useful options:
+
+```sh
+# Publish all supported bundled RIDs (win-x64, linux-x64, linux-arm64):
+bash scripts/install-vscode-extension-local.sh --all-rids
+
+# Force a clean pnpm dependency reinstall before building:
+bash scripts/install-vscode-extension-local.sh --force-install-dependencies
+
+# Override the VS Code CLI to use for install:
+bash scripts/install-vscode-extension-local.sh --code-command code-insiders
+
+# When running from bash on Windows/WSL and targeting the Windows VS Code build:
+bash scripts/install-vscode-extension-local.sh --target-rid win-x64
 ```
 
 On Windows:
@@ -189,6 +205,25 @@ On Windows:
 ```powershell
 .\scripts\install-vscode-extension-local.ps1
 ```
+
+Useful PowerShell options:
+
+```powershell
+# Package only, do not install the VSIX:
+.\scripts\install-vscode-extension-local.ps1 -SkipInstall
+
+# Publish all supported bundled RIDs:
+.\scripts\install-vscode-extension-local.ps1 -AllRids
+
+# Force a clean pnpm dependency reinstall before building:
+.\scripts\install-vscode-extension-local.ps1 -ForceInstallDependencies
+
+# Override the VS Code CLI to use for install:
+.\scripts\install-vscode-extension-local.ps1 -CodeCommand code-insiders
+```
+
+On Windows, prefer the PowerShell script for local install into the same
+VS Code instance you are using for development.
 
 ### Extension Only (No Publish)
 

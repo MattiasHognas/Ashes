@@ -1,6 +1,8 @@
 param(
     [string]$CodeCommand,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$AllRids,
+    [switch]$ForceInstallDependencies
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,6 +42,37 @@ function Resolve-PnpmCommand {
     throw "pnpm was not found on PATH. Install pnpm or enable it through your Node.js setup before running this script."
 }
 
+function Resolve-CurrentRid {
+    $os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+    $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        if ($architecture -eq [System.Runtime.InteropServices.Architecture]::X64) {
+            return "win-x64"
+        }
+    }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)) {
+        if ($architecture -eq [System.Runtime.InteropServices.Architecture]::X64) {
+            return "linux-x64"
+        }
+
+        if ($architecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+            return "linux-arm64"
+        }
+    }
+
+    throw "Unsupported platform for local VS Code packaging: $os / $architecture"
+}
+
+function Get-TargetRids {
+    if ($AllRids) {
+        return @("win-x64", "linux-x64", "linux-arm64")
+    }
+
+    return @(Resolve-CurrentRid)
+}
+
 function Invoke-Step {
     param(
         [string]$FilePath,
@@ -71,6 +104,46 @@ function Get-ExtensionVersion {
     }
 
     return [string]$packageJson.version
+}
+
+function Test-ExtensionDependenciesHealthy {
+    $requiredPaths = @(
+        (Join-Path $ExtensionRoot "node_modules\@types\node\package.json"),
+        (Join-Path $ExtensionRoot "node_modules\@types\vscode\package.json"),
+        (Join-Path $ExtensionRoot "node_modules\typescript\package.json")
+    )
+
+    foreach ($requiredPath in $requiredPaths) {
+        if (-not (Test-Path $requiredPath)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Restore-ExtensionDependencies {
+    param([string]$PnpmCommand)
+
+    $nodeModulesPath = Join-Path $ExtensionRoot "node_modules"
+
+    if (-not $ForceInstallDependencies -and (Test-ExtensionDependenciesHealthy)) {
+        Write-Host "==> Skipping VS Code extension dependency restore (existing node_modules detected)"
+        Write-Host "    Use -ForceInstallDependencies to reinstall dependencies."
+        return
+    }
+
+    if (Test-Path $nodeModulesPath) {
+        Write-Host "==> Removing stale VS Code extension dependencies"
+        Write-Host "    $nodeModulesPath"
+        Remove-Item $nodeModulesPath -Recurse -Force
+    }
+
+    Invoke-Step `
+        -FilePath $PnpmCommand `
+        -ArgumentList @("install", "--frozen-lockfile", "--force") `
+        -WorkingDirectory $ExtensionRoot `
+        -Description "Restoring VS Code extension dependencies"
 }
 
 function Publish-Compiler {
@@ -160,26 +233,19 @@ function Publish-DapServer {
 $version = Get-ExtensionVersion
 $pnpmCommand = Resolve-PnpmCommand
 $resolvedCodeCommand = if ($SkipInstall) { $null } else { Resolve-CodeCommand -RequestedCommand $CodeCommand }
+$targetRids = Get-TargetRids
 
 New-Item -ItemType Directory -Force -Path $CompilerRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LspServerRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $DapServerRoot | Out-Null
 
-Publish-Compiler -Rid "win-x64" -Version $version
-Publish-Compiler -Rid "linux-x64" -Version $version
-Publish-Compiler -Rid "linux-arm64" -Version $version
-Publish-LanguageServer -Rid "win-x64" -Version $version
-Publish-LanguageServer -Rid "linux-x64" -Version $version
-Publish-LanguageServer -Rid "linux-arm64" -Version $version
-Publish-DapServer -Rid "win-x64" -Version $version
-Publish-DapServer -Rid "linux-x64" -Version $version
-Publish-DapServer -Rid "linux-arm64" -Version $version
+foreach ($rid in $targetRids) {
+    Publish-Compiler -Rid $rid -Version $version
+    Publish-LanguageServer -Rid $rid -Version $version
+    Publish-DapServer -Rid $rid -Version $version
+}
 
-Invoke-Step `
-    -FilePath $pnpmCommand `
-    -ArgumentList @("install", "--frozen-lockfile") `
-    -WorkingDirectory $ExtensionRoot `
-    -Description "Restoring VS Code extension dependencies"
+Restore-ExtensionDependencies -PnpmCommand $pnpmCommand
 
 Invoke-Step `
     -FilePath $pnpmCommand `
