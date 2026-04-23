@@ -50,6 +50,9 @@ and resumption.
 Move from "blocking call during leaf-task completion" to true async
 networking backed by a readiness-aware runtime.
 
+- Add explicit task wait-state metadata and a readiness registry/event-loop
+    model so pending leaf tasks can suspend without busy-spinning and be
+    resumed coherently from `run`, `all`, and `race`.
 - Use `epoll` on Linux.
 - Use IO completion ports on Windows.
 - Implement non-blocking connect, send, receive, and close for TCP.
