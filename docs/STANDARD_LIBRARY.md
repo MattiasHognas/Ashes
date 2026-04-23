@@ -33,8 +33,10 @@ These types are always available without imports:
  
 ### `Ashes.Http`
 
-- `get(url)` returning `Result(Str, Str)`
-- `post(url, body)` returning `Result(Str, Str)`
+- `get(url)` returning `Task(Str, Str)`
+- `post(url, body)` returning `Task(Str, Str)`
+
+All networking APIs are async-only and must be awaited inside `async` blocks.
 
 Current HTTP support is intentionally small:
 
@@ -45,10 +47,10 @@ Current HTTP support is intentionally small:
 
 ### `Ashes.Net.Tcp`
 
-- `connect(host)(port)` returning `Result(Str, Socket)`
-- `send(socket)(text)` returning `Result(Str, Int)`
-- `receive(socket)(maxBytes)` returning `Result(Str, Str)`
-- `close(socket)` returning `Result(Str, Unit)`
+- `connect(host)(port)` returning `Task(Str, Socket)`
+- `send(socket)(text)` returning `Task(Str, Int)`
+- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `close(socket)` returning `Task(Str, Unit)`
 
 ## Shipped Helper Modules
 

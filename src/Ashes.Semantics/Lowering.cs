@@ -1801,6 +1801,139 @@ public sealed class Lowering
         return new TypeRef.TNamedType(resultSymbol, [new TypeRef.TStr(), successType]);
     }
 
+    private TypeRef.TNamedType CreateStringTaskType(TypeRef successType)
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol) || taskSymbol.TypeParameters.Count != 2)
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        return new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), successType]);
+    }
+
+    private (int, TypeRef) LowerCapturedStringTask(
+        IReadOnlyList<int> captureTemps,
+        TypeRef successType,
+        Expr origin,
+        Func<IReadOnlyList<int>, int> emitBody)
+    {
+        _usesAsync = true;
+
+        var envPtrTemp = NewTemp();
+        if (captureTemps.Count == 0)
+        {
+            Emit(new IrInst.LoadConstInt(envPtrTemp, 0));
+        }
+        else
+        {
+            Emit(new IrInst.Alloc(envPtrTemp, captureTemps.Count * 8));
+            for (int i = 0; i < captureTemps.Count; i++)
+            {
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, captureTemps[i]));
+            }
+        }
+
+        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
+
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTemp;
+        var savedLocal = _nextLocal;
+        var savedScopes = _scopes.ToArray();
+        var savedOwnershipScopes = _ownershipScopes.ToArray();
+        var savedArenaWatermarks = _arenaWatermarks.ToArray();
+        var savedTcoCtx = _tcoCtx;
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        _tcoCtx = null;
+
+        _inst.Clear();
+        _nextTemp = 0;
+        _nextLocal = 0;
+        _localNames.Clear();
+        _localTypes.Clear();
+
+        int stateStructSlot = NewLocal();
+        int dummyArgSlot = NewLocal();
+        Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
+
+        _scopes.Clear();
+        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+        _ownershipScopes.Clear();
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+        _arenaWatermarks.Clear();
+        _arenaWatermarks.Push((-1, -1));
+
+        var coroutineCaptureTemps = new int[captureTemps.Count];
+        for (int i = 0; i < captureTemps.Count; i++)
+        {
+            coroutineCaptureTemps[i] = NewTemp();
+            Emit(new IrInst.LoadEnv(coroutineCaptureTemps[i], i));
+        }
+
+        int bodyTemp = emitBody(coroutineCaptureTemps);
+        Emit(new IrInst.Return(bodyTemp));
+
+        var transformResult = StateMachineTransform.Transform(_inst, captureTemps.Count);
+        var coroutineFunc = new IrFunction(
+            Label: coroutineLabel,
+            Instructions: new List<IrInst>(transformResult.Instructions),
+            LocalCount: _nextLocal,
+            TempCount: Math.Max(_nextTemp, transformResult.MaxTemp + 1),
+            HasEnvAndArgParams: true,
+            Coroutine: new CoroutineInfo(
+                StateCount: transformResult.StateCount,
+                StateStructSize: transformResult.StateStructSize,
+                CaptureCount: captureTemps.Count
+            ),
+            LocalNames: new Dictionary<int, string>(_localNames),
+            LocalTypes: SnapshotLocalTypes()
+        );
+        _funcs.Add(coroutineFunc);
+
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTemp = savedTemp;
+        _nextLocal = savedLocal;
+        _localNames.Clear();
+        _localTypes.Clear();
+        foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
+        _scopes.Clear();
+        foreach (var scope in savedScopes.Reverse())
+        {
+            _scopes.Push(new Dictionary<string, Binding>(scope, StringComparer.Ordinal));
+        }
+        _ownershipScopes.Clear();
+        foreach (var scope in savedOwnershipScopes.Reverse())
+        {
+            _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(scope, StringComparer.Ordinal));
+        }
+        _arenaWatermarks.Clear();
+        foreach (var watermark in savedArenaWatermarks.Reverse())
+        {
+            _arenaWatermarks.Push(watermark);
+        }
+        _tcoCtx = savedTcoCtx;
+
+        var taskType = CreateStringTaskType(successType);
+        _usesClosures = true;
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captureTemps.Count * 8));
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captureTemps.Count));
+        return (taskTemp, taskType);
+    }
+
+    private static bool IsAsyncOnlyNetworkingBuiltin(BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind is BuiltinRegistry.BuiltinValueKind.HttpGet
+            or BuiltinRegistry.BuiltinValueKind.HttpPost
+            or BuiltinRegistry.BuiltinValueKind.NetTcpConnect
+            or BuiltinRegistry.BuiltinValueKind.NetTcpSend
+            or BuiltinRegistry.BuiltinValueKind.NetTcpReceive
+            or BuiltinRegistry.BuiltinValueKind.NetTcpClose;
+    }
+
     private bool TryRequireSocketType(TypeRef type, Expr origin, string diagnosticMessage)
     {
         var prunedType = Prune(type);
@@ -1861,9 +1994,12 @@ public sealed class Lowering
             return (portTemp, prunedPortType);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.NetTcpConnect(target, hostTemp, portTemp));
-        return (target, CreateStringResultType(_resolvedTypes["Socket"]));
+        return LowerCapturedStringTask([hostTemp, portTemp], _resolvedTypes["Socket"], hostArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.NetTcpConnect(target, capturedTemps[0], capturedTemps[1]));
+            return target;
+        });
     }
 
     private (int, TypeRef) LowerHttpGet(Expr urlArg)
@@ -1888,9 +2024,12 @@ public sealed class Lowering
             return (urlTemp, prunedUrlType);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.HttpGet(target, urlTemp));
-        return (target, CreateStringResultType(new TypeRef.TStr()));
+        return LowerCapturedStringTask([urlTemp], new TypeRef.TStr(), urlArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.HttpGet(target, capturedTemps[0]));
+            return target;
+        });
     }
 
     private (int, TypeRef) LowerHttpPost(Expr urlArg, Expr bodyArg)
@@ -1935,9 +2074,12 @@ public sealed class Lowering
             return (bodyTemp, prunedBodyType);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.HttpPost(target, urlTemp, bodyTemp));
-        return (target, CreateStringResultType(new TypeRef.TStr()));
+        return LowerCapturedStringTask([urlTemp, bodyTemp], new TypeRef.TStr(), urlArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.HttpPost(target, capturedTemps[0], capturedTemps[1]));
+            return target;
+        });
     }
 
     private (int, TypeRef) LowerNetTcpSend(Expr socketArg, Expr textArg)
@@ -1976,9 +2118,12 @@ public sealed class Lowering
             return (textTemp, prunedTextType);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.NetTcpSend(target, socketTemp, textTemp));
-        return (target, CreateStringResultType(new TypeRef.TInt()));
+        return LowerCapturedStringTask([socketTemp, textTemp], new TypeRef.TInt(), socketArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.NetTcpSend(target, capturedTemps[0], capturedTemps[1]));
+            return target;
+        });
     }
 
     private (int, TypeRef) LowerNetTcpReceive(Expr socketArg, Expr maxBytesArg)
@@ -2017,9 +2162,12 @@ public sealed class Lowering
             return (maxBytesTemp, prunedMaxBytesType);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.NetTcpReceive(target, socketTemp, maxBytesTemp));
-        return (target, CreateStringResultType(new TypeRef.TStr()));
+        return LowerCapturedStringTask([socketTemp, maxBytesTemp], new TypeRef.TStr(), socketArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.NetTcpReceive(target, capturedTemps[0], capturedTemps[1]));
+            return target;
+        });
     }
 
     private (int, TypeRef) LowerNetTcpClose(Expr socketArg)
@@ -2056,15 +2204,18 @@ public sealed class Lowering
             TryMarkDropped(varExpr.Name);
         }
 
-        var target = NewTemp();
-        Emit(new IrInst.NetTcpClose(target, socketTemp));
-        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
+        return LowerCapturedStringTask([socketTemp], _resolvedTypes["Unit"], socketArg, capturedTemps =>
+        {
+            var target = NewTemp();
+            Emit(new IrInst.NetTcpClose(target, capturedTemps[0]));
+            return target;
+        });
     }
 
     /// <summary>
     /// Ashes.Async.run(task) — synchronous execution.
-    /// Drives the task's coroutine to completion using RunTask,
-    /// then wraps the result in Result(E, A).
+    /// Drives the task's coroutine to completion using RunTask
+    /// and returns the resulting Result(E, A).
     /// </summary>
     private (int, TypeRef) LowerAsyncRun(Expr taskArg)
     {
@@ -2089,17 +2240,8 @@ public sealed class Lowering
         int bodyTemp = NewTemp();
         Emit(new IrInst.RunTask(bodyTemp, taskTemp));
 
-        // Wrap in Ok(value) — returns Result(E, A)
-        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
-        {
-            return ReturnNeverWithDummyTemp();
-        }
-
         var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
-        int adtTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(adtTemp, GetConstructorTag(okConstructor), 1));
-        Emit(new IrInst.SetAdtField(adtTemp, 0, bodyTemp));
-        return (adtTemp, resultType);
+        return (bodyTemp, resultType);
     }
 
     /// <summary>
@@ -2112,7 +2254,7 @@ public sealed class Lowering
 
         var (resultTemp, resultType) = LowerExpr(resultArg);
 
-        if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
+        if (!TryGetStandardResultParts(out var resultSymbol, out _, out _)
             || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
         {
             return ReturnNeverWithDummyTemp();
@@ -2123,39 +2265,8 @@ public sealed class Lowering
         var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
         Unify(resultType, expectedResultType);
 
-        // Extract the Ok payload from the Result and wrap in a completed task.
-        // Check tag to determine Ok vs Error: Ok → extract field[0], Error → pass through.
-        var tagTemp = NewTemp();
-        var expectedOkTagTemp = NewTemp();
-        var isOkTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
-        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-
-        var errorLabel = NewLabel("from_result_error");
-        var endLabel = NewLabel("from_result_end");
-        var resultSlot = NewLocal();
-
-        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
-
-        // Ok path: extract payload, create completed task
-        var payloadTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
-        int okTaskTemp = NewTemp();
-        Emit(new IrInst.CreateCompletedTask(okTaskTemp, payloadTemp));
-        Emit(new IrInst.StoreLocal(resultSlot, okTaskTemp));
-        Emit(new IrInst.Jump(endLabel));
-
-        // Error path: pass through the result value as the task (error propagation placeholder)
-        Emit(new IrInst.Label(errorLabel));
-        int errTaskTemp = NewTemp();
-        Emit(new IrInst.CreateCompletedTask(errTaskTemp, resultTemp));
-        Emit(new IrInst.StoreLocal(resultSlot, errTaskTemp));
-        Emit(new IrInst.Jump(endLabel));
-
-        Emit(new IrInst.Label(endLabel));
         int finalTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(finalTemp, resultSlot));
+        Emit(new IrInst.CreateCompletedTask(finalTemp, resultTemp));
         return (finalTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
     }
 
@@ -2882,6 +2993,15 @@ public sealed class Lowering
                     return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
                 }
 
+                if (!_insideAsync && IsAsyncOnlyNetworkingBuiltin(builtinMember.Kind))
+                {
+                    ReportDiagnostic(
+                        GetSpan(qv),
+                        $"'{resolvedModule}.{qv.Name}' returns Task and can only be called inside an 'async' block.",
+                        DiagnosticCodes.AsyncOnlyNetworkingApi);
+                    return ReturnNeverWithDummyTemp();
+                }
+
                 return builtinMember.Kind switch
                 {
                     BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
@@ -3468,7 +3588,13 @@ public sealed class Lowering
 
         // --- Lower the async body ---
         var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
-        Emit(new IrInst.Return(bodyTemp));
+        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        int okResultTemp = LowerSingleFieldConstructorValue(okConstructor, bodyTemp);
+        Emit(new IrInst.Return(okResultTemp));
 
         // --- Apply state machine transform ---
         var transformResult = StateMachineTransform.Transform(_inst, captures.Count);
@@ -3549,9 +3675,10 @@ public sealed class Lowering
         var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
 
         // Verify the operand is a Task(E, A)
-        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !TryGetStandardResultParts(out _, out var okConstructor, out _))
         {
-            ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task type not registered.");
+            ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task or Result type not registered.");
             return ReturnNeverWithDummyTemp();
         }
 
@@ -3567,10 +3694,34 @@ public sealed class Lowering
             Unify(errorType, _currentAsyncErrorType);
         }
 
-        // AwaitTask synchronously extracts the result
+        // AwaitTask yields the underlying Result(E, A).
         int resultTemp = NewTemp();
         Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
-        return (resultTemp, Prune(successType));
+
+        int tagTemp = NewTemp();
+        int expectedOkTagTemp = NewTemp();
+        int isOkTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+
+        string errorLabel = NewLabel("await_error");
+        string endLabel = NewLabel("await_ok");
+        int payloadSlot = NewLocal();
+
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+        int payloadTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
+        Emit(new IrInst.StoreLocal(payloadSlot, payloadTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        Emit(new IrInst.Label(errorLabel));
+        Emit(new IrInst.Return(resultTemp));
+
+        Emit(new IrInst.Label(endLabel));
+        int finalTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(finalTemp, payloadSlot));
+        return (finalTemp, Prune(successType));
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -6161,7 +6312,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr())))
         );
     }
 
@@ -6169,7 +6320,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr()))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr()))))
         );
     }
 
@@ -6177,7 +6328,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(_resolvedTypes["Socket"]))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"]))))
         );
     }
 
@@ -6185,7 +6336,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TInt()))))
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TInt()))))
         );
     }
 
@@ -6193,7 +6344,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr()))))
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TStr()))))
         );
     }
 
@@ -6201,7 +6352,7 @@ public sealed class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringResultType(_resolvedTypes["Unit"])))
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Unit"])))
         );
     }
 

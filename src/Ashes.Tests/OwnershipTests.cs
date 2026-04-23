@@ -252,11 +252,13 @@ public sealed class OwnershipTests
     {
         var ir = LowerProgram(
             """
-            match Ashes.Net.Tcp.connect("127.0.0.1")(80) with
-                | Error(msg) -> Ashes.IO.print(msg)
-                | Ok(sock) -> Ashes.IO.print("connected")
+            Ashes.IO.print(match Ashes.Async.run(async
+                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
+                in "connected") with
+                | Error(msg) -> msg
+                | Ok(text) -> text)
             """);
-        HasDropInstruction(ir.EntryFunction.Instructions, "Socket").ShouldBeTrue();
+        HasDropInstruction(ir, "Socket").ShouldBeTrue();
     }
 
     // --- Drop IR instruction structure ---
@@ -302,6 +304,24 @@ public sealed class OwnershipTests
             if (inst is IrInst.Drop drop && drop.TypeName == typeName)
                 return true;
         }
+        return false;
+    }
+
+    private static bool HasDropInstruction(IrProgram program, string typeName)
+    {
+        if (HasDropInstruction(program.EntryFunction.Instructions, typeName))
+        {
+            return true;
+        }
+
+        foreach (var func in program.Functions)
+        {
+            if (HasDropInstruction(func.Instructions, typeName))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 

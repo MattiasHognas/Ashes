@@ -131,7 +131,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_network_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("""match Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertLinuxLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("http://127.0.0.1:8080/")) with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]

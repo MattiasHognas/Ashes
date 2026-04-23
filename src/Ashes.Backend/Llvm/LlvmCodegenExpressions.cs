@@ -324,7 +324,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, awaitedTask, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "run_sleep_done");
         StoreMemory(state, awaitedTask, TaskStructLayout.ResultSlot,
-            LlvmApi.ConstInt(state.I64, 0, 0), "run_sleep_result");
+            EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), "run_sleep_result");
         // Get result and store
         LlvmValueHandle sleepResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "run_sleep_result_load");
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, sleepResult, "run_sleep_sub_store");
@@ -577,11 +577,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, "sleep_ms_val");
         EmitNanosleep(state, sleepMs);
 
-        // Mark the sleep task as completed with result = 0 (Unit)
+        // Mark the sleep task as completed with result = Ok(Unit)
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "sleep_mark_done");
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
-            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_result_zero");
+            EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), "sleep_result_zero");
 
         LlvmApi.BuildBr(builder, doneBlock);
     }
@@ -626,15 +626,20 @@ internal static partial class LlvmCodegen
         LlvmValueHandle revSrcSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rsrc");
         LlvmValueHandle revDstSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_rdst");
         LlvmValueHandle taskResSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_task_res");
+        LlvmValueHandle failureSlot = LlvmApi.BuildAlloca(builder, state.I64, "all_failure");
 
         // Initialize: acc = 0 (Nil), list = input
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildStore(builder, taskListPtr, listSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), revDstSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), failureSlot);
 
         // Create all blocks
         LlvmBasicBlockHandle chkBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_chk");
         LlvmBasicBlockHandle bodyBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_body");
         LlvmBasicBlockHandle afterRunBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_after_run");
+        LlvmBasicBlockHandle errorBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_error");
+        LlvmBasicBlockHandle consBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_cons");
         LlvmBasicBlockHandle revIBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revi");
         LlvmBasicBlockHandle revCBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revc");
         LlvmBasicBlockHandle revBBlk = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "all_revb");
@@ -661,13 +666,23 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, taskResult, taskResSlot);
         LlvmApi.BuildBr(builder, afterRunBlk);
 
-        // --- After run: build Cons(result, acc), loop back ---
+        // --- After run: propagate Error immediately, otherwise cons the Ok payload ---
         LlvmApi.PositionBuilderAtEnd(builder, afterRunBlk);
         LlvmValueHandle taskRes = LlvmApi.BuildLoad2(builder, state.I64, taskResSlot, "all_task_res_val");
+        LlvmValueHandle taskResTag = LoadMemory(state, taskRes, 0, "all_task_res_tag");
+        LlvmValueHandle isError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, taskResTag, LlvmApi.ConstInt(state.I64, 0, 0), "all_task_res_is_error");
+        LlvmApi.BuildCondBr(builder, isError, errorBlk, consBlk);
+
+        LlvmApi.PositionBuilderAtEnd(builder, errorBlk);
+        LlvmApi.BuildStore(builder, taskRes, failureSlot);
+        LlvmApi.BuildBr(builder, doneBlk);
+
+        LlvmApi.PositionBuilderAtEnd(builder, consBlk);
+        LlvmValueHandle taskResValue = LoadMemory(state, taskRes, 8, "all_task_res_ok_value");
         LlvmValueHandle prevAcc = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "all_prev_acc");
         // Cons cell: [head @0, tail @8] = 16 bytes
         LlvmValueHandle consNode = EmitAlloc(state, 16);
-        StoreMemory(state, consNode, 0, taskRes, "all_cons_head");
+        StoreMemory(state, consNode, 0, taskResValue, "all_cons_head");
         StoreMemory(state, consNode, 8, prevAcc, "all_cons_tail");
         LlvmApi.BuildStore(builder, consNode, resultSlot);
         LlvmApi.BuildBr(builder, chkBlk);
@@ -698,10 +713,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, rbCons, revDstSlot);
         LlvmApi.BuildBr(builder, revCBlk);
 
-        // --- Done: wrap reversed list in a completed task ---
+        // --- Done: wrap reversed list in Ok(...) and return a completed task ---
         LlvmApi.PositionBuilderAtEnd(builder, doneBlk);
+        LlvmValueHandle failureResult = LlvmApi.BuildLoad2(builder, state.I64, failureSlot, "all_failure_result");
+        LlvmValueHandle hasFailure = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, failureResult, LlvmApi.ConstInt(state.I64, 0, 0), "all_has_failure");
         LlvmValueHandle finalList = LlvmApi.BuildLoad2(builder, state.I64, revDstSlot, "all_final_list");
-        return EmitCreateCompletedTask(state, finalList);
+        LlvmValueHandle successResult = EmitResultOk(state, finalList);
+        LlvmValueHandle finalResult = LlvmApi.BuildSelect(builder, hasFailure, failureResult, successResult, "all_final_result");
+        return EmitCreateCompletedTask(state, finalResult);
     }
 
     // ── Async Race ─────────────────────────────────────────────
@@ -731,9 +750,9 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildCondBr(builder, isNil, emptyBlk, nonEmptyBlk);
 
-        // --- Empty list: result = 0 (unit) ---
+        // --- Empty list: result = Ok(Unit) ---
         LlvmApi.PositionBuilderAtEnd(builder, emptyBlk);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), resultSlot);
         LlvmApi.BuildBr(builder, doneBlk);
 
         // --- Non-empty: extract and run first task (head @offset 0) ---

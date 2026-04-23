@@ -4,7 +4,7 @@ Planned features and future work for the Ashes language and ecosystem.
 
 | Feature | Description |
 |---------|-------------|
-| [Async Networking](ASYNC_NETWORKING.md) | Non-blocking TCP/HTTP inside `async` |
+| [Async Networking](ASYNC_NETWORKING.md) | Async-only TCP/HTTP inside `async`; non-blocking event loop optimization remains |
 | [Package Manager](PACKAGE_MANAGER.md) | Local deps first, lock file second, registry third |
 | [Compiler Optimization](COMPILER_OPTIMIZATION.md) | LLVM passes, memory management, codegen improvements |
 | HTTPS/TLS | TLS, encryption, certificates |

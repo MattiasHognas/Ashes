@@ -43,23 +43,23 @@ Built-in standard library members live under reserved `Ashes` modules.
 
 Canonical built-ins available today include:
 
-- `Ashes.IO.print(expr)`
-- `Ashes.IO.panic("message")`
-- `Ashes.IO.args`
-- `Ashes.IO.write(expr)`
-- `Ashes.IO.writeLine(expr)`
-- `Ashes.IO.readLine()`
-- `Ashes.File.readText(path)`
-- `Ashes.File.writeText(path, text)`
-- `Ashes.File.exists(path)`
-- `Ashes.Http.get(url)`
-- `Ashes.Http.post(url, body)`
-- `Ashes.Net.Tcp.connect(host)(port)`
-- `Ashes.Net.Tcp.send(socket)(text)`
-- `Ashes.Net.Tcp.receive(socket)(maxBytes)`
-- `Ashes.Net.Tcp.close(socket)`
-- `Ashes.Async.run(task)`
-- `Ashes.Async.fromResult(result)`
+- `Ashes.IO.print(expr)` returning `Unit`
+- `Ashes.IO.panic("message")` returning `Unit`
+- `Ashes.IO.args` returning `List(Str)`
+- `Ashes.IO.write(expr)` returning `Unit`
+- `Ashes.IO.writeLine(expr)` returning `Unit`
+- `Ashes.IO.readLine()` returning `Maybe(Str)`
+- `Ashes.File.readText(path)` returning `Result(Str, Str)`
+- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)`
+- `Ashes.File.exists(path)` returning `Result(Str, Bool)`
+- `Ashes.Http.get(url)` returning `Task(Str, Str)`
+- `Ashes.Http.post(url, body)` returning `Task(Str, Str)`
+- `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`
+- `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`
+- `Ashes.Async.run(task)` returning `Result(Str, 'a)`
+- `Ashes.Async.fromResult(result)` returning `Task(Str, 'a)`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
@@ -114,19 +114,20 @@ Ashes strings represent UTF-8 text.
 
 Filesystem text APIs operate on UTF-8 encoded files:
 
-- `Ashes.File.readText(path)` returns `Result(Str, Str)`.
-- `Ashes.File.writeText(path, text)` returns `Result(Str, Unit)`.
-- `Ashes.File.exists(path)` returns `Result(Str, Bool)`.
+- `Ashes.File.readText(path)` returning `Result(Str, Str)`.
+- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)`.
+- `Ashes.File.exists(path)` returning `Result(Str, Bool)`.
 - Filesystem text is interpreted and written as UTF-8.
 - Invalid UTF-8 passed through `Ashes.File.readText` returns `Error(...)`.
 - Binary file APIs are not part of the current language surface.
 
 Networking APIs live under `Ashes.Net.Tcp`:
 
-- `Ashes.Net.Tcp.connect(host)(port)` returns `Result(Str, Socket)`.
-- `Ashes.Net.Tcp.send(socket)(text)` returns `Result(Str, Int)`.
-- `Ashes.Net.Tcp.receive(socket)(maxBytes)` returns `Result(Str, Str)`.
-- `Ashes.Net.Tcp.close(socket)` returns `Result(Str, Unit)`.
+- `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`.
+- `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`.
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`.
+- `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`.
+- All networking APIs are async-only and must be called inside `async` blocks.
 
 Networking rules:
 
@@ -148,8 +149,18 @@ Networking rules:
 
 Basic HTTP client APIs live under `Ashes.Http`:
 
-- `Ashes.Http.get(url)` returns `Result(Str, Str)`.
-- `Ashes.Http.post(url, body)` returns `Result(Str, Str)`.
+- `Ashes.Http.get(url)` returning `Task(Str, Str)`.
+- `Ashes.Http.post(url, body)` returning `Task(Str, Str)`.
+
+Example:
+
+```ash
+match Ashes.Async.run(async
+  let response = await Ashes.Http.get("http://example.com")
+  in response) with
+  | Ok(text) -> Ashes.IO.print(text)
+  | Error(err) -> Ashes.IO.print(err)
+```
 
 Current HTTP rules:
 
@@ -1041,26 +1052,26 @@ Both styles may be mixed freely.
 
 The built-in `Ashes.IO` module exports:
 
-- `print(expr)` — prints the evaluated expression to standard output.
-- `panic("message")` — prints the message and aborts with a non-zero exit code.
-  `panic` has Never/Bottom behavior, so it typechecks in any expression context.
-- `args` — a `List<String>` containing command-line arguments passed to the
+- `print(expr)` - prints the evaluated expression to standard output.
+- `panic("message")` - prints the message and aborts with a non-zero exit code.
+  `panic` - has Never/Bottom behavior, so it typechecks in any expression context.
+- `args` - a `List<String>` containing command-line arguments passed to the
   compiled program (excluding the executable path/name at `argv[0]`).
-- `write("text")` — writes a string to standard output without adding a newline.
-- `writeLine("text")` — writes a string to standard output and then writes `\n`.
-- `readLine()` — reads one line from standard input and returns `Some(line)` or `None` on EOF.
+- `write("text")` - writes a string to standard output without adding a newline.
+- `writeLine("text")` - writes a string to standard output and then writes `\n`.
+- `readLine()` - reads one line from standard input and returns `Some(line)` or `None` on EOF.
 
 Other built-in runtime modules are also always available through qualified access:
 
-- `Ashes.File.readText(path)` — `Result(Str, Str)` UTF-8 file read.
-- `Ashes.File.writeText(path, text)` — `Result(Str, Unit)` UTF-8 file write.
-- `Ashes.File.exists(path)` — `Result(Str, Bool)` filesystem existence check.
-- `Ashes.Net.Tcp.connect(host)(port)` — `Result(Str, Socket)` blocking TCP connect.
-- `Ashes.Net.Tcp.send(socket)(text)` — `Result(Str, Int)` blocking TCP send.
-- `Ashes.Net.Tcp.receive(socket)(maxBytes)` — `Result(Str, Str)` blocking TCP receive.
-- `Ashes.Net.Tcp.close(socket)` — `Result(Str, Unit)` explicit socket close.
-- `Ashes.Http.get(url)` — `Result(Str, Str)` blocking HTTP GET for plain `http://` URLs.
-- `Ashes.Http.post(url, body)` — `Result(Str, Str)` blocking HTTP POST for plain `http://` URLs.
+- `Ashes.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
+- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
+- `Ashes.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
+- `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)` - async TCP connect.
+- `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)` - async TCP send.
+- `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TCP receive.
+- `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)` - explicit async socket close.
+- `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for plain `http://` URLs.
+- `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for plain `http://` URLs.
 
 ## 13.3 Built-in Runtime Types
 
@@ -1202,7 +1213,7 @@ namespace. User projects cannot override them with project-local modules.
 ## 13.6 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules are tracked in
-`future/FUTURE_FEATURES.md`.
+[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md).
 
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
@@ -1548,8 +1559,8 @@ computation that may fail with error type `E` or succeed with value type `A`.
 - `await <expr>` where `<expr> : Task(E, A)` produces `A`.
 - `await` may only appear inside an `async` block. Using `await` outside
   `async` is a compile-time error (`ASH010`).
-- Tasks are currently infallible: `Ashes.Async.run` always returns `Ok(value)`.
-  Task failure/error propagation semantics are reserved for a future release.
+- Awaiting a task propagates `Error(e)` out of the enclosing `async` block.
+- `Ashes.Async.run(task)` returns the task's final `Result(E, A)`.
 
 ## 19.4 Async Let (let!)
 
@@ -1662,7 +1673,7 @@ of the first task:
 
 # 20. Unsupported (Future)
 
-See `future/FUTURE_FEATURES.md` for the list of planned but not yet supported features.
+See [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 
 Note: project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
 (`ashes.json` + `PROJECT_SPEC.md`) and are resolved before expression parsing. Built-in
