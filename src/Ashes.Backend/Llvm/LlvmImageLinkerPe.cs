@@ -104,14 +104,24 @@ internal static partial class LlvmImageLinker
         int sendHintOffset = WriteHintName(rdataStream, 0, "send");
         int recvHintOffset = WriteHintName(rdataStream, 0, "recv");
         int closeSocketHintOffset = WriteHintName(rdataStream, 0, "closesocket");
+        int ioctlSocketHintOffset = WriteHintName(rdataStream, 0, "ioctlsocket");
+        int wsaGetLastErrorHintOffset = WriteHintName(rdataStream, 0, "WSAGetLastError");
+        int bindHintOffset = WriteHintName(rdataStream, 0, "bind");
+        int setSockOptHintOffset = WriteHintName(rdataStream, 0, "setsockopt");
+        int wsaIoctlHintOffset = WriteHintName(rdataStream, 0, "WSAIoctl");
+        int wsaSendHintOffset = WriteHintName(rdataStream, 0, "WSASend");
+        int wsaRecvHintOffset = WriteHintName(rdataStream, 0, "WSARecv");
+        int wsaPollHintOffset = WriteHintName(rdataStream, 0, "WSAPoll");
         int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
         int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
         int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
+        int createIoCompletionPortHintOffset = WriteHintName(rdataStream, 0, "CreateIoCompletionPort");
+        int getQueuedCompletionStatusHintOffset = WriteHintName(rdataStream, 0, "GetQueuedCompletionStatus");
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
-        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset];
+        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset];
 
         // Write IAT (Import Address Table) — 8 bytes per entry + 8-byte null terminator per DLL
         AlignStream(rdataStream, 8);
@@ -166,6 +176,8 @@ internal static partial class LlvmImageLinker
         ulong sleepIatVa = kernel32IatVa + 10 * 8;
         ulong virtualAllocIatVa = kernel32IatVa + 11 * 8;
         ulong virtualFreeIatVa = kernel32IatVa + 12 * 8;
+        ulong createIoCompletionPortIatVa = kernel32IatVa + 13 * 8;
+        ulong getQueuedCompletionStatusIatVa = kernel32IatVa + 14 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -173,6 +185,14 @@ internal static partial class LlvmImageLinker
         ulong sendIatVa = ws2IatVa + 3 * 8;
         ulong recvIatVa = ws2IatVa + 4 * 8;
         ulong closeSocketIatVa = ws2IatVa + 5 * 8;
+        ulong ioctlSocketIatVa = ws2IatVa + 6 * 8;
+        ulong wsaGetLastErrorIatVa = ws2IatVa + 7 * 8;
+        ulong bindIatVa = ws2IatVa + 8 * 8;
+        ulong setSockOptIatVa = ws2IatVa + 9 * 8;
+        ulong wsaIoctlIatVa = ws2IatVa + 10 * 8;
+        ulong wsaSendIatVa = ws2IatVa + 11 * 8;
+        ulong wsaRecvIatVa = ws2IatVa + 12 * 8;
+        ulong wsaPollIatVa = ws2IatVa + 13 * 8;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -210,6 +230,8 @@ internal static partial class LlvmImageLinker
                 ["__imp_Sleep"] = sleepIatVa,
                 ["__imp_VirtualAlloc"] = virtualAllocIatVa,
                 ["__imp_VirtualFree"] = virtualFreeIatVa,
+                ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
+                ["__imp_GetQueuedCompletionStatus"] = getQueuedCompletionStatusIatVa,
                 ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
                 ["__imp_WSAStartup"] = wsaStartupIatVa,
                 ["__imp_socket"] = socketIatVa,
@@ -217,6 +239,14 @@ internal static partial class LlvmImageLinker
                 ["__imp_send"] = sendIatVa,
                 ["__imp_recv"] = recvIatVa,
                 ["__imp_closesocket"] = closeSocketIatVa,
+                ["__imp_ioctlsocket"] = ioctlSocketIatVa,
+                ["__imp_WSAGetLastError"] = wsaGetLastErrorIatVa,
+                ["__imp_bind"] = bindIatVa,
+                ["__imp_setsockopt"] = setSockOptIatVa,
+                ["__imp_WSAIoctl"] = wsaIoctlIatVa,
+                ["__imp_WSASend"] = wsaSendIatVa,
+                ["__imp_WSARecv"] = wsaRecvIatVa,
+                ["__imp_WSAPoll"] = wsaPollIatVa,
                 ["__chkstk"] = chkstkStubVa
             });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)

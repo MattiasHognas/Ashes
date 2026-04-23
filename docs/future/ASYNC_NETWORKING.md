@@ -1,329 +1,67 @@
-# Async-Only TCP/HTTP API Redesign
+# Async Networking — Status & Roadmap
 
-Convert existing blocking TCP/HTTP operations to non-blocking variants inside async blocks, powered by a platform-specific event loop (epoll on Linux, IO completion ports on Windows).
+Async-only TCP/HTTP is now part of the language surface.
+The public APIs return `Task(E, A)` and must be used inside `async`
+blocks with `await`.
 
-## Deliverables:
-
-Non-blocking TCP connect/send/receive
-Async HTTP get/post atop async TCP
-Event loop runtime with I/O readiness
-Tests: concurrent HTTP requests, parallel TCP connections, async resource cleanup, error propagation across awaits
-
-## Goal
-
-Remove all synchronous TCP/HTTP APIs and replace them with async-only
-versions.  After this change, `Ashes.Http.get`, `Ashes.Http.post`,
-`Ashes.Net.Tcp.connect`, `.send`, `.receive`, and `.close` will all
-return `Task(E, A)` instead of `Result(E, A)`, and can only be used
-inside `async` blocks with `await`.
-
-## Current State
-
-| API | Return type |
-|-----|-------------|
-| `Ashes.Http.get(url)` | `Result(Str, Str)` — synchronous, blocking |
-| `Ashes.Http.post(url, body)` | `Result(Str, Str)` — synchronous, blocking |
-| `Ashes.Net.Tcp.connect(host)(port)` | `Result(Str, Socket)` — synchronous, blocking |
-| `Ashes.Net.Tcp.send(socket)(text)` | `Result(Str, Int)` — synchronous, blocking |
-| `Ashes.Net.Tcp.receive(socket)(maxBytes)` | `Result(Str, Str)` — synchronous, blocking |
-| `Ashes.Net.Tcp.close(socket)` | `Result(Str, Unit)` — synchronous, blocking |
-
-## Target State
-
-| API | Return type |
-|-----|-------------|
-| `Ashes.Http.get(url)` | `Task(Str, Str)` — async-only |
-| `Ashes.Http.post(url, body)` | `Task(Str, Str)` — async-only |
-| `Ashes.Net.Tcp.connect(host)(port)` | `Task(Str, Socket)` — async-only |
-| `Ashes.Net.Tcp.send(socket)(text)` | `Task(Str, Int)` — async-only |
-| `Ashes.Net.Tcp.receive(socket)(maxBytes)` | `Task(Str, Str)` — async-only |
-| `Ashes.Net.Tcp.close(socket)` | `Task(Str, Unit)` — async-only |
-
-All six APIs become compiler-provided networking builtins that must be
-called inside `async` blocks and awaited.  There is no synchronous
-fallback.
+The current implementation now includes explicit task wait metadata, a
+pending-leaf wait path in the task runner, shared task-list scheduling
+for `Ashes.Async.all` / `race`, staged HTTP leaf tasks built on top of
+TCP leaf tasks, non-blocking TCP stepping on Linux, a Windows IO
+completion port runtime for TCP leaf tasks, and deterministic fixture
+coverage for cleanup, error propagation, and networking under task
+combinators. The substantial runtime work tracked in this document is
+now landed.
 
 ------------------------------------------------------------------------
 
-## Phase 1 — Update Language Specification (`docs/LANGUAGE_SPEC.md`)
+## Completed Work
 
-Spec-first is a ground rule.  Update before any implementation.
+The async-only API redesign is partially complete:
 
-1. **Section 1 (Program Structure, lines ~55-60)** — Update the builtin
-   listing to show the new return types (`Task(Str, ...)` instead of
-   `Result(Str, ...)`).
-2. **Section 2.2 (Networking APIs, lines ~124-161)** —
-   - Change all TCP return types from `Result(Str, X)` to `Task(Str, X)`.
-   - Change all HTTP return types from `Result(Str, Str)` to
-     `Task(Str, Str)`.
-   - Add a rule: "All networking APIs return `Task` and must be used
-     inside `async` blocks."
-   - Remove "blocking" from the descriptions.
-   - Update examples to show `async`/`await` usage.
-3. **Section 15 (Builtins, lines ~1058-1063)** — Update the builtin
-   summary from "blocking TCP/HTTP" to "async TCP/HTTP", change return
-   types.
-4. **Section 19 (Async, lines ~1528-1582)** — Verify the examples that
-   show `Ashes.Http.get` are consistent with the new return types (the
-   examples already `await` the HTTP call, which becomes correct once the
-   function returns `Task` directly).
-
-## Phase 2 — Update Standard Library Docs (`docs/STANDARD_LIBRARY.md`)
-
-5. Update **Ashes.Http** section: change return types to
-   `Task(Str, Str)`.
-6. Update **Ashes.Net.Tcp** section: change return types to
-   `Task(Str, Socket)`, `Task(Str, Int)`, `Task(Str, Str)`,
-   `Task(Str, Unit)`.
-7. Add note: "All networking APIs are async-only and must be awaited
-   inside `async` blocks."
-
-## Phase 2.5 — Runtime ABI Boundary (Future FFI Compatibility)
-
-To ensure that the async networking implementation does not block
-future user-facing interop (FFI), all TCP/HTTP builtins must be lowered
-through a **stable runtime ABI layer**, rather than directly embedding
-backend-specific behavior.
-
-### Core Rule
-
-All networking builtins must ultimately lower to calls into **named
-runtime symbols** (e.g. native functions), rather than being treated as
-special-case codegen instructions indefinitely.
-
-This applies even if the initial implementation still uses existing IR
-instructions internally.
-
-### Required Design Constraints
-
-1. **Explicit Runtime Symbols**
-
-   Each operation must have a well-defined runtime entry point:
-
-   - `ashes_tcp_connect`
-   - `ashes_tcp_send`
-   - `ashes_tcp_receive`
-   - `ashes_tcp_close`
-   - `ashes_http_get`
-   - `ashes_http_post`
-
-   These symbols form part of the **Ashes runtime ABI**.
-
-2. **Stable Calling Convention**
-
-   The lowering layer must define (and consistently use):
-
-   - how arguments are passed (strings, ints, sockets)
-   - how results are returned (`Result`-like or split error/value)
-   - how async tasks wrap these calls
-   - how errors are represented across the boundary
-
-   This convention must be consistent across all runtime calls.
-
-3. **No Backend-Specific Semantics in Lowering**
-
-   Lowering must not depend on:
-   - LLVM-specific behavior
-   - direct syscalls
-   - platform-specific logic
-
-   All such behavior must live behind the runtime ABI layer.
-
-4. **Resource Handles Are Opaque**
-
-   Types like `Socket` must be treated as opaque handles at the ABI level.
-
-   - The compiler must not assume layout
-   - The runtime owns allocation and destruction
-   - Ownership is transferred explicitly via return values and Drop
-
-5. **Separation of Concerns**
-
-   The system must remain layered:
-
-   - Ashes source → high-level APIs (`Http`, `Tcp`)
-   - Lowering → runtime ABI calls
-   - Runtime → platform-specific implementation (blocking or non-blocking)
-
-6. **Forward Compatibility with FFI**
-
-   This ABI layer will later be reused for user-facing interop.
-
-   Therefore:
-   - Do not hardcode special-case handling for networking only
-   - Do not bypass the ABI for performance shortcuts
-   - Treat networking builtins as first-class runtime calls
-
-### Initial Implementation Allowance
-
-For this phase, it is acceptable to:
-
-- keep existing IR instructions (`HttpGet`, `NetTcpConnect`, etc.)
-- wrap them in tasks as described
-
-However, the design must allow these IR instructions to be **replaced
-or re-lowered** into runtime ABI calls in a future phase without
-changing language semantics.
-
-### Rationale
-
-This ensures:
-
-- HTTPS/TLS can later be implemented as runtime functionality without
-  changing the language
-- user-facing FFI can reuse the same calling convention
-- the compiler can eventually be self-hosted in Ashes without being
-  tied to hidden backend intrinsics
-
-## Phase 3 — Semantics: Builtin Registry (`src/Ashes.Semantics/BuiltinRegistry.cs`)
-
-8. **HTTP/TCP dispatch** — Currently `Http`/`Tcp` are `BuiltinValueKind`
-   entries dispatched as qualified builtin calls.  Two options:
-
-   *Option A (recommended):* Keep `BuiltinValueKind` entries as-is
-   (`HttpGet`, `HttpPost`, `NetTcpConnect`, etc.) and change their
-   lowering methods to wrap the existing blocking IR in a
-   coroutine/task.
-
-   *Option B:* Move them to `IntrinsicKind` so they flow through the
-   intrinsic lowering path.
-
-9. **Update type bindings** — In the `CreateXxxBinding()` methods in
-   `Lowering.cs`, change return types from `Result(Str, X)` to
-   `Task(Str, X)`.
-
-## Phase 4 — Semantics: Lowering (`src/Ashes.Semantics/Lowering.cs`)
-
-This is the most complex phase.  Each of the 6 APIs must produce
-`Task(E, A)` instead of `Result(E, A)`.
-
-**Recommended approach (Option A):** Each API remains a builtin
-(`BuiltinValueKind`) whose lowering creates an async block internally
-(like `async { <blocking-call> }`).
-The blocking IR instruction stays the same at codegen level; the
-lowering wraps it in `CreateTask` + coroutine.  The caller must `await`
-it inside their own `async` block.
-
-This achieves the API design goal (async-only, no sync alternatives)
-without requiring a full event loop rewrite.  The blocking syscalls
-still happen, but inside a task coroutine.  The event loop can be
-optimized later.
-
-Implementation per API:
-
-10. **`LowerHttpGet`** — Change return type from `Result(Str, Str)` to
-    `Task(Str, Str)`.  Wrap the `HttpGet` IR instruction inside a
-    coroutine body that produces a `CreateTask`.
-11. **`LowerHttpPost`** — Same pattern with `HttpPost`.
-12. **`LowerNetTcpConnect`** — Wrap `NetTcpConnect` IR in a task
-    returning `Task(Str, Socket)`.
-13. **`LowerNetTcpSend`** — Wrap `NetTcpSend` IR in a task returning
-    `Task(Str, Int)`.
-14. **`LowerNetTcpReceive`** — Wrap `NetTcpReceive` IR in a task
-    returning `Task(Str, Str)`.
-15. **`LowerNetTcpClose`** — Wrap `NetTcpClose` IR in a task returning
-    `Task(Str, Unit)`.
-16. **Update `CreateXxxBinding()` methods** — Each of the 6 methods must
-    return `Task(Str, X)` instead of `Result(Str, X)` in their type
-    scheme.
-17. **Enforce async-only usage** — Add a compiler check (new diagnostic,
-    e.g. `ASH012`) that TCP/HTTP calls outside `async` blocks produce a
-    compile-time error.
-
-## Phase 5 — Semantics: Supporting Changes
-
-18. **`ProjectSupport.CollectReferencedNames`** — Verify all `Expr`
-    types are handled (any new AST nodes need a case here).
-19. **`IrOptimizer.CollectUsedTemps` / `StateMachineTransform`** —
-    Verify the new task-wrapped IR instructions are handled in optimizer
-    and state machine passes.
-20. **Type checker** — When HTTP/TCP returns `Task(Str, X)`, the `await`
-    of that value should correctly produce `X` via existing Task/await
-    unification.
-
-## Phase 6 — Backend: Codegen (No changes needed for Option A)
-
-21. **No IR instruction changes** — The existing `HttpGet`, `HttpPost`,
-    `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, `NetTcpClose` IR
-    instructions remain.  They still perform blocking I/O but are now
-    always emitted inside a coroutine function.
-22. **Verify codegen works inside coroutines** — The blocking network
-    instructions must work correctly when emitted inside a coroutine
-    function (called from `EmitRunTask`'s event loop).  The coroutine is
-    a regular LLVM function, so standard blocking calls should work fine.
-
-## Phase 7 — Update All Tests
-
-23. **Update TCP tests** (`tcp_connect_success.ash`,
-    `tcp_connect_localhost.ash`, `tcp_close.ash`, `tcp_send.ash`,
-    `tcp_receive.ash`, `tcp_receive_bounded.ash`,
-    `tcp_connect_invalid_host.ash`) — Wrap all TCP calls in `async`
-    blocks, `await` each operation, run with `Ashes.Async.run`, update
-    expected output where needed.
-24. **Update HTTP tests** (`http_get.ash`, `http_post.ash`,
-    `http_https_not_supported.ash`, `http_informational_status.ash`,
-    `http_non_success_status.ash`) — Wrap in `async` blocks, `await`
-    each HTTP call, run with `Ashes.Async.run`.
-25. **Update compile-error tests** (`tcp_send_after_close.ash`,
-    `tcp_receive_invalid_max_bytes.ash`) — Update to use async/await
-    while still triggering the same errors.
-26. **Update async tests that use HTTP** (e.g. `async_basic.ash`) —
-    Verify they still work; the `let!` examples already show
-    `await Ashes.Http.get(...)`.
-27. **Add new test** `tcp_connect_outside_async.ash` — Verify calling
-    `Ashes.Net.Tcp.connect` outside `async` produces a new dedicated
-    async-only API compile error code.
-28. **Add new test** `http_get_outside_async.ash` — Verify calling
-    `Ashes.Http.get` outside `async` produces the same new dedicated
-    async-only API compile error code.
-
-## Phase 8 — Format All `.ash` Files
-
-29. Run `dotnet run --project src/Ashes.Cli -- fmt -w tests/` on all
-    modified test files.
-
-## Phase 9 — Update Future Features Doc
-
-30. Update `docs/FUTURE_FEATURES.md`: Mark "Async Networking" API
-    surface as complete.  The remaining future work is the event loop
-    optimisation (replacing blocking syscalls with non-blocking +
-    `epoll`/IOCP).
+| Area | What was done |
+|------|---------------|
+| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Http.get`, `Ashes.Http.post`, `Ashes.Net.Tcp.connect`, `send`, `receive`, and `close` as returning `Task(Str, ...)` and requiring `async`/`await`. |
+| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now describes HTTP and TCP as async-only APIs returning `Task(Str, ...)`. |
+| **Builtin registry shape** | Networking remains under `BuiltinValueKind` and is still dispatched as qualified builtins (`HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, `NetTcpClose`). |
+| **Type bindings** | The `CreateXxxBinding()` methods in `Lowering.cs` now return `Task(Str, X)` instead of `Result(Str, X)` for all six networking builtins. |
+| **Leaf-task lowering** | `LowerHttpGet`, `LowerHttpPost`, `LowerNetTcpConnect`, `LowerNetTcpSend`, `LowerNetTcpReceive`, and `LowerNetTcpClose` now lower directly to dedicated task-producing IR instructions: `CreateHttpGetTask`, `CreateHttpPostTask`, `CreateTcpConnectTask`, `CreateTcpSendTask`, `CreateTcpReceiveTask`, and `CreateTcpCloseTask`. |
+| **Async-only enforcement** | Calling the networking builtins outside `async` now emits `ASH012`, a dedicated compile-time diagnostic for async-only networking APIs. |
+| **Supporting compiler passes** | The IR optimizer and state-machine transform now understand the dedicated networking task instructions, so lowering, temp remapping, and suspend/resume analysis all preserve them correctly. |
+| **Runtime ABI symbols** | The LLVM backend now emits named runtime symbols for networking: `ashes_tcp_connect`, `ashes_tcp_send`, `ashes_tcp_receive`, `ashes_tcp_close`, `ashes_http_get`, and `ashes_http_post`. |
+| **ABI-based lowering path** | HTTP/TCP instruction codegen and `Drop(Socket)` now route through the runtime ABI symbols instead of calling the backend networking helpers directly at each instruction site. |
+| **Platform runtime shims** | The named runtime symbols are currently implemented as compiler-emitted runtime helper functions in the generated module, keeping Linux and Windows socket details behind the ABI layer. |
+| **Leaf-step ABI boundary** | Networking leaf tasks are now stepped through dedicated task-level runtime symbols (`ashes_step_tcp_connect_task`, `ashes_step_tcp_send_task`, `ashes_step_tcp_receive_task`, `ashes_step_tcp_close_task`, `ashes_step_http_get_task`, `ashes_step_http_post_task`) that take the task pointer and return a step status. |
+| **Task runtime integration** | The LLVM task runner now recognizes negative-state leaf tasks for sleep, TCP, and HTTP operations, stores task arguments in the task header, completes those tasks through the ABI layer, and propagates awaited leaf-task results back into parent coroutines. |
+| **Task wait metadata** | The task header now carries explicit wait metadata (`WaitKind`, `WaitHandle`, `WaitData0`, `WaitData1`) so leaf tasks can preserve readiness state and incremental progress across steps. |
+| **Pending-leaf wait path** | The LLVM task runner now blocks on registered pending leaf waits instead of immediately busy-rechecking leaf tasks in the root-task and awaited-subtask run loops. |
+| **Linux pending TCP stepping** | The Linux TCP connect/send/receive leaf-step helpers now preserve per-task progress, switch sockets into non-blocking mode, return pending on would-block conditions, and resume through `epoll` readiness waits instead of completing through the older blocking helper path. |
+| **Windows IOCP TCP stepping** | The Windows TCP connect/send/receive leaf-step helpers now preserve per-task progress, resolve `ConnectEx` dynamically, issue overlapped `ConnectEx` / `WSASend` / `WSARecv` operations, and resume through a process-global IO completion port instead of `WSAPoll` readiness waits. |
+| **Platform wait scaffolding** | The backend now carries the Linux syscall and Windows import/link scaffolding needed for task waits (`epoll` syscalls on Linux; Winsock + IOCP imports and PE linker entries on Windows). |
+| **Shared combinator scheduler** | `Ashes.Async.all` and `Ashes.Async.race` now step tasks incrementally through shared runtime helpers that can drive arbitrary tasks until they are pending or complete, wait on any registered pending task in the list, and on Windows resume the task whose IOCP completion actually woke the wait before continuing the scan. |
+| **Staged HTTP leaf tasks** | HTTP get/post leaf tasks no longer call the old direct blocking helper path; they now advance through connect, send, receive, and close stages on top of TCP leaf tasks and parse the final HTTP response once the staged transport work completes. |
+| **Backend compatibility path** | The existing `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, and `NetTcpClose` IR instructions remain intact and still call through the runtime ABI, but the public async networking surface now lowers through the dedicated leaf-task IR path instead of wrapping those instructions in coroutines. |
+| **Test migration** | The HTTP and TCP end-to-end tests were rewritten to use `async`, `await`, and `Ashes.Async.run`, and compile-error coverage was added for using HTTP/TCP outside `async`. |
+| **Concurrency-focused fixture tests** | The socket fixture suite now covers async cleanup after `Tcp.close`, HTTP error propagation across `await`, and deterministic HTTP composition under `Ashes.Async.all` / `Ashes.Async.race`. |
+| **Full verification rerun** | `Ashes.Tests`, `Ashes.Lsp.Tests`, the full `.ash` suite, and `dotnet format Ashes.slnx --verify-no-changes` were rerun after the runtime and test changes and now pass together. |
+| **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the async-only API surface as complete while leaving the non-blocking runtime optimization as future work. |
 
 ------------------------------------------------------------------------
 
-## File Impact Summary
+## Ordered Roadmap — Next Work Items
 
-| File | Change type |
-|------|-------------|
-| `docs/LANGUAGE_SPEC.md` | Return types, examples, rules |
-| `docs/STANDARD_LIBRARY.md` | Return types, async note |
-| `docs/FUTURE_FEATURES.md` | Status update |
-| `src/Ashes.Semantics/BuiltinRegistry.cs` | Possibly move to `IntrinsicKind` |
-| `src/Ashes.Semantics/Lowering.cs` | Major — wrap 6 APIs in Task, new diagnostic, updated type bindings |
-| `src/Ashes.Semantics/Ir.cs` | Possibly new IR variant or no change |
-| `src/Ashes.Semantics/Diagnostics.cs` | New `ASH011` diagnostic |
-| `tests/*.ash` | ~15 test files updated + 2 new error tests |
+The public async networking surface, cross-platform non-blocking TCP
+leaf stepping, Windows IOCP runtime, combinator behavior, and current
+verification gaps tracked by this document are now addressed.
 
-## Risk Assessment
+No additional runtime items remain in this roadmap at the moment.
 
-- **Low risk** — Spec + doc changes, test updates, formatter.
-- **Medium risk** — Lowering changes: wrapping blocking IR in coroutine
-  tasks requires careful handling of the state machine transform,
-  capture analysis, and scope isolation.
-- **Key invariant** — The blocking network syscalls must work correctly
-  when emitted inside coroutine functions.  The coroutine is just a
-  regular function pointer called from `EmitRunTask`, so standard
-  blocking calls should work fine.
-- **Socket ownership** — Socket is a resource type with Drop semantics.
-  When wrapped in a task the socket's lifetime must be properly tracked.
-  The socket is created inside the coroutine and returned as the task
-  result; ownership transfers to the caller upon `await`.
+------------------------------------------------------------------------
 
-## Implementation Order
+## Explicitly Deferred
 
-1. Spec first (Phases 1–2.5)
-2. Semantics (Phases 3–5) — all 6 APIs change together
-3. Backend verification (Phase 6)
-4. Tests (Phases 7–8)
-5. Docs cleanup (Phase 9)
-6. Build + test verification
+The following items are not implemented yet and should not be described
+as done:
+
+- The current runtime ABI symbols are compiler-emitted helper functions,
+    not a separately packaged shared runtime yet.

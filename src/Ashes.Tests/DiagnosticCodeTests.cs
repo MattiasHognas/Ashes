@@ -70,6 +70,14 @@ public sealed class DiagnosticCodeTests
         diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
     }
 
+    [Test]
+    public void Async_only_networking_api_should_emit_ash012_outside_async()
+    {
+        var diag = LowerExpression("Ashes.Http.get(\"http://example.com\")");
+
+        diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
+    }
+
     private static Diagnostics LowerExpression(string source)
     {
         var diag = new Diagnostics();

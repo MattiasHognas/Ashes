@@ -14,6 +14,9 @@ set -euo pipefail
 ## Parse arguments
 codeCommand=""
 skipInstall="false"
+allRids="false"
+forceInstallDependencies="false"
+targetRid=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,11 +28,27 @@ while [[ $# -gt 0 ]]; do
       skipInstall="true"
       shift
       ;;
+    --all-rids)
+      allRids="true"
+      shift
+      ;;
+    --force-install-dependencies)
+      forceInstallDependencies="true"
+      shift
+      ;;
+    --target-rid)
+      targetRid="$2"
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: $0 [--code-command <cmd>] [--skip-install]"
+      echo "Usage: $0 [--code-command <cmd>] [--skip-install] [--all-rids] [--force-install-dependencies] [--target-rid <rid>]"
       echo ""
       echo "  --code-command <cmd>  VS Code CLI to use (default: auto-detect code-insiders or code)"
       echo "  --skip-install        Build and package only, do not install the VSIX"
+      echo "  --all-rids            Publish bundled compiler/LSP/DAP binaries for all supported RIDs"
+      echo "  --force-install-dependencies"
+      echo "                        Reinstall pnpm dependencies even when node_modules already exists"
+      echo "  --target-rid <rid>    Publish bundled binaries for a specific RID (for example: win-x64)"
       exit 0
       ;;
     *)
@@ -81,6 +100,26 @@ resolve_pnpm_command() {
   exit 1
 }
 
+resolve_dotnet_command() {
+  if command -v dotnet >/dev/null 2>&1; then
+    echo "dotnet"
+    return
+  fi
+
+  if command -v dotnet.exe >/dev/null 2>&1; then
+    echo "dotnet.exe"
+    return
+  fi
+
+  if [[ -x "/mnt/c/Program Files/dotnet/dotnet.exe" ]]; then
+    echo "/mnt/c/Program Files/dotnet/dotnet.exe"
+    return
+  fi
+
+  echo "dotnet was not found on PATH. Install dotnet or expose dotnet.exe to your shell before running this script." >&2
+  exit 1
+}
+
 ## Helpers
 
 invoke_step() {
@@ -94,12 +133,60 @@ invoke_step() {
 get_extension_version() {
   local packageJsonPath="${extensionRoot}/package.json"
   local version
-  version="$(node -p "require('${packageJsonPath}').version" 2>/dev/null)" || true
+  version="$(grep -m1 '"version"' "$packageJsonPath" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
   if [[ -z "$version" ]]; then
     echo "Unable to determine VS Code extension version from ${packageJsonPath}" >&2
     exit 1
   fi
   echo "$version"
+}
+
+get_target_rids() {
+  if [[ -n "$targetRid" ]]; then
+    printf '%s\n' "$targetRid"
+    return
+  fi
+
+  if [[ "$allRids" == "true" ]]; then
+    printf '%s\n' win-x64 linux-x64 linux-arm64
+    return
+  fi
+
+  printf '%s\n' "$rid"
+}
+
+extension_dependencies_healthy() {
+  local requiredPaths=(
+    "${extensionRoot}/node_modules/@types/node/package.json"
+    "${extensionRoot}/node_modules/@types/vscode/package.json"
+    "${extensionRoot}/node_modules/typescript/package.json"
+  )
+
+  local requiredPath
+  for requiredPath in "${requiredPaths[@]}"; do
+    if [[ ! -f "$requiredPath" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+ensure_extension_dependencies() {
+  if [[ "$forceInstallDependencies" != "true" ]] && extension_dependencies_healthy; then
+    echo "==> Skipping VS Code extension dependency restore (existing node_modules detected)"
+    echo "    Use --force-install-dependencies to reinstall dependencies."
+    return
+  fi
+
+  if [[ -d "${extensionRoot}/node_modules" ]]; then
+    echo "==> Removing stale VS Code extension dependencies"
+    echo "    ${extensionRoot}/node_modules"
+    rm -rf "${extensionRoot}/node_modules"
+  fi
+
+  invoke_step "Restoring VS Code extension dependencies" \
+    "$pnpmCommand" install --frozen-lockfile --force
 }
 
 ## Publish functions
@@ -113,7 +200,7 @@ publish_compiler() {
   mkdir -p "$outputDir"
 
   invoke_step "Publishing Ashes CLI for ${rid} (Debug)" \
-    dotnet publish src/Ashes.Cli/Ashes.Cli.csproj \
+    "$dotnetCommand" publish src/Ashes.Cli/Ashes.Cli.csproj \
       --configuration Debug \
       --runtime "$rid" \
       --self-contained true \
@@ -131,7 +218,7 @@ publish_language_server() {
   mkdir -p "$outputDir"
 
   invoke_step "Publishing Ashes language server for ${rid} (Debug)" \
-    dotnet publish src/Ashes.Lsp/Ashes.Lsp.csproj \
+    "$dotnetCommand" publish src/Ashes.Lsp/Ashes.Lsp.csproj \
       --configuration Debug \
       --runtime "$rid" \
       -p:UseAppHost=true \
@@ -149,7 +236,7 @@ publish_dap_server() {
   mkdir -p "$outputDir"
 
   invoke_step "Publishing Ashes DAP server for ${rid} (Debug)" \
-    dotnet publish src/Ashes.Dap/Ashes.Dap.csproj \
+    "$dotnetCommand" publish src/Ashes.Dap/Ashes.Dap.csproj \
       --configuration Debug \
       --runtime "$rid" \
       -p:UseAppHost=true \
@@ -188,6 +275,7 @@ cd "$repoRoot"
 
 version="$(get_extension_version)"
 pnpmCommand="$(resolve_pnpm_command)"
+dotnetCommand="$(resolve_dotnet_command)"
 resolvedCodeCommand=""
 if [[ "$skipInstall" == "false" ]]; then
   resolvedCodeCommand="$(resolve_code_command)"
@@ -195,18 +283,15 @@ fi
 
 mkdir -p "$compilerRoot" "$lspServerRoot" "$dapServerRoot"
 
-publish_compiler "$rid" "$version"
-publish_language_server "$rid" "$version"
-publish_dap_server "$rid" "$version"
+while IFS= read -r targetRid; do
+  publish_compiler "$targetRid" "$version"
+  publish_language_server "$targetRid" "$version"
+  publish_dap_server "$targetRid" "$version"
+done < <(get_target_rids)
 
 cd "$extensionRoot"
 
-if [[ "$os" == "linux" ]]; then
-  corepack enable
-fi
-
-invoke_step "Restoring VS Code extension dependencies" \
-  "$pnpmCommand" install --frozen-lockfile --force
+ensure_extension_dependencies
 
 invoke_step "Building VS Code extension" \
   "$pnpmCommand" run compile
@@ -217,7 +302,7 @@ invoke_step "Packaging local VSIX" \
   "$pnpmCommand" dlx \
     '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' \
     '--config.ignoredBuiltDependencies[]=keytar' \
-    @vscode/vsce@3.7.1 \
+    @vscode/vsce@3.9.1 \
     package \
     --no-dependencies \
     --allow-missing-repository \

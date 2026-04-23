@@ -30,6 +30,7 @@ public static class DiagnosticCodes
     public const string DoubleDrop = "ASH007";
     public const string AwaitOutsideAsync = "ASH010";
     public const string AsyncErrorTypeConflict = "ASH011";
+    public const string AsyncOnlyNetworkingApi = "ASH012";
 }
 
 public sealed record DiagnosticEntry(TextSpan Span, string Message, string? Code = null)

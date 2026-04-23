@@ -309,6 +309,42 @@ public abstract record IrInst
     public sealed record AsyncSleep(int Target, int MillisecondsTemp) : IrInst;
 
     /// <summary>
+    /// Creates a leaf networking task for TCP connect.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpConnectTask(int Target, int HostTemp, int PortTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP send.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpSendTask(int Target, int SocketTemp, int TextTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP receive.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpReceiveTask(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP close.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpCloseTask(int Target, int SocketTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for HTTP GET.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateHttpGetTask(int Target, int UrlTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for HTTP POST.
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateHttpPostTask(int Target, int UrlTemp, int BodyTemp) : IrInst;
+
+    /// <summary>
     /// Runs all tasks in a list to completion and collects results into a list.
     /// Returns a completed Task(E, List(A)) containing all result values.
     /// Used by Ashes.Async.all.
@@ -354,7 +390,13 @@ public static class TaskStructLayout
     public const int AwaitedTask = 24;     // pointer to sub-task being awaited (i64)
     public const int NextTask = 32;        // queue linked list pointer (i64)
     public const int SleepDurationMs = 40; // sleep duration in milliseconds (i64)
-    public const int HeaderSize = 48;      // total header size in bytes
+    public const int IoArg0 = 48;          // leaf-task argument slot 0 (i64)
+    public const int IoArg1 = 56;          // leaf-task argument slot 1 (i64)
+    public const int WaitKind = 64;        // pending wait descriptor kind (i64)
+    public const int WaitHandle = 72;      // pending wait handle / socket (i64)
+    public const int WaitData0 = 80;       // pending wait scratch slot 0 (i64)
+    public const int WaitData1 = 88;       // pending wait scratch slot 1 (i64)
+    public const int HeaderSize = 96;      // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 
@@ -362,6 +404,25 @@ public static class TaskStructLayout
     public const long StateCompleted = -1;
     /// <summary>State index value indicating the task is sleeping (timer-based suspend).</summary>
     public const long StateSleeping = -2;
+    /// <summary>State index value indicating a leaf TCP connect task.</summary>
+    public const long StateTcpConnect = -10;
+    /// <summary>State index value indicating a leaf TCP send task.</summary>
+    public const long StateTcpSend = -11;
+    /// <summary>State index value indicating a leaf TCP receive task.</summary>
+    public const long StateTcpReceive = -12;
+    /// <summary>State index value indicating a leaf TCP close task.</summary>
+    public const long StateTcpClose = -13;
+    /// <summary>State index value indicating a leaf HTTP GET task.</summary>
+    public const long StateHttpGet = -14;
+    /// <summary>State index value indicating a leaf HTTP POST task.</summary>
+    public const long StateHttpPost = -15;
+
+    /// <summary>No pending wait is registered for the task.</summary>
+    public const long WaitNone = 0;
+    /// <summary>The task is waiting for a socket to become readable.</summary>
+    public const long WaitSocketRead = 1;
+    /// <summary>The task is waiting for a socket to become writable.</summary>
+    public const long WaitSocketWrite = 2;
 }
 
 public sealed record IrFunction(

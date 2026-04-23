@@ -231,7 +231,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Http()
     {
-        const string source = "import Ashes.Http\nmatch Ashes.Http.get(\"http://example.com\") with | Ok(text) -> 1 | Error(_) -> 0";
+        const string source = "import Ashes.Http\nmatch Ashes.Async.run(async await Ashes.Http.get(\"http://example.com\")) with | Ok(text) -> 1 | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -241,7 +241,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Net_Tcp()
     {
-        const string source = "import Ashes.Net.Tcp\nmatch Ashes.Net.Tcp.connect(\"127.0.0.1\")(80) with | Ok(sock) -> 1 | Error(_) -> 0";
+        const string source = "import Ashes.Net.Tcp\nmatch Ashes.Async.run(async let sock = await Ashes.Net.Tcp.connect(\"127.0.0.1\")(80) in 1) with | Ok(value) -> value | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
