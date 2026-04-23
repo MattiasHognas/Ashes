@@ -1994,12 +1994,9 @@ public sealed class Lowering
             return (portTemp, prunedPortType);
         }
 
-        return LowerCapturedStringTask([hostTemp, portTemp], _resolvedTypes["Socket"], hostArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.NetTcpConnect(target, capturedTemps[0], capturedTemps[1]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpConnectTask(taskTemp, hostTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
     }
 
     private (int, TypeRef) LowerHttpGet(Expr urlArg)
@@ -2024,12 +2021,9 @@ public sealed class Lowering
             return (urlTemp, prunedUrlType);
         }
 
-        return LowerCapturedStringTask([urlTemp], new TypeRef.TStr(), urlArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.HttpGet(target, capturedTemps[0]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateHttpGetTask(taskTemp, urlTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerHttpPost(Expr urlArg, Expr bodyArg)
@@ -2074,12 +2068,9 @@ public sealed class Lowering
             return (bodyTemp, prunedBodyType);
         }
 
-        return LowerCapturedStringTask([urlTemp, bodyTemp], new TypeRef.TStr(), urlArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.HttpPost(target, capturedTemps[0], capturedTemps[1]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateHttpPostTask(taskTemp, urlTemp, bodyTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerNetTcpSend(Expr socketArg, Expr textArg)
@@ -2118,12 +2109,9 @@ public sealed class Lowering
             return (textTemp, prunedTextType);
         }
 
-        return LowerCapturedStringTask([socketTemp, textTemp], new TypeRef.TInt(), socketArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.NetTcpSend(target, capturedTemps[0], capturedTemps[1]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpSendTask(taskTemp, socketTemp, textTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
     private (int, TypeRef) LowerNetTcpReceive(Expr socketArg, Expr maxBytesArg)
@@ -2162,12 +2150,9 @@ public sealed class Lowering
             return (maxBytesTemp, prunedMaxBytesType);
         }
 
-        return LowerCapturedStringTask([socketTemp, maxBytesTemp], new TypeRef.TStr(), socketArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.NetTcpReceive(target, capturedTemps[0], capturedTemps[1]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpReceiveTask(taskTemp, socketTemp, maxBytesTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TStr()));
     }
 
     private (int, TypeRef) LowerNetTcpClose(Expr socketArg)
@@ -2204,12 +2189,9 @@ public sealed class Lowering
             TryMarkDropped(varExpr.Name);
         }
 
-        return LowerCapturedStringTask([socketTemp], _resolvedTypes["Unit"], socketArg, capturedTemps =>
-        {
-            var target = NewTemp();
-            Emit(new IrInst.NetTcpClose(target, capturedTemps[0]));
-            return target;
-        });
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpCloseTask(taskTemp, socketTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Unit"]));
     }
 
     /// <summary>

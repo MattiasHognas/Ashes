@@ -202,6 +202,11 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
             LlvmApi.ConstInt(state.I64, 0, 0), "task_sleep_init");
 
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_io_arg0_init");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_io_arg1_init");
+
         // Copy captured env variables from closure env into task struct
         if (captureCount > 0)
         {
@@ -242,7 +247,190 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask,
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_awaited_null");
 
+        StoreMemory(state, taskPtr, TaskStructLayout.NextTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_next_null");
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_sleep_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_io_arg0_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_io_arg1_zero");
+
         return taskPtr;
+    }
+
+    private static LlvmValueHandle EmitCreateLeafNetworkingTask(
+        LlvmCodegenState state,
+        long taskState,
+        LlvmValueHandle arg0,
+        LlvmValueHandle arg1,
+        string prefix)
+    {
+        LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)taskState), 1), prefix + "_state");
+        StoreMemory(state, taskPtr, TaskStructLayout.CoroutineFn,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_coroutine_fn");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_awaited");
+        StoreMemory(state, taskPtr, TaskStructLayout.NextTask,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_next");
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_sleep");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg0, arg0, prefix + "_arg0");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg1, arg1, prefix + "_arg1");
+
+        return taskPtr;
+    }
+
+    private static void EmitCompleteLeafTask(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle stateIdx = LoadMemory(state, taskPtr, TaskStructLayout.StateIndex, prefix + "_state_idx");
+
+        LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sleep");
+        LlvmBasicBlockHandle checkTcpConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_connect");
+        LlvmBasicBlockHandle tcpConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_connect");
+        LlvmBasicBlockHandle checkTcpSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_send");
+        LlvmBasicBlockHandle tcpSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_send");
+        LlvmBasicBlockHandle checkTcpReceiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_receive");
+        LlvmBasicBlockHandle tcpReceiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_receive");
+        LlvmBasicBlockHandle checkTcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_close");
+        LlvmBasicBlockHandle tcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_close");
+        LlvmBasicBlockHandle checkHttpGetBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_http_get");
+        LlvmBasicBlockHandle httpGetBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_http_get");
+        LlvmBasicBlockHandle checkHttpPostBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_http_post");
+        LlvmBasicBlockHandle httpPostBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_http_post");
+        LlvmBasicBlockHandle invalidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_invalid");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_continue");
+
+        LlvmValueHandle isSleep = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1),
+            prefix + "_is_sleep");
+        LlvmApi.BuildCondBr(builder, isSleep, sleepBlock, checkTcpConnectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
+        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, prefix + "_sleep_ms");
+        EmitNanosleep(state, sleepMs);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), prefix + "_sleep_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_sleep_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpConnectBlock);
+        LlvmValueHandle isTcpConnect = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpConnect), 1),
+            prefix + "_is_tcp_connect");
+        LlvmApi.BuildCondBr(builder, isTcpConnect, tcpConnectBlock, checkTcpSendBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpConnectBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitTcpConnectAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_tcp_connect_arg0"),
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, prefix + "_tcp_connect_arg1")),
+            prefix + "_tcp_connect_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_tcp_connect_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpSendBlock);
+        LlvmValueHandle isTcpSend = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpSend), 1),
+            prefix + "_is_tcp_send");
+        LlvmApi.BuildCondBr(builder, isTcpSend, tcpSendBlock, checkTcpReceiveBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpSendBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitTcpSendAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_tcp_send_arg0"),
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, prefix + "_tcp_send_arg1")),
+            prefix + "_tcp_send_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_tcp_send_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpReceiveBlock);
+        LlvmValueHandle isTcpReceive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpReceive), 1),
+            prefix + "_is_tcp_receive");
+        LlvmApi.BuildCondBr(builder, isTcpReceive, tcpReceiveBlock, checkTcpCloseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpReceiveBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitTcpReceiveAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_tcp_receive_arg0"),
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, prefix + "_tcp_receive_arg1")),
+            prefix + "_tcp_receive_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_tcp_receive_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpCloseBlock);
+        LlvmValueHandle isTcpClose = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpClose), 1),
+            prefix + "_is_tcp_close");
+        LlvmApi.BuildCondBr(builder, isTcpClose, tcpCloseBlock, checkHttpGetBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpCloseBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitTcpCloseAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_tcp_close_arg0")),
+            prefix + "_tcp_close_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_tcp_close_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkHttpGetBlock);
+        LlvmValueHandle isHttpGet = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateHttpGet), 1),
+            prefix + "_is_http_get");
+        LlvmApi.BuildCondBr(builder, isHttpGet, httpGetBlock, checkHttpPostBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, httpGetBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitHttpGetAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_http_get_arg0")),
+            prefix + "_http_get_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_http_get_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkHttpPostBlock);
+        LlvmValueHandle isHttpPost = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateHttpPost), 1),
+            prefix + "_is_http_post");
+        LlvmApi.BuildCondBr(builder, isHttpPost, httpPostBlock, invalidBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, httpPostBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitHttpPostAbiCall(state,
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, prefix + "_http_post_arg0"),
+                LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, prefix + "_http_post_arg1")),
+            prefix + "_http_post_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_http_post_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitResultError(state, EmitHeapStringLiteral(state, "unknown leaf task state")),
+            prefix + "_invalid_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_invalid_done");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
     }
 
     /// <summary>
@@ -263,6 +451,10 @@ internal static partial class LlvmCodegen
             state.Target.Context, state.Function, "run_task_check");
         LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "run_task_step");
+        LlvmBasicBlockHandle notDoneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_task_not_done");
+        LlvmBasicBlockHandle leafBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_task_leaf");
         LlvmBasicBlockHandle suspendedBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "run_task_suspended");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(
@@ -277,7 +469,16 @@ internal static partial class LlvmCodegen
         LlvmValueHandle minusOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1), 1);
         LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             stateIdx, minusOne, "run_is_done");
-        LlvmApi.BuildCondBr(builder, isDone, doneBlock, stepBlock);
+        LlvmApi.BuildCondBr(builder, isDone, doneBlock, notDoneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, notDoneBlock);
+        LlvmValueHandle isLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
+            stateIdx, minusOne, "run_is_leaf");
+        LlvmApi.BuildCondBr(builder, isLeaf, leafBlock, stepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
+        EmitCompleteLeafTask(state, taskPtr, "run_leaf");
+        LlvmApi.BuildBr(builder, doneBlock);
 
         // --- Step block: call the coroutine ---
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
@@ -300,34 +501,22 @@ internal static partial class LlvmCodegen
         // --- Suspended block: run the awaited sub-task, then resume ---
         LlvmApi.PositionBuilderAtEnd(builder, suspendedBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "run_awaited_task");
-
-        // Check if the awaited sub-task is a sleep task (state_index == -2)
         LlvmValueHandle awaitedState = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "run_awaited_state");
-        LlvmValueHandle sleepConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
-        LlvmValueHandle isSleep = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            awaitedState, sleepConst, "run_is_sleep");
-
-        LlvmBasicBlockHandle sleepHandleBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "run_sleep_handle");
+        LlvmValueHandle isLeafAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
+            awaitedState, minusOne, "run_is_leaf_awaited");
+        LlvmBasicBlockHandle leafHandleBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "run_leaf_handle");
         LlvmBasicBlockHandle normalSubBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "run_normal_sub");
         LlvmBasicBlockHandle afterSubBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "run_after_sub");
 
-        LlvmApi.BuildCondBr(builder, isSleep, sleepHandleBlock, normalSubBlock);
+        LlvmApi.BuildCondBr(builder, isLeafAwaited, leafHandleBlock, normalSubBlock);
 
-        // --- Sleep handle: perform nanosleep, mark sub-task complete ---
-        LlvmApi.PositionBuilderAtEnd(builder, sleepHandleBlock);
-        LlvmValueHandle sleepMs = LoadMemory(state, awaitedTask, TaskStructLayout.SleepDurationMs, "run_sleep_ms");
-        EmitNanosleep(state, sleepMs);
-        // Mark sleep task as completed
-        StoreMemory(state, awaitedTask, TaskStructLayout.StateIndex,
-            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "run_sleep_done");
-        StoreMemory(state, awaitedTask, TaskStructLayout.ResultSlot,
-            EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), "run_sleep_result");
-        // Get result and store
-        LlvmValueHandle sleepResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "run_sleep_result_load");
-        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, sleepResult, "run_sleep_sub_store");
+        LlvmApi.PositionBuilderAtEnd(builder, leafHandleBlock);
+        EmitCompleteLeafTask(state, awaitedTask, "run_awaited_leaf");
+        LlvmValueHandle leafResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "run_leaf_result_load");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, leafResult, "run_leaf_sub_store");
         LlvmApi.BuildBr(builder, afterSubBlock);
 
         // --- Normal sub-task: recursively run to completion ---
@@ -359,6 +548,10 @@ internal static partial class LlvmCodegen
             state.Target.Context, state.Function, "sub_run_check");
         LlvmBasicBlockHandle subStepBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "sub_run_step");
+        LlvmBasicBlockHandle subNotDoneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_run_not_done");
+        LlvmBasicBlockHandle subLeafBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_run_leaf");
         LlvmBasicBlockHandle subSuspendedBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "sub_run_suspended");
         LlvmBasicBlockHandle subDoneBlock = LlvmApi.AppendBasicBlockInContext(
@@ -373,30 +566,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             stateIdx, minusOne, "sub_is_done");
 
-        // Also check if sleeping (-2) — if so, perform nanosleep and mark complete
-        LlvmValueHandle sleepingConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
-        LlvmValueHandle isSleeping = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            stateIdx, sleepingConst, "sub_is_sleeping");
-
-        LlvmBasicBlockHandle subSleepBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "sub_run_sleep");
-        LlvmBasicBlockHandle subNotDoneBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "sub_run_not_done");
-
         LlvmApi.BuildCondBr(builder, isDone, subDoneBlock, subNotDoneBlock);
 
-        // Check if sleeping
         LlvmApi.PositionBuilderAtEnd(builder, subNotDoneBlock);
-        LlvmApi.BuildCondBr(builder, isSleeping, subSleepBlock, subStepBlock);
+        LlvmValueHandle subIsLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
+            stateIdx, minusOne, "sub_is_leaf");
+        LlvmApi.BuildCondBr(builder, subIsLeaf, subLeafBlock, subStepBlock);
 
-        // --- Sleep handling ---
-        LlvmApi.PositionBuilderAtEnd(builder, subSleepBlock);
-        LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, "sub_sleep_ms");
-        EmitNanosleep(state, sleepMs);
-        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
-            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "sub_sleep_mark_done");
-        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
-            LlvmApi.ConstInt(state.I64, 0, 0), "sub_sleep_result");
+        LlvmApi.PositionBuilderAtEnd(builder, subLeafBlock);
+        EmitCompleteLeafTask(state, taskPtr, "sub_leaf");
         LlvmApi.BuildBr(builder, subDoneBlock);
 
         // --- Step: call coroutine ---
@@ -429,13 +607,26 @@ internal static partial class LlvmCodegen
         LlvmValueHandle nestedStateIdx = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "nested_state_idx");
         LlvmValueHandle nestedIsDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             nestedStateIdx, minusOne, "nested_is_done");
+        LlvmValueHandle nestedIsLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
+            nestedStateIdx, minusOne, "nested_is_leaf");
 
         LlvmBasicBlockHandle nestedDoneBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "nested_done");
+        LlvmBasicBlockHandle nestedLeafBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "nested_leaf");
         LlvmBasicBlockHandle nestedStepBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "nested_step");
 
-        LlvmApi.BuildCondBr(builder, nestedIsDone, nestedDoneBlock, nestedStepBlock);
+        LlvmBasicBlockHandle nestedNotDoneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "nested_not_done");
+        LlvmApi.BuildCondBr(builder, nestedIsDone, nestedDoneBlock, nestedNotDoneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nestedNotDoneBlock);
+        LlvmApi.BuildCondBr(builder, nestedIsLeaf, nestedLeafBlock, nestedStepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nestedLeafBlock);
+        EmitCompleteLeafTask(state, awaitedTask, "nested_leaf");
+        LlvmApi.BuildBr(builder, nestedDoneBlock);
 
         // --- Nested step: call nested coroutine in a loop ---
         LlvmApi.PositionBuilderAtEnd(builder, nestedStepBlock);
@@ -501,6 +692,11 @@ internal static partial class LlvmCodegen
         // sleep_deadline_ns = milliseconds (runtime interprets as ms)
         StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
             millisecondsValue, "sleep_ms");
+
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_io_arg0_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_io_arg1_zero");
 
         return taskPtr;
     }

@@ -240,14 +240,25 @@ internal static partial class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program));
+        bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
+            || ProgramUsesInstruction<IrInst.HttpPost>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.RunTask>(program)
+            || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+            || ProgramUsesInstruction<IrInst.AsyncAll>(program)
+            || ProgramUsesInstruction<IrInst.AsyncRace>(program)
+            || ProgramUsesInstruction<IrInst.Drop>(program);
         bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
-            && (ProgramUsesInstruction<IrInst.HttpGet>(program)
-                || ProgramUsesInstruction<IrInst.HttpPost>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-                || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program));
+            && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.RunTask>(program)
@@ -388,34 +399,37 @@ internal static partial class LlvmCodegen
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
         LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
 
-        EmitNetworkingRuntimeAbi(
-            target,
-            flavor,
-            i32,
-            i32Ptr,
-            heapCursorGlobal,
-            heapEndGlobal,
-            windowsGetStdHandleImport,
-            windowsWriteFileImport,
-            windowsReadFileImport,
-            windowsCreateFileImport,
-            windowsCloseHandleImport,
-            windowsGetFileAttributesImport,
-            windowsWsaStartupImport,
-            windowsSocketImport,
-            windowsConnectImport,
-            windowsSendImport,
-            windowsRecvImport,
-            windowsCloseSocketImport,
-            windowsExitProcessImport,
-            windowsGetCommandLineImport,
-            windowsWideCharToMultiByteImport,
-            windowsLocalFreeImport,
-            windowsCommandLineToArgvImport,
-            windowsSleepImport,
-            windowsVirtualAllocImport,
-            windowsVirtualFreeImport,
-            nounwindAttr);
+        if (usesNetworkingRuntimeAbi)
+        {
+            EmitNetworkingRuntimeAbi(
+                target,
+                flavor,
+                i32,
+                i32Ptr,
+                heapCursorGlobal,
+                heapEndGlobal,
+                windowsGetStdHandleImport,
+                windowsWriteFileImport,
+                windowsReadFileImport,
+                windowsCreateFileImport,
+                windowsCloseHandleImport,
+                windowsGetFileAttributesImport,
+                windowsWsaStartupImport,
+                windowsSocketImport,
+                windowsConnectImport,
+                windowsSendImport,
+                windowsRecvImport,
+                windowsCloseSocketImport,
+                windowsExitProcessImport,
+                windowsGetCommandLineImport,
+                windowsWideCharToMultiByteImport,
+                windowsLocalFreeImport,
+                windowsCommandLineToArgvImport,
+                windowsSleepImport,
+                windowsVirtualAllocImport,
+                windowsVirtualFreeImport,
+                nounwindAttr);
+        }
 
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
@@ -761,6 +775,18 @@ internal static partial class LlvmCodegen
             // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
+            IrInst.CreateTcpConnectTask tcpConnectTask => StoreTemp(state, tcpConnectTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpConnect, LoadTemp(state, tcpConnectTask.HostTemp), LoadTemp(state, tcpConnectTask.PortTemp), "tcp_connect_task")),
+            IrInst.CreateTcpSendTask tcpSendTask => StoreTemp(state, tcpSendTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpSend, LoadTemp(state, tcpSendTask.SocketTemp), LoadTemp(state, tcpSendTask.TextTemp), "tcp_send_task")),
+            IrInst.CreateTcpReceiveTask tcpReceiveTask => StoreTemp(state, tcpReceiveTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpReceive, LoadTemp(state, tcpReceiveTask.SocketTemp), LoadTemp(state, tcpReceiveTask.MaxBytesTemp), "tcp_receive_task")),
+            IrInst.CreateTcpCloseTask tcpCloseTask => StoreTemp(state, tcpCloseTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpClose, LoadTemp(state, tcpCloseTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_task")),
+            IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
+            IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpPost, LoadTemp(state, httpPostTask.UrlTemp), LoadTemp(state, httpPostTask.BodyTemp), "http_post_task")),
             // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
