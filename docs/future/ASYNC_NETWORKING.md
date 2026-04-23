@@ -29,6 +29,7 @@ The async-only API redesign is partially complete:
 | **Runtime ABI symbols** | The LLVM backend now emits named runtime symbols for networking: `ashes_tcp_connect`, `ashes_tcp_send`, `ashes_tcp_receive`, `ashes_tcp_close`, `ashes_http_get`, and `ashes_http_post`. |
 | **ABI-based lowering path** | HTTP/TCP instruction codegen and `Drop(Socket)` now route through the runtime ABI symbols instead of calling the backend networking helpers directly at each instruction site. |
 | **Platform runtime shims** | The named runtime symbols are currently implemented as compiler-emitted runtime helper functions in the generated module, keeping Linux and Windows socket details behind the ABI layer. |
+| **Leaf-step ABI boundary** | Networking leaf tasks are now stepped through dedicated task-level runtime symbols (`ashes_step_tcp_connect_task`, `ashes_step_tcp_send_task`, `ashes_step_tcp_receive_task`, `ashes_step_tcp_close_task`, `ashes_step_http_get_task`, `ashes_step_http_post_task`) that take the task pointer and return a step status. |
 | **Task runtime integration** | The LLVM task runner now recognizes negative-state leaf tasks for sleep, TCP, and HTTP operations, stores task arguments in the task header, completes those tasks through the ABI layer, and propagates awaited leaf-task results back into parent coroutines. |
 | **Backend compatibility path** | The existing `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, and `NetTcpClose` IR instructions remain intact and still call through the runtime ABI, but the public async networking surface now lowers through the dedicated leaf-task IR path instead of wrapping those instructions in coroutines. |
 | **Test migration** | The HTTP and TCP end-to-end tests were rewritten to use `async`, `await`, and `Ashes.Async.run`, and compile-error coverage was added for using HTTP/TCP outside `async`. |
@@ -38,10 +39,11 @@ The async-only API redesign is partially complete:
 
 ## Ordered Roadmap — Next Work Items
 
-Every remaining task below is still open. The leaf-task IR path and the
-runtime ABI boundary are now in place, so the remaining work starts with
-replacing the current blocking leaf-task execution model with true
-readiness-driven suspension and resumption.
+Every remaining task below is still open. The leaf-task IR path, the
+runtime ABI boundary, and the task-level leaf-step ABI boundary are now
+in place, so the remaining work starts with replacing the current
+blocking leaf-task execution model with true readiness-driven suspension
+and resumption.
 
 ### 1. Replace blocking networking with non-blocking readiness I/O
 

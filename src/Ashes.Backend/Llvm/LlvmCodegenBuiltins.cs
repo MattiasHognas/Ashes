@@ -1,3 +1,4 @@
+using Ashes.Semantics;
 using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
@@ -670,6 +671,36 @@ internal static partial class LlvmCodegen
             LlvmApi.FunctionType(i64, [i64, i64]),
             (state, fn) => EmitHttpRequest(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), hasBody: true));
 
+        EmitRuntimeFunction(
+            "ashes_step_tcp_connect_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpConnectTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_tcp_send_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpSendTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_tcp_receive_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpReceiveTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_tcp_close_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpCloseTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_http_get_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepHttpGetTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_http_post_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepHttpPostTask(state, LlvmApi.GetParam(fn, 0)));
+
         void EmitRuntimeFunction(string symbolName, LlvmTypeHandle functionType, Func<LlvmCodegenState, LlvmValueHandle, LlvmValueHandle> emitBody)
         {
             LlvmValueHandle function = LlvmApi.AddFunction(target.Module, symbolName, functionType);
@@ -760,6 +791,82 @@ internal static partial class LlvmCodegen
         Array.Fill(parameterTypes, state.I64);
         LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I64, parameterTypes);
         return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, name);
+    }
+
+    private static LlvmValueHandle EmitLeafTaskCompletedStatus(LlvmCodegenState state)
+        => LlvmApi.ConstInt(state.I64, 1, 0);
+
+    private static LlvmValueHandle EmitStepTcpConnectTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitTcpConnect(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_connect_host"),
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_connect_port"));
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_tcp_connect_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_tcp_connect_done");
+        return EmitLeafTaskCompletedStatus(state);
+    }
+
+    private static LlvmValueHandle EmitStepTcpSendTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitTcpSend(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_send_socket"),
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_send_text"));
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_tcp_send_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_tcp_send_done");
+        return EmitLeafTaskCompletedStatus(state);
+    }
+
+    private static LlvmValueHandle EmitStepTcpReceiveTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitTcpReceive(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_receive_socket"),
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tcp_receive_max"));
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_tcp_receive_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_tcp_receive_done");
+        return EmitLeafTaskCompletedStatus(state);
+    }
+
+    private static LlvmValueHandle EmitStepTcpCloseTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitTcpClose(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_close_socket"));
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_tcp_close_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_tcp_close_done");
+        return EmitLeafTaskCompletedStatus(state);
+    }
+
+    private static LlvmValueHandle EmitStepHttpGetTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitHttpRequest(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_http_get_url"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            hasBody: false);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_http_get_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_http_get_done");
+        return EmitLeafTaskCompletedStatus(state);
+    }
+
+    private static LlvmValueHandle EmitStepHttpPostTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle result = EmitHttpRequest(
+            state,
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_http_post_url"),
+            LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_http_post_body"),
+            hasBody: true);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, result, "step_http_post_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "step_http_post_done");
+        return EmitLeafTaskCompletedStatus(state);
     }
 
     private static LlvmValueHandle EmitTcpConnect(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
