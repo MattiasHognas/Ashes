@@ -1400,6 +1400,7 @@ internal static partial class LlvmCodegen
             SyscallConnect => Arm64SyscallConnect,
             SyscallFcntl => Arm64SyscallFcntl,
             SyscallEpollCtl => Arm64SyscallEpollCtl,
+            SyscallEpollWait => Arm64SyscallEpollPwait,
             SyscallEpollCreate1 => Arm64SyscallEpollCreate1,
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,

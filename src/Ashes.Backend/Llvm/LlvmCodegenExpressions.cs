@@ -627,7 +627,7 @@ internal static partial class LlvmCodegen
             if (IsLinuxArm64Flavor(state.Flavor))
             {
                 EmitLinuxSyscall6(state,
-                    Arm64SyscallEpollPwait,
+                    SyscallEpollWait,
                     epollFd,
                     LlvmApi.BuildPtrToInt(builder, waitEventPtr, state.I64, prefix + "_wait_event_arg"),
                     LlvmApi.ConstInt(state.I64, 1, 0),
@@ -1120,7 +1120,7 @@ internal static partial class LlvmCodegen
                 prefix + "_epoll_ctl");
             if (IsLinuxArm64Flavor(state.Flavor))
             {
-                EmitLinuxSyscall6(state, Arm64SyscallEpollPwait,
+                EmitLinuxSyscall6(state, SyscallEpollWait,
                     epollFd,
                     LlvmApi.BuildPtrToInt(builder, epollEventOutPtr, state.I64, prefix + "_epoll_wait_events"),
                     LlvmApi.ConstInt(state.I64, 1, 0),

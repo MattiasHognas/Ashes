@@ -17,6 +17,7 @@ public sealed class LlvmSyscallMappingTests
 
         ((long)resolveMethod.Invoke(null, [linuxArm64, 72L])!).ShouldBe(25L);
         ((long)resolveMethod.Invoke(null, [linuxArm64, 233L])!).ShouldBe(21L);
+        ((long)resolveMethod.Invoke(null, [linuxArm64, 232L])!).ShouldBe(22L);
         ((long)resolveMethod.Invoke(null, [linuxArm64, 291L])!).ShouldBe(20L);
     }
 }
