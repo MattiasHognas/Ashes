@@ -383,18 +383,46 @@ internal static partial class LlvmCodegen
         EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
         EmitBuiltinBcmp(target, i8, i64, i8Ptr);
 
+        // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
+        // point and lifted closures. The current runtime ABI layer does not unwind.
+        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
+        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
+
+        EmitNetworkingRuntimeAbi(
+            target,
+            flavor,
+            i32,
+            i32Ptr,
+            heapCursorGlobal,
+            heapEndGlobal,
+            windowsGetStdHandleImport,
+            windowsWriteFileImport,
+            windowsReadFileImport,
+            windowsCreateFileImport,
+            windowsCloseHandleImport,
+            windowsGetFileAttributesImport,
+            windowsWsaStartupImport,
+            windowsSocketImport,
+            windowsConnectImport,
+            windowsSendImport,
+            windowsRecvImport,
+            windowsCloseSocketImport,
+            windowsExitProcessImport,
+            windowsGetCommandLineImport,
+            windowsWideCharToMultiByteImport,
+            windowsLocalFreeImport,
+            windowsCommandLineToArgvImport,
+            windowsSleepImport,
+            windowsVirtualAllocImport,
+            windowsVirtualFreeImport,
+            nounwindAttr);
+
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             IsLinuxFlavor(flavor)
                 ? LlvmApi.FunctionType(voidType, [i64])
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
-
-        // Apply nounwind to Ashes-generated functions — the entry point and lifted
-        // closures. Ashes has no exceptions / unwind semantics, so LLVM can skip
-        // unwind table generation for smaller, faster code.
-        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
-        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
 
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
@@ -708,12 +736,12 @@ internal static partial class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
-            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpRequest(state, LoadTemp(state, httpGet.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), hasBody: false)),
-            IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpRequest(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp), hasBody: true)),
-            IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnect(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
-            IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSend(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
-            IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceive(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
-            IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpClose(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpGetAbiCall(state, LoadTemp(state, httpGet.UrlTemp))),
+            IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpPostAbiCall(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp))),
+            IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnectAbiCall(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
+            IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSendAbiCall(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
+            IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceiveAbiCall(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
+            IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
             IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.

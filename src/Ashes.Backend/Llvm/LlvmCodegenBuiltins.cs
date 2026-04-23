@@ -605,6 +605,163 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_exists_win_result_value");
     }
 
+    private static void EmitNetworkingRuntimeAbi(
+        LlvmTargetContext target,
+        LlvmCodegenFlavor flavor,
+        LlvmTypeHandle i32,
+        LlvmTypeHandle i32Ptr,
+        LlvmValueHandle heapCursorGlobal,
+        LlvmValueHandle heapEndGlobal,
+        LlvmValueHandle windowsGetStdHandleImport,
+        LlvmValueHandle windowsWriteFileImport,
+        LlvmValueHandle windowsReadFileImport,
+        LlvmValueHandle windowsCreateFileImport,
+        LlvmValueHandle windowsCloseHandleImport,
+        LlvmValueHandle windowsGetFileAttributesImport,
+        LlvmValueHandle windowsWsaStartupImport,
+        LlvmValueHandle windowsSocketImport,
+        LlvmValueHandle windowsConnectImport,
+        LlvmValueHandle windowsSendImport,
+        LlvmValueHandle windowsRecvImport,
+        LlvmValueHandle windowsCloseSocketImport,
+        LlvmValueHandle windowsExitProcessImport,
+        LlvmValueHandle windowsGetCommandLineImport,
+        LlvmValueHandle windowsWideCharToMultiByteImport,
+        LlvmValueHandle windowsLocalFreeImport,
+        LlvmValueHandle windowsCommandLineToArgvImport,
+        LlvmValueHandle windowsSleepImport,
+        LlvmValueHandle windowsVirtualAllocImport,
+        LlvmValueHandle windowsVirtualFreeImport,
+        LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
+        LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
+        LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+
+        EmitRuntimeFunction(
+            "ashes_tcp_connect",
+            LlvmApi.FunctionType(i64, [i64, i64]),
+            (state, fn) => EmitTcpConnect(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
+
+        EmitRuntimeFunction(
+            "ashes_tcp_send",
+            LlvmApi.FunctionType(i64, [i64, i64]),
+            (state, fn) => EmitTcpSend(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
+
+        EmitRuntimeFunction(
+            "ashes_tcp_receive",
+            LlvmApi.FunctionType(i64, [i64, i64]),
+            (state, fn) => EmitTcpReceive(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
+
+        EmitRuntimeFunction(
+            "ashes_tcp_close",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitTcpClose(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_http_get",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitHttpRequest(state, LlvmApi.GetParam(fn, 0), LlvmApi.ConstInt(state.I64, 0, 0), hasBody: false));
+
+        EmitRuntimeFunction(
+            "ashes_http_post",
+            LlvmApi.FunctionType(i64, [i64, i64]),
+            (state, fn) => EmitHttpRequest(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), hasBody: true));
+
+        void EmitRuntimeFunction(string symbolName, LlvmTypeHandle functionType, Func<LlvmCodegenState, LlvmValueHandle, LlvmValueHandle> emitBody)
+        {
+            LlvmValueHandle function = LlvmApi.AddFunction(target.Module, symbolName, functionType);
+            LlvmApi.SetLinkage(function, LlvmLinkage.External);
+            LlvmApi.AddAttributeAtIndex(function, LlvmApi.AttributeIndexFunction, nounwindAttr);
+
+            LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(target.Context, function, "entry");
+            LlvmApi.PositionBuilderAtEnd(target.Builder, entryBlock);
+
+            LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(target.Builder, i64, symbolName + "_program_args");
+            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), programArgsSlot);
+
+            var runtimeState = new LlvmCodegenState(
+                target,
+                function,
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
+                programArgsSlot,
+                Array.Empty<LlvmValueHandle>(),
+                Array.Empty<LlvmValueHandle>(),
+                heapCursorGlobal,
+                heapEndGlobal,
+                new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+                new Dictionary<int, LlvmBasicBlockHandle>(),
+                i64,
+                i32,
+                i8,
+                f64,
+                i8Ptr,
+                i32Ptr,
+                i64Ptr,
+                default,
+                windowsGetStdHandleImport,
+                windowsWriteFileImport,
+                windowsReadFileImport,
+                windowsCreateFileImport,
+                windowsCloseHandleImport,
+                windowsGetFileAttributesImport,
+                windowsWsaStartupImport,
+                windowsSocketImport,
+                windowsConnectImport,
+                windowsSendImport,
+                windowsRecvImport,
+                windowsCloseSocketImport,
+                windowsExitProcessImport,
+                windowsGetCommandLineImport,
+                windowsWideCharToMultiByteImport,
+                windowsLocalFreeImport,
+                windowsCommandLineToArgvImport,
+                windowsSleepImport,
+                windowsVirtualAllocImport,
+                windowsVirtualFreeImport,
+                flavor,
+                false,
+                false);
+
+            LlvmApi.BuildRet(target.Builder, NormalizeToI64(runtimeState, emitBody(runtimeState, function)));
+        }
+    }
+
+    private static LlvmValueHandle EmitHttpGetAbiCall(LlvmCodegenState state, LlvmValueHandle urlRef)
+        => EmitNetworkingRuntimeCall(state, "ashes_http_get", [urlRef], "http_get_abi");
+
+    private static LlvmValueHandle EmitHttpPostAbiCall(LlvmCodegenState state, LlvmValueHandle urlRef, LlvmValueHandle bodyRef)
+        => EmitNetworkingRuntimeCall(state, "ashes_http_post", [urlRef, bodyRef], "http_post_abi");
+
+    private static LlvmValueHandle EmitTcpConnectAbiCall(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
+        => EmitNetworkingRuntimeCall(state, "ashes_tcp_connect", [hostRef, port], "tcp_connect_abi");
+
+    private static LlvmValueHandle EmitTcpSendAbiCall(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle textRef)
+        => EmitNetworkingRuntimeCall(state, "ashes_tcp_send", [socket, textRef], "tcp_send_abi");
+
+    private static LlvmValueHandle EmitTcpReceiveAbiCall(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle maxBytes)
+        => EmitNetworkingRuntimeCall(state, "ashes_tcp_receive", [socket, maxBytes], "tcp_receive_abi");
+
+    private static LlvmValueHandle EmitTcpCloseAbiCall(LlvmCodegenState state, LlvmValueHandle socket)
+        => EmitNetworkingRuntimeCall(state, "ashes_tcp_close", [socket], "tcp_close_abi");
+
+    private static LlvmValueHandle EmitNetworkingRuntimeCall(LlvmCodegenState state, string symbolName, ReadOnlySpan<LlvmValueHandle> args, string name)
+    {
+        LlvmValueHandle function = LlvmApi.GetNamedFunction(state.Target.Module, symbolName);
+        if (function.Ptr == 0)
+        {
+            throw new InvalidOperationException($"Missing networking runtime symbol '{symbolName}'.");
+        }
+
+        var parameterTypes = new LlvmTypeHandle[args.Length];
+        Array.Fill(parameterTypes, state.I64);
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I64, parameterTypes);
+        return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, name);
+    }
+
     private static LlvmValueHandle EmitTcpConnect(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
     {
         return IsLinuxFlavor(state.Flavor)
@@ -646,10 +803,10 @@ internal static partial class LlvmCodegen
         switch (typeName)
         {
             case "Socket":
-                // Drop a socket by calling the platform-specific TCP close.
+                // Drop a socket by routing cleanup through the networking ABI.
                 // The result (Result[Unit, Str]) is discarded — Drop is
                 // fire-and-forget; runtime errors during cleanup are ignored.
-                EmitTcpClose(state, value);
+                EmitTcpCloseAbiCall(state, value);
                 return false;
 
             default:
