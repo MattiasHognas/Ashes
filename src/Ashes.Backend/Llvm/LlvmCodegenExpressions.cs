@@ -52,7 +52,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle callInst = LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             typedCodePtr,
-            new[] { envPtr, argValue },
+            [envPtr, argValue],
             "closure_call");
         if (isTailCall)
         {
@@ -133,7 +133,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder,
             exitProcessType,
             exitProcessPtr,
-            new[] { exitCode },
+            [exitCode],
             string.Empty);
         LlvmApi.BuildUnreachable(builder);
     }
@@ -208,6 +208,14 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "task_io_arg1_init");
 
         // Copy captured env variables from closure env into task struct
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_kind_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_handle_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_data0_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_data1_zero");
         if (captureCount > 0)
         {
             LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "task_env_ptr");
@@ -255,6 +263,14 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_io_arg0_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.IoArg1,
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_io_arg1_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_kind_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_handle_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_data0_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_data1_zero");
 
         return taskPtr;
     }
@@ -282,6 +298,14 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_sleep");
         StoreMemory(state, taskPtr, TaskStructLayout.IoArg0, arg0, prefix + "_arg0");
         StoreMemory(state, taskPtr, TaskStructLayout.IoArg1, arg1, prefix + "_arg1");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_kind");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_handle");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_data0");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_data1");
 
         return taskPtr;
     }
@@ -468,6 +492,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, leafCompleted, doneBlock, leafPendingBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafPendingBlock);
+        EmitWaitForPendingLeafTask(state, taskPtr, "run_leaf_pending");
         LlvmApi.BuildBr(builder, checkBlock);
 
         // --- Step block: call the coroutine ---
@@ -479,7 +504,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle status = LlvmApi.BuildCall2(builder,
             coroutineFnType,
             typedFnPtr,
-            new[] { taskPtr, LlvmApi.ConstInt(state.I64, 0, 0) },
+            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
             "run_status");
 
         // Check status: 0 = SUSPENDED, 1 = COMPLETED
@@ -519,6 +544,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, afterSubBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafHandlePendingBlock);
+        EmitWaitForPendingLeafTask(state, awaitedTask, "run_awaited_leaf_pending");
         LlvmApi.BuildBr(builder, suspendedBlock);
 
         // --- Normal sub-task: recursively run to completion ---
@@ -584,6 +610,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, subLeafCompleted, subDoneBlock, subLeafPendingBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, subLeafPendingBlock);
+        EmitWaitForPendingLeafTask(state, taskPtr, "sub_leaf_pending");
         LlvmApi.BuildBr(builder, subCheckBlock);
 
         // --- Step: call coroutine ---
@@ -595,7 +622,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle status = LlvmApi.BuildCall2(builder,
             coroutineFnType,
             typedFnPtr,
-            new[] { taskPtr, LlvmApi.ConstInt(state.I64, 0, 0) },
+            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
             "sub_status");
 
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -656,7 +683,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle nestedStatus = LlvmApi.BuildCall2(builder,
             coroutineFnType,
             nestedFnPtr,
-            new[] { awaitedTask, LlvmApi.ConstInt(state.I64, 0, 0) },
+            [awaitedTask, LlvmApi.ConstInt(state.I64, 0, 0)],
             "nested_status");
 
         // If nested task completed, fall through to nestedDone.
@@ -718,6 +745,14 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_io_arg0_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.IoArg1,
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_io_arg1_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_kind_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_handle_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_data0_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_data1_zero");
 
         return taskPtr;
     }
@@ -818,6 +853,105 @@ internal static partial class LlvmCodegen
             state.WindowsSleepImport,
             "sleep_fn_ptr");
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
+    }
+
+    private static void EmitWaitForPendingLeafTask(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle waitKind = LoadMemory(state, taskPtr, TaskStructLayout.WaitKind, prefix + "_wait_kind");
+        LlvmValueHandle waitHandle = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, prefix + "_wait_handle");
+        LlvmValueHandle isReadWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0),
+            prefix + "_is_read_wait");
+        LlvmValueHandle isWriteWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0),
+            prefix + "_is_write_wait");
+        LlvmValueHandle shouldWait = LlvmApi.BuildOr(builder, isReadWait, isWriteWait, prefix + "_should_wait");
+
+        LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait_block");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_continue");
+        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
+            LlvmValueHandle epollEventStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_epoll_event_storage");
+            LlvmValueHandle epollEventPtr = GetArrayElementPointer(state, epollEventType, epollEventStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_event_ptr");
+            LlvmValueHandle epollEventOutStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_epoll_event_out_storage");
+            LlvmValueHandle epollEventOutPtr = GetArrayElementPointer(state, epollEventType, epollEventOutStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_event_out_ptr");
+            LlvmValueHandle epollFd = EmitLinuxSyscall(state, SyscallEpollCreate1, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_create1");
+            LlvmValueHandle readMask = LlvmApi.ConstInt(state.I32, 0x001, 0);
+            LlvmValueHandle writeMask = LlvmApi.ConstInt(state.I32, 0x004, 0);
+            LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder, isReadWait, readMask, writeMask, prefix + "_event_mask");
+            LlvmApi.BuildStore(builder, eventMask, LlvmApi.BuildBitCast(builder, epollEventPtr, state.I32Ptr, prefix + "_epoll_event_mask_ptr"));
+            LlvmApi.BuildStore(builder, waitHandle, LlvmApi.BuildBitCast(builder,
+                LlvmApi.BuildGEP2(builder, state.I8, epollEventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_epoll_event_data_byte"),
+                state.I64Ptr,
+                prefix + "_epoll_event_data_ptr"));
+
+            EmitLinuxSyscall4(state, SyscallEpollCtl,
+                epollFd,
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                waitHandle,
+                LlvmApi.BuildPtrToInt(builder, epollEventPtr, state.I64, prefix + "_epoll_event_arg"),
+                prefix + "_epoll_ctl");
+            if (IsLinuxArm64Flavor(state.Flavor))
+            {
+                EmitLinuxSyscall6(state, Arm64SyscallEpollPwait,
+                    epollFd,
+                    LlvmApi.BuildPtrToInt(builder, epollEventOutPtr, state.I64, prefix + "_epoll_wait_events"),
+                    LlvmApi.ConstInt(state.I64, 1, 0),
+                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    LlvmApi.ConstInt(state.I64, 0, 0),
+                    LlvmApi.ConstInt(state.I64, 0, 0),
+                    prefix + "_epoll_wait");
+            }
+            else
+            {
+                EmitLinuxSyscall4(state, SyscallEpollWait,
+                    epollFd,
+                    LlvmApi.BuildPtrToInt(builder, epollEventOutPtr, state.I64, prefix + "_epoll_wait_events"),
+                    LlvmApi.ConstInt(state.I64, 1, 0),
+                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    prefix + "_epoll_wait");
+            }
+            EmitLinuxSyscall(state, SyscallClose, epollFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_close");
+        }
+        else
+        {
+            LlvmTypeHandle pollfdType = LlvmApi.ArrayType2(state.I8, 16);
+            LlvmValueHandle pollfdStorage = LlvmApi.BuildAlloca(builder, pollfdType, prefix + "_pollfd_storage");
+            LlvmValueHandle pollfdPtr = GetArrayElementPointer(state, pollfdType, pollfdStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_pollfd_ptr");
+            LlvmApi.BuildStore(builder, waitHandle, LlvmApi.BuildBitCast(builder, pollfdPtr, state.I64Ptr, prefix + "_pollfd_socket_ptr"));
+            LlvmValueHandle pollEventPtr = LlvmApi.BuildBitCast(builder,
+                LlvmApi.BuildGEP2(builder, state.I8, pollfdPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_pollfd_event_byte"),
+                LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+                prefix + "_pollfd_event_ptr");
+            LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+            LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+            LlvmValueHandle pollMask = LlvmApi.BuildSelect(builder,
+                isReadWait,
+                LlvmApi.ConstInt(i16, 0x0100, 0),
+                LlvmApi.ConstInt(i16, 0x0010, 0),
+                prefix + "_poll_mask");
+            LlvmApi.BuildStore(builder, pollMask, LlvmApi.BuildBitCast(builder, pollEventPtr, i16Ptr, prefix + "_poll_mask_ptr"));
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(i16, 0, 0), LlvmApi.BuildBitCast(builder,
+                LlvmApi.BuildGEP2(builder, state.I8, pollfdPtr, [LlvmApi.ConstInt(state.I64, 10, 0)], prefix + "_pollfd_revents_byte"),
+                i16Ptr,
+                prefix + "_pollfd_revents_ptr"));
+            EmitWindowsWsaPoll(state,
+                LlvmApi.BuildBitCast(builder, pollfdPtr, state.I8Ptr, prefix + "_pollfd_i8"),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                prefix + "_wsapoll_wait");
+        }
+
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
     }
 
     // ── Async All ──────────────────────────────────────────────

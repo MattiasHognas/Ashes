@@ -392,7 +392,11 @@ public static class TaskStructLayout
     public const int SleepDurationMs = 40; // sleep duration in milliseconds (i64)
     public const int IoArg0 = 48;          // leaf-task argument slot 0 (i64)
     public const int IoArg1 = 56;          // leaf-task argument slot 1 (i64)
-    public const int HeaderSize = 64;      // total header size in bytes
+    public const int WaitKind = 64;        // pending wait descriptor kind (i64)
+    public const int WaitHandle = 72;      // pending wait handle / socket (i64)
+    public const int WaitData0 = 80;       // pending wait scratch slot 0 (i64)
+    public const int WaitData1 = 88;       // pending wait scratch slot 1 (i64)
+    public const int HeaderSize = 96;      // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 
@@ -412,6 +416,13 @@ public static class TaskStructLayout
     public const long StateHttpGet = -14;
     /// <summary>State index value indicating a leaf HTTP POST task.</summary>
     public const long StateHttpPost = -15;
+
+    /// <summary>No pending wait is registered for the task.</summary>
+    public const long WaitNone = 0;
+    /// <summary>The task is waiting for a socket to become readable.</summary>
+    public const long WaitSocketRead = 1;
+    /// <summary>The task is waiting for a socket to become writable.</summary>
+    public const long WaitSocketWrite = 2;
 }
 
 public sealed record IrFunction(

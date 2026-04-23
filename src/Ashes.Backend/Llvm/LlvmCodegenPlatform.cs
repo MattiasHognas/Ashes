@@ -16,11 +16,10 @@ internal static partial class LlvmCodegen
         LlvmValueHandle result = LlvmApi.BuildCall2(builder,
             wsaStartupType,
             wsaStartupPtr,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(i16, 0x0202, 0),
                 wsadataPtr
-            },
+            ],
             name);
         return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
@@ -36,12 +35,11 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             socketType,
             socketPtr,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I32, (uint)af, 0),
                 LlvmApi.ConstInt(state.I32, (uint)socketTypeValue, 0),
                 LlvmApi.ConstInt(state.I32, (uint)protocol, 0)
-            },
+            ],
             name);
     }
 
@@ -56,12 +54,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle result = LlvmApi.BuildCall2(builder,
             connectType,
             connectPtr,
-            new[]
-            {
+            [
                 socket,
                 sockaddrPtr,
                 LlvmApi.ConstInt(state.I32, 16, 0)
-            },
+            ],
             name);
         return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
@@ -77,13 +74,12 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             sendType,
             sendPtr,
-            new[]
-            {
+            [
                 socket,
                 buffer,
                 len,
                 LlvmApi.ConstInt(state.I32, 0, 0)
-            },
+            ],
             name);
     }
 
@@ -98,13 +94,12 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             recvType,
             recvPtr,
-            new[]
-            {
+            [
                 socket,
                 buffer,
                 len,
                 LlvmApi.ConstInt(state.I32, 0, 0)
-            },
+            ],
             name);
     }
 
@@ -119,7 +114,56 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             closeSocketType,
             closeSocketPtr,
-            new[] { socket },
+            [socket],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsIoctlSocket(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle command, LlvmValueHandle valuePtr, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle ioctlSocketType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I64Ptr]);
+        LlvmValueHandle ioctlSocketPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsIoctlSocketImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            ioctlSocketType,
+            ioctlSocketPtr,
+            [
+                socket,
+                LlvmApi.BuildTrunc(builder, command, state.I32, name + "_cmd"),
+                valuePtr
+            ],
+            name);
+    }
+
+    private static LlvmValueHandle EmitWindowsWsaGetLastError(LlvmCodegenState state, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle getLastErrorType = LlvmApi.FunctionType(state.I32, []);
+        LlvmValueHandle getLastErrorPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWsaGetLastErrorImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder, getLastErrorType, getLastErrorPtr, Array.Empty<LlvmValueHandle>(), name);
+    }
+
+    private static LlvmValueHandle EmitWindowsWsaPoll(LlvmCodegenState state, LlvmValueHandle pollfdPtr, LlvmValueHandle count, LlvmValueHandle timeoutMs, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle wsaPollType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I32, state.I32]);
+        LlvmValueHandle wsaPollPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWsaPollImport,
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            wsaPollType,
+            wsaPollPtr,
+            [
+                pollfdPtr,
+                LlvmApi.BuildTrunc(builder, count, state.I32, name + "_count"),
+                LlvmApi.BuildTrunc(builder, timeoutMs, state.I32, name + "_timeout")
+            ],
             name);
     }
 
@@ -134,8 +178,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             createFileType,
             createFilePtr,
-            new[]
-            {
+            [
                 pathCstr,
                 LlvmApi.ConstInt(state.I32, unchecked((uint)desiredAccess), 1),
                 LlvmApi.ConstInt(state.I32, unchecked((uint)shareMode), 0),
@@ -143,7 +186,7 @@ internal static partial class LlvmCodegen
                 LlvmApi.ConstInt(state.I32, unchecked((uint)creationDisposition), 0),
                 LlvmApi.ConstInt(state.I32, 0x80, 0),
                 LlvmApi.ConstInt(state.I64, 0, 0)
-            },
+            ],
             name);
     }
 
@@ -158,7 +201,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder,
             closeHandleType,
             closeHandlePtr,
-            new[] { handle },
+            [handle],
             name);
     }
 
@@ -173,7 +216,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             getFileAttributesType,
             getFileAttributesPtr,
-            new[] { pathCstr },
+            [pathCstr],
             name);
     }
 
@@ -189,14 +232,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle callResult = LlvmApi.BuildCall2(builder,
             readFileType,
             readFilePtr,
-            new[]
-            {
+            [
                 handle,
                 buffer,
                 len,
                 bytesReadSlot,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_overlapped")
-            },
+            ],
             name);
         return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, callResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
@@ -213,14 +255,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle callResult = LlvmApi.BuildCall2(builder,
             writeFileType,
             writeFilePtr,
-            new[]
-            {
+            [
                 handle,
                 buffer,
                 len,
                 bytesWrittenSlot,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, name + "_overlapped")
-            },
+            ],
             name);
         return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, callResult, LlvmApi.ConstInt(state.I32, 0, 0), name + "_success");
     }
@@ -327,7 +368,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             getStdHandleType,
             getStdHandlePtr,
-            new[] { LlvmApi.ConstInt(state.I32, handleKind, 1) },
+            [LlvmApi.ConstInt(state.I32, handleKind, 1)],
             name);
     }
 
@@ -343,14 +384,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder,
             readFileType,
             readFilePtr,
-            new[]
-            {
+            [
                 stdinHandle,
                 byteSlot,
                 LlvmApi.ConstInt(state.I32, 1, 0),
                 bytesReadSlot,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
-            },
+            ],
             "read_file");
         return LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "read_line_bytes_read_value"), state.I64, "read_line_bytes_read_i64");
     }
@@ -369,14 +409,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder,
             writeFileType,
             writeFilePtr,
-            new[]
-            {
+            [
                 stdoutHandle,
                 bytePtr,
                 LlvmApi.BuildTrunc(builder, NormalizeToI64(state, len), state.I32, "write_len_i32"),
                 bytesWritten,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
-            },
+            ],
             "write_file");
     }
 
@@ -401,6 +440,27 @@ internal static partial class LlvmCodegen
         return EmitSyscallX86(state, resolved, arg1, arg2, arg3, name);
     }
 
+    private static LlvmValueHandle EmitLinuxSyscall4(LlvmCodegenState state, long nr,
+        LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, LlvmValueHandle arg4, string name)
+    {
+        long resolved = ResolveSyscallNr(state.Flavor, nr);
+        if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            return EmitSyscall4Arm64(state, resolved, arg1, arg2, arg3, arg4, name);
+        }
+
+        return EmitSyscall6X86(
+            state,
+            resolved,
+            arg1,
+            arg2,
+            arg3,
+            arg4,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            name);
+    }
+
     private static LlvmValueHandle EmitSyscallX86(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)
     {
         LlvmTypeHandle syscallType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64]);
@@ -413,13 +473,12 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
                 NormalizeToI64(state, arg3)
-            },
+            ],
             name);
     }
 
@@ -440,13 +499,12 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
                 NormalizeToI64(state, arg3)
-            },
+            ],
             name);
     }
 
@@ -463,14 +521,13 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
                 NormalizeToI64(state, arg3),
                 NormalizeToI64(state, arg4)
-            },
+            ],
             name);
     }
 
@@ -506,8 +563,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
@@ -515,7 +571,7 @@ internal static partial class LlvmCodegen
                 NormalizeToI64(state, arg4),
                 NormalizeToI64(state, arg5),
                 NormalizeToI64(state, arg6)
-            },
+            ],
             name);
     }
 
@@ -537,8 +593,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder,
             syscallType,
             syscall,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, unchecked((ulong)nr), 1),
                 NormalizeToI64(state, arg1),
                 NormalizeToI64(state, arg2),
@@ -546,7 +601,7 @@ internal static partial class LlvmCodegen
                 NormalizeToI64(state, arg4),
                 NormalizeToI64(state, arg5),
                 NormalizeToI64(state, arg6)
-            },
+            ],
             name);
     }
 }

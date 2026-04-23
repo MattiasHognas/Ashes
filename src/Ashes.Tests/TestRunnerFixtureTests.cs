@@ -30,7 +30,7 @@ public sealed class TestRunnerFixtureTests
         directives.FileFixtures[1].RelativePath.ShouldBe("nested/dir/value.txt");
         directives.FileFixtures[2].RelativePath.ShouldBe("bad.bin");
         directives.FileFixtures[0].Content.ShouldBe(System.Text.Encoding.UTF8.GetBytes("hello"));
-        directives.FileFixtures[2].Content.ShouldBe(new byte[] { 0xFF, 0xFE, 0xFD });
+        directives.FileFixtures[2].Content.ShouldBe([0xFF, 0xFE, 0xFD]);
     }
 
     [Test]
@@ -44,11 +44,11 @@ public sealed class TestRunnerFixtureTests
                 root,
                 [
                     new Runner.TestFileFixture("input.txt", System.Text.Encoding.UTF8.GetBytes("hello")),
-                    new Runner.TestFileFixture("nested/dir/value.bin", new byte[] { 0x00, 0x01, 0x02 })
+                    new Runner.TestFileFixture("nested/dir/value.bin", [0x00, 0x01, 0x02])
                 ]);
 
             File.ReadAllText(Path.Combine(root, "input.txt")).ShouldBe("hello");
-            File.ReadAllBytes(Path.Combine(root, "nested", "dir", "value.bin")).ShouldBe(new byte[] { 0x00, 0x01, 0x02 });
+            File.ReadAllBytes(Path.Combine(root, "nested", "dir", "value.bin")).ShouldBe([0x00, 0x01, 0x02]);
         }
         finally
         {

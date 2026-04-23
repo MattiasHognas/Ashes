@@ -4,12 +4,14 @@ Async-only TCP/HTTP is now part of the language surface.
 The public APIs return `Task(E, A)` and must be used inside `async`
 blocks with `await`.
 
-The current implementation still performs blocking TCP/HTTP work at task
-execution time, but networking now lowers through dedicated leaf-task IR
-nodes and named runtime ABI symbols instead of running as ordinary
-task-coroutine bodies. The remaining roadmap is a true non-blocking
-runtime backed by readiness-based I/O plus the missing
-concurrency-focused test coverage.
+The current implementation now includes explicit task wait metadata, a
+pending-leaf wait path in the task runner, and pending-aware TCP leaf
+stepping on the Windows backend. Linux leaf networking and HTTP still
+use the older blocking helper path, and `Ashes.Async.all` / `race` do
+not yet drive multiple pending tasks through a shared readiness-aware
+scheduler. The remaining roadmap is finishing that cross-platform,
+cross-task non-blocking runtime plus the missing concurrency-focused
+test coverage.
 
 ------------------------------------------------------------------------
 
@@ -31,6 +33,10 @@ The async-only API redesign is partially complete:
 | **Platform runtime shims** | The named runtime symbols are currently implemented as compiler-emitted runtime helper functions in the generated module, keeping Linux and Windows socket details behind the ABI layer. |
 | **Leaf-step ABI boundary** | Networking leaf tasks are now stepped through dedicated task-level runtime symbols (`ashes_step_tcp_connect_task`, `ashes_step_tcp_send_task`, `ashes_step_tcp_receive_task`, `ashes_step_tcp_close_task`, `ashes_step_http_get_task`, `ashes_step_http_post_task`) that take the task pointer and return a step status. |
 | **Task runtime integration** | The LLVM task runner now recognizes negative-state leaf tasks for sleep, TCP, and HTTP operations, stores task arguments in the task header, completes those tasks through the ABI layer, and propagates awaited leaf-task results back into parent coroutines. |
+| **Task wait metadata** | The task header now carries explicit wait metadata (`WaitKind`, `WaitHandle`, `WaitData0`, `WaitData1`) so leaf tasks can preserve readiness state and incremental progress across steps. |
+| **Pending-leaf wait path** | The LLVM task runner now blocks on registered pending leaf waits instead of immediately busy-rechecking leaf tasks in the root-task and awaited-subtask run loops. |
+| **Windows pending TCP stepping** | The Windows TCP connect/send/receive leaf-step helpers now preserve per-task progress, switch sockets into non-blocking mode, return pending on would-block conditions, and resume through socket-readiness waits instead of always completing inline. |
+| **Platform readiness scaffolding** | The backend now carries the Linux syscall and Windows import/link scaffolding needed for readiness waits (`epoll` syscalls on Linux; non-blocking Winsock plus `WSAPoll` support on Windows). |
 | **Backend compatibility path** | The existing `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, and `NetTcpClose` IR instructions remain intact and still call through the runtime ABI, but the public async networking surface now lowers through the dedicated leaf-task IR path instead of wrapping those instructions in coroutines. |
 | **Test migration** | The HTTP and TCP end-to-end tests were rewritten to use `async`, `await`, and `Ashes.Async.run`, and compile-error coverage was added for using HTTP/TCP outside `async`. |
 | **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the async-only API surface as complete while leaving the non-blocking runtime optimization as future work. |
@@ -39,27 +45,32 @@ The async-only API redesign is partially complete:
 
 ## Ordered Roadmap — Next Work Items
 
-Every remaining task below is still open. The leaf-task IR path, the
-runtime ABI boundary, and the task-level leaf-step ABI boundary are now
-in place, so the remaining work starts with replacing the current
-blocking leaf-task execution model with true readiness-driven suspension
-and resumption.
+Each roadmap section below is still incomplete. The leaf-task IR path,
+the runtime ABI boundary, the task-level leaf-step ABI boundary, task
+wait metadata, and the first pending-aware TCP step path are now in
+place, so the remaining work is finishing the shared readiness runtime
+across platforms and task combinators.
 
 ### 1. Replace blocking networking with non-blocking readiness I/O
 
-Move from "blocking call during leaf-task completion" to true async
-networking backed by a readiness-aware runtime.
+Finish the move from "blocking call during leaf-task completion" to a
+fully shared async networking runtime backed by readiness-aware I/O.
 
-- Add explicit task wait-state metadata and a readiness registry/event-loop
-    model so pending leaf tasks can suspend without busy-spinning and be
-    resumed coherently from `run`, `all`, and `race`.
-- Use `epoll` on Linux.
-- Use IO completion ports on Windows.
-- Implement non-blocking connect, send, receive, and close for TCP.
+- Extend the current task wait-state metadata into a shared readiness
+    registry / event-loop model so pending tasks can be driven coherently
+    across `run`, `all`, and `race` rather than only through the current
+    single-task wait path.
+- Finish the Linux `epoll` runtime and convert Linux TCP leaf tasks off
+    the current blocking helper path.
+- Replace the current Windows non-blocking-socket + `WSAPoll` bridge with
+    the intended IO completion port runtime.
+- Finish non-blocking connect, send, receive, and close for TCP on all
+    supported backends.
 - Rebuild HTTP get/post on top of async TCP rather than the current
     direct blocking helper path.
-- Ensure task suspension and resumption are driven by runtime readiness
-    rather than a blocking call inside the task runner's leaf-task path.
+- Extend readiness-driven suspension and resumption to the task
+    combinators so `Ashes.Async.all` and `Ashes.Async.race` no longer
+    just drive their task lists sequentially.
 
 ### 2. Add concurrency-focused networking tests
 
@@ -91,8 +102,12 @@ as done:
 
 - The current runtime ABI symbols are compiler-emitted helper functions,
     not a separately packaged shared runtime yet.
-- TCP/HTTP operations are not yet truly non-blocking at runtime; the
-    current leaf tasks still complete synchronously when run.
-- No readiness-based `epoll`/IOCP networking runtime has landed yet.
+- Linux TCP/HTTP operations still use the older blocking helper path.
+- HTTP leaf tasks still complete synchronously when run.
+- `Ashes.Async.all` and `Ashes.Async.race` do not yet use a shared
+    readiness-driven wait-any scheduler.
+- No full `epoll`/IOCP networking runtime has landed yet; the current
+    Windows readiness bridge uses non-blocking Winsock plus `WSAPoll`,
+    and Linux has only the syscall scaffolding so far.
 - The current tests do not yet cover the concurrency-focused
     deliverables for async networking.

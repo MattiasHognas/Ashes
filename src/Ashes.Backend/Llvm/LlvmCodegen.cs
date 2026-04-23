@@ -23,9 +23,20 @@ internal static partial class LlvmCodegen
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
+    private const long SyscallFcntl = 72;
+    private const long SyscallEpollCtl = 233;
+    private const long SyscallEpollWait = 232;
+    private const long SyscallEpollCreate1 = 291;
     private const long SyscallNanosleep = 35;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
+    private const long LinuxErrWouldBlock = -11;
+    private const long LinuxErrAlready = -114;
+    private const long LinuxErrInProgress = -115;
+    private const long LinuxErrIsConnected = -106;
+    private const long LinuxFcntlGetFlags = 3;
+    private const long LinuxFcntlSetFlags = 4;
+    private const long LinuxOpenNonBlocking = 0x800;
 
     // AArch64 Linux syscall numbers
     private const long Arm64SyscallClose = 57;
@@ -38,8 +49,17 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallExit = 93;
     private const long Arm64SyscallSocket = 198;
     private const long Arm64SyscallConnect = 203;
+    private const long Arm64SyscallFcntl = 25;
+    private const long Arm64SyscallEpollCreate1 = 20;
+    private const long Arm64SyscallEpollCtl = 21;
+    private const long Arm64SyscallEpollPwait = 22;
     private const long Arm64SyscallNanosleep = 101;
     private const long Arm64SyscallClockGettime = 113;
+    private const uint WindowsFionBio = 0x8004667E;
+    private const int WindowsWsaErrorWouldBlock = 10035;
+    private const int WindowsWsaErrorInProgress = 10036;
+    private const int WindowsWsaErrorAlready = 10037;
+    private const int WindowsWsaErrorIsConnected = 10056;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -276,6 +296,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSendImport = default;
         LlvmValueHandle windowsRecvImport = default;
         LlvmValueHandle windowsCloseSocketImport = default;
+        LlvmValueHandle windowsIoctlSocketImport = default;
+        LlvmValueHandle windowsWsaGetLastErrorImport = default;
+        LlvmValueHandle windowsWsaPollImport = default;
         LlvmValueHandle windowsExitProcessImport = default;
         LlvmValueHandle windowsGetCommandLineImport = default;
         LlvmValueHandle windowsWideCharToMultiByteImport = default;
@@ -332,6 +355,9 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle sendType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
             LlvmTypeHandle recvType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32]);
             LlvmTypeHandle closeSocketType = LlvmApi.FunctionType(i32, [i64]);
+            LlvmTypeHandle ioctlSocketType = LlvmApi.FunctionType(i32, [i64, i32, i64Ptr]);
+            LlvmTypeHandle wsaGetLastErrorType = LlvmApi.FunctionType(i32, []);
+            LlvmTypeHandle wsaPollType = LlvmApi.FunctionType(i32, [i8Ptr, i32, i32]);
             windowsWsaStartupImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAStartup");
             LlvmApi.SetLinkage(windowsWsaStartupImport, LlvmLinkage.External);
             windowsSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_socket");
@@ -344,6 +370,12 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsRecvImport, LlvmLinkage.External);
             windowsCloseSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_closesocket");
             LlvmApi.SetLinkage(windowsCloseSocketImport, LlvmLinkage.External);
+            windowsIoctlSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ioctlsocket");
+            LlvmApi.SetLinkage(windowsIoctlSocketImport, LlvmLinkage.External);
+            windowsWsaGetLastErrorImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAGetLastError");
+            LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
+            windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
+            LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
         }
 
         if (usesWindowsExitProcess)
@@ -420,6 +452,9 @@ internal static partial class LlvmCodegen
                 windowsSendImport,
                 windowsRecvImport,
                 windowsCloseSocketImport,
+                windowsIoctlSocketImport,
+                windowsWsaGetLastErrorImport,
+                windowsWsaPollImport,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -483,6 +518,9 @@ internal static partial class LlvmCodegen
             windowsSendImport,
             windowsRecvImport,
             windowsCloseSocketImport,
+            windowsIoctlSocketImport,
+            windowsWsaGetLastErrorImport,
+            windowsWsaPollImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -520,6 +558,9 @@ internal static partial class LlvmCodegen
                 windowsSendImport,
                 windowsRecvImport,
                 windowsCloseSocketImport,
+                windowsIoctlSocketImport,
+                windowsWsaGetLastErrorImport,
+                windowsWsaPollImport,
                 windowsExitProcessImport,
                 windowsGetCommandLineImport,
                 windowsWideCharToMultiByteImport,
@@ -571,6 +612,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSendImport,
         LlvmValueHandle windowsRecvImport,
         LlvmValueHandle windowsCloseSocketImport,
+        LlvmValueHandle windowsIoctlSocketImport,
+        LlvmValueHandle windowsWsaGetLastErrorImport,
+        LlvmValueHandle windowsWsaPollImport,
         LlvmValueHandle windowsExitProcessImport,
         LlvmValueHandle windowsGetCommandLineImport,
         LlvmValueHandle windowsWideCharToMultiByteImport,
@@ -667,6 +711,9 @@ internal static partial class LlvmCodegen
             windowsSendImport,
             windowsRecvImport,
             windowsCloseSocketImport,
+            windowsIoctlSocketImport,
+            windowsWsaGetLastErrorImport,
+            windowsWsaPollImport,
             windowsExitProcessImport,
             windowsGetCommandLineImport,
             windowsWideCharToMultiByteImport,
@@ -918,6 +965,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsSendImport,
         LlvmValueHandle WindowsRecvImport,
         LlvmValueHandle WindowsCloseSocketImport,
+        LlvmValueHandle WindowsIoctlSocketImport,
+        LlvmValueHandle WindowsWsaGetLastErrorImport,
+        LlvmValueHandle WindowsWsaPollImport,
         LlvmValueHandle WindowsExitProcessImport,
         LlvmValueHandle WindowsGetCommandLineImport,
         LlvmValueHandle WindowsWideCharToMultiByteImport,
@@ -961,6 +1011,9 @@ internal static partial class LlvmCodegen
 
     private static bool IsLinuxFlavor(LlvmCodegenFlavor flavor) =>
         flavor is LlvmCodegenFlavor.LinuxX64 or LlvmCodegenFlavor.LinuxArm64;
+
+    private static bool IsLinuxArm64Flavor(LlvmCodegenFlavor flavor) =>
+        flavor == LlvmCodegenFlavor.LinuxArm64;
 
     /// <summary>
     /// Emits local <c>memcpy</c> and <c>memset</c> function implementations so that LLVM's

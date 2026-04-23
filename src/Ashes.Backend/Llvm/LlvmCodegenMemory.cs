@@ -36,7 +36,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildGEP2(state.Target.Builder,
             arrayType,
             global,
-            new[] { LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0) },
+            [LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0)],
             prefix + "_ptr");
     }
 
@@ -93,10 +93,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(state.Target.Builder,
             state.I8,
             basePtr,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, (ulong)offsetBytes, 0)
-            },
+            ],
             name + "_byte");
         return LlvmApi.BuildBitCast(state.Target.Builder, bytePtr, state.I64Ptr, name);
     }
@@ -131,7 +130,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle memcmpType = LlvmApi.FunctionType(i32, [state.I8Ptr, state.I8Ptr, state.I64]);
         LlvmValueHandle memcmpFn = LlvmApi.GetNamedFunction(state.Target.Module, "memcmp");
         LlvmValueHandle cmpResult = LlvmApi.BuildCall2(builder, memcmpType, memcmpFn,
-            new[] { leftBytes, rightBytes, leftLen }, "str_cmp_memcmp");
+            [leftBytes, rightBytes, leftLen], "str_cmp_memcmp");
         LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cmpResult, LlvmApi.ConstInt(i32, 0, 0), "str_cmp_is_eq");
         LlvmApi.BuildCondBr(builder, isZero, eqBlock, notEqBlock);
 
@@ -157,7 +156,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle leftBytes = GetStringBytesPointer(state, leftRef, "str_cat_left_bytes");
         LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "str_cat_right_bytes");
         EmitCopyBytes(state, destBytes, leftBytes, leftLen, "str_cat_copy_left");
-        LlvmValueHandle rightDest = LlvmApi.BuildGEP2(builder, state.I8, destBytes, new[] { leftLen }, "str_cat_right_dest");
+        LlvmValueHandle rightDest = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [leftLen], "str_cat_right_dest");
         EmitCopyBytes(state, rightDest, rightBytes, rightLen, "str_cat_copy_right");
         return destRef;
     }
@@ -532,7 +531,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
         LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, "copy_list_cache_head_val");
         LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, "copy_list_cache_idx_val");
-        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { cacheIdx }, "copy_list_buf_slot");
+        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], "copy_list_buf_slot");
         LlvmApi.BuildStore(builder, headVal, bufSlot);
         LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, "copy_list_cache_idx_inc");
         LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
@@ -550,7 +549,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, zero, prevCellSlot);
 
         // Eagerly allocate the first cell from headBuf[0].
-        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { zero }, "copy_list_first_head_slot");
+        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], "copy_list_first_head_slot");
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_list_first_head_val");
         LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
         LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
@@ -571,7 +570,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildBody);
-        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { buildIdx }, "copy_list_build_head_slot");
+        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], "copy_list_build_head_slot");
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_list_build_head_val");
         LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
         LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
@@ -695,7 +694,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
         LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, "copy_inner_cache_head_val");
         LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, "copy_inner_cache_idx_val");
-        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { cacheIdx }, "copy_inner_buf_slot");
+        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], "copy_inner_buf_slot");
         LlvmApi.BuildStore(builder, headVal, bufSlot);
         LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, "copy_inner_cache_idx_inc");
         LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
@@ -711,7 +710,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_prev");
         LlvmApi.BuildStore(builder, zero, prevCellSlot);
 
-        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { zero }, "copy_inner_first_head_slot");
+        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], "copy_inner_first_head_slot");
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_inner_first_head_val");
         LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
         StoreMemory(state, firstCell, 0, firstHeadVal, "copy_inner_store_first_head");
@@ -731,7 +730,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildBody);
-        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, new[] { buildIdx }, "copy_inner_build_head_slot");
+        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], "copy_inner_build_head_slot");
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_inner_build_head_val");
         LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
         StoreMemory(state, newCell, 0, buildHeadVal, "copy_inner_store_head");
@@ -885,12 +884,11 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildCall2(builder,
                 virtualFreeType,
                 virtualFreePtr,
-                new[]
-                {
+                [
                     basePtr,                                          // lpAddress
                     LlvmApi.ConstInt(state.I64, 0, 0),               // dwSize = 0 (MEM_RELEASE requirement)
                     LlvmApi.ConstInt(state.I32, memRelease, 0)        // dwFreeType = MEM_RELEASE
-                },
+                ],
                 prefix + "_vf_call");
         }
     }
@@ -995,13 +993,12 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(builder,
             virtualAllocType,
             virtualAllocPtr,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, 0, 0),                        // lpAddress = NULL
                 NormalizeToI64(state, sizeBytes),                          // dwSize
                 LlvmApi.ConstInt(state.I32, memCommitReserve, 0),          // flAllocationType
                 LlvmApi.ConstInt(state.I32, pageReadWrite, 0)              // flProtect
-            },
+            ],
             prefix + "_va_call");
     }
 
@@ -1012,7 +1009,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle cstrRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_size"));
         LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, cstrRef, state.I8Ptr, prefix + "_dest");
         EmitCopyBytes(state, destPtr, GetStringBytesPointer(state, stringRef, prefix + "_src"), len, prefix + "_copy");
-        LlvmValueHandle terminatorPtr = LlvmApi.BuildGEP2(builder, state.I8, destPtr, new[] { len }, prefix + "_nul_ptr");
+        LlvmValueHandle terminatorPtr = LlvmApi.BuildGEP2(builder, state.I8, destPtr, [len], prefix + "_nul_ptr");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), terminatorPtr);
         return destPtr;
     }
@@ -1255,7 +1252,7 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle LoadByteAt(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle index, string name)
     {
-        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(state.Target.Builder, state.I8, bytesPtr, new[] { index }, name + "_ptr");
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(state.Target.Builder, state.I8, bytesPtr, [index], name + "_ptr");
         return LlvmApi.BuildLoad2(state.Target.Builder, state.I8, bytePtr, name);
     }
 
@@ -1393,11 +1390,10 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildGEP2(state.Target.Builder,
             arrayType,
             storage,
-            new[]
-            {
+            [
                 LlvmApi.ConstInt(state.I64, 0, 0),
                 index
-            },
+            ],
             name);
     }
 }

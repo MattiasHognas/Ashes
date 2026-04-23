@@ -104,6 +104,9 @@ internal static partial class LlvmImageLinker
         int sendHintOffset = WriteHintName(rdataStream, 0, "send");
         int recvHintOffset = WriteHintName(rdataStream, 0, "recv");
         int closeSocketHintOffset = WriteHintName(rdataStream, 0, "closesocket");
+        int ioctlSocketHintOffset = WriteHintName(rdataStream, 0, "ioctlsocket");
+        int wsaGetLastErrorHintOffset = WriteHintName(rdataStream, 0, "WSAGetLastError");
+        int wsaPollHintOffset = WriteHintName(rdataStream, 0, "WSAPoll");
         int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
         int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
         int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
@@ -111,7 +114,7 @@ internal static partial class LlvmImageLinker
         // Group hint offsets by DLL for IAT/ILT construction
         int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
-        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset];
+        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, wsaPollHintOffset];
 
         // Write IAT (Import Address Table) — 8 bytes per entry + 8-byte null terminator per DLL
         AlignStream(rdataStream, 8);
@@ -173,6 +176,9 @@ internal static partial class LlvmImageLinker
         ulong sendIatVa = ws2IatVa + 3 * 8;
         ulong recvIatVa = ws2IatVa + 4 * 8;
         ulong closeSocketIatVa = ws2IatVa + 5 * 8;
+        ulong ioctlSocketIatVa = ws2IatVa + 6 * 8;
+        ulong wsaGetLastErrorIatVa = ws2IatVa + 7 * 8;
+        ulong wsaPollIatVa = ws2IatVa + 8 * 8;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -217,6 +223,9 @@ internal static partial class LlvmImageLinker
                 ["__imp_send"] = sendIatVa,
                 ["__imp_recv"] = recvIatVa,
                 ["__imp_closesocket"] = closeSocketIatVa,
+                ["__imp_ioctlsocket"] = ioctlSocketIatVa,
+                ["__imp_WSAGetLastError"] = wsaGetLastErrorIatVa,
+                ["__imp_WSAPoll"] = wsaPollIatVa,
                 ["__chkstk"] = chkstkStubVa
             });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
