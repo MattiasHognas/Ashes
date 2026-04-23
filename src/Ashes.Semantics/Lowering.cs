@@ -95,6 +95,18 @@ public sealed class Lowering
     private enum IntrinsicKind
     {
         Print,
+        Write,
+        WriteLine,
+        ReadLine,
+        FileReadText,
+        FileWriteText,
+        FileExists,
+        HttpGet,
+        HttpPost,
+        NetTcpConnect,
+        NetTcpSend,
+        NetTcpReceive,
+        NetTcpClose,
         Panic,
         AsyncRun,
         AsyncFromResult,
@@ -1934,6 +1946,26 @@ public sealed class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpClose;
     }
 
+    private static bool IsAsyncOnlyNetworkingIntrinsic(IntrinsicKind kind)
+    {
+        return kind is IntrinsicKind.HttpGet
+            or IntrinsicKind.HttpPost
+            or IntrinsicKind.NetTcpConnect
+            or IntrinsicKind.NetTcpSend
+            or IntrinsicKind.NetTcpReceive
+            or IntrinsicKind.NetTcpClose;
+    }
+
+    private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
+    {
+        IntrinsicKind.FileWriteText => 2,
+        IntrinsicKind.HttpPost => 2,
+        IntrinsicKind.NetTcpConnect => 2,
+        IntrinsicKind.NetTcpSend => 2,
+        IntrinsicKind.NetTcpReceive => 2,
+        _ => 1
+    };
+
     private bool TryRequireSocketType(TypeRef type, Expr origin, string diagnosticMessage)
     {
         var prunedType = Prune(type);
@@ -2939,14 +2971,36 @@ public sealed class Lowering
 
         if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)
         {
-            if (collectedArgs.Count != 1)
+            int expectedArity = GetIntrinsicArity(intrinsic.Kind);
+            if (collectedArgs.Count != expectedArity)
             {
-                return ReportArityMismatch(rootExpr, 1, collectedArgs.Count);
+                return ReportArityMismatch(rootExpr, expectedArity, collectedArgs.Count);
+            }
+
+            if (!_insideAsync && IsAsyncOnlyNetworkingIntrinsic(intrinsic.Kind))
+            {
+                ReportDiagnostic(
+                    GetSpan(rootExpr),
+                    $"'{varFunc.Name}' returns Task and can only be called inside an 'async' block.",
+                    DiagnosticCodes.AsyncOnlyNetworkingApi);
+                return ReturnNeverWithDummyTemp();
             }
 
             return intrinsic.Kind switch
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
+                IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+                IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
+                IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+                IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+                IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+                IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
@@ -6235,7 +6289,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateWriteBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.Write,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]))
         );
     }
@@ -6243,7 +6297,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateWriteLineBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.WriteLine,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]))
         );
     }
@@ -6251,7 +6305,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateReadLineBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.ReadLine,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateMaybeType(new TypeRef.TStr())))
         );
     }
@@ -6269,7 +6323,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateFileReadTextBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.FileReadText,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())))
         );
     }
@@ -6277,7 +6331,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateFileWriteTextBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.FileWriteText,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
     }
@@ -6285,7 +6339,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateFileExistsBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.FileExists,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())))
         );
     }
@@ -6293,7 +6347,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateHttpGetBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.HttpGet,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr())))
         );
     }
@@ -6301,7 +6355,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateHttpPostBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.HttpPost,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr()))))
         );
     }
@@ -6309,7 +6363,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateNetTcpConnectBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.NetTcpConnect,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"]))))
         );
     }
@@ -6317,7 +6371,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateNetTcpSendBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.NetTcpSend,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TInt()))))
         );
     }
@@ -6325,7 +6379,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateNetTcpReceiveBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.NetTcpReceive,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TStr()))))
         );
     }
@@ -6333,7 +6387,7 @@ public sealed class Lowering
     private Binding.Intrinsic CreateNetTcpCloseBinding()
     {
         return new Binding.Intrinsic(
-            IntrinsicKind.Print,
+            IntrinsicKind.NetTcpClose,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Unit"])))
         );
     }
