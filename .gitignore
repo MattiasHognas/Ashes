@@ -71,6 +71,7 @@ examples/*.exe
 *.received.txt
 runtimes
 out
+*.lscache
 
 # Git
 .git/
