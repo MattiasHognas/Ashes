@@ -15,12 +15,8 @@
 
   <!-- When no explicit RID is set, detect host platform for native library selection -->
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">
-    <_HostLinuxRid
-      Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">
-      linux-x64</_HostLinuxRid>
-    <_HostLinuxRid
-      Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
-      linux-arm64</_HostLinuxRid>
+    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</_HostLinuxRid>
+    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</_HostLinuxRid>
   </PropertyGroup>
 
   <ItemGroup>
