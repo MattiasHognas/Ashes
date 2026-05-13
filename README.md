@@ -179,9 +179,10 @@ in
 | `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
 | `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
 | `Ashes.Result` | Helpers for the built-in `Result(E, A)` type |
+| `Ashes.Text` | Unicode-aware `uncons` plus `parseInt` and `parseFloat` |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
+Built-in types: `Int`, `Float`, `Bool`, `Str`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
 
 ---
 
@@ -291,6 +292,7 @@ Explore the [`examples/`](examples/) directory:
 | [`closures.ash`](examples/closures.ash) | Closures capturing bindings |
 | [`result_flow.ash`](examples/result_flow.ash) | `Result` pipelines |
 | [`stdlib_overview.ash`](examples/stdlib_overview.ash) | Standard library tour |
+| [`text_parsing_demo.ash`](examples/text_parsing_demo.ash) | `Ashes.Text` parsing primitives |
 | [`polymorphism_basics.ash`](examples/polymorphism_basics.ash) | Let-polymorphism |
 | [`io_echo_all.ash`](examples/io_echo_all.ash) | Recursive I/O until EOF |
 | [`http_get.ash`](examples/http_get.ash) | HTTP GET request |
