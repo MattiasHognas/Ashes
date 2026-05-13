@@ -67,6 +67,10 @@ internal static partial class LlvmCodegen
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
+    private const string TextParseIntInvalidMessage = "Ashes.Text.parseInt() invalid input";
+    private const string TextParseIntOverflowMessage = "Ashes.Text.parseInt() overflow";
+    private const string TextParseFloatInvalidMessage = "Ashes.Text.parseFloat() invalid input";
+    private const string TextParseFloatRangeMessage = "Ashes.Text.parseFloat() out of range";
     private const string TcpConnectFailedMessage = "Ashes.Net.Tcp.connect() failed";
     private const string TcpSendFailedMessage = "Ashes.Net.Tcp.send() failed";
     private const string TcpReceiveFailedMessage = "Ashes.Net.Tcp.receive() failed";
@@ -882,6 +886,9 @@ internal static partial class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
+            IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp))),
+            IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp))),
+            IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp))),
             IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpGetAbiCall(state, LoadTemp(state, httpGet.UrlTemp))),
             IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpPostAbiCall(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp))),
             IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnectAbiCall(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),

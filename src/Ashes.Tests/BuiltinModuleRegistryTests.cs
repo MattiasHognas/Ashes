@@ -49,6 +49,44 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_text_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Text", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Text");
+        module.Members.ContainsKey("uncons").ShouldBeTrue();
+        module.Members.ContainsKey("parseInt").ShouldBeTrue();
+        module.Members.ContainsKey("parseFloat").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Ashes_text_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.Text").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Text");
+    }
+
+    [Test]
+    public void Ashes_text_builtins_typecheck_through_maybe_and_result_flow()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            match Ashes.Text.uncons("ab") with
+                | None -> Ashes.IO.print("none")
+                | Some((head, tail)) ->
+                    match Ashes.Text.parseInt("123") with
+                        | Error(message) -> Ashes.IO.print(message)
+                        | Ok(value) -> Ashes.IO.print(value)
+            """,
+            diag).ParseProgram();
+        var lowering = new Lowering(diag);
+
+        lowering.Lower(program);
+
+        diag.Errors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Ashes_http_builtins_typecheck_through_result_flow()
     {
         var diag = new Diagnostics();

@@ -1,3 +1,4 @@
 {
-    "ashes.debugger": "lldb"
+    "ashes.debugger": "lldb",
+    "editor.formatOnSave": true
 }

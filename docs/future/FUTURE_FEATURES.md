@@ -2,23 +2,23 @@
 
 Planned features and future work for the Ashes language and ecosystem.
 
-| Feature | Description |
-|---------|-------------|
-| [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Minimal string primitives to enable full JSON and other text parsers in ordinary Ashes code |
-| [Async Networking](ASYNC_NETWORKING.md) | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
-| [Package Manager](PACKAGE_MANAGER.md) | Local deps first, lock file second, registry third |
-| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | LLVM passes, memory management, codegen improvements |
-| HTTPS/TLS | TLS, encryption, certificates |
-| Pattern Guards | Pattern matching enhancements |
-| Type Annotations | User-written type annotations |
-| Selective Imports | `import Ashes.IO (print)` |
-| Effects / IO Types | Effect system or IO types |
-| Inline Modules | Inline module declarations |
-| Ashes.String | Standard library string utilities |
-| Ashes.Bytes | Standard library byte utilities |
-| Ashes.Net.Http | Standard library HTTP module |
-| Ashes.Math | Standard library math utilities |
-| [Self-Hosting](SELF_HOSTING.md) | Rewrite the compiler in Ashes |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Landed | Landed as `Ashes.Text.uncons`, `Ashes.Text.parseInt`, and `Ashes.Text.parseFloat`; recursive user-space JSON parser smoke coverage proves the surface; follow-on text helpers remain deferred |
+| [Async Networking](ASYNC_NETWORKING.md) | Landed | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
+| [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
+| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | Ongoing | LLVM passes, memory management, codegen improvements |
+| HTTPS/TLS | Planned | TLS, encryption, certificates |
+| Pattern Guards | Planned | Pattern matching enhancements |
+| Type Annotations | Planned | User-written type annotations |
+| Selective Imports | Planned | `import Ashes.IO (print)` |
+| Effects / IO Types | Planned | Effect system or IO types |
+| Inline Modules | Planned | Inline module declarations |
+| Ashes.String | Planned | Standard library string utilities |
+| Ashes.Bytes | Planned | Standard library byte utilities |
+| Ashes.Net.Http | Planned | Standard library HTTP module |
+| Ashes.Math | Planned | Standard library math utilities |
+| [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ------------------------------------------------------------------------
 

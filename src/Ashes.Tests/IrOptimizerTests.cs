@@ -437,6 +437,30 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("Multi-use non-copy borrow should be preserved.");
     }
 
+    [Test]
+    public void Borrow_elision_remaps_text_builtin_operand()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_text"),
+            new IrInst.Borrow(1, 0),
+            new IrInst.TextUncons(2, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [new IrStringLiteral("lbl_text", "hello")], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeFalse("Single-use borrow feeding TextUncons should be elided.");
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.TextUncons { TextTemp: 0 })
+            .ShouldBeTrue("TextUncons should be remapped to the original source temp when the borrow is elided.");
+    }
+
     // ── End-to-end optimization correctness ─────────────────────────────
 
     [Test]
@@ -508,6 +532,30 @@ public sealed class IrOptimizerTests
             """;
         var stdout = await CompileOptimizedAndRunAsync(source);
         stdout.ShouldBe("no\n");
+    }
+
+    [Test]
+    public async Task Optimized_text_uncons_long_string_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var source = """
+            let sample = "{ \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }" in
+            match Ashes.Text.uncons(sample) with
+                | None -> Ashes.IO.print("none")
+                | Some((head, tail)) ->
+                    if head == "{"
+                    then if tail == " \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }"
+                    then Ashes.IO.print("ok")
+                    else Ashes.IO.print("tail")
+                    else Ashes.IO.print("head")
+            """;
+
+        var stdout = await CompileOptimizedAndRunAsync(source);
+        stdout.ShouldBe("ok\n");
     }
 
     // ── Constant propagation across single-predecessor labels ─────────

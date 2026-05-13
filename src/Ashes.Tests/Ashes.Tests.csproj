@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <AssemblyName>Ashes.Tests</AssemblyName>
     <RootNamespace>Ashes.Tests</RootNamespace>
@@ -32,4 +33,5 @@
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
   </ItemGroup>
+
 </Project>

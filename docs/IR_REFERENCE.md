@@ -210,6 +210,16 @@ tag identifying the variant. Each field occupies 8 bytes. Total size is
 All file operations return `Result` ADTs: `Ok(value)` on success,
 `Error(message)` on failure.
 
+### Text Parsing
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `TextUncons` | `Target`, `TextTemp` | Split front scalar → `Maybe((Str, Str))` |
+| `TextParseInt` | `Target`, `TextTemp` | Parse decimal integer → `Result<Int>` |
+| `TextParseFloat` | `Target`, `TextTemp` | Parse decimal float → `Result<Float>` |
+
+These instructions return the existing `Maybe` and `Result` ADTs.
+
 ### HTTP
 
 | Instruction | Fields | Description |
