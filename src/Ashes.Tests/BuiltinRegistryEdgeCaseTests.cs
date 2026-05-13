@@ -119,6 +119,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.IsBuiltinModule("Ashes").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.IO").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.File").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Text").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Http").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tcp").ShouldBeTrue();
     }
@@ -192,6 +193,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes");
         names.ShouldContain("Ashes.IO");
         names.ShouldContain("Ashes.File");
+        names.ShouldContain("Ashes.Text");
         names.ShouldContain("Ashes.Http");
         names.ShouldContain("Ashes.Net.Tcp");
         names.ShouldContain("Ashes.Result");
@@ -238,6 +240,14 @@ public sealed class BuiltinRegistryEdgeCaseTests
     public void Ashes_IO_module_should_have_null_resource_name()
     {
         BuiltinRegistry.TryGetModule("Ashes.IO", out var module).ShouldBeTrue();
+
+        module.ResourceName.ShouldBeNull();
+    }
+
+    [Test]
+    public void Ashes_Text_module_should_have_null_resource_name()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Text", out var module).ShouldBeTrue();
 
         module.ResourceName.ShouldBeNull();
     }

@@ -30,6 +30,12 @@ These types are always available without imports:
 - `readText(path)` returning `Result(Str, Str)`
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
+
+### `Ashes.Text`
+
+- `uncons(text)` returning `Maybe((Str, Str))`
+- `parseInt(text)` returning `Result(Str, Int)`
+- `parseFloat(text)` returning `Result(Str, Float)`
  
 ### `Ashes.Http`
 

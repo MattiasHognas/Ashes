@@ -43,7 +43,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle sizeConst = LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0);
+        LlvmValueHandle sizeConst = LlvmApi.ConstInt(state.I64, (ulong)AlignRuntimeSize(sizeBytes), 0);
         EmitHeapEnsureSpace(state, sizeConst);
         // After EnsureSpace the cursor global points to valid space in the current chunk.
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
@@ -54,10 +54,16 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStackAlloc(LlvmCodegenState state, int sizeBytes, string name)
     {
-        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, (ulong)sizeBytes);
+        int alignedSizeBytes = AlignRuntimeSize(sizeBytes);
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I64, (ulong)(alignedSizeBytes / 8));
         LlvmValueHandle bufferPtr = LlvmApi.BuildAlloca(state.Target.Builder, bufferType, name);
         LlvmValueHandle bytePtr = LlvmApi.BuildBitCast(state.Target.Builder, bufferPtr, state.I8Ptr, name + "_i8");
         return LlvmApi.BuildPtrToInt(state.Target.Builder, bytePtr, state.I64, name + "_addr");
+    }
+
+    private static int AlignRuntimeSize(int sizeBytes)
+    {
+        return (sizeBytes + 7) & ~7;
     }
 
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
@@ -183,12 +189,20 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle normalizedSize = NormalizeToI64(state, sizeBytes);
+        LlvmValueHandle normalizedSize = AlignRuntimeSize(state, sizeBytes, "heap_alloc_size");
         EmitHeapEnsureSpace(state, normalizedSize);
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
         LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, normalizedSize, "heap_cursor_next_dyn");
         LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
         return cursor;
+    }
+
+    private static LlvmValueHandle AlignRuntimeSize(LlvmCodegenState state, LlvmValueHandle sizeBytes, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle normalizedSize = NormalizeToI64(state, sizeBytes);
+        LlvmValueHandle plusSeven = LlvmApi.BuildAdd(builder, normalizedSize, LlvmApi.ConstInt(state.I64, 7, 0), name + "_plus_7");
+        return LlvmApi.BuildAnd(builder, plusSeven, LlvmApi.ConstInt(state.I64, 0xFFFFFFFFFFFFFFF8UL, 0), name + "_aligned");
     }
 
     /// <summary>
@@ -1301,9 +1315,33 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
-        StoreMemory(state, stringRef, 0, len, prefix + "_len");
-        EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, prefix + "_dest"), bytesPtr, len, prefix + "_copy");
+        LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
+        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, normalizedLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
+        StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
+
+        LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx");
+        LlvmApi.BuildStore(builder, zero, idxSlot);
+
+        var copyLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_loop");
+        var copyBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_body");
+        var copyDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_done");
+        LlvmApi.BuildBr(builder, copyLoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyLoopBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_idx_value");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, idx, normalizedLen, prefix + "_copy_done_check");
+        LlvmApi.BuildCondBr(builder, done, copyDoneBlock, copyBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyBodyBlock);
+        LlvmValueHandle srcByte = LoadByteAt(state, bytesPtr, idx, prefix + "_src_byte");
+        LlvmValueHandle destBytePtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [idx], prefix + "_dest_byte_ptr");
+        LlvmApi.BuildStore(builder, srcByte, destBytePtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), idxSlot);
+        LlvmApi.BuildBr(builder, copyLoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copyDoneBlock);
         return stringRef;
     }
 

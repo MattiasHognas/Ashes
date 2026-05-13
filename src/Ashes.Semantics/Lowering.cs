@@ -101,6 +101,9 @@ public sealed class Lowering
         FileReadText,
         FileWriteText,
         FileExists,
+        TextUncons,
+        TextParseInt,
+        TextParseFloat,
         HttpGet,
         HttpPost,
         NetTcpConnect,
@@ -807,6 +810,9 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextUncons => LowerQualifiedBuiltinFunctionReference(name, CreateTextUnconsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerQualifiedBuiltinFunctionReference(name, CreateTextParseIntBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerQualifiedBuiltinFunctionReference(name, CreateTextParseFloatBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.HttpGet => LowerQualifiedBuiltinFunctionReference(name, CreateHttpGetBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.HttpPost => LowerQualifiedBuiltinFunctionReference(name, CreateHttpPostBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpConnectBinding().S.Body),
@@ -1801,6 +1807,90 @@ public sealed class Lowering
         var target = NewTemp();
         Emit(new IrInst.FileExists(target, pathTemp));
         return (target, CreateStringResultType(new TypeRef.TBool()));
+    }
+
+    private (int, TypeRef) LowerTextUncons(Expr textArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var loweredType = Prune(textType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (textTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.uncons() expects Str but got {Pretty(loweredType)}.");
+            return (textTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextUncons(target, textTemp));
+        return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
+    }
+
+    private (int, TypeRef) LowerTextParseInt(Expr textArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var loweredType = Prune(textType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (textTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.parseInt() expects Str but got {Pretty(loweredType)}.");
+            return (textTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextParseInt(target, textTemp));
+        return (target, CreateStringResultType(new TypeRef.TInt()));
+    }
+
+    private (int, TypeRef) LowerTextParseFloat(Expr textArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var loweredType = Prune(textType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (textTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.parseFloat() expects Str but got {Pretty(loweredType)}.");
+            return (textTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextParseFloat(target, textTemp));
+        return (target, CreateStringResultType(new TypeRef.TFloat()));
     }
 
     private TypeRef.TNamedType CreateStringResultType(TypeRef successType)
@@ -2995,6 +3085,9 @@ public sealed class Lowering
                 IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                 IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+                IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+                IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
+                IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
                 IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                 IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
@@ -3048,6 +3141,9 @@ public sealed class Lowering
                     BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
@@ -6307,6 +6403,30 @@ public sealed class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.ReadLine,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateMaybeType(new TypeRef.TStr())))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextUnconsBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextUncons,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()]))))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextParseIntBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextParseInt,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TInt())))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextParseFloatBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextParseFloat,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TFloat())))
         );
     }
 

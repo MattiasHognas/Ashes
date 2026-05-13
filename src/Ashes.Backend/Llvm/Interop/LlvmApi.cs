@@ -326,6 +326,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildTrunc", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildTrunc(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildSIToFP", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle BuildSIToFP(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
+
     [LibraryImport(Lib, EntryPoint = "LLVMBuildIntToPtr", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildIntToPtr(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
 

@@ -4,7 +4,7 @@ Planned features and future work for the Ashes language and ecosystem.
 
 | Feature | Description |
 |---------|-------------|
-| [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Minimal string primitives to enable full JSON and other text parsers in ordinary Ashes code |
+| [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Landed as `Ashes.Text.uncons`, `Ashes.Text.parseInt`, and `Ashes.Text.parseFloat`; follow-on text helpers remain deferred |
 | [Async Networking](ASYNC_NETWORKING.md) | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
 | [Package Manager](PACKAGE_MANAGER.md) | Local deps first, lock file second, registry third |
 | [Compiler Optimization](COMPILER_OPTIMIZATION.md) | LLVM passes, memory management, codegen improvements |

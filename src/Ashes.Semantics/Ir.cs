@@ -92,6 +92,9 @@ public abstract record IrInst
     public sealed record FileReadText(int Target, int PathTemp) : IrInst;
     public sealed record FileWriteText(int Target, int PathTemp, int TextTemp) : IrInst;
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
+    public sealed record TextUncons(int Target, int TextTemp) : IrInst;
+    public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
+    public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;
     public sealed record HttpGet(int Target, int UrlTemp) : IrInst;
     public sealed record HttpPost(int Target, int UrlTemp, int BodyTemp) : IrInst;
     public sealed record NetTcpConnect(int Target, int HostTemp, int PortTemp) : IrInst;
