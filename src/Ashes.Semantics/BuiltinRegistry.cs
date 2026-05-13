@@ -20,6 +20,9 @@ public static class BuiltinRegistry
         FileReadText,
         FileWriteText,
         FileExists,
+        TextUncons,
+        TextParseInt,
+        TextParseFloat,
         HttpGet,
         HttpPost,
         NetTcpConnect,
@@ -98,6 +101,15 @@ public static class BuiltinRegistry
                     ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Text"] = new(
+                "Ashes.Text",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
+                    ["parseInt"] = new("parseInt", BuiltinValueKind.TextParseInt, IsCallable: true, Arity: 1),
+                    ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",

@@ -1,14 +1,38 @@
-# Text Parsing Primitives
+# Text Parsing Primitives — Status & Roadmap
 
-This document proposes a small standard-library addition that makes it
-possible to implement a full JSON parser in ordinary Ashes code without
-adding JSON as a language feature.
+The minimal text parsing surface is now part of the language surface
+through the builtin `Ashes.Text` module.
+
+The current implementation includes Unicode-aware `uncons`, decimal
+`parseInt`, decimal-and-exponent `parseFloat`, dedicated lowering and
+LLVM backend support, user-facing documentation, backend smoke tests,
+and end-to-end `.ash` coverage. The minimal compiler/runtime work
+tracked in this document is now landed.
 
 The key design constraint is:
 
 - add the minimum surface needed for user-space parsers
 - keep JSON itself out of the language
 - avoid a large string API before the need is proven
+
+------------------------------------------------------------------------
+
+## Completed Work
+
+| Area | What was done |
+|------|---------------|
+| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Text.uncons`, `Ashes.Text.parseInt`, and `Ashes.Text.parseFloat` and their runtime semantics. |
+| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now lists the shipped `Ashes.Text` surface for users. |
+| **Builtin module shape** | `BuiltinRegistry` now registers `Ashes.Text` as a builtin runtime module with null `ResourceName` and members `uncons`, `parseInt`, and `parseFloat`. |
+| **Type bindings and lowering** | `Lowering.cs` now binds `uncons : Str -> Maybe((Str, Str))`, `parseInt : Str -> Result(Str, Int)`, and `parseFloat : Str -> Result(Str, Float)` and lowers them to dedicated text IR instructions. |
+| **IR surface** | `Ir.cs` now includes `TextUncons`, `TextParseInt`, and `TextParseFloat`, and `docs/IR_REFERENCE.md` documents them. |
+| **LLVM backend implementation** | The LLVM backend now executes UTF-8 scalar splitting for `uncons`, decimal integer parsing with invalid-input and overflow errors, and decimal/exponent float parsing with invalid-input and range errors. |
+| **Compiler/backend tests** | `Ashes.Tests` now covers registry shape, null-resource behavior, and Linux/Windows backend smoke tests for the new builtins. |
+| **End-to-end coverage** | The `.ash` suite now includes `tests/text_*.ash` for empty/ascii/unicode `uncons`, integer parse success/failure/overflow, and float parse success/failure/range cases. |
+| **User-space parser proof** | `tests/text_json_parser_smoke.ash` now exercises `Ashes.Text` through a recursive user-space JSON parser covering whitespace, strings, numbers, booleans, null, arrays, objects, and nested data. |
+| **Example coverage** | `examples/text_parsing_demo.ash` now demonstrates `uncons`, `parseInt`, and `parseFloat` together in ordinary Ashes code. |
+| **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the minimal `Ashes.Text` parsing surface as landed while leaving further text helpers deferred. |
+| **Full verification rerun** | `Ashes.Tests`, `Ashes.Lsp.Tests`, the full `.ash` suite, and `dotnet format Ashes.slnx --verify-no-changes` were rerun after implementation and passed together. |
 
 ------------------------------------------------------------------------
 
@@ -67,14 +91,11 @@ This proposal does not add:
 
 ------------------------------------------------------------------------
 
-## Recommended Minimal Surface
+## Landed Minimal Surface
 
-This document uses `Ashes.Text` as the working module name.
+The shipped module name is `Ashes.Text`.
 
-If the project prefers `Ashes.String` to match the current future-features
-naming, the API shape should remain the same.
-
-### Required V1 surface
+### Landed V1 surface
 
 ```ash
 Ashes.Text.uncons : Str -> Maybe((Str, Str))
@@ -100,7 +121,7 @@ value, not one raw UTF-8 byte.
 
 `parseInt` converts a decimal string to an `Int`.
 
-Recommended behavior:
+Current behavior:
 
 - accepts an optional leading `-`
 - otherwise parses decimal digits only
@@ -114,7 +135,8 @@ config parsing, CLI argument parsing, and small text protocols.
 
 `parseFloat` converts a string to `Float`.
 
-For JSON support, it should accept at least the JSON number grammar:
+For JSON support, it accepts the JSON-shaped number grammar used by the
+current implementation:
 
 - optional leading `-`
 - integer part
@@ -129,7 +151,7 @@ Examples that should parse:
 - `1e3`
 - `-2.5E-4`
 
-Like `parseInt`, invalid input should return `Error(...)`.
+Like `parseInt`, invalid input returns `Error(...)`.
 
 ------------------------------------------------------------------------
 
@@ -218,48 +240,23 @@ well.
 
 ------------------------------------------------------------------------
 
-## Suggested Rollout
+## Ordered Roadmap — Next Work Items
 
-### 1. Add the text module surface
+The minimal compiler/runtime surface tracked by this document is now
+complete. `tests/text_json_parser_smoke.ash` already provides the
+user-space parser proof point by exercising recursive parsing,
+whitespace handling, strings, numbers, booleans, null, arrays,
+objects, and nested data in ordinary Ashes code. Remaining work, if
+pursued, is follow-on library and ergonomics work rather than missing
+core parsing primitives.
 
-Add the minimal shipped module API:
-
-- `uncons`
-- `parseInt`
-- `parseFloat`
-
-Update:
-
-- `docs/LANGUAGE_SPEC.md`
-- `docs/STANDARD_LIBRARY.md`
-
-### 2. Implement and test the helpers
-
-Implementation may live behind normal compiler-shipped builtins or a
-small runtime helper layer, but it should remain exposed as ordinary
-module functions.
-
-Tests should cover:
-
-- empty and non-empty `uncons`
-- Unicode handling for `uncons`
-- valid and invalid integer parses
-- valid and invalid float parses
-- overflow and malformed input behavior
-
-### 3. Add end-to-end examples
-
-Add examples or tests proving that user-space parsing is now feasible.
-
-A JSON parser example is the best validation target because it exercises:
-
-- punctuation handling
-- recursion
-- booleans
-- numbers
-- strings
-- whitespace
-- nested structures
+1. Re-evaluate convenience helpers such as `stripPrefix`, `startsWith`,
+   `trim`, `takeWhile`, `dropWhile`, and `parseBool` only after real
+   library usage shows that `uncons`, `parseInt`, and `parseFloat` are
+   insufficient.
+2. Keep additional text APIs out of the compiler/runtime until the spec
+   is updated first and there is concrete evidence that the landed
+   minimal surface is not enough.
 
 ------------------------------------------------------------------------
 
@@ -279,15 +276,16 @@ Those can be evaluated separately if real users need them.
 
 ------------------------------------------------------------------------
 
-## Recommendation
+## Explicitly Deferred
 
-Adopt the smallest practical V1:
+The following items are not implemented yet and should not be described
+as landed:
 
-```ash
-Ashes.Text.uncons : Str -> Maybe((Str, Str))
-Ashes.Text.parseInt : Str -> Result(Str, Int)
-Ashes.Text.parseFloat : Str -> Result(Str, Float)
-```
-
-That is enough to unlock a full JSON parser in user code while keeping
-the language itself free of JSON-specific features.
+- A built-in JSON parser or JSON value type.
+- Parser-combinator or regex modules.
+- Mutable cursor APIs, byte-oriented parsing APIs, or a general `Char`
+   language type.
+- Additional text convenience helpers beyond `uncons`, `parseInt`, and
+   `parseFloat` unless real library usage justifies them.
+- Repackaging `Ashes.Text` as a shipped `.ash` module; the current
+   surface remains a builtin runtime module.

@@ -6,15 +6,15 @@
     is placed alongside the published executable.
   -->
   <Target Name="_EnsureCorrectNativeLibForPublish"
-          AfterTargets="Publish"
-          Condition="'$(RuntimeIdentifier)' != ''">
+    AfterTargets="Publish"
+    Condition="'$(RuntimeIdentifier)' != ''">
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.so"
-          DestinationFiles="$(PublishDir)libLLVM.so"
-          SkipUnchangedFiles="false"
-          Condition="$(RuntimeIdentifier.StartsWith('linux-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.so')" />
+      DestinationFiles="$(PublishDir)libLLVM.so"
+      SkipUnchangedFiles="false"
+      Condition="$(RuntimeIdentifier.StartsWith('linux-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.so')" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.dll"
-          DestinationFiles="$(PublishDir)libLLVM.dll"
-          SkipUnchangedFiles="false"
-          Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.dll')" />
+      DestinationFiles="$(PublishDir)libLLVM.dll"
+      SkipUnchangedFiles="false"
+      Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\libLLVM.dll')" />
   </Target>
 </Project>

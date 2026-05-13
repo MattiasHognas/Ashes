@@ -73,5 +73,9 @@ runtimes
 out
 *.lscache
 
+# Workfiles
+_*.sh
+_*.md
+
 # Git
 .git/

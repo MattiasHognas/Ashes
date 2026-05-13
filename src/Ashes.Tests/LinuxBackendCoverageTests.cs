@@ -311,6 +311,68 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_uncons_unicode_scalars()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(head + "|" + tail)""");
+        result.Stdout.ShouldBe("é|!\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_uncons_long_json_like_strings()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """
+            let sample = "{ \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }"
+            in match Ashes.Text.uncons(sample) with
+            | None -> Ashes.IO.print("none")
+            | Some((head, tail)) ->
+                if head == "{"
+                then if tail == " \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }"
+                then Ashes.IO.print("ok")
+                else Ashes.IO.print("bad")
+                else Ashes.IO.print("bad")
+            """);
+        result.Stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_parse_integers()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.Text.parseInt("-42") with | Ok(value) -> Ashes.IO.print(value) | Error(msg) -> Ashes.IO.print(msg)""");
+        result.Stdout.ShouldBe("-42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_parse_floats_with_exponents()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """match Ashes.Text.parseFloat("1e3") with | Ok(value) -> if value == 1000.0 then Ashes.IO.print("ok") else Ashes.IO.print("bad") | Error(msg) -> Ashes.IO.print(msg)""");
+        result.Stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_file_exists_programs()
     {
         if (!OperatingSystem.IsLinux())

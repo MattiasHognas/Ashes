@@ -52,6 +52,9 @@ Canonical built-ins available today include:
 - `Ashes.File.readText(path)` returning `Result(Str, Str)`
 - `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)`
 - `Ashes.File.exists(path)` returning `Result(Str, Bool)`
+- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))`
+- `Ashes.Text.parseInt(text)` returning `Result(Str, Int)`
+- `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)`
 - `Ashes.Http.get(url)` returning `Task(Str, Str)`
 - `Ashes.Http.post(url, body)` returning `Task(Str, Str)`
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`
@@ -1083,6 +1086,9 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
 - `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
 - `Ashes.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
+- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))` - split one Unicode scalar from the front of a string.
+- `Ashes.Text.parseInt(text)` returning `Result(Str, Int)` - parse a decimal integer with optional leading `-`.
+- `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)` - parse a decimal float with optional fraction and exponent.
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)` - async TCP connect.
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)` - async TCP send.
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TCP receive.
@@ -1131,6 +1137,20 @@ Rules:
 `Ashes.IO.print` has type `a -> Unit`.
 `Ashes.IO.readLine` has type `Unit -> Maybe(Str)` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
+
+`Ashes.Text.uncons` has type `Str -> Maybe((Str, Str))` and returns `None` for
+the empty string. For non-empty strings it returns `Some((head, tail))`, where
+`head` is one Unicode scalar value encoded as a `Str` and `tail` is the
+remaining suffix.
+
+`Ashes.Text.parseInt` has type `Str -> Result(Str, Int)`. It accepts an
+optional leading `-` followed by decimal digits. Malformed input and overflow
+return `Error(message)`.
+
+`Ashes.Text.parseFloat` has type `Str -> Result(Str, Float)`. It accepts a
+decimal integer part with an optional fractional part and optional exponent
+using `e` or `E`. Malformed input and out-of-range values return
+`Error(message)`.
 
 `Ashes.IO.readLine` removes a trailing `\n` from the returned line and also
 normalizes Windows `\r\n` input so the returned string never includes the trailing
