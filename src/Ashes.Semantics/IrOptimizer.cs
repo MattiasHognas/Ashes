@@ -195,6 +195,9 @@ public static class IrOptimizer
             IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
             IrInst.HttpGet h => h with { UrlTemp = R(h.UrlTemp) },
             IrInst.HttpPost h => h with { UrlTemp = R(h.UrlTemp), BodyTemp = R(h.BodyTemp) },
             IrInst.NetTcpConnect n => n with { HostTemp = R(n.HostTemp), PortTemp = R(n.PortTemp) },
@@ -919,6 +922,9 @@ public static class IrOptimizer
             case IrInst.FileReadText f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;
             case IrInst.HttpGet h: usedTemps.Add(h.UrlTemp); break;
             case IrInst.HttpPost h: usedTemps.Add(h.UrlTemp); usedTemps.Add(h.BodyTemp); break;
             case IrInst.NetTcpConnect n: usedTemps.Add(n.HostTemp); usedTemps.Add(n.PortTemp); break;
@@ -927,6 +933,10 @@ public static class IrOptimizer
             case IrInst.NetTcpClose n: usedTemps.Add(n.SocketTemp); break;
             case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
+            case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyOutList c: usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyOutClosure c: usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyOutTcoListCell c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CreateTask ct: usedTemps.Add(ct.ClosureTemp); break;
             case IrInst.CreateCompletedTask ct: usedTemps.Add(ct.ResultTemp); break;
             case IrInst.AwaitTask at: usedTemps.Add(at.TaskTemp); break;
