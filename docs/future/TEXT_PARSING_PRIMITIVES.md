@@ -29,6 +29,7 @@ The key design constraint is:
 | **LLVM backend implementation** | The LLVM backend now executes UTF-8 scalar splitting for `uncons`, decimal integer parsing with invalid-input and overflow errors, and decimal/exponent float parsing with invalid-input and range errors. |
 | **Compiler/backend tests** | `Ashes.Tests` now covers registry shape, null-resource behavior, and Linux/Windows backend smoke tests for the new builtins. |
 | **End-to-end coverage** | The `.ash` suite now includes `tests/text_*.ash` for empty/ascii/unicode `uncons`, integer parse success/failure/overflow, and float parse success/failure/range cases. |
+| **User-space parser proof** | `tests/text_json_parser_smoke.ash` now exercises `Ashes.Text` through a recursive user-space JSON parser covering whitespace, strings, numbers, booleans, null, arrays, objects, and nested data. |
 | **Example coverage** | `examples/text_parsing_demo.ash` now demonstrates `uncons`, `parseInt`, and `parseFloat` together in ordinary Ashes code. |
 | **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the minimal `Ashes.Text` parsing surface as landed while leaving further text helpers deferred. |
 | **Full verification rerun** | `Ashes.Tests`, `Ashes.Lsp.Tests`, the full `.ash` suite, and `dotnet format Ashes.slnx --verify-no-changes` were rerun after implementation and passed together. |
@@ -242,17 +243,18 @@ well.
 ## Ordered Roadmap — Next Work Items
 
 The minimal compiler/runtime surface tracked by this document is now
-complete. Remaining work, if pursued, is follow-on library and
-ergonomics work rather than missing core parsing primitives.
+complete. `tests/text_json_parser_smoke.ash` already provides the
+user-space parser proof point by exercising recursive parsing,
+whitespace handling, strings, numbers, booleans, null, arrays,
+objects, and nested data in ordinary Ashes code. Remaining work, if
+pursued, is follow-on library and ergonomics work rather than missing
+core parsing primitives.
 
-1. Prove the surface further with a full user-space JSON parser or a
-   comparable parser library/example that exercises recursive parsing,
-   whitespace handling, strings, numbers, booleans, and nested data.
-2. Re-evaluate convenience helpers such as `stripPrefix`, `startsWith`,
+1. Re-evaluate convenience helpers such as `stripPrefix`, `startsWith`,
    `trim`, `takeWhile`, `dropWhile`, and `parseBool` only after real
    library usage shows that `uncons`, `parseInt`, and `parseFloat` are
    insufficient.
-3. Keep additional text APIs out of the compiler/runtime until the spec
+2. Keep additional text APIs out of the compiler/runtime until the spec
    is updated first and there is concrete evidence that the landed
    minimal surface is not enough.
 
