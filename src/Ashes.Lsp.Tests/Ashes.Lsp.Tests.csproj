@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <AssemblyName>Ashes.Lsp.Tests</AssemblyName>
     <RootNamespace>Ashes.Lsp.Tests</RootNamespace>
@@ -30,4 +31,5 @@
   <ItemGroup>
     <None Include="fixtures\**\*.ash" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
 </Project>
