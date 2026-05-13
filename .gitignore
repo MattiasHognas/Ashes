@@ -75,6 +75,7 @@ out
 
 # Workfiles
 _*.sh
+_*.md
 
 # Git
 .git/
