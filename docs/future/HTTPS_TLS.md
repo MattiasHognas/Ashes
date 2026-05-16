@@ -17,18 +17,21 @@ The long-term direction is now decided: Step 3 should become the
 preferred shipping model. The current runtime-loaded OpenSSL path is
 the landed transitional implementation, not the intended end-state.
 
-The current preferred post-V1 design is:
+## Locked Decisions
 
 - hermetic TLS embedded per executable rather than shipped as a shared
   Ashes runtime library
 - TLS payload linked only into compiled outputs that actually require
   `https://` or a future public `Ashes.Net.Tls` surface
-- a memory-safe vendored TLS engine, with `rustls` behind a thin C ABI
-  wrapper as the current recommended implementation target
+- a memory-safe vendored TLS engine, using `rustls` behind a thin C ABI
+  wrapper as the chosen implementation target
 - system trust roots imported at runtime rather than a bundled CA set
   by default
 - a public `Ashes.Net.Tls` module built on top of the same TLS runtime
   foundation as `Ashes.Http`
+
+No further product-direction decisions are required for the base
+HTTPS/TLS roadmap. The remaining work is implementation and validation.
 
 HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
@@ -185,23 +188,31 @@ User-visible `Task(Str, Str)` semantics are unchanged.
 
 ------------------------------------------------------------------------
 
-## Remaining Work
+## Implementation Checklist
 
-The HTTP-over-TLS path is landed on the shipped native backends, but
-the broader roadmap is not complete yet.
+HTTPS/TLS should be treated as 100% complete only when every checklist
+item below is done.
 
-Recommended follow-up work, in order:
+### Phase A — Finish the Current Shipped Path
 
 - [ ] Add explicit Linux arm64 HTTPS runtime validation.
   The Linux TLS implementation path is shared across Linux x64 and
   Linux arm64, but this branch does not yet have dedicated arm64
   runtime fixture coverage comparable to the current Linux x64 and
   Windows x64 backend tests.
+- [ ] Add first-class HTTPS harness support to end-to-end `.ash` tests.
+  The backend coverage tests already use loopback `SslStream` fixtures,
+  but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
+  mode for successful HTTPS, trust-failure, and hostname-mismatch
+  scenarios.
+- [ ] Keep the current runtime-loaded OpenSSL path in bug-fix-only mode
+  while the hermetic runtime is being built.
+
+### Phase B — Build the Hermetic TLS Runtime
+
 - [ ] Implement built-in hermetic TLS as the long-term runtime model.
-  Embed the vendored TLS payload per executable, but only in compiled
-  outputs that actually require HTTPS or `Ashes.Net.Tls`. The current
-  system-OpenSSL design remains the shipped implementation until the
-  hermetic runtime lands.
+  Embed the vendored TLS payload per executable rather than shipping a
+  shared Ashes TLS runtime library.
 - [ ] Use `rustls` behind a thin C ABI wrapper as the default hermetic
   TLS engine.
   This is the current recommended direction because it preserves the
@@ -209,30 +220,71 @@ Recommended follow-up work, in order:
   supporting the shipped Linux and Windows targets. Binary size should
   still be minimized, but size is secondary to speed, memory safety,
   and functionality.
+- [ ] Link the TLS payload only into compiled outputs that actually
+  require HTTPS or `Ashes.Net.Tls`.
+  Programs that never touch TLS should not pay the binary-size cost of
+  the vendored runtime.
 - [ ] Import system trust roots at runtime for hermetic TLS.
   The default policy should stay aligned with the host OS trust store
-  rather than shipping a bundled CA set by default. That keeps trust
-  updates aligned with the operating system and avoids treating CA
-  distribution as part of every Ashes executable.
+  rather than shipping a bundled CA set by default.
+- [ ] Repoint the staged `Ashes.Http` TLS leaf tasks from the current
+  OpenSSL ABI to the hermetic TLS ABI.
+- [ ] Add backend/runtime coverage for the hermetic path on every
+  shipped native backend.
+  At minimum this should cover success, trust failure, hostname
+  mismatch, EOF/close semantics, and async combinator behavior.
+
+### Phase C — Expose Raw TLS Publicly
+
 - [ ] Expose a public `Ashes.Net.Tls` module.
   Define the minimal user-visible surface, then update
   `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
   backend/runtime tests on top of the same hermetic TLS foundation used
   by `Ashes.Http`.
-- [ ] Define the update and security-maintenance policy for the
-  vendored TLS dependency.
-  Once TLS is built in, the project owns version pinning, CVE response,
-  upgrade cadence, and the native build pipeline for each shipped
-  target.
-- [ ] Add first-class HTTPS harness support to end-to-end `.ash` tests.
-  The backend coverage tests already use loopback `SslStream` fixtures,
-  but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
-  mode for successful HTTPS, trust-failure, and hostname-mismatch
-  scenarios.
-- [ ] Keep any OpenSSL deployment polish strictly transitional.
-  Helper tooling or Windows DLL bundling should be treated only as a
-  migration bridge while the built-in runtime is being implemented, not
-  as the long-term shipping model.
+- [ ] Document `Ashes.Net.Tls` in `docs/STANDARD_LIBRARY.md` and add
+  examples that exercise connect, send, receive, and close.
+- [ ] Add end-to-end `.ash` coverage for the public raw TLS API.
+
+### Phase D — Cut Over and Clean Up
+
+- [ ] Make hermetic TLS the default shipping path for both
+  `Ashes.Http` and `Ashes.Net.Tls` on `linux-x64`, `linux-arm64`, and
+  `windows-x64`.
+- [ ] Remove the runtime OpenSSL requirement from user-facing docs once
+  the hermetic path is landed.
+- [ ] Delete the transitional OpenSSL loader/runtime path once the
+  hermetic path is proven on all shipped native backends.
+- [ ] Update `docs/future/FUTURE_FEATURES.md`,
+  `docs/future/ASYNC_NETWORKING.md`, and related architecture docs to
+  describe hermetic TLS as landed rather than planned.
+
+## Definition of Complete
+
+HTTPS/TLS is 100% complete only when all of the following are true:
+
+- [ ] `Ashes.Http` HTTPS works on `linux-x64`, `linux-arm64`, and
+  `windows-x64` without any external OpenSSL installation.
+- [ ] `Ashes.Net.Tls` is public, documented, and tested.
+- [ ] `Ashes.Tests`, `Ashes.Lsp.Tests`, the `.ash` suite, and
+  formatting checks pass with the hermetic path enabled.
+- [ ] The transitional OpenSSL path has been removed rather than kept
+  as a default or silent fallback.
+
+## Vendored Dependency Policy
+
+The vendored TLS dependency should be maintained under the following
+policy:
+
+- exact version pinning rather than floating dependency ranges
+- a scheduled dependency review once per quarter
+- out-of-band updates for security or interoperability issues
+- target patch window of 48 hours for critical or remotely exploitable
+  TLS issues
+- target patch window of 7 days for high-severity TLS issues
+- medium- and low-severity updates batched into scheduled maintenance
+  unless they affect correctness or interoperability
+- the transitional system-OpenSSL path remains bug-fix only until it is
+  removed
 
 ------------------------------------------------------------------------
 
@@ -292,27 +344,18 @@ This document follows the
 
 ------------------------------------------------------------------------
 
-## Future Considerations
+## Post-Completion Considerations
 
-These items are deliberately out of scope for V1 and are listed only
-to record where the design can grow:
+These items are intentionally outside the base roadmap above. They are
+follow-on features to consider only after HTTPS/TLS is complete under
+the Definition of Complete section.
 
-1. **`Ashes.Net.Tls` raw module.** This is now part of the intended
-  roadmap, but it should be exposed on top of the hermetic TLS
-  runtime rather than creating a second backend-specific transport
-  path.
-2. **OpenSSL 1.1 fallback.** V1 rejects `libssl.so.1.1`. Adding a
-  1.1 ABI table is straightforward if older RHEL-class distros
-  become a target, but this only matters while the transitional
-  OpenSSL-backed runtime still exists.
-3. **Built-in hermetic TLS.** This is now the chosen post-V1 direction.
-  The current recommendation is `rustls` behind a thin C ABI wrapper,
-  embedded per executable only when TLS functionality is required, with
-  system trust roots imported at runtime. Expect a real size and
-  maintenance tradeoff in exchange for removing the runtime OpenSSL
-  dependency.
-4. **Windows DLL bundling.** This can still exist as a transitional
-  bridge, but it is no longer the preferred long-term answer now that
-  hermetic TLS is the chosen direction.
-5. **mTLS, ALPN, HTTP/2.** Each is a separate milestone with its
-   own spec entry.
+1. **Mutual TLS.** Client certificates remain a separate milestone.
+2. **Custom trust configuration.** Per-call CA bundles, trust
+   callbacks, and certificate pinning remain separate features.
+3. **TLS server support.** Server-side accept/listen support is not
+   part of the client-focused roadmap above.
+4. **ALPN, HTTP/2, and HTTP/3.** Each is a separate protocol milestone.
+5. **OpenSSL 1.1 transitional compatibility.** Only relevant if the
+   temporary OpenSSL-backed path survives long enough to justify more
+   compatibility work.
