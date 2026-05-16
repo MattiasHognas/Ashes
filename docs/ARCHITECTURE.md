@@ -138,7 +138,7 @@ flowchart TD
 
     Factory -->|"linux-x64"| Linux
     Factory -->|"linux-arm64"| LinuxArm64
-    Factory -->|"windows-x64"| Windows
+    Factory -->|"win-x64"| Windows
     Linux --> Codegen
     LinuxArm64 --> Codegen
     Windows --> Codegen
@@ -178,8 +178,7 @@ scripts:
 | Platform | Command |
 |----------|---------|
 | Linux / WSL | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) |
-| Windows | `.\scripts\download-llvm-native.ps1 [-LlvmVersion X.Y.Z]` |
-| Windows + Linux .so | `.\scripts\download-llvm-native.ps1 -Linux` |
+| Windows (run from WSL) | `./scripts/download-llvm-native.sh --all [LLVM_VERSION]` |
 
 `Ashes.Backend.csproj` contains OS-conditional `<None>` items that copy
 the appropriate native library to the build output directory so that
@@ -373,4 +372,4 @@ Adding a new compile target requires:
 |-----------|--------|---------------|-------------------|
 | `linux-x64` | `x86_64-unknown-linux-gnu` | ELF64 | ELF64 (x86-64) |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
-| `windows-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
+| `win-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |

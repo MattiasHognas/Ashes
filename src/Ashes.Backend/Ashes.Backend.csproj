@@ -13,28 +13,112 @@
     <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RustlsFfiVersion</_Parameter1>
+      <_Parameter2>$(RustlsFfiVersion)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!-- When no explicit RID is set, detect host platform for native library selection -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">
-    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</_HostLinuxRid>
-    <_HostLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</_HostLinuxRid>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">
+    <_ExpectedRustlsRuntimeIdentifier>linux-x64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
+    <_ExpectedRustlsRuntimeIdentifier>linux-arm64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">
+    <_ExpectedRustlsRuntimeIdentifier>win-x64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64'">
+    <_ExpectedRustlsRuntimeIdentifier>linux-x64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-arm64'">
+    <_ExpectedRustlsRuntimeIdentifier>linux-arm64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <_ExpectedRustlsRuntimeIdentifier>win-x64</_ExpectedRustlsRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
+    <_ExpectedNativeLibraryExtension>.so</_ExpectedNativeLibraryExtension>
+    <_ExpectedRustlsLibraryFileName>librustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
+    <_ExpectedRustlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionPath>
+    <_ExpectedRustlsProvisionHint>bash scripts/download-rustls-ffi.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedRustlsProvisionHint>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != '' and '$(_ExpectedRustlsRuntimeIdentifier)' != 'win-x64'">
+    <_ExpectedLlvmLinuxArch>$([System.String]::Copy('$(_ExpectedRustlsRuntimeIdentifier)').Replace('linux-', ''))</_ExpectedLlvmLinuxArch>
+    <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh [LLVM_MAJOR] $(_ExpectedLlvmLinuxArch)</_ExpectedLlvmProvisionHint>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' == 'win-x64'">
+    <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
+    <_ExpectedRustlsLibraryFileName>rustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
+    <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
+    <_ExpectedRustlsAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedRustlsLibraryFileName)</_ExpectedRustlsAssetPath>
+    <_ExpectedLlvmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmAssetPath>
+    <_ExpectedLlvmLinkFileName>libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmLinkFileName>
+    <_ExpectedRustlsAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedRustlsLibraryFileName)</_ExpectedRustlsAssetLinkPath>
+    <_ExpectedRustlsVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionLinkPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' )">
+    <_ShouldCopyResolvedNativeAssets>true</_ShouldCopyResolvedNativeAssets>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64' )">
+    <_ShouldCopyResolvedNativeAssets>true</_ShouldCopyResolvedNativeAssets>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\runtimes\win-x64\libLLVM.dll"
-      Condition="Exists('..\..\runtimes\win-x64\libLLVM.dll')"
+    <None Include="$(_ExpectedLlvmAssetPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedLlvmAssetPath)')"
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
-      Link="libLLVM.dll" />
-    <None Include="..\..\runtimes\linux-x64\libLLVM.so"
-      Condition="Exists('..\..\runtimes\linux-x64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-x64' or ('$(RuntimeIdentifier)' == '' and '$(_HostLinuxRid)' == 'linux-x64') )"
+      Link="$(_ExpectedLlvmLinkFileName)" />
+    <None Include="$(_ExpectedRustlsAssetPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedRustlsAssetPath)')"
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
-      Link="libLLVM.so" />
-    <None Include="..\..\runtimes\linux-arm64\libLLVM.so"
-      Condition="Exists('..\..\runtimes\linux-arm64\libLLVM.so') and ( '$(RuntimeIdentifier)' == 'linux-arm64' or ('$(RuntimeIdentifier)' == '' and '$(_HostLinuxRid)' == 'linux-arm64') )"
+      Link="$(_ExpectedRustlsAssetLinkPath)" />
+    <None Include="$(_ExpectedRustlsVersionPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedRustlsVersionPath)')"
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
-      Link="libLLVM.so" />
+      Link="$(_ExpectedRustlsVersionLinkPath)" />
   </ItemGroup>
+
+  <Target Name="ValidateRustlsRuntimeAsset"
+    BeforeTargets="Build;Publish"
+    Condition="'$(_ExpectedRustlsAssetPath)' != ''">
+    <Error Condition="!Exists('$(_ExpectedRustlsAssetPath)')"
+      Text="Missing rustls-ffi asset '$(_ExpectedRustlsAssetPath)'. Run '$(_ExpectedRustlsProvisionHint)' to provision the expected runtime payload." />
+    <Error Condition="!Exists('$(_ExpectedRustlsVersionPath)')"
+      Text="Missing rustls-ffi version marker '$(_ExpectedRustlsVersionPath)'. Re-run '$(_ExpectedRustlsProvisionHint)' so the provisioned asset version can be verified at build time." />
+    <ReadLinesFromFile File="$(_ExpectedRustlsVersionPath)">
+      <Output TaskParameter="Lines" ItemName="_ProvisionedRustlsVersionLine" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_ProvisionedRustlsVersion>@(_ProvisionedRustlsVersionLine)</_ProvisionedRustlsVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_ProvisionedRustlsVersion)' != '$(RustlsFfiVersion)'"
+      Text="Provisioned rustls-ffi version '$(_ProvisionedRustlsVersion)' does not match expected version '$(RustlsFfiVersion)' for '$(_ExpectedRustlsRuntimeIdentifier)'. Re-run '$(_ExpectedRustlsProvisionHint)' or update RustlsFfiVersion." />
+  </Target>
+
+  <Target Name="ValidateLlvmRuntimeAsset"
+    BeforeTargets="Build;Publish"
+    Condition="'$(_ExpectedLlvmAssetPath)' != ''">
+    <Error Condition="!Exists('$(_ExpectedLlvmAssetPath)')"
+      Text="Missing LLVM native library '$(_ExpectedLlvmAssetPath)'. Run '$(_ExpectedLlvmProvisionHint)' to provision the expected runtime payload." />
+  </Target>
 
 </Project>

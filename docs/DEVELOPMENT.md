@@ -72,11 +72,11 @@ bash scripts/download-llvm-native.sh
 bash scripts/download-llvm-native.sh 22 arm64
 ```
 
-On Windows (PowerShell):
+On Windows, run the bash script from WSL:
 
-```powershell
-.\scripts\download-llvm-native.ps1
-.\scripts\download-llvm-native.ps1 -Linux    # also fetch linux .so
+```sh
+# Download all supported runtimes, including win-x64:
+bash scripts/download-llvm-native.sh --all
 ```
 
 The libraries are placed under `runtimes/{linux-x64,linux-arm64,win-x64}/`
@@ -200,30 +200,8 @@ bash scripts/install-vscode-extension-local.sh --code-command code-insiders
 bash scripts/install-vscode-extension-local.sh --target-rid win-x64
 ```
 
-On Windows:
-
-```powershell
-.\scripts\install-vscode-extension-local.ps1
-```
-
-Useful PowerShell options:
-
-```powershell
-# Package only, do not install the VSIX:
-.\scripts\install-vscode-extension-local.ps1 -SkipInstall
-
-# Publish all supported bundled RIDs:
-.\scripts\install-vscode-extension-local.ps1 -AllRids
-
-# Force a clean pnpm dependency reinstall before building:
-.\scripts\install-vscode-extension-local.ps1 -ForceInstallDependencies
-
-# Override the VS Code CLI to use for install:
-.\scripts\install-vscode-extension-local.ps1 -CodeCommand code-insiders
-```
-
-On Windows, prefer the PowerShell script for local install into the same
-VS Code instance you are using for development.
+On Windows, run the same script from WSL. Use `--target-rid win-x64` when
+you need to bundle binaries for the Windows VS Code build.
 
 ### Extension Only (No Publish)
 
@@ -248,11 +226,7 @@ Build self-contained executables for distribution:
 bash scripts/publish.sh
 ```
 
-On Windows:
-
-```powershell
-.\scripts\publish.ps1
-```
+On Windows, run the same command from WSL.
 
 ------------------------------------------------------------------------
 

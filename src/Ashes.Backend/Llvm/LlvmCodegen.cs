@@ -92,6 +92,7 @@ internal static partial class LlvmCodegen
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
     private const string HttpsRequiresOpenSslRuntimeMessage = "https requires OpenSSL 3 (libssl) at runtime";
+    private const int RustlsResultOk = 7000;
     private const string TlsRuntimeInitFailedMessage = "Ashes TLS runtime initialization failed";
     private const string TlsHandshakeFailedMessage = "Ashes TLS handshake failed";
     private const string TlsSendFailedMessage = "Ashes TLS send failed";
@@ -325,6 +326,13 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
             || ProgramUsesInstruction<IrInst.Drop>(program);
+        bool usesTlsRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
+            || ProgramUsesInstruction<IrInst.HttpPost>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
         bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
             && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
@@ -369,6 +377,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsVirtualAllocImport = default;
         LlvmValueHandle windowsVirtualFreeImport = default;
         LlvmValueHandle windowsIocpPortGlobal = default;
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = usesTlsRuntimeAbi
+            ? HermeticTlsRuntimeAssets.GetRustlsSharedLibrary(GetTargetIdForFlavor(flavor))
+            : null;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
@@ -382,7 +393,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsStdout || usesWindowsFileOps)
+        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi)
         {
             LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
@@ -402,7 +413,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps)
+        if (usesWindowsFileOps || usesNetworkingRuntimeAbi)
         {
             LlvmTypeHandle createFileType = LlvmApi.FunctionType(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
             LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(i32, [i8Ptr]);
@@ -572,6 +583,7 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                rustlsSharedLibrary,
                 nounwindAttr);
         }
 
@@ -716,6 +728,17 @@ internal static partial class LlvmCodegen
     {
         return program.EntryFunction.Instructions.Any(static instruction => instruction is TInstruction)
             || program.Functions.Any(static function => function.Instructions.Any(static instruction => instruction is TInstruction));
+    }
+
+    private static string GetTargetIdForFlavor(LlvmCodegenFlavor flavor)
+    {
+        return flavor switch
+        {
+            LlvmCodegenFlavor.LinuxX64 => Backends.TargetIds.LinuxX64,
+            LlvmCodegenFlavor.LinuxArm64 => Backends.TargetIds.LinuxArm64,
+            LlvmCodegenFlavor.WindowsX64 => Backends.TargetIds.WindowsX64,
+            _ => throw new ArgumentOutOfRangeException(nameof(flavor), $"Unsupported codegen flavor '{flavor}'.")
+        };
     }
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)

@@ -251,7 +251,7 @@ item below is done.
 
 - [ ] Make hermetic TLS the default shipping path for both
   `Ashes.Http` and `Ashes.Net.Tls` on `linux-x64`, `linux-arm64`, and
-  `windows-x64`.
+  `win-x64`.
 - [ ] Remove the runtime OpenSSL requirement from user-facing docs once
   the hermetic path is landed.
 - [ ] Delete the transitional OpenSSL loader/runtime path once the
@@ -265,7 +265,7 @@ item below is done.
 HTTPS/TLS is 100% complete only when all of the following are true:
 
 - [ ] `Ashes.Http` HTTPS works on `linux-x64`, `linux-arm64`, and
-  `windows-x64` without any external OpenSSL installation.
+  `win-x64` without any external OpenSSL installation.
 - [x] `Ashes.Net.Tls` is public, documented, and tested.
 - [ ] `Ashes.Tests`, `Ashes.Lsp.Tests`, the `.ash` suite, and
   formatting checks pass with the hermetic path enabled.

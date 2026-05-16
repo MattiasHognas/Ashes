@@ -12,10 +12,10 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|windows-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
@@ -769,7 +769,7 @@ async Task<int> RunReplAsync(string[] a)
             AnsiConsole.MarkupLine("  [yellow]:help[/]   Show this help");
             AnsiConsole.MarkupLine("  [yellow]:quit[/]   Exit");
             AnsiConsole.MarkupLine("  [yellow]:target[/] Show current target");
-            AnsiConsole.MarkupLine("  [yellow]:target linux-x64|windows-x64[/]  Change target");
+            AnsiConsole.MarkupLine("  [yellow]:target linux-x64|linux-arm64|win-x64[/]  Change target");
             AnsiConsole.MarkupLine("  [yellow]let name = ... in name[/]  Persist a binding in the session");
             continue;
         }
@@ -782,14 +782,14 @@ async Task<int> RunReplAsync(string[] a)
                 AnsiConsole.MarkupLine($"Target: [bold]{target}[/]");
                 continue;
             }
-            if (parts.Length == 2 && (parts[1] == TargetIds.LinuxX64 || parts[1] == TargetIds.WindowsX64))
+            if (parts.Length == 2 && (parts[1] == TargetIds.LinuxX64 || parts[1] == TargetIds.LinuxArm64 || parts[1] == TargetIds.WindowsX64))
             {
                 target = parts[1];
                 AnsiConsole.MarkupLine($"Target set to [bold]{target}[/]");
                 continue;
             }
 
-            AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|windows-x64");
+            AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|linux-arm64|win-x64");
             continue;
         }
 
