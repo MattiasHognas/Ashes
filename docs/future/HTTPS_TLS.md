@@ -17,6 +17,19 @@ The long-term direction is now decided: Step 3 should become the
 preferred shipping model. The current runtime-loaded OpenSSL path is
 the landed transitional implementation, not the intended end-state.
 
+The current preferred post-V1 design is:
+
+- hermetic TLS embedded per executable rather than shipped as a shared
+  Ashes runtime library
+- TLS payload linked only into compiled outputs that actually require
+  `https://` or a future public `Ashes.Net.Tls` surface
+- a memory-safe vendored TLS engine, with `rustls` behind a thin C ABI
+  wrapper as the current recommended implementation target
+- system trust roots imported at runtime rather than a bundled CA set
+  by default
+- a public `Ashes.Net.Tls` module built on top of the same TLS runtime
+  foundation as `Ashes.Http`
+
 HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
 require new user-visible syntax, a new module, or changes to the
@@ -185,25 +198,28 @@ Recommended follow-up work, in order:
   runtime fixture coverage comparable to the current Linux x64 and
   Windows x64 backend tests.
 - [ ] Implement built-in hermetic TLS as the long-term runtime model.
-  This is now the chosen direction. The current system-OpenSSL design
-  remains the shipped implementation until the hermetic runtime lands,
-  but helper tooling and Windows-side DLL bundling are no longer the
-  preferred end-state.
-- [ ] Choose the vendored TLS engine and embedding strategy.
-  This still needs a concrete technical decision: vendored OpenSSL,
-  BoringSSL, rustls behind a C ABI, or another embeddable TLS stack.
-  That choice drives binary size, build complexity, trust-store
-  integration, and long-term maintenance cost.
-- [ ] Choose the trust-store model for hermetic TLS.
-  A built-in TLS runtime still needs a certificate root story. Decide
-  whether hermetic builds should import system roots at runtime, ship a
-  bundled CA set, or support a hybrid model.
-- [ ] Decide whether to expose a public `Ashes.Net.Tls` module.
-  If the answer is yes, define the minimal user-visible surface first,
-  then update `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
-  backend/runtime tests before exposing the currently-internal TLS leaf
-  task machinery.
-- [ ] Choose the update and security-maintenance policy for the
+  Embed the vendored TLS payload per executable, but only in compiled
+  outputs that actually require HTTPS or `Ashes.Net.Tls`. The current
+  system-OpenSSL design remains the shipped implementation until the
+  hermetic runtime lands.
+- [ ] Use `rustls` behind a thin C ABI wrapper as the default hermetic
+  TLS engine.
+  This is the current recommended direction because it preserves the
+  memory-safety goal better than vendored C TLS stacks while still
+  supporting the shipped Linux and Windows targets. Binary size should
+  still be minimized, but size is secondary to speed, memory safety,
+  and functionality.
+- [ ] Import system trust roots at runtime for hermetic TLS.
+  The default policy should stay aligned with the host OS trust store
+  rather than shipping a bundled CA set by default. That keeps trust
+  updates aligned with the operating system and avoids treating CA
+  distribution as part of every Ashes executable.
+- [ ] Expose a public `Ashes.Net.Tls` module.
+  Define the minimal user-visible surface, then update
+  `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
+  backend/runtime tests on top of the same hermetic TLS foundation used
+  by `Ashes.Http`.
+- [ ] Define the update and security-maintenance policy for the
   vendored TLS dependency.
   Once TLS is built in, the project owns version pinning, CVE response,
   upgrade cadence, and the native build pipeline for each shipped
@@ -213,11 +229,10 @@ Recommended follow-up work, in order:
   but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
   mode for successful HTTPS, trust-failure, and hostname-mismatch
   scenarios.
-- [ ] Decide whether the transitional system-OpenSSL path should keep
-  any deployment polish.
-  This is now a secondary decision. If hermetic TLS is the target,
-  helper tooling or Windows DLL bundling should be treated only as a
-  temporary bridge while the built-in runtime is being implemented.
+- [ ] Keep any OpenSSL deployment polish strictly transitional.
+  Helper tooling or Windows DLL bundling should be treated only as a
+  migration bridge while the built-in runtime is being implemented, not
+  as the long-term shipping model.
 
 ------------------------------------------------------------------------
 
@@ -282,18 +297,20 @@ This document follows the
 These items are deliberately out of scope for V1 and are listed only
 to record where the design can grow:
 
-1. **`Ashes.Net.Tls` raw module.** Once the TLS IR instructions
-   exist, exposing them via `BuiltinRegistry` + bindings + ASH012
-   enforcement is mechanical. Track as a separate milestone.
+1. **`Ashes.Net.Tls` raw module.** This is now part of the intended
+  roadmap, but it should be exposed on top of the hermetic TLS
+  runtime rather than creating a second backend-specific transport
+  path.
 2. **OpenSSL 1.1 fallback.** V1 rejects `libssl.so.1.1`. Adding a
   1.1 ABI table is straightforward if older RHEL-class distros
   become a target, but this only matters while the transitional
   OpenSSL-backed runtime still exists.
 3. **Built-in hermetic TLS.** This is now the chosen post-V1 direction.
-  The remaining design work is selecting the vendored TLS engine,
-  trust-store model, and native build/distribution pipeline. Expect a
-  real size and maintenance tradeoff in exchange for removing the
-  runtime OpenSSL dependency.
+  The current recommendation is `rustls` behind a thin C ABI wrapper,
+  embedded per executable only when TLS functionality is required, with
+  system trust roots imported at runtime. Expect a real size and
+  maintenance tradeoff in exchange for removing the runtime OpenSSL
+  dependency.
 4. **Windows DLL bundling.** This can still exist as a transitional
   bridge, but it is no longer the preferred long-term answer now that
   hermetic TLS is the chosen direction.
