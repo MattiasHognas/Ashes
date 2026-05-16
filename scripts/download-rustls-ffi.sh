@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIMES_DIR="$REPO_ROOT/runtimes"
 TARGETS=()
+SUDO=()
 
 read_rustls_version_from_props() {
     local props_path="$REPO_ROOT/Directory.Build.props"
@@ -51,7 +52,9 @@ Defaults:
 Notes:
   - Windows payload download works from Linux/WSL and stages rustls.dll under runtimes/win-x64/.
   - linux-arm64 is source-built because upstream does not publish a prebuilt Linux arm64 shared library.
-  - Cross-building linux-arm64 from x64 requires cargo, rustup, and an aarch64 GNU linker such as aarch64-linux-gnu-gcc.
+    - Cross-building linux-arm64 from x64 requires cargo, rustup, and an aarch64 GNU linker.
+    - On apt-based and pacman-based systems, the script installs the cross-linker automatically when needed.
+    - On other systems, install aarch64-linux-gnu-gcc (or aarch64-unknown-linux-gnu-gcc) before running.
     - The default rustls-ffi version comes from Directory.Build.props; --version overrides it.
 EOF
 }
@@ -68,6 +71,92 @@ require_command() {
         fi
         exit 1
     fi
+}
+
+ensure_cargo_c() {
+    if cargo capi --version >/dev/null 2>&1; then
+        return
+    fi
+
+    echo "Installing missing prerequisite: cargo-c"
+    cargo install cargo-c --locked
+}
+
+ensure_root_access() {
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO=()
+        return
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO=(sudo)
+        return
+    fi
+
+    echo "ERROR: Missing root access or sudo to install linux-arm64 cross-build prerequisites automatically." >&2
+    echo "Install 'gcc-aarch64-linux-gnu' manually and retry." >&2
+    exit 1
+}
+
+as_root() {
+    if [ "${#SUDO[@]}" -eq 0 ]; then
+        "$@"
+    else
+        "${SUDO[@]}" "$@"
+    fi
+}
+
+detect_package_manager() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "apt"
+        return
+    fi
+
+    if command -v pacman >/dev/null 2>&1; then
+        echo "pacman"
+        return
+    fi
+
+    echo "unknown"
+}
+
+resolve_aarch64_gnu_linker() {
+    if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+        printf '%s\n' "aarch64-linux-gnu-gcc"
+        return
+    fi
+
+    if command -v aarch64-unknown-linux-gnu-gcc >/dev/null 2>&1; then
+        printf '%s\n' "aarch64-unknown-linux-gnu-gcc"
+        return
+    fi
+
+    if [ "$(detect_package_manager)" = "apt" ]; then
+        ensure_root_access
+        echo "Installing missing prerequisite: gcc-aarch64-linux-gnu"
+        as_root apt-get update -qq
+        as_root apt-get install -y -qq gcc-aarch64-linux-gnu
+
+        if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+            printf '%s\n' "aarch64-linux-gnu-gcc"
+            return
+        fi
+    fi
+
+    if [ "$(detect_package_manager)" = "pacman" ]; then
+        ensure_root_access
+        echo "Installing missing prerequisite: aarch64-linux-gnu-gcc"
+        as_root pacman -Sy --noconfirm --needed aarch64-linux-gnu-gcc
+
+        if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+            printf '%s\n' "aarch64-linux-gnu-gcc"
+            return
+        fi
+    fi
+
+    echo "ERROR: linux-arm64 cross-build requires an aarch64 GNU linker." >&2
+    echo "Install 'gcc-aarch64-linux-gnu' (apt) or provide 'aarch64-linux-gnu-gcc' / 'aarch64-unknown-linux-gnu-gcc' on PATH." >&2
+    exit 1
 }
 
 normalize_arch() {
@@ -145,7 +234,46 @@ require_command curl "Install curl and retry."
 require_command unzip "Install unzip and retry."
 require_command tar "Install tar and retry."
 
-mkdir -p "$RUNTIMES_DIR/linux-x64" "$RUNTIMES_DIR/linux-arm64" "$RUNTIMES_DIR/win-x64"
+ensure_directory_writable() {
+    local dir_path="$1"
+
+    if [ ! -d "$dir_path" ]; then
+        if ! mkdir -p "$dir_path"; then
+            echo "ERROR: Could not create '$dir_path'." >&2
+            exit 1
+        fi
+    fi
+
+    if [ ! -w "$dir_path" ]; then
+        echo "ERROR: Cannot write to '$dir_path'." >&2
+        ls -ld "$dir_path" >&2 || true
+        echo "Fix ownership or permissions and retry, for example:" >&2
+        echo "  sudo chown -R $(id -un):$(id -gn) '$dir_path'" >&2
+        exit 1
+    fi
+}
+
+ensure_target_writable() {
+    case "$1" in
+        linux-x64)
+            ensure_directory_writable "$RUNTIMES_DIR/linux-x64"
+            ;;
+        linux-arm64)
+            ensure_directory_writable "$RUNTIMES_DIR/linux-arm64"
+            ;;
+        win-x64)
+            ensure_directory_writable "$RUNTIMES_DIR/win-x64"
+            ;;
+        *)
+            echo "ERROR: Unsupported target '$1'." >&2
+            exit 1
+            ;;
+    esac
+}
+
+for target in "${TARGETS[@]}"; do
+    ensure_target_writable "$target"
+done
 
 download_release_entry() {
     local url="$1"
@@ -174,7 +302,12 @@ download_release_entry() {
 
 write_version_marker() {
     local target_id="$1"
-    printf '%s\n' "$RUSTLS_VERSION" > "$RUNTIMES_DIR/$target_id/rustls.version"
+    local output_path="$RUNTIMES_DIR/$target_id/rustls.version"
+    local tmp_path
+
+    tmp_path="$(mktemp "$RUNTIMES_DIR/$target_id/.rustls.version.XXXXXX")"
+    printf '%s\n' "$RUSTLS_VERSION" > "$tmp_path"
+    mv -f "$tmp_path" "$output_path"
 }
 
 download_linux_x64() {
@@ -201,18 +334,21 @@ build_linux_arm64() {
     local output_path="$RUNTIMES_DIR/linux-arm64/librustls.so"
     local tmpdir
     local linker=""
+    local prefix_dir=""
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' RETURN
 
     require_command cargo "Install Rust and cargo to build linux-arm64 rustls-ffi."
+    ensure_cargo_c
 
     if [ "$HOST_ARCH" = "arm64" ]; then
         echo "=== Building rustls-ffi linux-arm64 ${RUSTLS_VERSION} natively ==="
         pushd "$tmpdir" >/dev/null
         curl -fsSL "https://github.com/rustls/rustls-ffi/archive/refs/tags/v${RUSTLS_VERSION}.tar.gz" | tar -xz
         pushd "rustls-ffi-${RUSTLS_VERSION}" >/dev/null
-        cargo build --release --locked
-        cp -f target/release/librustls.so "$output_path"
+        prefix_dir="$tmpdir/stage"
+        cargo capi install --release --locked --prefix "$prefix_dir" --libdir lib
+        cp -f "$prefix_dir/lib/librustls.so" "$output_path"
         write_version_marker "linux-arm64"
         popd >/dev/null
         popd >/dev/null
@@ -224,22 +360,16 @@ build_linux_arm64() {
 
     require_command rustup "Install rustup so the aarch64-unknown-linux-gnu target can be added."
 
-    if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-        linker="aarch64-linux-gnu-gcc"
-    elif command -v aarch64-unknown-linux-gnu-gcc >/dev/null 2>&1; then
-        linker="aarch64-unknown-linux-gnu-gcc"
-    else
-        echo "ERROR: linux-arm64 cross-build requires an aarch64 GNU linker (for example aarch64-linux-gnu-gcc)." >&2
-        exit 1
-    fi
+    linker="$(resolve_aarch64_gnu_linker)"
 
     echo "=== Building rustls-ffi linux-arm64 ${RUSTLS_VERSION} via cross-compilation ==="
     pushd "$tmpdir" >/dev/null
     curl -fsSL "https://github.com/rustls/rustls-ffi/archive/refs/tags/v${RUSTLS_VERSION}.tar.gz" | tar -xz
     pushd "rustls-ffi-${RUSTLS_VERSION}" >/dev/null
     rustup target add aarch64-unknown-linux-gnu >/dev/null
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker" cargo build --release --locked --target aarch64-unknown-linux-gnu
-    cp -f target/aarch64-unknown-linux-gnu/release/librustls.so "$output_path"
+    prefix_dir="$tmpdir/stage"
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker" cargo capi install --release --locked --target aarch64-unknown-linux-gnu --prefix "$prefix_dir" --libdir lib
+    cp -f "$prefix_dir/lib/librustls.so" "$output_path"
     write_version_marker "linux-arm64"
     popd >/dev/null
     popd >/dev/null

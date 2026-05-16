@@ -134,36 +134,39 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.WindowsX64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
+        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxX64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
+        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxArm64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry");
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static void VerifyModule(LlvmTargetContext target)
@@ -274,7 +277,8 @@ internal static partial class LlvmCodegen
         IrProgram program,
         string entryFunctionName,
         LlvmCodegenFlavor flavor,
-        Backends.BackendCompileOptions options)
+        Backends.BackendCompileOptions options,
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
@@ -326,13 +330,6 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
             || ProgramUsesInstruction<IrInst.Drop>(program);
-        bool usesTlsRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
-            || ProgramUsesInstruction<IrInst.HttpPost>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
         bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
             && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
@@ -377,9 +374,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsVirtualAllocImport = default;
         LlvmValueHandle windowsVirtualFreeImport = default;
         LlvmValueHandle windowsIocpPortGlobal = default;
-        HermeticTlsRuntimeAsset? rustlsSharedLibrary = usesTlsRuntimeAbi
-            ? HermeticTlsRuntimeAssets.GetRustlsSharedLibrary(GetTargetIdForFlavor(flavor))
-            : null;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
@@ -728,6 +722,37 @@ internal static partial class LlvmCodegen
     {
         return program.EntryFunction.Instructions.Any(static instruction => instruction is TInstruction)
             || program.Functions.Any(static function => function.Instructions.Any(static instruction => instruction is TInstruction));
+    }
+
+    private static bool ProgramUsesTlsRuntimeAbi(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.HttpGet>(program)
+            || ProgramUsesInstruction<IrInst.HttpPost>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
+    }
+
+    private static HermeticTlsRuntimeAsset? LoadLinkedTlsRuntimeAsset(IrProgram program, string targetId)
+    {
+        return ProgramUsesTlsRuntimeAbi(program)
+            ? HermeticTlsRuntimeAssets.GetRustlsSharedLibrary(targetId)
+            : null;
+    }
+
+    private static LlvmImageLinker.LinkedImagePayload? CreateLinkedTlsPayload(HermeticTlsRuntimeAsset? rustlsSharedLibrary)
+    {
+        return rustlsSharedLibrary is null
+            ? null
+            : new LlvmImageLinker.LinkedImagePayload(
+                HermeticTlsLinkPayloadSymbols.StartSymbolName,
+                HermeticTlsLinkPayloadSymbols.EndSymbolName,
+                rustlsSharedLibrary.Bytes,
+                HermeticTlsLinkPayloadSymbols.Alignment);
     }
 
     private static string GetTargetIdForFlavor(LlvmCodegenFlavor flavor)

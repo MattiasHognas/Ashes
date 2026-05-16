@@ -19,6 +19,8 @@ internal static partial class LlvmImageLinker
     private const uint ElfRelocX86_64GlobDat = 6;
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
+    private const uint ElfRelocX86_64GotPcRelX = 41;
+    private const uint ElfRelocX86_64RexGotPcRelX = 42;
     private const uint ElfProgramTypeLoad = 1;
     private const uint ElfProgramTypeDynamic = 2;
     private const uint ElfProgramTypeInterp = 3;
@@ -50,7 +52,7 @@ internal static partial class LlvmImageLinker
     private const int ElfHeaderSize = 64;
     private const int ElfProgramHeaderSize = 56;
 
-    public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName)
+    public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + LinuxTrampolineLength;
@@ -74,6 +76,25 @@ internal static partial class LlvmImageLinker
             ? LinuxDynamicImportLayout.Empty
             : BuildLinuxDynamicImportLayout(imports, dataVa, checked((uint)importDataOffset), objectTextVa + (ulong)parsed.TextBytes.Length);
 
+        var externalSymbolVas = new Dictionary<string, ulong>(importLayout.ImportStubVas, StringComparer.Ordinal);
+        var extraDataSegments = new List<LinkerDataSegment>();
+        if (importLayout.Bytes.Length > 0)
+        {
+            extraDataSegments.Add(new LinkerDataSegment(importDataOffset, importLayout.Bytes));
+        }
+
+        int payloadDataOffset = importLayout.Bytes.Length > 0
+            ? importDataOffset + importLayout.Bytes.Length
+            : laidOutData.DataBytes.Length;
+        if (linkedPayload is LinkedImagePayload payload)
+        {
+            payloadDataOffset = Align(payloadDataOffset, payload.Alignment);
+            extraDataSegments.Add(new LinkerDataSegment(payloadDataOffset, payload.Bytes));
+            ulong payloadStartVa = dataVa + (ulong)payloadDataOffset;
+            externalSymbolVas[payload.StartSymbolName] = payloadStartVa;
+            externalSymbolVas[payload.EndSymbolName] = payloadStartVa + (ulong)payload.Bytes.Length;
+        }
+
         ApplyElfTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -82,7 +103,7 @@ internal static partial class LlvmImageLinker
             parsed.TextSectionIndex,
             objectTextVa,
             sectionBaseVas,
-            importLayout.ImportStubVas);
+            externalSymbolVas);
 
         ApplyElfDebugRelocations(
             objectBytes,
@@ -92,16 +113,16 @@ internal static partial class LlvmImageLinker
             parsed.TextSectionIndex,
             objectTextVa,
             sectionBaseVas,
-            importLayout.ImportStubVas);
+            externalSymbolVas);
 
         byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
             .Concat(importLayout.StubBytes)
             .ToArray();
 
-        byte[] finalDataBytes = importLayout.Bytes.Length == 0
+        byte[] finalDataBytes = extraDataSegments.Count == 0
             ? laidOutData.DataBytes
-            : BuildLinuxDataBytes(laidOutData.DataBytes, importDataOffset, importLayout.Bytes);
+            : BuildLinuxDataBytes(laidOutData.DataBytes, extraDataSegments);
 
         bool hasData = finalDataBytes.Length > 0;
         bool hasDebug = parsed.DebugSections.Count > 0;
@@ -534,6 +555,21 @@ internal static partial class LlvmImageLinker
                             BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
                         }
                         break;
+                    case ElfRelocX86_64GotPcRelX:
+                    case ElfRelocX86_64RexGotPcRelX:
+                        {
+                            // Relax foo@GOTPCREL(%rip) loads into a direct RIP-relative LEA.
+                            // LLVM emits this for external-global address materialization.
+                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+
+                            int opcodeOffset = checked((int)relocOffset - 2);
+                            if (opcodeOffset >= 0 && textBytes[opcodeOffset] == 0x8B)
+                            {
+                                textBytes[opcodeOffset] = 0x8D;
+                            }
+                        }
+                        break;
                     case ElfRelocX86_64_32:
                         {
                             Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
@@ -647,6 +683,19 @@ internal static partial class LlvmImageLinker
                     {
                         Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
                         BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                    }
+                    break;
+                case ElfRelocX86_64GotPcRelX:
+                case ElfRelocX86_64RexGotPcRelX:
+                    {
+                        Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
+                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+
+                        int opcodeOffset = checked((int)relocOffset - 2);
+                        if (opcodeOffset >= 0 && targetSectionBytes[opcodeOffset] == 0x8B)
+                        {
+                            targetSectionBytes[opcodeOffset] = 0x8D;
+                        }
                     }
                     break;
                 case ElfRelocX86_64_32:
@@ -893,11 +942,21 @@ internal static partial class LlvmImageLinker
     private static bool TryGetLinuxDynamicImportLibrary(string symbolName, out string? libraryName)
         => LinuxDynamicImportLibraries.TryGetValue(symbolName, out libraryName);
 
-    private static byte[] BuildLinuxDataBytes(byte[] existingDataBytes, int importDataOffset, byte[] importBytes)
+    private static byte[] BuildLinuxDataBytes(byte[] existingDataBytes, IReadOnlyList<LinkerDataSegment> segments)
     {
-        var output = new byte[importDataOffset + importBytes.Length];
+        int totalLength = existingDataBytes.Length;
+        foreach (LinkerDataSegment segment in segments)
+        {
+            totalLength = Math.Max(totalLength, checked(segment.Offset + segment.Bytes.Length));
+        }
+
+        var output = new byte[totalLength];
         Array.Copy(existingDataBytes, 0, output, 0, existingDataBytes.Length);
-        Array.Copy(importBytes, 0, output, importDataOffset, importBytes.Length);
+        foreach (LinkerDataSegment segment in segments)
+        {
+            Array.Copy(segment.Bytes, 0, output, segment.Offset, segment.Bytes.Length);
+        }
+
         return output;
     }
 
@@ -1285,4 +1344,6 @@ internal static partial class LlvmImageLinker
             DynamicDataOffset: 0,
             DynamicByteCount: 0);
     }
+
+    private readonly record struct LinkerDataSegment(int Offset, byte[] Bytes);
 }

@@ -136,3 +136,10 @@ internal static class HermeticTlsRuntimeAssets
 }
 
 internal sealed record HermeticTlsRuntimeAsset(string EmbeddedFileName, byte[] Bytes);
+
+internal static class HermeticTlsLinkPayloadSymbols
+{
+    internal const string StartSymbolName = "__ashes_tls_payload_start";
+    internal const string EndSymbolName = "__ashes_tls_payload_end";
+    internal const int Alignment = 16;
+}

@@ -29,7 +29,7 @@ internal static partial class LlvmImageLinker
     private const int PeSectionHeaderSize = 40;
     private const int PeHeadersStart = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + PeOptionalHeaderSize;
 
-    public static byte[] LinkWindowsExecutable(byte[] objectBytes, string entrySymbolName)
+    public static byte[] LinkWindowsExecutable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
     {
         var parsed = ParseCoffObject(objectBytes, entrySymbolName);
 
@@ -171,6 +171,17 @@ internal static partial class LlvmImageLinker
 
         int importDirSize = (int)rdataStream.Position - importDirOffset;
 
+        ulong payloadStartVa = 0;
+        ulong payloadEndVa = 0;
+        if (linkedPayload is LinkedImagePayload payload)
+        {
+            AlignStream(rdataStream, payload.Alignment);
+            int payloadOffset = (int)rdataStream.Position;
+            rdataStream.Write(payload.Bytes, 0, payload.Bytes.Length);
+            payloadStartVa = PeImageBase + rdataRva + (uint)payloadOffset;
+            payloadEndVa = payloadStartVa + (ulong)payload.Bytes.Length;
+        }
+
         // Compute IAT VAs from recorded offsets — each entry is 8 bytes.
         ulong kernel32IatVa = PeImageBase + rdataRva + (ulong)kernel32IatOffset;
         ulong shell32IatVa = PeImageBase + rdataRva + (ulong)shell32IatOffset;
@@ -226,6 +237,51 @@ internal static partial class LlvmImageLinker
             }
         }
 
+        var externalSymbolVas = new Dictionary<string, ulong>(StringComparer.Ordinal)
+        {
+            ["__imp_ExitProcess"] = exitProcessIatVa,
+            ["__imp_GetStdHandle"] = getStdHandleIatVa,
+            ["__imp_WriteFile"] = writeFileIatVa,
+            ["__imp_ReadFile"] = readFileIatVa,
+            ["__imp_CreateFileA"] = createFileIatVa,
+            ["__imp_CloseHandle"] = closeHandleIatVa,
+            ["__imp_GetFileAttributesA"] = getFileAttributesIatVa,
+            ["__imp_GetCommandLineW"] = getCommandLineIatVa,
+            ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
+            ["__imp_LocalFree"] = localFreeIatVa,
+            ["__imp_Sleep"] = sleepIatVa,
+            ["__imp_VirtualAlloc"] = virtualAllocIatVa,
+            ["__imp_VirtualFree"] = virtualFreeIatVa,
+            ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
+            ["__imp_GetQueuedCompletionStatus"] = getQueuedCompletionStatusIatVa,
+            ["__imp_LoadLibraryA"] = loadLibraryIatVa,
+            ["__imp_GetProcAddress"] = getProcAddressIatVa,
+            ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
+            ["__imp_WSAStartup"] = wsaStartupIatVa,
+            ["__imp_socket"] = socketIatVa,
+            ["__imp_connect"] = connectIatVa,
+            ["__imp_send"] = sendIatVa,
+            ["__imp_recv"] = recvIatVa,
+            ["__imp_closesocket"] = closeSocketIatVa,
+            ["__imp_ioctlsocket"] = ioctlSocketIatVa,
+            ["__imp_WSAGetLastError"] = wsaGetLastErrorIatVa,
+            ["__imp_bind"] = bindIatVa,
+            ["__imp_setsockopt"] = setSockOptIatVa,
+            ["__imp_WSAIoctl"] = wsaIoctlIatVa,
+            ["__imp_WSASend"] = wsaSendIatVa,
+            ["__imp_WSARecv"] = wsaRecvIatVa,
+            ["__imp_WSAPoll"] = wsaPollIatVa,
+            ["__imp_CertOpenSystemStoreA"] = certOpenSystemStoreIatVa,
+            ["__imp_CertEnumCertificatesInStore"] = certEnumCertificatesInStoreIatVa,
+            ["__imp_CertCloseStore"] = certCloseStoreIatVa,
+            ["__chkstk"] = chkstkStubVa,
+        };
+        if (linkedPayload is LinkedImagePayload windowsPayload)
+        {
+            externalSymbolVas[windowsPayload.StartSymbolName] = payloadStartVa;
+            externalSymbolVas[windowsPayload.EndSymbolName] = payloadEndVa;
+        }
+
         ApplyCoffTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -234,45 +290,7 @@ internal static partial class LlvmImageLinker
             parsed.SymbolCount,
             parsed.TextSectionNumber,
             sectionBaseVas,
-            new Dictionary<string, ulong>(StringComparer.Ordinal)
-            {
-                ["__imp_ExitProcess"] = exitProcessIatVa,
-                ["__imp_GetStdHandle"] = getStdHandleIatVa,
-                ["__imp_WriteFile"] = writeFileIatVa,
-                ["__imp_ReadFile"] = readFileIatVa,
-                ["__imp_CreateFileA"] = createFileIatVa,
-                ["__imp_CloseHandle"] = closeHandleIatVa,
-                ["__imp_GetFileAttributesA"] = getFileAttributesIatVa,
-                ["__imp_GetCommandLineW"] = getCommandLineIatVa,
-                ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
-                ["__imp_LocalFree"] = localFreeIatVa,
-                ["__imp_Sleep"] = sleepIatVa,
-                ["__imp_VirtualAlloc"] = virtualAllocIatVa,
-                ["__imp_VirtualFree"] = virtualFreeIatVa,
-                ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
-                ["__imp_GetQueuedCompletionStatus"] = getQueuedCompletionStatusIatVa,
-                ["__imp_LoadLibraryA"] = loadLibraryIatVa,
-                ["__imp_GetProcAddress"] = getProcAddressIatVa,
-                ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
-                ["__imp_WSAStartup"] = wsaStartupIatVa,
-                ["__imp_socket"] = socketIatVa,
-                ["__imp_connect"] = connectIatVa,
-                ["__imp_send"] = sendIatVa,
-                ["__imp_recv"] = recvIatVa,
-                ["__imp_closesocket"] = closeSocketIatVa,
-                ["__imp_ioctlsocket"] = ioctlSocketIatVa,
-                ["__imp_WSAGetLastError"] = wsaGetLastErrorIatVa,
-                ["__imp_bind"] = bindIatVa,
-                ["__imp_setsockopt"] = setSockOptIatVa,
-                ["__imp_WSAIoctl"] = wsaIoctlIatVa,
-                ["__imp_WSASend"] = wsaSendIatVa,
-                ["__imp_WSARecv"] = wsaRecvIatVa,
-                ["__imp_WSAPoll"] = wsaPollIatVa,
-                ["__imp_CertOpenSystemStoreA"] = certOpenSystemStoreIatVa,
-                ["__imp_CertEnumCertificatesInStore"] = certEnumCertificatesInStoreIatVa,
-                ["__imp_CertCloseStore"] = certCloseStoreIatVa,
-                ["__chkstk"] = chkstkStubVa
-            });
+            externalSymbolVas);
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
             .Concat(BuildWindowsChkstkStub())
             .Concat(parsed.TextBytes)

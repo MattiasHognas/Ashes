@@ -26,6 +26,18 @@ jobs:
         if: steps.cache-runtimes.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
+      - name: Download all Rustls FFIs
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        run: bash scripts/download-rustls-ffi.sh --all
+
+      - name: Save Runtimes Cache
+        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: runtimes
+          key: runtimes-22
+          enableCrossOsArchive: true
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:

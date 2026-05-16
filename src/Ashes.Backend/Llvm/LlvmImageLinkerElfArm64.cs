@@ -21,7 +21,7 @@ internal static partial class LlvmImageLinker
     private const uint ElfRelocAArch64LdstImm12Lo12Nc64 = 286;
     private const uint ElfRelocAArch64LdstImm12Lo12Nc128 = 299;
 
-    public static byte[] LinkLinuxArm64Executable(byte[] objectBytes, string entrySymbolName)
+    public static byte[] LinkLinuxArm64Executable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + (ulong)Arm64TrampolineLength;
@@ -31,6 +31,20 @@ internal static partial class LlvmImageLinker
         int dataFileOffset = Align(textFileOffset + codeLength, PageSize);
         ulong dataVa = ElfBaseVa + (ulong)dataFileOffset;
         var laidOutData = LayoutElfAllocatedSections(parsed.AllocatedSections, dataVa);
+        var externalSymbolVas = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var extraDataSegments = new List<LinkerDataSegment>();
+        if (linkedPayload is LinkedImagePayload payload)
+        {
+            int payloadDataOffset = Align(laidOutData.DataBytes.Length, payload.Alignment);
+            extraDataSegments.Add(new LinkerDataSegment(payloadDataOffset, payload.Bytes));
+            ulong payloadStartVa = dataVa + (ulong)payloadDataOffset;
+            externalSymbolVas[payload.StartSymbolName] = payloadStartVa;
+            externalSymbolVas[payload.EndSymbolName] = payloadStartVa + (ulong)payload.Bytes.Length;
+        }
+
+        byte[] finalDataBytes = extraDataSegments.Count == 0
+            ? laidOutData.DataBytes
+            : BuildLinuxDataBytes(laidOutData.DataBytes, extraDataSegments);
         ApplyElfArm64TextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -38,18 +52,19 @@ internal static partial class LlvmImageLinker
             parsed.SymbolTable,
             parsed.TextSectionIndex,
             objectTextVa,
-            laidOutData.SectionBaseVas);
+            laidOutData.SectionBaseVas,
+            externalSymbolVas);
 
         byte[] codeBytes = BuildArm64Trampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
             .ToArray();
 
-        bool hasData = laidOutData.DataBytes.Length > 0;
+        bool hasData = finalDataBytes.Length > 0;
         bool hasDebug = parsed.DebugSections.Count > 0;
         int programHeaderCount = hasData ? 2 : 1;
 
         int endOfLoadable = hasData
-            ? dataFileOffset + laidOutData.DataBytes.Length
+            ? dataFileOffset + finalDataBytes.Length
             : textFileOffset + codeBytes.Length;
 
         // Layout debug sections after loadable content
@@ -107,8 +122,8 @@ internal static partial class LlvmImageLinker
             WriteElf64ProgramHeader(output, 1,
                 fileOffset: (ulong)dataFileOffset,
                 virtualAddress: dataVa,
-                fileSize: (ulong)laidOutData.DataBytes.Length,
-                memorySize: (ulong)laidOutData.DataBytes.Length,
+                fileSize: (ulong)finalDataBytes.Length,
+                memorySize: (ulong)finalDataBytes.Length,
                 flags: 0x06); // PF_R | PF_W
         }
 
@@ -118,7 +133,7 @@ internal static partial class LlvmImageLinker
         // Write .data content
         if (hasData)
         {
-            Array.Copy(laidOutData.DataBytes, 0, output, dataFileOffset, laidOutData.DataBytes.Length);
+            Array.Copy(finalDataBytes, 0, output, dataFileOffset, finalDataBytes.Length);
         }
 
         // Write debug sections and section headers
@@ -155,7 +170,7 @@ internal static partial class LlvmImageLinker
                     type: 1, // SHT_PROGBITS
                     flags: 0x03, // SHF_ALLOC | SHF_WRITE
                     fileOffset: (ulong)dataFileOffset,
-                    size: (ulong)laidOutData.DataBytes.Length,
+                        size: (ulong)finalDataBytes.Length,
                     addr: dataVa,
                     alignment: 8);
             }
@@ -223,7 +238,8 @@ internal static partial class LlvmImageLinker
         ElfSectionHeader symtab,
         int textSectionIndex,
         ulong loadedTextVa,
-        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong>? externalSymbolVas = null)
     {
         byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
         var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
@@ -248,7 +264,7 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, externalSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
 
                 switch (relocationType)

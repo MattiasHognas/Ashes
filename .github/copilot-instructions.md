@@ -116,13 +116,14 @@ Formatting is considered part of correctness, not style.
 
 # Runtime Prerequisites
 
-Before running backend or end-to-end tests, download all LLVM native runtimes:
+Before running backend or end-to-end tests, download all LLVM native runtimes and Rustls FFIs using the provided scripts:
 
 ```bash
 bash scripts/download-llvm-native.sh --all
+bash scripts/download-rustls-ffi.sh --all
 ```
 
-This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries.
+This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries, as well as Rustls FFIs.
 
 ---
 
