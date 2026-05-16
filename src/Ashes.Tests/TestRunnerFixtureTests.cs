@@ -34,6 +34,28 @@ public sealed class TestRunnerFixtureTests
     }
 
     [Test]
+    public void ParseTestDirectives_reads_tls_fixture_directives()
+    {
+        const string source = """
+            // tls-server: accept
+            // tls-trust: untrusted
+            // tls-cert-host: localhost
+            // tls-expect: GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n
+            // tls-send: HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello
+            // expect: hello
+            Ashes.IO.print(1)
+            """;
+
+        var directives = Runner.ParseTestDirectives(source);
+
+        directives.TlsServer.Enabled.ShouldBeTrue();
+        directives.TlsServer.TrustMode.ShouldBe(Runner.TlsFixtureTrustMode.Untrusted);
+        directives.TlsServer.CertificateHost.ShouldBe("localhost");
+        directives.TlsServer.ExpectedText.ShouldBe("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        directives.TlsServer.SendText.ShouldBe("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello");
+    }
+
+    [Test]
     public void MaterializeTestFixtures_creates_nested_files()
     {
         var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
@@ -113,6 +135,49 @@ public sealed class TestRunnerFixtureTests
         {
             Runner.TcpFixtureAcceptTimeout = originalTimeout;
 
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public void RunTests_supports_https_loopback_fixtures()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
+        var filePath = Path.Combine(root, "https-get.ash");
+
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(
+                filePath,
+                """
+                // tls-server: accept
+                // tls-expect: GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n
+                // tls-send: HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https
+                // expect: hello from https
+                Ashes.IO.print(match Ashes.Async.run(async
+                    await Ashes.Http.get("https://localhost:__TCP_PORT__/")) with
+                    | Ok(text) -> text
+                    | Error(err) -> err)
+                """);
+
+            using var output = new StringWriter();
+            var console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output)
+            });
+
+            var exitCode = Runner.RunTests([filePath], BackendFactory.DefaultForCurrentOS(), console);
+
+            exitCode.ShouldBe(0, output.ToString());
+            output.ToString().ShouldContain("https-get.ash");
+            output.ToString().ShouldContain("PASS");
+        }
+        finally
+        {
             if (Directory.Exists(root))
             {
                 Directory.Delete(root, recursive: true);

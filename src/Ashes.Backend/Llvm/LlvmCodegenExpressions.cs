@@ -326,6 +326,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle tcpReceiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_receive");
         LlvmBasicBlockHandle checkTcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_close");
         LlvmBasicBlockHandle tcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_close");
+        LlvmBasicBlockHandle checkTlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_connect");
+        LlvmBasicBlockHandle tlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_connect");
         LlvmBasicBlockHandle checkTlsHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_handshake");
         LlvmBasicBlockHandle tlsHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_handshake");
         LlvmBasicBlockHandle checkTlsSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_send");
@@ -401,11 +403,24 @@ internal static partial class LlvmCodegen
             stateIdx,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpClose), 1),
             prefix + "_is_tcp_close");
-        LlvmApi.BuildCondBr(builder, isTcpClose, tcpCloseBlock, checkTlsHandshakeBlock);
+        LlvmApi.BuildCondBr(builder, isTcpClose, tcpCloseBlock, checkTlsConnectBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, tcpCloseBlock);
         LlvmApi.BuildStore(builder,
             EmitNetworkingRuntimeCall(state, "ashes_step_tcp_close_task", [taskPtr], prefix + "_tcp_close_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTlsConnectBlock);
+        LlvmValueHandle isTlsConnect = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTlsConnect), 1),
+            prefix + "_is_tls_connect");
+        LlvmApi.BuildCondBr(builder, isTlsConnect, tlsConnectBlock, checkTlsHandshakeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tlsConnectBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_tls_connect_task", [taskPtr], prefix + "_tls_connect_status"),
             statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 

@@ -61,6 +61,10 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`
+- `Ashes.Net.Tls.connect(host)(port)` returning `Task(Str, TlsSocket)`
+- `Ashes.Net.Tls.send(socket)(text)` returning `Task(Str, Int)`
+- `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)`
 - `Ashes.Async.run(task)` returning `Result(E, A)`
 - `Ashes.Async.fromResult(result)` returning `Task(E, A)`
 - `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
@@ -79,7 +83,9 @@ Built-in runtime types available without import include:
 - `Unit`
 - `Maybe(T)`
 - `Result(E, A)`
+- `Socket`
 - `Task(E, A)`
+- `TlsSocket`
 
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
@@ -141,12 +147,16 @@ Filesystem text APIs operate on UTF-8 encoded files:
 - Invalid UTF-8 passed through `Ashes.File.readText` returns `Error(...)`.
 - Binary file APIs are not part of the current language surface.
 
-Networking APIs live under `Ashes.Net.Tcp`:
+Networking APIs live under `Ashes.Net.Tcp` and `Ashes.Net.Tls`:
 
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`.
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`.
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`.
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)`.
+- `Ashes.Net.Tls.connect(host)(port)` returning `Task(Str, TlsSocket)`.
+- `Ashes.Net.Tls.send(socket)(text)` returning `Task(Str, Int)`.
+- `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)`.
+- `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)`.
 - All networking APIs are async-only and must be called inside `async` blocks.
 
 Networking rules:
@@ -159,13 +169,20 @@ Networking rules:
 - `send` attempts to write the full UTF-8 buffer before returning `Ok(bytesWritten)`.
 - `receive` reads at most `maxBytes` bytes and returns `Ok("")` on EOF.
 - Invalid UTF-8 received from the network returns `Error(...)`.
-- `close` is explicit and deterministic; using a closed socket returns `Error(...)`.
-- **Automatic cleanup**: `Socket` is a **resource type**. The compiler automatically
-  releases unclosed sockets when their binding goes out of scope. If a socket is
-  closed explicitly via `Ashes.Net.Tcp.close`, the automatic cleanup is skipped.
-- **Use-after-close**: using a socket after it has been closed (via `send`, `receive`,
-  or a second `close`) is a compile-time error.
-- **Double-close**: calling `close` on an already-closed socket is a compile-time error.
+- `Ashes.Net.Tls.connect` performs a TCP connect followed by a TLS client handshake.
+- TLS connections require SNI, hostname verification, and system-trust validation.
+- On the current Linux x64, Linux arm64, and Windows x64 backends, `Ashes.Net.Tls`
+  uses the same OpenSSL 3 runtime dependency as `https://` in `Ashes.Http`.
+- `close` is explicit and deterministic; using a closed `Socket` or `TlsSocket`
+  returns `Error(...)`.
+- **Automatic cleanup**: `Socket` and `TlsSocket` are **resource types**. The compiler
+  automatically releases unclosed networking resources when their binding goes out
+  of scope. If a resource is closed explicitly via `Ashes.Net.Tcp.close` or
+  `Ashes.Net.Tls.close`, the automatic cleanup is skipped.
+- **Use-after-close**: using a networking resource after it has been closed (via
+  `send`, `receive`, or a second `close`) is a compile-time error.
+- **Double-close**: calling `close` on an already-closed networking resource is a
+  compile-time error.
 
 Basic HTTP client APIs live under `Ashes.Http`:
 
@@ -1097,6 +1114,10 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)` - async TCP send.
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TCP receive.
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)` - explicit async socket close.
+- `Ashes.Net.Tls.connect(host)(port)` returning `Task(Str, TlsSocket)` - async TLS connect.
+- `Ashes.Net.Tls.send(socket)(text)` returning `Task(Str, Int)` - async TLS send.
+- `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TLS receive.
+- `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)` - explicit async TLS close.
 - `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for `http://` and `https://` URLs.
 - `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for `http://` and `https://` URLs.
 
@@ -1374,6 +1395,7 @@ sockets). These are called **resource types**.
 Currently classified resource types:
 
 - `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
+- `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect`
 
 ## 16.1 Automatic Cleanup
 
@@ -1393,6 +1415,7 @@ over when a resource is released.
 Resources may be closed explicitly using the appropriate API:
 
 - `Ashes.Net.Tcp.close(socket)` — closes a socket
+- `Ashes.Net.Tls.close(socket)` — closes a TLS session
 
 When a resource is closed explicitly, the automatic cleanup for that
 resource is skipped (no double close).

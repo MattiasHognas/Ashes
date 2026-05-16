@@ -35,10 +35,11 @@ HTTPS/TLS roadmap. The remaining work is implementation and validation.
 
 HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
-require new user-visible syntax, a new module, or changes to the
-`Task(E, A)` discipline. The landed milestone is intentionally narrow:
+require new user-visible syntax or changes to the `Task(E, A)`
+discipline. The original landed milestone was intentionally narrow:
 make `https://` URLs work in the existing HTTP client on the shipped
-native backends, and leave broader TLS surface area for follow-on work.
+native backends, then build broader TLS surface area on the same
+runtime foundation.
 
 ------------------------------------------------------------------------
 
@@ -54,6 +55,7 @@ native backends, and leave broader TLS surface area for follow-on work.
 | **Windows trust-store bridge** | The Windows runtime now imports the current user's `ROOT` certificate store into the shared OpenSSL `SSL_CTX*` on first HTTPS use so loopback and system-trusted certificates verify through the same TLS path. |
 | **TLS leaf tasks** | Dedicated internal TLS handshake/send/receive/close leaf tasks now exist in IR, backend dispatch, wait integration, and generated runtime helpers. |
 | **HTTP staging integration** | The staged HTTP client now accepts `https://`, defaults to port 443, persists the secure stage across resumes, inserts a TLS handshake stage, and routes send/receive/close through TLS task states on Linux x64, Linux arm64, and Windows x64. |
+| **Public raw TLS API** | `Ashes.Net.Tls.connect/send/receive/close` now ships as a public built-in module using the same current TLS runtime path as `Ashes.Http`, with `TlsSocket` as a first-class resource type. |
 | **Examples and tests** | Added `examples/https_get.ash`, Linux/backend, Windows/backend, and CLI loopback TLS fixture coverage, updated ASH012 coverage for HTTPS, and replaced the old `.ash` expectation that HTTPS is unsupported. |
 
 ------------------------------------------------------------------------
@@ -200,7 +202,7 @@ item below is done.
   Linux arm64, but this branch does not yet have dedicated arm64
   runtime fixture coverage comparable to the current Linux x64 and
   Windows x64 backend tests.
-- [ ] Add first-class HTTPS harness support to end-to-end `.ash` tests.
+- [x] Add first-class HTTPS harness support to end-to-end `.ash` tests.
   The backend coverage tests already use loopback `SslStream` fixtures,
   but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
   mode for successful HTTPS, trust-failure, and hostname-mismatch
@@ -236,14 +238,14 @@ item below is done.
 
 ### Phase C — Expose Raw TLS Publicly
 
-- [ ] Expose a public `Ashes.Net.Tls` module.
-  Define the minimal user-visible surface, then update
-  `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
-  backend/runtime tests on top of the same hermetic TLS foundation used
-  by `Ashes.Http`.
-- [ ] Document `Ashes.Net.Tls` in `docs/STANDARD_LIBRARY.md` and add
+- [x] Expose a public `Ashes.Net.Tls` module.
+  The current public surface is `connect/send/receive/close`, sharing the
+  shipped TLS runtime foundation already used by `Ashes.Http`. Future
+  hermetic-runtime work should re-point this module to the vendored path
+  without changing the public API.
+- [x] Document `Ashes.Net.Tls` in `docs/STANDARD_LIBRARY.md` and add
   examples that exercise connect, send, receive, and close.
-- [ ] Add end-to-end `.ash` coverage for the public raw TLS API.
+- [x] Add end-to-end `.ash` coverage for the public raw TLS API.
 
 ### Phase D — Cut Over and Clean Up
 
@@ -264,7 +266,7 @@ HTTPS/TLS is 100% complete only when all of the following are true:
 
 - [ ] `Ashes.Http` HTTPS works on `linux-x64`, `linux-arm64`, and
   `windows-x64` without any external OpenSSL installation.
-- [ ] `Ashes.Net.Tls` is public, documented, and tested.
+- [x] `Ashes.Net.Tls` is public, documented, and tested.
 - [ ] `Ashes.Tests`, `Ashes.Lsp.Tests`, the `.ash` suite, and
   formatting checks pass with the hermetic path enabled.
 - [ ] The transitional OpenSSL path has been removed rather than kept
@@ -309,14 +311,17 @@ The landed coverage uses the existing loopback fixture style:
 ## Standard Library and Spec Impact
 
 - `docs/LANGUAGE_SPEC.md` — HTTP rules section now allows `https://`,
-  documents default port 443, and notes the current Linux x64 / Linux
-  arm64 / Windows x64 OpenSSL 3 runtime dependency. ASH012 unchanged.
+  documents default port 443, notes the current Linux x64 / Linux arm64 /
+  Windows x64 OpenSSL 3 runtime dependency, and now documents the public
+  `Ashes.Net.Tls` module plus the `TlsSocket` resource type. ASH012 unchanged.
 - `docs/STANDARD_LIBRARY.md` — HTTP module section now notes HTTPS
   support and the current Linux x64 / Linux arm64 / Windows x64
-  OpenSSL runtime dependency.
+  OpenSSL runtime dependency, and `Ashes.Net.Tls` is documented as a
+  public built-in module.
 - `docs/future/FUTURE_FEATURES.md` — HTTPS/TLS row links to this
   document and now marks the feature as partial rather than purely planned.
-- No new builtins. No new IR instructions exposed to users.
+- New public builtins are exposed under `Ashes.Net.Tls` and lower through
+  a staged TLS connect task plus dedicated TLS send/receive/close task states.
 - No new diagnostics codes.
 
 ------------------------------------------------------------------------

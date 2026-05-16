@@ -173,8 +173,9 @@ in
 |---|---|
 | `Ashes.IO` | Console I/O, `print`, `panic`, `args`, line-based input |
 | `Ashes.File` | UTF-8 file read/write/exists returning `Result` |
-| `Ashes.Http` | HTTP/1.1 GET/POST for plain `http://` URLs |
-| `Ashes.Net.Tcp` | Blocking TCP client (connect, send, receive, close) |
+| `Ashes.Http` | HTTP/1.1 GET/POST for `http://` and `https://` URLs |
+| `Ashes.Net.Tcp` | Async TCP client (connect, send, receive, close) |
+| `Ashes.Net.Tls` | Async TLS client (connect, send, receive, close) |
 | `Ashes.Async` | `run`, `fromResult`, `sleep`, `all`, `race` |
 | `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
 | `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
@@ -182,7 +183,7 @@ in
 | `Ashes.Text` | Unicode-aware `uncons` plus `parseInt` and `parseFloat` |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types: `Int`, `Float`, `Bool`, `Str`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
+Built-in types: `Int`, `Float`, `Bool`, `Str`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`, `TlsSocket`
 
 ---
 

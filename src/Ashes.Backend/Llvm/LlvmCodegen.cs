@@ -315,6 +315,7 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
@@ -997,6 +998,8 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
             IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpPost, LoadTemp(state, httpPostTask.UrlTemp), LoadTemp(state, httpPostTask.BodyTemp), "http_post_task")),
+            IrInst.CreateTlsConnectTask tlsConnectTask => StoreTemp(state, tlsConnectTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsConnect, LoadTemp(state, tlsConnectTask.HostTemp), LoadTemp(state, tlsConnectTask.PortTemp), "tls_connect_task")),
             IrInst.CreateTlsHandshakeTask tlsHandshakeTask => StoreTemp(state, tlsHandshakeTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsHandshake, LoadTemp(state, tlsHandshakeTask.SocketTemp), LoadTemp(state, tlsHandshakeTask.HostTemp), "tls_handshake_task")),
             IrInst.CreateTlsSendTask tlsSendTask => StoreTemp(state, tlsSendTask.Target,

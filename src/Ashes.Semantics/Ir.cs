@@ -348,27 +348,30 @@ public abstract record IrInst
     public sealed record CreateHttpPostTask(int Target, int UrlTemp, int BodyTemp) : IrInst;
 
     /// <summary>
+    /// Creates a staged networking task for TLS connect (TCP connect + TLS handshake).
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTlsConnectTask(int Target, int HostTemp, int PortTemp) : IrInst;
+
+    /// <summary>
     /// Creates a leaf networking task for a TLS handshake on top of an existing TCP socket.
     /// The task is completed by the runtime/task runner rather than a coroutine body.
-    /// Internal-only: emitted from staged HTTPS lowering, not from a user-visible builtin.
+    /// Internal-only: emitted from staged HTTPS/TLS connect lowering, not from a user-visible builtin.
     /// </summary>
     public sealed record CreateTlsHandshakeTask(int Target, int SocketTemp, int HostTemp) : IrInst;
 
     /// <summary>
     /// Creates a leaf networking task for sending text over a TLS session.
-    /// Internal-only: emitted from staged HTTPS lowering, not from a user-visible builtin.
     /// </summary>
     public sealed record CreateTlsSendTask(int Target, int SslTemp, int TextTemp) : IrInst;
 
     /// <summary>
     /// Creates a leaf networking task for receiving text over a TLS session.
-    /// Internal-only: emitted from staged HTTPS lowering, not from a user-visible builtin.
     /// </summary>
     public sealed record CreateTlsReceiveTask(int Target, int SslTemp, int MaxBytesTemp) : IrInst;
 
     /// <summary>
     /// Creates a leaf networking task for closing a TLS session (SSL_shutdown + SSL_free).
-    /// Internal-only: emitted from staged HTTPS lowering, not from a user-visible builtin.
     /// </summary>
     public sealed record CreateTlsCloseTask(int Target, int SslTemp) : IrInst;
 
@@ -444,6 +447,8 @@ public static class TaskStructLayout
     public const long StateHttpGet = -14;
     /// <summary>State index value indicating a leaf HTTP POST task.</summary>
     public const long StateHttpPost = -15;
+    /// <summary>State index value indicating a staged TLS connect task.</summary>
+    public const long StateTlsConnect = -19;
     /// <summary>State index value indicating a leaf TLS handshake task.</summary>
     public const long StateTlsHandshake = -20;
     /// <summary>State index value indicating a leaf TLS send task.</summary>
