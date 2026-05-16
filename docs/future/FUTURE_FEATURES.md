@@ -8,7 +8,7 @@ Planned features and future work for the Ashes language and ecosystem.
 | [Async Networking](ASYNC_NETWORKING.md) | Landed | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
 | [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
 | [Compiler Optimization](COMPILER_OPTIMIZATION.md) | Ongoing | LLVM passes, memory management, codegen improvements |
-| [HTTPS/TLS](HTTPS_TLS.md) | Partial | Transparent `https://` in `Ashes.Http` landed on Linux x64 via OpenSSL 3; Windows/raw TLS follow-on work remains |
+| [HTTPS/TLS](HTTPS_TLS.md) | Partial | Transparent `https://` in `Ashes.Http` landed on Linux x64, Linux arm64, and Windows x64 via OpenSSL 3; raw TLS follow-on work remains |
 | Pattern Guards | Planned | Pattern matching enhancements |
 | Type Annotations | Planned | User-written type annotations |
 | Selective Imports | Planned | `import Ashes.IO (print)` |

@@ -1,7 +1,8 @@
 # HTTPS/TLS — Status & Roadmap
 
 Transparent `https://` in `Ashes.Http.get` / `Ashes.Http.post` is now
-landed on the Linux x64 backend via OpenSSL 3 loaded at runtime.
+landed on the Linux x64, Linux arm64, and Windows x64 backends via
+OpenSSL 3 loaded at runtime.
 This document records the completed work and the remaining follow-up
 items.
 
@@ -16,8 +17,8 @@ HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
 require new user-visible syntax, a new module, or changes to the
 `Task(E, A)` discipline. The landed milestone is intentionally narrow:
-make `https://` URLs work in the existing HTTP client on Linux x64,
-and leave broader TLS surface area for follow-on work.
+make `https://` URLs work in the existing HTTP client on the shipped
+native backends, and leave broader TLS surface area for follow-on work.
 
 ------------------------------------------------------------------------
 
@@ -25,21 +26,24 @@ and leave broader TLS surface area for follow-on work.
 
 | Area | What was done |
 |------|---------------|
-| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Http.get` / `Ashes.Http.post` as accepting `http://` and `https://` URLs, with default port 443 for HTTPS and the current Linux x64 runtime caveat. |
-| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now describes HTTPS support in `Ashes.Http` and the OpenSSL 3 runtime dependency used on Linux x64. |
+| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Http.get` / `Ashes.Http.post` as accepting `http://` and `https://` URLs, with default port 443 for HTTPS and the current Linux x64 / Linux arm64 / Windows x64 runtime caveat. |
+| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now describes HTTPS support in `Ashes.Http` and the OpenSSL 3 runtime dependency used on Linux x64, Linux arm64, and Windows x64. |
 | **Linux dynamic-import foundation** | The Linux x64 ELF linker now emits the dynamic loader/interpreter metadata and import tables needed for runtime `dlopen` / `dlsym` calls from generated executables. |
+| **Windows dynamic-import foundation** | The Windows PE linker now emits the import tables needed for runtime `LoadLibraryA` / `GetProcAddress` calls plus Crypt32 root-store access from generated executables. |
 | **OpenSSL runtime initialization** | The generated runtime now lazily loads `libssl.so.3` / `libcrypto.so.3`, initializes a shared `SSL_CTX*`, enables peer verification, and loads default verify paths on first HTTPS use. |
+| **Windows trust-store bridge** | The Windows runtime now imports the current user's `ROOT` certificate store into the shared OpenSSL `SSL_CTX*` on first HTTPS use so loopback and system-trusted certificates verify through the same TLS path. |
 | **TLS leaf tasks** | Dedicated internal TLS handshake/send/receive/close leaf tasks now exist in IR, backend dispatch, wait integration, and generated runtime helpers. |
-| **HTTP staging integration** | The staged HTTP client now accepts `https://`, defaults to port 443, persists the secure stage across resumes, inserts a TLS handshake stage, and routes send/receive/close through TLS task states on Linux x64. |
-| **Examples and tests** | Added `examples/https_get.ash`, Linux/backend and CLI loopback TLS fixture coverage, updated ASH012 coverage for HTTPS, and replaced the old `.ash` expectation that HTTPS is unsupported. |
+| **HTTP staging integration** | The staged HTTP client now accepts `https://`, defaults to port 443, persists the secure stage across resumes, inserts a TLS handshake stage, and routes send/receive/close through TLS task states on Linux x64, Linux arm64, and Windows x64. |
+| **Examples and tests** | Added `examples/https_get.ash`, Linux/backend, Windows/backend, and CLI loopback TLS fixture coverage, updated ASH012 coverage for HTTPS, and replaced the old `.ash` expectation that HTTPS is unsupported. |
 
 ------------------------------------------------------------------------
 
 ## Why This Is Needed
 
-The modern web is HTTPS by default. Today `Ashes.Http.get("https://...")`
-returns `Error("https not supported")`, which makes the HTTP client
-useless for almost every real-world endpoint.
+The modern web is HTTPS by default. Before this work,
+`Ashes.Http.get("https://...")` returned
+`Error("https not supported")`, which made the HTTP client useless for
+almost every real-world endpoint.
 
 Ashes already has the async runtime, the staged HTTP-on-TCP state
 machine, the socket-fixture test infrastructure, and the
@@ -99,15 +103,18 @@ done:
 
 ## Runtime Dependency
 
-The landed Linux x64 implementation dynamically loads OpenSSL 3 at
+The landed native-backend implementation dynamically loads OpenSSL 3 at
 runtime:
 
-- **Linux x64**: `dlopen("libssl.so.3", RTLD_NOW)`. Most modern distros
+- **Linux x64 / Linux arm64**: `dlopen("libssl.so.3", RTLD_NOW)`. Most
+  modern distros
   (Debian 12+, Ubuntu 22.04+, Fedora 36+) ship this by default;
   otherwise install via `apt install libssl3`, `dnf install openssl`,
   or equivalent.
-- **Windows**: still deferred. The future implementation is expected to
-  load OpenSSL dynamically rather than link it at compiler build time.
+- **Windows x64**: `LoadLibraryA("libssl-3-x64.dll")` /
+  `LoadLibraryA("libcrypto-3-x64.dll")` with fallback to the generic
+  OpenSSL 3 DLL names, plus `CertOpenSystemStoreA("ROOT")` to import
+  the current user's root store into the shared `SSL_CTX*`.
 
 The compiler itself does **not** link against OpenSSL. The dlopen
 calls are emitted into the produced executable. Programs that never
@@ -130,7 +137,7 @@ The shipped async networking runtime already exposes:
 - a task struct with `WaitKind` / `WaitHandle` / `WaitData0` /
   `WaitData1` slots
 - negative `StateIndex` values (`-10..-15`) for leaf tasks
-- per-platform readiness waits (Linux `epoll`, Windows IOCP)
+- per-platform readiness waits (Linux `epoll`, Windows `WSAPoll`)
 - a staged HTTP leaf task that drives child TCP leaf tasks
   (connect → send → receive → close)
 
@@ -143,9 +150,9 @@ HTTPS reuses all of that:
    `BuiltinRegistry` in V1; they are emitted only from staged HTTPS
    lowering.
 2. **Wait integration** — `SSL_get_error` returns
-   `SSL_ERROR_WANT_READ` / `WANT_WRITE` are translated into the
-   existing pending-wait path with the underlying socket fd, so the
-   epoll/IOCP infrastructure is reused without modification.
+  `SSL_ERROR_WANT_READ` / `WANT_WRITE` are translated into the
+  existing pending-wait path with the underlying socket fd, so the
+  epoll/`WSAPoll` infrastructure is reused without modification.
 3. **HTTP staging branch** — `EmitStepHttpTask` gets a
    `scheme = https` flag. When set, stages 2/3 (send/receive) use TLS
    leaf tasks instead of TCP leaf tasks, with an extra handshake stage
@@ -163,11 +170,9 @@ User-visible `Task(Str, Str)` semantics are unchanged.
 
 ## Remaining Work
 
-The Linux x64 HTTP-over-TLS path is landed, but the broader roadmap is
-not complete yet.
+The HTTP-over-TLS path is landed on the shipped native backends, but
+the broader roadmap is not complete yet.
 
-- Add Windows TLS runtime parity so `https://` works beyond the Linux
-  x64 backend.
 - Decide whether to expose a future raw `Ashes.Net.Tls` module instead
   of keeping TLS as an HTTP-internal transport detail.
 - Evaluate hermetic/vendored TLS only after the runtime-loaded OpenSSL
@@ -181,12 +186,15 @@ not complete yet.
 
 The landed coverage uses the existing loopback fixture style:
 
-1. `LinuxBackendCoverageTests` now hosts a local `SslStream` listener,
+1. `LinuxBackendCoverageTests` hosts a local `SslStream` listener,
   writes a temporary PEM trust bundle, and runs a Linux LLVM HTTPS
   program with `SSL_CERT_FILE` set for that child process only.
-2. `ExampleSocketFixtureTests` exercises `examples/https_get.ash`
+2. `WindowsBackendCoverageTests` hosts the same style of TLS listener,
+  temporarily adds the loopback certificate to the current user's root
+  store, and runs the Windows LLVM HTTPS program against that fixture.
+3. `ExampleSocketFixtureTests` exercises `examples/https_get.ash`
   against the same kind of loopback TLS listener.
-3. `tests/http_https_not_supported.ash` was updated to assert that
+4. `tests/http_https_not_supported.ash` was updated to assert that
   HTTPS now routes into the networking stack instead of returning the
   old unsupported-feature error.
 
@@ -195,10 +203,11 @@ The landed coverage uses the existing loopback fixture style:
 ## Standard Library and Spec Impact
 
 - `docs/LANGUAGE_SPEC.md` — HTTP rules section now allows `https://`,
-  documents default port 443, and notes the current Linux x64 OpenSSL 3
-  runtime dependency. ASH012 unchanged.
+  documents default port 443, and notes the current Linux x64 / Linux
+  arm64 / Windows x64 OpenSSL 3 runtime dependency. ASH012 unchanged.
 - `docs/STANDARD_LIBRARY.md` — HTTP module section now notes HTTPS
-  support and the current Linux x64 OpenSSL runtime dependency.
+  support and the current Linux x64 / Linux arm64 / Windows x64
+  OpenSSL runtime dependency.
 - `docs/future/FUTURE_FEATURES.md` — HTTPS/TLS row links to this
   document and now marks the feature as partial rather than purely planned.
 - No new builtins. No new IR instructions exposed to users.

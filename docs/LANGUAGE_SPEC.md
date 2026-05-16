@@ -185,8 +185,9 @@ match Ashes.Async.run(async
 Current HTTP rules:
 
 - `http://` and `https://` URLs are supported.
-- `https://` defaults to port 443 and, on the current Linux x64 backend,
-  requires OpenSSL 3 to be available at runtime.
+- `https://` defaults to port 443 and, on the current Linux x64,
+  Linux arm64, and Windows x64 backends, requires OpenSSL 3 to be
+  available at runtime.
 - Other backends may still return a runtime error for `https://` until
   their TLS runtime support lands.
 - Non-2xx responses return `Error("HTTP <status>")`.

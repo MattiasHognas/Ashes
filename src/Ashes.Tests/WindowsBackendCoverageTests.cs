@@ -1,4 +1,9 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -148,6 +153,12 @@ public sealed class WindowsBackendCoverageTests
     public void Windows_backend_llvm_support_check_should_accept_network_programs()
     {
         AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("http://127.0.0.1:8080/")) with | Ok(text) -> text | Error(msg) -> msg"""));
+    }
+
+    [Test]
+    public void Windows_backend_llvm_support_check_should_accept_https_network_programs()
+    {
+        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("https://localhost/")) with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
@@ -312,6 +323,25 @@ public sealed class WindowsBackendCoverageTests
         {
             DeleteDirectoryIfExists(tmpDir);
         }
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_https_against_loopback_tls_fixture()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+            });
+
+        result.Stdout.ShouldBe("hello from https\n");
     }
 
     [Test]
@@ -547,6 +577,32 @@ public sealed class WindowsBackendCoverageTests
         {
             DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
+        using var trustedCertificate = X509CertificateLoader.LoadCertificate(tlsHost.ServerCertificate.Export(X509ContentType.Cert));
+        using var rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
+        rootStore.Open(OpenFlags.ReadWrite);
+        rootStore.Add(trustedCertificate);
+
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+            var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
+            var result = await CompileRunWithWindowsLlvmAsync(source);
+            var serverException = await serverTask;
+            serverException.ShouldBeNull(serverException?.ToString());
+            return result;
+        }
+        finally
+        {
+            rootStore.Remove(trustedCertificate);
         }
     }
 

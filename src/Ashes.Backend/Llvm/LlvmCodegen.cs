@@ -62,6 +62,9 @@ internal static partial class LlvmCodegen
     private const int WindowsWsaErrorAlready = 10037;
     private const int WindowsWsaErrorIsConnected = 10056;
     private const int WindowsErrorIoPending = 997;
+    private const ushort WindowsPollReadNormal = 0x0100;
+    private const ushort WindowsPollWriteNormal = 0x0010;
+    private const int WindowsPollFdSize = 16;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
     private const int LinuxRtldNow = 2;
@@ -344,6 +347,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsIoctlSocketImport = default;
         LlvmValueHandle windowsWsaGetLastErrorImport = default;
         LlvmValueHandle windowsWsaPollImport = default;
+        LlvmValueHandle windowsLoadLibraryImport = default;
+        LlvmValueHandle windowsGetProcAddressImport = default;
+        LlvmValueHandle windowsCertOpenSystemStoreImport = default;
+        LlvmValueHandle windowsCertEnumCertificatesInStoreImport = default;
+        LlvmValueHandle windowsCertCloseStoreImport = default;
         LlvmValueHandle windowsBindImport = default;
         LlvmValueHandle windowsSetSockOptImport = default;
         LlvmValueHandle windowsWsaIoctlImport = default;
@@ -432,6 +440,10 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
             windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
             LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            windowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
+            LlvmApi.SetLinkage(windowsLoadLibraryImport, LlvmLinkage.External);
+            windowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");
+            LlvmApi.SetLinkage(windowsGetProcAddressImport, LlvmLinkage.External);
             windowsBindImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_bind");
             LlvmApi.SetLinkage(windowsBindImport, LlvmLinkage.External);
             windowsSetSockOptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_setsockopt");
@@ -449,6 +461,16 @@ internal static partial class LlvmCodegen
             windowsIocpPortGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_windows_iocp_port");
             LlvmApi.SetLinkage(windowsIocpPortGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(windowsIocpPortGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        }
+
+        if (flavor == LlvmCodegenFlavor.WindowsX64 && usesNetworkingRuntimeAbi)
+        {
+            windowsCertOpenSystemStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertOpenSystemStoreA");
+            LlvmApi.SetLinkage(windowsCertOpenSystemStoreImport, LlvmLinkage.External);
+            windowsCertEnumCertificatesInStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertEnumCertificatesInStore");
+            LlvmApi.SetLinkage(windowsCertEnumCertificatesInStoreImport, LlvmLinkage.External);
+            windowsCertCloseStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertCloseStore");
+            LlvmApi.SetLinkage(windowsCertCloseStoreImport, LlvmLinkage.External);
         }
 
         if (usesWindowsExitProcess)
@@ -528,6 +550,11 @@ internal static partial class LlvmCodegen
                 windowsIoctlSocketImport,
                 windowsWsaGetLastErrorImport,
                 windowsWsaPollImport,
+                windowsLoadLibraryImport,
+                windowsGetProcAddressImport,
+                windowsCertOpenSystemStoreImport,
+                windowsCertEnumCertificatesInStoreImport,
+                windowsCertCloseStoreImport,
                 windowsBindImport,
                 windowsSetSockOptImport,
                 windowsWsaIoctlImport,
@@ -602,6 +629,11 @@ internal static partial class LlvmCodegen
             windowsIoctlSocketImport,
             windowsWsaGetLastErrorImport,
             windowsWsaPollImport,
+            windowsLoadLibraryImport,
+            windowsGetProcAddressImport,
+            windowsCertOpenSystemStoreImport,
+            windowsCertEnumCertificatesInStoreImport,
+            windowsCertCloseStoreImport,
             windowsBindImport,
             windowsSetSockOptImport,
             windowsWsaIoctlImport,
@@ -650,6 +682,11 @@ internal static partial class LlvmCodegen
                 windowsIoctlSocketImport,
                 windowsWsaGetLastErrorImport,
                 windowsWsaPollImport,
+                windowsLoadLibraryImport,
+                windowsGetProcAddressImport,
+                windowsCertOpenSystemStoreImport,
+                windowsCertEnumCertificatesInStoreImport,
+                windowsCertCloseStoreImport,
                 windowsBindImport,
                 windowsSetSockOptImport,
                 windowsWsaIoctlImport,
@@ -712,6 +749,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsIoctlSocketImport,
         LlvmValueHandle windowsWsaGetLastErrorImport,
         LlvmValueHandle windowsWsaPollImport,
+        LlvmValueHandle windowsLoadLibraryImport,
+        LlvmValueHandle windowsGetProcAddressImport,
+        LlvmValueHandle windowsCertOpenSystemStoreImport,
+        LlvmValueHandle windowsCertEnumCertificatesInStoreImport,
+        LlvmValueHandle windowsCertCloseStoreImport,
         LlvmValueHandle windowsBindImport,
         LlvmValueHandle windowsSetSockOptImport,
         LlvmValueHandle windowsWsaIoctlImport,
@@ -819,6 +861,11 @@ internal static partial class LlvmCodegen
             windowsIoctlSocketImport,
             windowsWsaGetLastErrorImport,
             windowsWsaPollImport,
+            windowsLoadLibraryImport,
+            windowsGetProcAddressImport,
+            windowsCertOpenSystemStoreImport,
+            windowsCertEnumCertificatesInStoreImport,
+            windowsCertCloseStoreImport,
             windowsBindImport,
             windowsSetSockOptImport,
             windowsWsaIoctlImport,
@@ -1092,6 +1139,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsIoctlSocketImport,
         LlvmValueHandle WindowsWsaGetLastErrorImport,
         LlvmValueHandle WindowsWsaPollImport,
+        LlvmValueHandle WindowsLoadLibraryImport,
+        LlvmValueHandle WindowsGetProcAddressImport,
+        LlvmValueHandle WindowsCertOpenSystemStoreImport,
+        LlvmValueHandle WindowsCertEnumCertificatesInStoreImport,
+        LlvmValueHandle WindowsCertCloseStoreImport,
         LlvmValueHandle WindowsBindImport,
         LlvmValueHandle WindowsSetSockOptImport,
         LlvmValueHandle WindowsWsaIoctlImport,

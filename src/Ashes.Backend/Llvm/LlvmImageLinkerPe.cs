@@ -85,6 +85,8 @@ internal static partial class LlvmImageLinker
         rdataStream.Write(Encoding.ASCII.GetBytes("SHELL32.DLL\0"));
         int ws2NameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("WS2_32.DLL\0"));
+        int crypt32NameOffset = (int)rdataStream.Position;
+        rdataStream.Write(Encoding.ASCII.GetBytes("CRYPT32.DLL\0"));
 
         // Write Hint/Name entries for each import function
         int exitProcessHintOffset = WriteHintName(rdataStream, 0, "ExitProcess");
@@ -117,11 +119,17 @@ internal static partial class LlvmImageLinker
         int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
         int createIoCompletionPortHintOffset = WriteHintName(rdataStream, 0, "CreateIoCompletionPort");
         int getQueuedCompletionStatusHintOffset = WriteHintName(rdataStream, 0, "GetQueuedCompletionStatus");
+        int loadLibraryHintOffset = WriteHintName(rdataStream, 0, "LoadLibraryA");
+        int getProcAddressHintOffset = WriteHintName(rdataStream, 0, "GetProcAddress");
+        int certOpenSystemStoreHintOffset = WriteHintName(rdataStream, 0, "CertOpenSystemStoreA");
+        int certEnumCertificatesInStoreHintOffset = WriteHintName(rdataStream, 0, "CertEnumCertificatesInStore");
+        int certCloseStoreHintOffset = WriteHintName(rdataStream, 0, "CertCloseStore");
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
         int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset];
+        int[] crypt32Hints = [certOpenSystemStoreHintOffset, certEnumCertificatesInStoreHintOffset, certCloseStoreHintOffset];
 
         // Write IAT (Import Address Table) — 8 bytes per entry + 8-byte null terminator per DLL
         AlignStream(rdataStream, 8);
@@ -135,6 +143,8 @@ internal static partial class LlvmImageLinker
         WriteImportAddressTable(rdataStream, shell32Hints, rdataRva);
         int ws2IatOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, ws2Hints, rdataRva);
+        int crypt32IatOffset = (int)rdataStream.Position;
+        WriteImportAddressTable(rdataStream, crypt32Hints, rdataRva);
 
         // Write ILT (Import Lookup Table) — identical structure to IAT
         int kernel32IltOffset = (int)rdataStream.Position;
@@ -143,13 +153,16 @@ internal static partial class LlvmImageLinker
         WriteImportAddressTable(rdataStream, shell32Hints, rdataRva);
         int ws2IltOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, ws2Hints, rdataRva);
+        int crypt32IltOffset = (int)rdataStream.Position;
+        WriteImportAddressTable(rdataStream, crypt32Hints, rdataRva);
 
-        // Write Import Directory Table (3 entries + null terminator)
+        // Write Import Directory Table (4 entries + null terminator)
         // Each entry is 20 bytes: ILT RVA, TimeDateStamp, ForwarderChain, Name RVA, IAT RVA
         int importDirOffset = (int)rdataStream.Position;
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)kernel32IltOffset, rdataRva + (uint)kernelNameOffset, rdataRva + (uint)kernel32IatOffset);
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)shell32IltOffset, rdataRva + (uint)shellNameOffset, rdataRva + (uint)shell32IatOffset);
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)ws2IltOffset, rdataRva + (uint)ws2NameOffset, rdataRva + (uint)ws2IatOffset);
+        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)crypt32IltOffset, rdataRva + (uint)crypt32NameOffset, rdataRva + (uint)crypt32IatOffset);
         // Null terminator entry (20 zero bytes)
         for (int i = 0; i < 20; i++)
         {
@@ -162,6 +175,7 @@ internal static partial class LlvmImageLinker
         ulong kernel32IatVa = PeImageBase + rdataRva + (ulong)kernel32IatOffset;
         ulong shell32IatVa = PeImageBase + rdataRva + (ulong)shell32IatOffset;
         ulong ws2IatVa = PeImageBase + rdataRva + (ulong)ws2IatOffset;
+        ulong crypt32IatVa = PeImageBase + rdataRva + (ulong)crypt32IatOffset;
 
         ulong exitProcessIatVa = kernel32IatVa;
         ulong getStdHandleIatVa = kernel32IatVa + 1 * 8;
@@ -178,6 +192,8 @@ internal static partial class LlvmImageLinker
         ulong virtualFreeIatVa = kernel32IatVa + 12 * 8;
         ulong createIoCompletionPortIatVa = kernel32IatVa + 13 * 8;
         ulong getQueuedCompletionStatusIatVa = kernel32IatVa + 14 * 8;
+        ulong loadLibraryIatVa = kernel32IatVa + 15 * 8;
+        ulong getProcAddressIatVa = kernel32IatVa + 16 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -193,6 +209,9 @@ internal static partial class LlvmImageLinker
         ulong wsaSendIatVa = ws2IatVa + 11 * 8;
         ulong wsaRecvIatVa = ws2IatVa + 12 * 8;
         ulong wsaPollIatVa = ws2IatVa + 13 * 8;
+        ulong certOpenSystemStoreIatVa = crypt32IatVa;
+        ulong certEnumCertificatesInStoreIatVa = crypt32IatVa + 1 * 8;
+        ulong certCloseStoreIatVa = crypt32IatVa + 2 * 8;
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
         var sectionBaseVas = extraSectionOffsets.ToDictionary(
             static pair => pair.Key,
@@ -232,6 +251,8 @@ internal static partial class LlvmImageLinker
                 ["__imp_VirtualFree"] = virtualFreeIatVa,
                 ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
                 ["__imp_GetQueuedCompletionStatus"] = getQueuedCompletionStatusIatVa,
+                ["__imp_LoadLibraryA"] = loadLibraryIatVa,
+                ["__imp_GetProcAddress"] = getProcAddressIatVa,
                 ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
                 ["__imp_WSAStartup"] = wsaStartupIatVa,
                 ["__imp_socket"] = socketIatVa,
@@ -247,6 +268,9 @@ internal static partial class LlvmImageLinker
                 ["__imp_WSASend"] = wsaSendIatVa,
                 ["__imp_WSARecv"] = wsaRecvIatVa,
                 ["__imp_WSAPoll"] = wsaPollIatVa,
+                ["__imp_CertOpenSystemStoreA"] = certOpenSystemStoreIatVa,
+                ["__imp_CertEnumCertificatesInStore"] = certEnumCertificatesInStoreIatVa,
+                ["__imp_CertCloseStore"] = certCloseStoreIatVa,
                 ["__chkstk"] = chkstkStubVa
             });
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
@@ -351,7 +375,7 @@ internal static partial class LlvmImageLinker
 
         // Entry 12 (index 12): IAT Directory
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 96, 4), rdataRva + (uint)iatSectionOffset); // IAT RVA
-        int iatTotalSize = ws2IatOffset + (ws2Hints.Length + 1) * 8 - iatSectionOffset;
+        int iatTotalSize = crypt32IatOffset + (crypt32Hints.Length + 1) * 8 - iatSectionOffset;
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 100, 4), (uint)iatTotalSize); // IAT Size
 
         // Section headers
