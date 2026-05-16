@@ -56,31 +56,49 @@ dotnet build Ashes.slnx --configuration Release
 
 ------------------------------------------------------------------------
 
-## LLVM Native Libraries
+## Native Runtime Libraries
 
-The backend requires native LLVM libraries. Download them before running
-any backend or end-to-end tests:
+The native backend requires LLVM libraries, and HTTPS/TLS workloads also
+require rustls-ffi shared libraries. Provision both before running
+backend or end-to-end tests:
 
 ```sh
-# All platforms (linux-x64, linux-arm64, win-x64):
+# LLVM: all platforms (linux-x64, linux-arm64, win-x64):
 bash scripts/download-llvm-native.sh --all
 
-# Current architecture only:
+# LLVM: current architecture only:
 bash scripts/download-llvm-native.sh
 
-# Specific architecture:
+# LLVM: specific architecture:
 bash scripts/download-llvm-native.sh 22 arm64
+
+# rustls-ffi: all supported payloads (linux-x64, linux-arm64, win-x64):
+bash scripts/download-rustls-ffi.sh --all
+
+# rustls-ffi: native Linux payload only:
+bash scripts/download-rustls-ffi.sh
+
+# rustls-ffi: selected targets:
+bash scripts/download-rustls-ffi.sh --linux-x64 --win-x64
 ```
 
-On Windows, run the bash script from WSL:
+For rustls-ffi, `--linux-arm64` builds the arm64 payload from source
+because upstream does not publish a prebuilt Linux arm64 shared
+library. The default rustls-ffi version is read from
+`Directory.Build.props`.
+
+On Windows, run the bash scripts from WSL:
 
 ```sh
-# Download all supported runtimes, including win-x64:
+# Download all supported runtimes, including win-x64 payloads:
 bash scripts/download-llvm-native.sh --all
+bash scripts/download-rustls-ffi.sh --all
 ```
 
-The libraries are placed under `runtimes/{linux-x64,linux-arm64,win-x64}/`
-and are automatically copied to build output by `Ashes.Backend.csproj`.
+The scripts stage native payloads under
+`runtimes/{linux-x64,linux-arm64,win-x64}/`. `Ashes.Backend.csproj`
+validates the provisioned rustls-ffi version and copies both LLVM and
+rustls assets into build output.
 
 ------------------------------------------------------------------------
 
