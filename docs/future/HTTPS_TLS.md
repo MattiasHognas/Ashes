@@ -173,12 +173,33 @@ User-visible `Task(Str, Str)` semantics are unchanged.
 The HTTP-over-TLS path is landed on the shipped native backends, but
 the broader roadmap is not complete yet.
 
-- Decide whether to expose a future raw `Ashes.Net.Tls` module instead
-  of keeping TLS as an HTTP-internal transport detail.
-- Evaluate hermetic/vendored TLS only after the runtime-loaded OpenSSL
-  path has enough real-world bake time.
-- Extend end-to-end `.ash` coverage further if the test runner gains a
-  first-class HTTPS fixture harness.
+Recommended follow-up work, in order:
+
+- [ ] Add explicit Linux arm64 HTTPS runtime validation.
+  The Linux TLS implementation path is shared across Linux x64 and
+  Linux arm64, but this branch does not yet have dedicated arm64
+  runtime fixture coverage comparable to the current Linux x64 and
+  Windows x64 backend tests.
+- [ ] Decide whether to expose a public `Ashes.Net.Tls` module.
+  If the answer is yes, define the minimal user-visible surface first,
+  then update `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
+  backend/runtime tests before exposing the currently-internal TLS leaf
+  task machinery.
+- [ ] Add first-class HTTPS harness support to end-to-end `.ash` tests.
+  The backend coverage tests already use loopback `SslStream` fixtures,
+  but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
+  mode for successful HTTPS, trust-failure, and hostname-mismatch
+  scenarios.
+- [ ] Decide how much deployment polish to add around the OpenSSL
+  runtime dependency.
+  The current design intentionally uses system OpenSSL. The next policy
+  choice is whether to keep that as-is, add helper tooling/docs, or
+  optionally bundle the Windows DLLs next to produced executables.
+- [ ] Evaluate hermetic/vendored TLS only after the runtime-loaded
+  OpenSSL path has real bake time.
+  Treat this as a separate milestone once the current runtime-loaded
+  design has enough production-style usage to justify the added build,
+  size, and maintenance cost.
 
 ------------------------------------------------------------------------
 
