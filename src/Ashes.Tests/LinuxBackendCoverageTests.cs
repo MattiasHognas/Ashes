@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using Ashes.Backend.Backends;
@@ -510,16 +511,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_should_report_https_not_supported()
+    public async Task Linux_backend_llvm_should_run_https_against_loopback_tls_fixture()
     {
         if (!OperatingSystem.IsLinux())
         {
             return;
         }
 
-        var result = await CompileRunWithLinuxLlvmAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://example.com")) with | Ok(text) -> text | Error(msg) -> msg)""");
-        result.Stdout.ShouldBe("https not supported\n");
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET / HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+        result.Stdout.ShouldBe("hello from https\n");
     }
 
     [Test]
@@ -669,13 +681,25 @@ public sealed class LinuxBackendCoverageTests
         return ir;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
+        string source,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode);
+        return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
+        IrProgram ir,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
 
@@ -695,6 +719,13 @@ public sealed class LinuxBackendCoverageTests
             if (workingDirectory is not null)
             {
                 psi.WorkingDirectory = workingDirectory;
+            }
+            if (environmentVariables is not null)
+            {
+                foreach (var entry in environmentVariables)
+                {
+                    psi.Environment[entry.Key] = entry.Value;
+                }
             }
             if (args is not null)
             {
@@ -737,6 +768,23 @@ public sealed class LinuxBackendCoverageTests
         return result;
     }
 
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
+        var result = await CompileRunWithLinuxLlvmAsync(source, environmentVariables: new Dictionary<string, string>
+        {
+            ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
+        });
+        var serverException = await serverTask;
+        serverException.ShouldBeNull(serverException?.ToString());
+        return result;
+    }
+
     private static async Task<Exception?> RunLoopbackServerAsync(TcpListener listener, Func<TcpClient, Task> handleClientAsync)
     {
         try
@@ -758,10 +806,11 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private static async Task<string> ReadTextAsync(NetworkStream stream, int maxBytes)
+    private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
     {
         var buffer = new byte[maxBytes];
         var total = 0;
+        byte[] headerTerminator = "\r\n\r\n"u8.ToArray();
 
         while (total < buffer.Length)
         {
@@ -775,10 +824,19 @@ public sealed class LinuxBackendCoverageTests
                 }
 
                 total += count;
-                if (!stream.DataAvailable)
+                if (total >= headerTerminator.Length && buffer.AsSpan(0, total).IndexOf(headerTerminator) >= 0)
                 {
                     break;
                 }
+
+                if (stream is NetworkStream networkStream && !networkStream.DataAvailable)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException) when (total > 0)
+            {
+                break;
             }
             catch (IOException) when (total > 0)
             {

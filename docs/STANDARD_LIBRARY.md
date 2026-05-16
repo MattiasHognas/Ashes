@@ -46,8 +46,11 @@ All networking APIs are async-only and must be awaited inside `async` blocks.
 
 Current HTTP support is intentionally small:
 
-- Only `http://` URLs are supported.
-- `https://` returns `Error("https not supported")`.
+- `http://` and `https://` URLs are supported.
+- `https://` defaults to port 443 and currently ships on the Linux x64 backend
+	via OpenSSL 3 loaded at runtime.
+- Other backends may still return a runtime error for `https://` until their
+	TLS runtime support lands.
 - Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
 - `Transfer-Encoding: chunked` currently returns `Error("unsupported transfer encoding")`.
 

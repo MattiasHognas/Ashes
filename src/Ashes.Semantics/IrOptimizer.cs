@@ -226,6 +226,10 @@ public static class IrOptimizer
             IrInst.CreateTcpCloseTask t => t with { SocketTemp = R(t.SocketTemp) },
             IrInst.CreateHttpGetTask t => t with { UrlTemp = R(t.UrlTemp) },
             IrInst.CreateHttpPostTask t => t with { UrlTemp = R(t.UrlTemp), BodyTemp = R(t.BodyTemp) },
+            IrInst.CreateTlsHandshakeTask t => t with { SocketTemp = R(t.SocketTemp), HostTemp = R(t.HostTemp) },
+            IrInst.CreateTlsSendTask t => t with { SslTemp = R(t.SslTemp), TextTemp = R(t.TextTemp) },
+            IrInst.CreateTlsReceiveTask t => t with { SslTemp = R(t.SslTemp), MaxBytesTemp = R(t.MaxBytesTemp) },
+            IrInst.CreateTlsCloseTask t => t with { SslTemp = R(t.SslTemp) },
             IrInst.AsyncAll aa => aa with { TaskListTemp = R(aa.TaskListTemp) },
             IrInst.AsyncRace ar => ar with { TaskListTemp = R(ar.TaskListTemp) },
             IrInst.Suspend s => s with
@@ -948,6 +952,10 @@ public static class IrOptimizer
             case IrInst.CreateTcpCloseTask t: usedTemps.Add(t.SocketTemp); break;
             case IrInst.CreateHttpGetTask t: usedTemps.Add(t.UrlTemp); break;
             case IrInst.CreateHttpPostTask t: usedTemps.Add(t.UrlTemp); usedTemps.Add(t.BodyTemp); break;
+            case IrInst.CreateTlsHandshakeTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.HostTemp); break;
+            case IrInst.CreateTlsSendTask t: usedTemps.Add(t.SslTemp); usedTemps.Add(t.TextTemp); break;
+            case IrInst.CreateTlsReceiveTask t: usedTemps.Add(t.SslTemp); usedTemps.Add(t.MaxBytesTemp); break;
+            case IrInst.CreateTlsCloseTask t: usedTemps.Add(t.SslTemp); break;
             case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
             case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
             case IrInst.Suspend s:

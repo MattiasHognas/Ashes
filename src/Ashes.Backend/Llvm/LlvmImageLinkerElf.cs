@@ -12,11 +12,40 @@ internal static partial class LlvmImageLinker
     private const int PageSize = 0x1000;
     private const ulong ElfBaseVa = 0x400000;
     private const int LinuxTrampolineLength = 20;
+    private const int LinuxImportStubLength = 6;
     private const uint ElfRelocX86_64_64 = 1;
     private const uint ElfRelocX86_64Pc32 = 2;
     private const uint ElfRelocX86_64Plt32 = 4;
+    private const uint ElfRelocX86_64GlobDat = 6;
     private const uint ElfRelocX86_64_32 = 10;
     private const uint ElfRelocX86_64_32S = 11;
+    private const uint ElfProgramTypeLoad = 1;
+    private const uint ElfProgramTypeDynamic = 2;
+    private const uint ElfProgramTypeInterp = 3;
+    private const long ElfDynamicTagNull = 0;
+    private const long ElfDynamicTagNeeded = 1;
+    private const long ElfDynamicTagHash = 4;
+    private const long ElfDynamicTagStrtab = 5;
+    private const long ElfDynamicTagSymtab = 6;
+    private const long ElfDynamicTagRela = 7;
+    private const long ElfDynamicTagRelasz = 8;
+    private const long ElfDynamicTagRelaent = 9;
+    private const long ElfDynamicTagStrsz = 10;
+    private const long ElfDynamicTagSyment = 11;
+    private const int Elf64SymSize = 24;
+    private const int Elf64RelaSize = 24;
+    private const byte ElfSymbolBindGlobal = 1;
+    private const byte ElfSymbolTypeFunc = 2;
+    private const string LinuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2";
+
+    private static readonly IReadOnlyDictionary<string, string> LinuxDynamicImportLibraries =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["dlopen"] = "libdl.so.2",
+            ["dlsym"] = "libdl.so.2",
+            ["dlclose"] = "libdl.so.2",
+            ["strlen"] = "libc.so.6",
+        };
 
     private const int ElfHeaderSize = 64;
     private const int ElfProgramHeaderSize = 56;
@@ -26,8 +55,9 @@ internal static partial class LlvmImageLinker
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + LinuxTrampolineLength;
         var parsed = ParseElfObject(objectBytes, entrySymbolName);
+        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed);
         int textFileOffset = PageSize;
-        int codeLength = LinuxTrampolineLength + parsed.TextBytes.Length;
+        int codeLength = LinuxTrampolineLength + parsed.TextBytes.Length + imports.Count * LinuxImportStubLength;
         int dataFileOffset = Align(textFileOffset + codeLength, PageSize);
         ulong dataVa = ElfBaseVa + (ulong)dataFileOffset;
         var laidOutData = LayoutElfAllocatedSections(parsed.AllocatedSections, dataVa);
@@ -39,6 +69,11 @@ internal static partial class LlvmImageLinker
             sectionBaseVas[debugSection.SectionIndex] = 0;
         }
 
+        int importDataOffset = Align(laidOutData.DataBytes.Length, 8);
+        LinuxDynamicImportLayout importLayout = imports.Count == 0
+            ? LinuxDynamicImportLayout.Empty
+            : BuildLinuxDynamicImportLayout(imports, dataVa, checked((uint)importDataOffset), objectTextVa + (ulong)parsed.TextBytes.Length);
+
         ApplyElfTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -46,7 +81,8 @@ internal static partial class LlvmImageLinker
             parsed.SymbolTable,
             parsed.TextSectionIndex,
             objectTextVa,
-            sectionBaseVas);
+            sectionBaseVas,
+            importLayout.ImportStubVas);
 
         ApplyElfDebugRelocations(
             objectBytes,
@@ -55,18 +91,25 @@ internal static partial class LlvmImageLinker
             parsed.SymbolTable,
             parsed.TextSectionIndex,
             objectTextVa,
-            sectionBaseVas);
+            sectionBaseVas,
+            importLayout.ImportStubVas);
 
         byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
+            .Concat(importLayout.StubBytes)
             .ToArray();
 
-        bool hasData = laidOutData.DataBytes.Length > 0;
+        byte[] finalDataBytes = importLayout.Bytes.Length == 0
+            ? laidOutData.DataBytes
+            : BuildLinuxDataBytes(laidOutData.DataBytes, importDataOffset, importLayout.Bytes);
+
+        bool hasData = finalDataBytes.Length > 0;
         bool hasDebug = parsed.DebugSections.Count > 0;
-        int programHeaderCount = hasData ? 2 : 1;
+        bool hasDynamicImports = imports.Count > 0;
+        int programHeaderCount = 1 + (hasData ? 1 : 0) + (hasDynamicImports ? 2 : 0);
 
         int endOfLoadable = hasData
-            ? dataFileOffset + laidOutData.DataBytes.Length
+            ? dataFileOffset + finalDataBytes.Length
             : textFileOffset + codeBytes.Length;
 
         // Layout debug sections after loadable content
@@ -110,12 +153,14 @@ internal static partial class LlvmImageLinker
             sectionHeaderCount: hasDebug ? sectionHeaderCount : 0,
             shstrtabIndex: hasDebug ? shstrtabIndex : 0);
 
-        // Program header 1: text (R+X)
+        // Program header 1: headers + text (R+X).
+        // Dynamic Linux executables need the ELF and program headers mapped so
+        // the interpreter can walk them before transferring control to entry.
         WriteElf64ProgramHeader(output, 0,
-            fileOffset: (ulong)textFileOffset,
-            virtualAddress: textVa,
-            fileSize: (ulong)codeBytes.Length,
-            memorySize: (ulong)codeBytes.Length,
+            fileOffset: 0,
+            virtualAddress: ElfBaseVa,
+            fileSize: (ulong)(textFileOffset + codeBytes.Length),
+            memorySize: (ulong)(textFileOffset + codeBytes.Length),
             flags: 0x05); // PF_R | PF_X
 
         if (hasData)
@@ -124,9 +169,31 @@ internal static partial class LlvmImageLinker
             WriteElf64ProgramHeader(output, 1,
                 fileOffset: (ulong)dataFileOffset,
                 virtualAddress: dataVa,
-                fileSize: (ulong)laidOutData.DataBytes.Length,
-                memorySize: (ulong)laidOutData.DataBytes.Length,
+                fileSize: (ulong)finalDataBytes.Length,
+                memorySize: (ulong)finalDataBytes.Length,
                 flags: 0x06); // PF_R | PF_W
+        }
+
+        if (hasDynamicImports)
+        {
+            int interpHeaderIndex = hasData ? 2 : 1;
+            int dynamicHeaderIndex = interpHeaderIndex + 1;
+            WriteElf64ProgramHeader(output, interpHeaderIndex,
+                fileOffset: (ulong)(dataFileOffset + importLayout.InterpDataOffset),
+                virtualAddress: dataVa + importLayout.InterpDataOffset,
+                fileSize: (ulong)importLayout.InterpByteCount,
+                memorySize: (ulong)importLayout.InterpByteCount,
+                flags: 0x04,
+                type: ElfProgramTypeInterp,
+                alignment: 1);
+            WriteElf64ProgramHeader(output, dynamicHeaderIndex,
+                fileOffset: (ulong)(dataFileOffset + importLayout.DynamicDataOffset),
+                virtualAddress: dataVa + importLayout.DynamicDataOffset,
+                fileSize: (ulong)importLayout.DynamicByteCount,
+                memorySize: (ulong)importLayout.DynamicByteCount,
+                flags: 0x06,
+                type: ElfProgramTypeDynamic,
+                alignment: 8);
         }
 
         // Write .text content
@@ -135,7 +202,7 @@ internal static partial class LlvmImageLinker
         // Write .data content
         if (hasData)
         {
-            Array.Copy(laidOutData.DataBytes, 0, output, dataFileOffset, laidOutData.DataBytes.Length);
+            Array.Copy(finalDataBytes, 0, output, dataFileOffset, finalDataBytes.Length);
         }
 
         // Write debug sections and section headers
@@ -172,7 +239,7 @@ internal static partial class LlvmImageLinker
                     type: 1, // SHT_PROGBITS
                     flags: 0x03, // SHF_ALLOC | SHF_WRITE
                     fileOffset: (ulong)dataFileOffset,
-                    size: (ulong)laidOutData.DataBytes.Length,
+                    size: (ulong)finalDataBytes.Length,
                     addr: dataVa,
                     alignment: 8);
             }
@@ -236,17 +303,18 @@ internal static partial class LlvmImageLinker
     }
 
     private static void WriteElf64ProgramHeader(byte[] output, int index,
-        ulong fileOffset, ulong virtualAddress, ulong fileSize, ulong memorySize, uint flags)
+        ulong fileOffset, ulong virtualAddress, ulong fileSize, ulong memorySize, uint flags,
+        uint type = ElfProgramTypeLoad, ulong alignment = (ulong)PageSize)
     {
         int offset = ElfHeaderSize + index * ElfProgramHeaderSize;
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset, 4), 1);             // p_type: PT_LOAD
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset, 4), type);
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(offset + 4, 4), flags);     // p_flags
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 8, 8), fileOffset); // p_offset
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 16, 8), virtualAddress); // p_vaddr
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 24, 8), virtualAddress); // p_paddr
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 32, 8), fileSize);  // p_filesz
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 40, 8), memorySize); // p_memsz
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 48, 8), (ulong)PageSize); // p_align
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 48, 8), alignment); // p_align
     }
 
     private static void WriteElf64SectionHeader(byte[] output, int sectionHeaderTableOffset, int index,
@@ -417,7 +485,8 @@ internal static partial class LlvmImageLinker
         ElfSectionHeader symtab,
         int textSectionIndex,
         ulong loadedTextVa,
-        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
     {
         // Build a name-based lookup table for defined symbols so we can resolve
         // SHN_UNDEF (section 0) references produced by LLVM optimization passes.
@@ -446,7 +515,7 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, importSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
                 switch (relocationType)
                 {
@@ -491,7 +560,8 @@ internal static partial class LlvmImageLinker
         ElfSectionHeader symtab,
         int textSectionIndex,
         ulong loadedTextVa,
-        IReadOnlyDictionary<int, ulong> sectionBaseVas)
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
     {
         if (debugSections.Count == 0 || relocationSections.Count == 0)
         {
@@ -524,6 +594,7 @@ internal static partial class LlvmImageLinker
                 sectionBaseVas,
                 strtab,
                 definedSymbolVas,
+                importSymbolVas,
                 ".debug");
         }
     }
@@ -539,6 +610,7 @@ internal static partial class LlvmImageLinker
         IReadOnlyDictionary<int, ulong> sectionBaseVas,
         byte[] strtab,
         IReadOnlyDictionary<string, ulong> definedSymbolVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas,
         string sectionLabel)
     {
         if (relocationSection.EntrySize == 0)
@@ -559,7 +631,7 @@ internal static partial class LlvmImageLinker
             int symbolIndex = checked((int)(info >> 32));
             uint relocationType = unchecked((uint)info);
             ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
-            long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas) + addend);
+            long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, importSymbolVas) + addend);
             long placeVa = checked((long)targetSectionBase + (long)relocOffset);
 
             switch (relocationType)
@@ -667,7 +739,8 @@ internal static partial class LlvmImageLinker
         ulong loadedTextVa,
         IReadOnlyDictionary<int, ulong> sectionBaseVas,
         byte[] strtab,
-        IReadOnlyDictionary<string, ulong> definedSymbolVas)
+        IReadOnlyDictionary<string, ulong> definedSymbolVas,
+        IReadOnlyDictionary<string, ulong>? importSymbolVas = null)
     {
         if (symbol.SectionIndex == textSectionIndex)
         {
@@ -688,6 +761,11 @@ internal static partial class LlvmImageLinker
             if (definedSymbolVas.TryGetValue(name, out ulong va))
             {
                 return va;
+            }
+
+            if (importSymbolVas is not null && importSymbolVas.TryGetValue(name, out ulong importVa))
+            {
+                return importVa;
             }
 
             throw new InvalidOperationException($"LLVM ELF text relocation references undefined symbol '{name}' (section 0) with no local definition.");
@@ -759,6 +837,298 @@ internal static partial class LlvmImageLinker
         }
 
         throw new InvalidOperationException($"LLVM object did not define the '{entrySymbolName}' entry symbol.");
+    }
+
+    private static List<LinuxDynamicImport> CollectLinuxDynamicImports(ReadOnlySpan<byte> objectBytes, ParsedElfObject parsed)
+    {
+        byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)parsed.SymbolTable.Link));
+        int symbolCount = checked((int)(parsed.SymbolTable.Size / parsed.SymbolTable.EntrySize));
+        var definedNames = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < symbolCount; i++)
+        {
+            ElfSymbol symbol = ReadElfSymbol(objectBytes, parsed.SymbolTable, i);
+            if (symbol.SectionIndex == 0)
+            {
+                continue;
+            }
+
+            string name = ReadNullTerminatedString(strtab, (int)symbol.NameIndex);
+            if (name.Length != 0)
+            {
+                definedNames.Add(name);
+            }
+        }
+
+        var imports = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (int i = 0; i < symbolCount; i++)
+        {
+            ElfSymbol symbol = ReadElfSymbol(objectBytes, parsed.SymbolTable, i);
+            if (symbol.SectionIndex != 0)
+            {
+                continue;
+            }
+
+            string name = ReadNullTerminatedString(strtab, (int)symbol.NameIndex);
+            if (name.Length == 0 || definedNames.Contains(name) || !TryGetLinuxDynamicImportLibrary(name, out string? libraryName) || libraryName is null)
+            {
+                continue;
+            }
+
+            imports.TryAdd(name, libraryName);
+        }
+
+        var orderedImports = imports
+            .OrderBy(static pair => pair.Value, StringComparer.Ordinal)
+            .ThenBy(static pair => pair.Key, StringComparer.Ordinal)
+            .ToArray();
+        var result = new List<LinuxDynamicImport>(orderedImports.Length);
+        for (int i = 0; i < orderedImports.Length; i++)
+        {
+            result.Add(new LinuxDynamicImport(orderedImports[i].Key, orderedImports[i].Value, i + 1));
+        }
+
+        return result;
+    }
+
+    private static bool TryGetLinuxDynamicImportLibrary(string symbolName, out string? libraryName)
+        => LinuxDynamicImportLibraries.TryGetValue(symbolName, out libraryName);
+
+    private static byte[] BuildLinuxDataBytes(byte[] existingDataBytes, int importDataOffset, byte[] importBytes)
+    {
+        var output = new byte[importDataOffset + importBytes.Length];
+        Array.Copy(existingDataBytes, 0, output, 0, existingDataBytes.Length);
+        Array.Copy(importBytes, 0, output, importDataOffset, importBytes.Length);
+        return output;
+    }
+
+    private static LinuxDynamicImportLayout BuildLinuxDynamicImportLayout(
+        IReadOnlyList<LinuxDynamicImport> imports,
+        ulong dataVa,
+        uint dataOffset,
+        ulong stubBaseVa)
+    {
+        var importStubVas = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var stream = new MemoryStream();
+
+        uint interpDataOffset = dataOffset;
+        byte[] interpBytes = Encoding.ASCII.GetBytes(LinuxDynamicLoaderPath + "\0");
+        stream.Write(interpBytes);
+        AlignImportStream(stream, 8);
+
+        string[] libraries = imports.Select(static import => import.LibraryName).Distinct(StringComparer.Ordinal).ToArray();
+        var dynstrStream = new MemoryStream();
+        dynstrStream.WriteByte(0);
+        var dynstrOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string library in libraries)
+        {
+            dynstrOffsets[library] = checked((int)dynstrStream.Position);
+            dynstrStream.Write(Encoding.ASCII.GetBytes(library + "\0"));
+        }
+
+        foreach (LinuxDynamicImport import in imports)
+        {
+            dynstrOffsets[import.SymbolName] = checked((int)dynstrStream.Position);
+            dynstrStream.Write(Encoding.ASCII.GetBytes(import.SymbolName + "\0"));
+        }
+
+        byte[] dynstrBytes = dynstrStream.ToArray();
+        byte[] dynsymBytes = BuildLinuxDynamicSymbolTable(imports, dynstrOffsets);
+        byte[] hashBytes = BuildLinuxElfHash(imports);
+
+        uint hashDataOffset = dataOffset + checked((uint)stream.Position);
+        stream.Write(hashBytes);
+        AlignImportStream(stream, 8);
+
+        uint dynstrDataOffset = dataOffset + checked((uint)stream.Position);
+        stream.Write(dynstrBytes);
+        AlignImportStream(stream, 8);
+
+        uint dynsymDataOffset = dataOffset + checked((uint)stream.Position);
+        stream.Write(dynsymBytes);
+        AlignImportStream(stream, 8);
+
+        uint gotDataOffset = dataOffset + checked((uint)stream.Position);
+        stream.Write(new byte[imports.Count * 8]);
+        AlignImportStream(stream, 8);
+
+        uint relaDataOffset = dataOffset + checked((uint)stream.Position);
+        byte[] relaBytes = BuildLinuxGlobalDataRelocations(imports, dataVa + gotDataOffset);
+        stream.Write(relaBytes);
+        AlignImportStream(stream, 8);
+
+        uint dynamicDataOffset = dataOffset + checked((uint)stream.Position);
+        byte[] dynamicBytes = BuildLinuxDynamicTable(
+            libraries,
+            dynstrOffsets,
+            dataVa + hashDataOffset,
+            dataVa + dynstrDataOffset,
+            dynstrBytes.Length,
+            dataVa + dynsymDataOffset,
+            dataVa + relaDataOffset,
+            relaBytes.Length);
+        stream.Write(dynamicBytes);
+
+        byte[] importBytes = stream.ToArray();
+        byte[] stubBytes = new byte[imports.Count * LinuxImportStubLength];
+        for (int i = 0; i < imports.Count; i++)
+        {
+            ulong stubVa = stubBaseVa + (ulong)(i * LinuxImportStubLength);
+            ulong gotEntryVa = dataVa + gotDataOffset + (ulong)(i * 8);
+            int disp32 = checked((int)(gotEntryVa - (stubVa + (ulong)LinuxImportStubLength)));
+            int stubOffset = i * LinuxImportStubLength;
+            stubBytes[stubOffset] = 0xFF;
+            stubBytes[stubOffset + 1] = 0x25;
+            BinaryPrimitives.WriteInt32LittleEndian(stubBytes.AsSpan(stubOffset + 2, 4), disp32);
+            importStubVas[imports[i].SymbolName] = stubVa;
+        }
+
+        return new LinuxDynamicImportLayout(
+            StubBytes: stubBytes,
+            Bytes: importBytes,
+            ImportStubVas: importStubVas,
+            InterpDataOffset: interpDataOffset,
+            InterpByteCount: checked((uint)interpBytes.Length),
+            DynamicDataOffset: dynamicDataOffset,
+            DynamicByteCount: checked((uint)dynamicBytes.Length));
+    }
+
+    private static byte[] BuildLinuxDynamicSymbolTable(IReadOnlyList<LinuxDynamicImport> imports, IReadOnlyDictionary<string, int> dynstrOffsets)
+    {
+        var bytes = new byte[(imports.Count + 1) * Elf64SymSize];
+        for (int i = 0; i < imports.Count; i++)
+        {
+            int offset = (i + 1) * Elf64SymSize;
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset, 4), checked((uint)dynstrOffsets[imports[i].SymbolName]));
+            bytes[offset + 4] = (byte)((ElfSymbolBindGlobal << 4) | ElfSymbolTypeFunc);
+            bytes[offset + 5] = 0;
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(offset + 6, 2), 0);
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + 8, 8), 0);
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + 16, 8), 0);
+        }
+
+        return bytes;
+    }
+
+    private static byte[] BuildLinuxGlobalDataRelocations(IReadOnlyList<LinuxDynamicImport> imports, ulong gotVa)
+    {
+        var bytes = new byte[imports.Count * Elf64RelaSize];
+        for (int i = 0; i < imports.Count; i++)
+        {
+            int offset = i * Elf64RelaSize;
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset, 8), gotVa + (ulong)(i * 8));
+            ulong info = ((ulong)imports[i].SymbolIndex << 32) | ElfRelocX86_64GlobDat;
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + 8, 8), info);
+            BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(offset + 16, 8), 0);
+        }
+
+        return bytes;
+    }
+
+    private static byte[] BuildLinuxDynamicTable(
+        IReadOnlyList<string> libraries,
+        IReadOnlyDictionary<string, int> dynstrOffsets,
+        ulong hashVa,
+        ulong dynstrVa,
+        int dynstrSize,
+        ulong dynsymVa,
+        ulong relaVa,
+        int relaSize)
+    {
+        var entries = new List<(long Tag, ulong Value)>(libraries.Count + 8);
+        foreach (string library in libraries)
+        {
+            entries.Add((ElfDynamicTagNeeded, checked((ulong)dynstrOffsets[library])));
+        }
+
+        entries.Add((ElfDynamicTagHash, hashVa));
+        entries.Add((ElfDynamicTagStrtab, dynstrVa));
+        entries.Add((ElfDynamicTagSymtab, dynsymVa));
+        entries.Add((ElfDynamicTagStrsz, checked((ulong)dynstrSize)));
+        entries.Add((ElfDynamicTagSyment, Elf64SymSize));
+        entries.Add((ElfDynamicTagRela, relaVa));
+        entries.Add((ElfDynamicTagRelasz, checked((ulong)relaSize)));
+        entries.Add((ElfDynamicTagRelaent, Elf64RelaSize));
+        entries.Add((ElfDynamicTagNull, 0));
+
+        var bytes = new byte[entries.Count * 16];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int offset = i * 16;
+            BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(offset, 8), entries[i].Tag);
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + 8, 8), entries[i].Value);
+        }
+
+        return bytes;
+    }
+
+    private static byte[] BuildLinuxElfHash(IReadOnlyList<LinuxDynamicImport> imports)
+    {
+        uint nbucket = checked((uint)Math.Max(1, imports.Count));
+        uint nchain = checked((uint)(imports.Count + 1));
+        var buckets = new uint[nbucket];
+        var chains = new uint[nchain];
+        foreach (LinuxDynamicImport import in imports)
+        {
+            uint symIndex = checked((uint)import.SymbolIndex);
+            uint bucket = ElfHash(import.SymbolName) % nbucket;
+            if (buckets[bucket] == 0)
+            {
+                buckets[bucket] = symIndex;
+                continue;
+            }
+
+            uint cursor = buckets[bucket];
+            while (chains[cursor] != 0)
+            {
+                cursor = chains[cursor];
+            }
+
+            chains[cursor] = symIndex;
+        }
+
+        var bytes = new byte[(2 + buckets.Length + chains.Length) * 4];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0, 4), nbucket);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4, 4), nchain);
+        int offset = 8;
+        foreach (uint bucket in buckets)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset, 4), bucket);
+            offset += 4;
+        }
+
+        foreach (uint chain in chains)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset, 4), chain);
+            offset += 4;
+        }
+
+        return bytes;
+    }
+
+    private static uint ElfHash(string value)
+    {
+        uint hash = 0;
+        foreach (byte b in Encoding.ASCII.GetBytes(value))
+        {
+            hash = (hash << 4) + b;
+            uint x = hash & 0xF0000000;
+            if (x != 0)
+            {
+                hash ^= x >> 24;
+            }
+
+            hash &= ~x;
+        }
+
+        return hash;
+    }
+
+    private static void AlignImportStream(MemoryStream stream, int alignment)
+    {
+        while ((stream.Position % alignment) != 0)
+        {
+            stream.WriteByte(0);
+        }
     }
 
     private static string ReadElfString(byte[] table, uint offset)
@@ -891,4 +1261,28 @@ internal static partial class LlvmImageLinker
         int SectionIndex,
         byte[] Bytes,
         ulong Alignment);
+
+    private readonly record struct LinuxDynamicImport(
+        string SymbolName,
+        string LibraryName,
+        int SymbolIndex);
+
+    private readonly record struct LinuxDynamicImportLayout(
+        byte[] StubBytes,
+        byte[] Bytes,
+        IReadOnlyDictionary<string, ulong> ImportStubVas,
+        uint InterpDataOffset,
+        uint InterpByteCount,
+        uint DynamicDataOffset,
+        uint DynamicByteCount)
+    {
+        internal static LinuxDynamicImportLayout Empty => new(
+            StubBytes: [],
+            Bytes: [],
+            ImportStubVas: new Dictionary<string, ulong>(StringComparer.Ordinal),
+            InterpDataOffset: 0,
+            InterpByteCount: 0,
+            DynamicDataOffset: 0,
+            DynamicByteCount: 0);
+    }
 }

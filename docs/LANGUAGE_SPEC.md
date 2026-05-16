@@ -184,8 +184,11 @@ match Ashes.Async.run(async
 
 Current HTTP rules:
 
-- Only `http://` URLs are supported.
-- `https://` returns `Error(...)`.
+- `http://` and `https://` URLs are supported.
+- `https://` defaults to port 443 and, on the current Linux x64 backend,
+  requires OpenSSL 3 to be available at runtime.
+- Other backends may still return a runtime error for `https://` until
+  their TLS runtime support lands.
 - Non-2xx responses return `Error("HTTP <status>")`.
 - Chunked transfer encoding is not supported and returns `Error(...)`.
 - The successful payload is the response body text after the HTTP header separator.
@@ -1093,8 +1096,8 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)` - async TCP send.
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TCP receive.
 - `Ashes.Net.Tcp.close(socket)` returning `Task(Str, Unit)` - explicit async socket close.
-- `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for plain `http://` URLs.
-- `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for plain `http://` URLs.
+- `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for `http://` and `https://` URLs.
+- `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for `http://` and `https://` URLs.
 
 ## 13.3 Built-in Runtime Types
 

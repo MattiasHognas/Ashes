@@ -64,6 +64,12 @@ internal static partial class LlvmCodegen
     private const int WindowsErrorIoPending = 997;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
+    private const int LinuxRtldNow = 2;
+    private const int TlsVerifyPeer = 0x01;
+    private const int TlsCtrlSetSni = 55;
+    private const int TlsErrorWantRead = 2;
+    private const int TlsErrorWantWrite = 3;
+    private const int TlsErrorZeroReturn = 6;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -82,6 +88,13 @@ internal static partial class LlvmCodegen
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
+    private const string HttpsRequiresOpenSslRuntimeMessage = "https requires OpenSSL 3 (libssl) at runtime";
+    private const string TlsRuntimeInitFailedMessage = "Ashes TLS runtime initialization failed";
+    private const string TlsHandshakeFailedMessage = "Ashes TLS handshake failed";
+    private const string TlsSendFailedMessage = "Ashes TLS send failed";
+    private const string TlsReceiveFailedMessage = "Ashes TLS receive failed";
+    private const string TlsCloseFailedMessage = "Ashes TLS close failed";
+    private const string TlsInvalidUtf8Message = "Ashes TLS receive() encountered invalid UTF-8";
 
     private static class WindowsIocpOperationLayout
     {
@@ -93,6 +106,13 @@ internal static partial class LlvmCodegen
         internal const long StatePending = 0;
         internal const long StateCompleted = 1;
         internal const long StateFailed = 2;
+    }
+
+    private static class TlsSessionLayout
+    {
+        internal const int Socket = 0;
+        internal const int SslHandle = 8;
+        internal const int TotalSize = 16;
     }
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
@@ -292,6 +312,10 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
             || ProgramUsesInstruction<IrInst.RunTask>(program)
             || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
@@ -926,6 +950,14 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
             IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpPost, LoadTemp(state, httpPostTask.UrlTemp), LoadTemp(state, httpPostTask.BodyTemp), "http_post_task")),
+            IrInst.CreateTlsHandshakeTask tlsHandshakeTask => StoreTemp(state, tlsHandshakeTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsHandshake, LoadTemp(state, tlsHandshakeTask.SocketTemp), LoadTemp(state, tlsHandshakeTask.HostTemp), "tls_handshake_task")),
+            IrInst.CreateTlsSendTask tlsSendTask => StoreTemp(state, tlsSendTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsSend, LoadTemp(state, tlsSendTask.SslTemp), LoadTemp(state, tlsSendTask.TextTemp), "tls_send_task")),
+            IrInst.CreateTlsReceiveTask tlsReceiveTask => StoreTemp(state, tlsReceiveTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsReceive, LoadTemp(state, tlsReceiveTask.SslTemp), LoadTemp(state, tlsReceiveTask.MaxBytesTemp), "tls_receive_task")),
+            IrInst.CreateTlsCloseTask tlsCloseTask => StoreTemp(state, tlsCloseTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsClose, LoadTemp(state, tlsCloseTask.SslTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tls_close_task")),
             // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
