@@ -13,6 +13,10 @@ The implementation shipped in this branch prioritizes:
 3. **Step 3:** hermetic TLS (vendored implementation, no runtime
    dependency)
 
+The long-term direction is now decided: Step 3 should become the
+preferred shipping model. The current runtime-loaded OpenSSL path is
+the landed transitional implementation, not the intended end-state.
+
 HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
 require new user-visible syntax, a new module, or changes to the
@@ -180,26 +184,40 @@ Recommended follow-up work, in order:
   Linux arm64, but this branch does not yet have dedicated arm64
   runtime fixture coverage comparable to the current Linux x64 and
   Windows x64 backend tests.
+- [ ] Implement built-in hermetic TLS as the long-term runtime model.
+  This is now the chosen direction. The current system-OpenSSL design
+  remains the shipped implementation until the hermetic runtime lands,
+  but helper tooling and Windows-side DLL bundling are no longer the
+  preferred end-state.
+- [ ] Choose the vendored TLS engine and embedding strategy.
+  This still needs a concrete technical decision: vendored OpenSSL,
+  BoringSSL, rustls behind a C ABI, or another embeddable TLS stack.
+  That choice drives binary size, build complexity, trust-store
+  integration, and long-term maintenance cost.
+- [ ] Choose the trust-store model for hermetic TLS.
+  A built-in TLS runtime still needs a certificate root story. Decide
+  whether hermetic builds should import system roots at runtime, ship a
+  bundled CA set, or support a hybrid model.
 - [ ] Decide whether to expose a public `Ashes.Net.Tls` module.
   If the answer is yes, define the minimal user-visible surface first,
   then update `LANGUAGE_SPEC.md`, bindings, ASH012 enforcement, and
   backend/runtime tests before exposing the currently-internal TLS leaf
   task machinery.
+- [ ] Choose the update and security-maintenance policy for the
+  vendored TLS dependency.
+  Once TLS is built in, the project owns version pinning, CVE response,
+  upgrade cadence, and the native build pipeline for each shipped
+  target.
 - [ ] Add first-class HTTPS harness support to end-to-end `.ash` tests.
   The backend coverage tests already use loopback `SslStream` fixtures,
   but the `Ashes.Cli test` flow still lacks a built-in HTTPS fixture
   mode for successful HTTPS, trust-failure, and hostname-mismatch
   scenarios.
-- [ ] Decide how much deployment polish to add around the OpenSSL
-  runtime dependency.
-  The current design intentionally uses system OpenSSL. The next policy
-  choice is whether to keep that as-is, add helper tooling/docs, or
-  optionally bundle the Windows DLLs next to produced executables.
-- [ ] Evaluate hermetic/vendored TLS only after the runtime-loaded
-  OpenSSL path has real bake time.
-  Treat this as a separate milestone once the current runtime-loaded
-  design has enough production-style usage to justify the added build,
-  size, and maintenance cost.
+- [ ] Decide whether the transitional system-OpenSSL path should keep
+  any deployment polish.
+  This is now a secondary decision. If hermetic TLS is the target,
+  helper tooling or Windows DLL bundling should be treated only as a
+  temporary bridge while the built-in runtime is being implemented.
 
 ------------------------------------------------------------------------
 
@@ -268,15 +286,16 @@ to record where the design can grow:
    exist, exposing them via `BuiltinRegistry` + bindings + ASH012
    enforcement is mechanical. Track as a separate milestone.
 2. **OpenSSL 1.1 fallback.** V1 rejects `libssl.so.1.1`. Adding a
-   1.1 ABI table is straightforward if older RHEL-class distros
-   become a target.
-3. **Vendoring TLS.** A hermetic build (rustls behind a C ABI, or
-   BoringSSL) removes the runtime OpenSSL dependency. Cost is
-   roughly 3 MB per platform plus a build pipeline. Track under
-   distribution / `COMPILER_OPTIMIZATION.md`.
-4. **Windows DLL bundling.** Optionally copy
-   `libssl-3-x64.dll` + `libcrypto-3-x64.dll` next to produced
-   `.exe` files to remove the user install step on Windows. Smaller
-   footprint than full vendoring; same license posture.
+  1.1 ABI table is straightforward if older RHEL-class distros
+  become a target, but this only matters while the transitional
+  OpenSSL-backed runtime still exists.
+3. **Built-in hermetic TLS.** This is now the chosen post-V1 direction.
+  The remaining design work is selecting the vendored TLS engine,
+  trust-store model, and native build/distribution pipeline. Expect a
+  real size and maintenance tradeoff in exchange for removing the
+  runtime OpenSSL dependency.
+4. **Windows DLL bundling.** This can still exist as a transitional
+  bridge, but it is no longer the preferred long-term answer now that
+  hermetic TLS is the chosen direction.
 5. **mTLS, ALPN, HTTP/2.** Each is a separate milestone with its
    own spec entry.
