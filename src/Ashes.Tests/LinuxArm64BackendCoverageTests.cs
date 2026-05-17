@@ -70,6 +70,110 @@ public sealed class LinuxArm64BackendCoverageTests
         result.Stdout.ShouldBe("hello from https\n");
     }
 
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_report_https_trust_failures_against_loopback_tls_fixture()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            trustServerCertificate: false,
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer\n");
+    }
+
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_report_https_hostname_mismatches_against_loopback_tls_fixture()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "127.0.0.1",
+            certificateHost: "localhost",
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: NotValidForName\n");
+    }
+
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_return_first_completed_https_race_task_against_loopback_tls_fixture()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/slow"), Ashes.Http.get("https://__HOST__:__PORT__/fast")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("Host: localhost");
+
+                var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
+                if (isSlow)
+                {
+                    await Task.Delay(250);
+                }
+
+                var responseBody = isSlow ? "slow" : "fast";
+                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost",
+            expectedClientCount: 2);
+
+        result.Stdout.ShouldBe("fast\n");
+    }
+
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_treat_https_close_notify_eof_as_end_of_body()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET /empty HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+
+        result.Stdout.ShouldBe("empty\n");
+    }
+
     private static byte[] CompileForLinuxArm64(string source)
     {
         var ir = LowerExpression(source);
@@ -143,7 +247,8 @@ public sealed class LinuxArm64BackendCoverageTests
         string host = "localhost",
         string? certificateHost = null,
         bool trustServerCertificate = true,
-        int expectedClientCount = 1)
+        int expectedClientCount = 1,
+        bool allowServerHandshakeFailure = false)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -159,7 +264,14 @@ public sealed class LinuxArm64BackendCoverageTests
             : null;
         var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: environmentVariables);
         var serverException = await serverTask;
-        serverException.ShouldBeNull(serverException?.ToString());
+        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        {
+            ioException.Message.ShouldContain("unexpected EOF");
+        }
+        else
+        {
+            serverException.ShouldBeNull(serverException?.ToString());
+        }
         return result;
     }
 
