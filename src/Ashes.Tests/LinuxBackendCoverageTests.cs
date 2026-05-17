@@ -535,6 +535,110 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_report_https_trust_failures_against_loopback_tls_fixture()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            trustServerCertificate: false,
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_report_https_hostname_mismatches_against_loopback_tls_fixture()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "127.0.0.1",
+            certificateHost: "localhost",
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: NotValidForName\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_return_first_completed_https_race_task_against_loopback_tls_fixture()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/slow"), Ashes.Http.get("https://__HOST__:__PORT__/fast")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("Host: localhost");
+
+                var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
+                if (isSlow)
+                {
+                    await Task.Delay(250);
+                }
+
+                var responseBody = isSlow ? "slow" : "fast";
+                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost",
+            expectedClientCount: 2);
+
+        result.Stdout.ShouldBe("fast\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_treat_https_close_notify_eof_as_end_of_body()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET /empty HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+
+        result.Stdout.ShouldBe("empty\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_report_http_non_success_statuses()
     {
         if (!OperatingSystem.IsLinux())
@@ -768,20 +872,37 @@ public sealed class LinuxBackendCoverageTests
         return result;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmTlsLoopbackAsync(
+        string sourceTemplate,
+        Func<SslStream, Task> handleClientAsync,
+        string host = "localhost",
+        string? certificateHost = null,
+        bool trustServerCertificate = true,
+        int expectedClientCount = 1,
+        bool allowServerHandshakeFailure = false)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
-        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
-        var result = await CompileRunWithLinuxLlvmAsync(source, environmentVariables: new Dictionary<string, string>
-        {
-            ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
-        });
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
+        IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
+            ? new Dictionary<string, string>
+            {
+                ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
+            }
+            : null;
+        var result = await CompileRunWithLinuxLlvmAsync(source, environmentVariables: environmentVariables);
         var serverException = await serverTask;
-        serverException.ShouldBeNull(serverException?.ToString());
+        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        {
+            ioException.Message.ShouldContain("unexpected EOF");
+        }
+        else
+        {
+            serverException.ShouldBeNull(serverException?.ToString());
+        }
         return result;
     }
 

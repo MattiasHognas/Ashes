@@ -125,6 +125,10 @@ bash scripts/download-rustls-ffi.sh --all
 
 This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries, as well as Rustls FFIs.
 
+When native arm64 hardware is unavailable, linux-arm64 backend/runtime validation may run through `qemu-aarch64` or `qemu-aarch64-static` with an arm64 sysroot (for example `/usr/aarch64-linux-gnu`).
+The repo's linux-arm64 coverage helper checks both `PATH` and the rootless Arch-style unpack location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+Do not claim the same for win-x64 on Linux unless a Wine-based execution helper is explicitly added; that path is not wired today.
+
 ---
 
 # Tests

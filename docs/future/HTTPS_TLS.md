@@ -3,8 +3,8 @@
 Transparent `https://` in `Ashes.Http.get` / `Ashes.Http.post` is now
 landed. The active native-backend implementation is now the hermetic
 `rustls` path shared by Linux x64, Linux arm64, and Windows x64,
-although broader cross-backend runtime coverage and final
-cleanup/documentation alignment remain open.
+although broader cross-backend runtime coverage and final cleanup/documentation
+alignment remain open.
 This document records the completed work and the remaining follow-up
 items.
 
@@ -201,10 +201,10 @@ item below is done.
 ### Phase A — Finish the Current Shipped Path
 
 - [x] Add explicit Linux arm64 HTTPS runtime validation.
-  `src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` now includes a
-  dedicated HTTPS loopback runtime test that executes on native arm64
-  Linux hosts and on x64 Linux when `qemu-aarch64` plus an arm64
-  sysroot are available.
+  `src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` now runs the
+  dedicated arm64 HTTPS loopback test natively on arm64 Linux and on
+  x64 Linux hosts through `qemu-aarch64` / `qemu-aarch64-static` when
+  an arm64 sysroot is available.
 - [x] Add first-class HTTPS harness support to end-to-end `.ash` tests.
   The backend coverage tests and `Ashes.Cli test` flow now both have
   built-in HTTPS fixture coverage for successful HTTPS, trust-failure,

@@ -47,6 +47,7 @@ internal static partial class LlvmImageLinker
             ["dlsym"] = "libdl.so.2",
             ["dlclose"] = "libdl.so.2",
             ["getenv"] = "libc.so.6",
+            ["getpid"] = "libc.so.6",
             ["strlen"] = "libc.so.6",
         };
 

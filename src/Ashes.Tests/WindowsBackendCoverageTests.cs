@@ -580,21 +580,32 @@ public sealed class WindowsBackendCoverageTests
         }
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmTlsLoopbackAsync(
+        string sourceTemplate,
+        Func<SslStream, Task> handleClientAsync,
+        string host = "localhost",
+        string? certificateHost = null,
+        bool trustServerCertificate = true,
+        int expectedClientCount = 1)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
-        using var trustedCertificate = X509CertificateLoader.LoadCertificate(tlsHost.ServerCertificate.Export(X509ContentType.Cert));
-        using var rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
-        rootStore.Open(OpenFlags.ReadWrite);
-        rootStore.Add(trustedCertificate);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
+        X509Certificate2? trustedCertificate = null;
+        X509Store? rootStore = null;
+        if (trustServerCertificate)
+        {
+            trustedCertificate = X509CertificateLoader.LoadCertificate(tlsHost.ServerCertificate.Export(X509ContentType.Cert));
+            rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
+            rootStore.Open(OpenFlags.ReadWrite);
+            rootStore.Add(trustedCertificate);
+        }
 
         try
         {
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
-            var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
+            var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
             var result = await CompileRunWithWindowsLlvmAsync(source);
             var serverException = await serverTask;
             serverException.ShouldBeNull(serverException?.ToString());
@@ -602,8 +613,45 @@ public sealed class WindowsBackendCoverageTests
         }
         finally
         {
-            rootStore.Remove(trustedCertificate);
+            if (rootStore is not null && trustedCertificate is not null)
+            {
+                rootStore.Remove(trustedCertificate);
+                rootStore.Dispose();
+                trustedCertificate.Dispose();
+            }
         }
+    }
+
+    private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
+    {
+        var buffer = new byte[maxBytes];
+        var total = 0;
+        byte[] headerTerminator = "\r\n\r\n"u8.ToArray();
+
+        while (total < buffer.Length)
+        {
+            try
+            {
+                using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                total += count;
+                if (buffer.AsSpan(0, total).IndexOf(headerTerminator) >= 0)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, total);
     }
 
     private static string CreateTempDirectory()

@@ -100,6 +100,31 @@ The scripts stage native payloads under
 validates the provisioned rustls-ffi version and copies both LLVM and
 rustls assets into build output.
 
+### Optional linux-arm64 execution from linux-x64 hosts
+
+The repo can also execute `linux-arm64` backend outputs from an x64 Linux
+host when all of the following are available:
+
+- `qemu-aarch64` or `qemu-aarch64-static`
+- an arm64 sysroot containing `lib/ld-linux-aarch64.so.1`
+   (for example `/usr/aarch64-linux-gnu`)
+
+`src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` auto-detects emulator
+binaries from both `PATH` and the rootless Arch-style unpack location
+`~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+
+For manual runs outside the test helper, add the rootless install to
+`PATH` if needed:
+
+```sh
+export PATH="$HOME/.local/share/ashes-tools/qemu-user-static/root/usr/bin:$PATH"
+qemu-aarch64-static -L /usr/aarch64-linux-gnu ./hello-arm64
+```
+
+There is no equivalent `win-x64` runner on Linux today.
+If we want parity with the arm64 qemu path, the analogous follow-up is a
+`wine64`-backed execution helper for compiled PE outputs.
+
 ------------------------------------------------------------------------
 
 ## Running the Compiler

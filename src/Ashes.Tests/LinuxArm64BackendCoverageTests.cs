@@ -137,18 +137,27 @@ public sealed class LinuxArm64BackendCoverageTests
         }
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+        string sourceTemplate,
+        Func<SslStream, Task> handleClientAsync,
+        string host = "localhost",
+        string? certificateHost = null,
+        bool trustServerCertificate = true,
+        int expectedClientCount = 1)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
-        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
-        var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: new Dictionary<string, string>
-        {
-            ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
-        });
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
+        IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
+            ? new Dictionary<string, string>
+            {
+                ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
+            }
+            : null;
+        var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: environmentVariables);
         var serverException = await serverTask;
         serverException.ShouldBeNull(serverException?.ToString());
         return result;
@@ -219,14 +228,21 @@ public sealed class LinuxArm64BackendCoverageTests
     private static string? FindCommandOnPath(IEnumerable<string> candidates)
     {
         var path = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(path))
+        var directories = new List<string>();
+        if (!string.IsNullOrWhiteSpace(path))
         {
-            return null;
+            directories.AddRange(path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        }
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            directories.Add(Path.Combine(userProfile, ".local", "share", "ashes-tools", "qemu-user-static", "root", "usr", "bin"));
         }
 
         foreach (var candidate in candidates)
         {
-            foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var directory in directories)
             {
                 var fullPath = Path.Combine(directory, candidate);
                 if (File.Exists(fullPath))

@@ -1761,6 +1761,12 @@ internal static partial class LlvmCodegen
         return EmitLinuxImportedCall(state, "getenv", functionType, [variableNameCstr], name);
     }
 
+    private static LlvmValueHandle EmitLinuxGetPid(LlvmCodegenState state, string name)
+    {
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, []);
+        return EmitLinuxImportedCall(state, "getpid", functionType, Array.Empty<LlvmValueHandle>(), name);
+    }
+
     private static LlvmValueHandle EmitWindowsLoadLibraryWithFallback(LlvmCodegenState state, string primaryName, string fallbackName, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -2079,7 +2085,14 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle failMissingSymbolBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fail_missing_symbol");
         LlvmBasicBlockHandle failInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fail_init");
 
-        LlvmValueHandle payloadPathRef = EmitHeapStringLiteral(state, "/tmp/" + rustlsSharedLibrary.EmbeddedFileName);
+        LlvmValueHandle payloadPid = EmitLinuxGetPid(state, prefix + "_payload_pid");
+        LlvmValueHandle payloadPidText = EmitNonNegativeIntToString(
+            state,
+            LlvmApi.BuildZExt(builder, payloadPid, state.I64, prefix + "_payload_pid_i64"),
+            prefix + "_payload_pid_text");
+        LlvmValueHandle payloadPathRef = EmitStringConcat(state, EmitHeapStringLiteral(state, "/tmp/ashes-tls-"), payloadPidText);
+        payloadPathRef = EmitStringConcat(state, payloadPathRef, EmitHeapStringLiteral(state, "-"));
+        payloadPathRef = EmitStringConcat(state, payloadPathRef, EmitHeapStringLiteral(state, rustlsSharedLibrary.EmbeddedFileName));
         LlvmValueHandle payloadPathCstr = EmitStringToCString(state, payloadPathRef, prefix + "_payload_path");
         LlvmValueHandle payloadStartAddress = LlvmApi.BuildPtrToInt(builder, linkedTlsPayloadStartGlobal, state.I64, prefix + "_payload_start");
         LlvmValueHandle payloadEndAddress = LlvmApi.BuildPtrToInt(builder, linkedTlsPayloadEndGlobal, state.I64, prefix + "_payload_end");
