@@ -10,7 +10,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Int_program_runs_and_prints_expected_output()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -22,7 +22,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task String_concat_program_runs_and_prints_expected_output()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -34,7 +34,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -46,7 +46,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Write_line_program_runs_with_newline()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -58,7 +58,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Read_line_returns_some_for_input()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -70,7 +70,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Read_line_returns_none_at_eof()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -82,7 +82,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Lambda_and_closure_work()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -94,7 +94,7 @@ public sealed class EndToEndWindowsBackendTests
     [Test]
     public async Task Program_args_are_available_as_prelude_list_without_executable_name()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsPrograms())
         {
             return;
         }
@@ -120,13 +120,11 @@ public sealed class EndToEndWindowsBackendTests
         var exePath = Path.Combine(tmpDir, $"mf_{Guid.NewGuid():N}.exe");
         await File.WriteAllBytesAsync(exePath, exeBytes);
 
-        var psi = new ProcessStartInfo(exePath)
-        {
-            RedirectStandardInput = stdin is not null,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
+        var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+        psi.RedirectStandardInput = stdin is not null;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.UseShellExecute = false;
         foreach (var arg in programArgs ?? [])
         {
             psi.ArgumentList.Add(arg);
@@ -144,5 +142,10 @@ public sealed class EndToEndWindowsBackendTests
 
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;
+    }
+
+    private static bool CanRunWindowsPrograms()
+    {
+        return TestProcessHelper.CanRunWindowsExecutables();
     }
 }

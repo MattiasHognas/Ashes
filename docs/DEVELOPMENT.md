@@ -121,9 +121,20 @@ export PATH="$HOME/.local/share/ashes-tools/qemu-user-static/root/usr/bin:$PATH"
 qemu-aarch64-static -L /usr/aarch64-linux-gnu ./hello-arm64
 ```
 
-There is no equivalent `win-x64` runner on Linux today.
-If we want parity with the arm64 qemu path, the analogous follow-up is a
-`wine64`-backed execution helper for compiled PE outputs.
+### Optional win-x64 execution from linux-x64 hosts
+
+Non-TLS `win-x64` backend outputs can also be executed from an x64 Linux
+host when `wine64` or `wine` is available in `PATH`.
+
+`src/Ashes.Tests/TestProcessHelper.cs` auto-detects Wine for test-time PE
+execution, so `EndToEndWindowsBackendTests` and the non-TLS runtime slice
+of `WindowsBackendCoverageTests` can run from Linux hosts once Wine is
+installed.
+
+Current limitation: the HTTPS/TLS loopback coverage in
+`WindowsBackendCoverageTests` still trusts the loopback certificate through
+the Windows CurrentUser root store. Those trust-dependent TLS scenarios
+remain native-Windows-only.
 
 ------------------------------------------------------------------------
 

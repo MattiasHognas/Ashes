@@ -53,6 +53,18 @@ jobs:
           node-version: 'lts/*'
           check-latest: true
 
+      - name: Install Wine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64
+          wine64 --version || wine --version
+
+      - name: Install linux-arm64 execution prerequisites
+        run: |
+          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross
+          qemu-aarch64 --version
+          test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+
       - name: Restore
         run: dotnet restore Ashes.slnx
 

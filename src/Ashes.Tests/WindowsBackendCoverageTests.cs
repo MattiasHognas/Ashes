@@ -170,7 +170,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_first_order_closure_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -182,7 +182,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_nested_heap_backed_closure_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -194,7 +194,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_program_args_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -208,7 +208,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_read_line_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -222,7 +222,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_return_none_at_read_line_eof()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -236,7 +236,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_read_text_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -260,7 +260,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_missing_file_read_errors()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -282,7 +282,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_invalid_utf8_file_read_errors()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -306,7 +306,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_write_text_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -347,7 +347,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_uncons_unicode_scalars()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -360,7 +360,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_parse_integers()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -373,7 +373,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_parse_floats_with_exponents()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -386,7 +386,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_exists_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -410,7 +410,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_float_arithmetic_and_comparisons()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -422,7 +422,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_heap_backed_tuple_and_list_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -434,7 +434,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_string_compare_and_concat_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -446,7 +446,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_print_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -458,7 +458,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_adt_field_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -475,7 +475,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_panic_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -541,13 +541,11 @@ public sealed class WindowsBackendCoverageTests
         {
             await File.WriteAllBytesAsync(exePath, exeBytes);
 
-            var psi = new ProcessStartInfo(exePath)
-            {
-                RedirectStandardInput = stdin is not null,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
+            var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+            psi.RedirectStandardInput = stdin is not null;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
             if (workingDirectory is not null)
             {
                 psi.WorkingDirectory = workingDirectory;
@@ -652,6 +650,11 @@ public sealed class WindowsBackendCoverageTests
         }
 
         return Encoding.UTF8.GetString(buffer, 0, total);
+    }
+
+    private static bool CanRunWindowsRuntimePrograms()
+    {
+        return TestProcessHelper.CanRunWindowsExecutables();
     }
 
     private static string CreateTempDirectory()
