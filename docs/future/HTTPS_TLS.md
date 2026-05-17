@@ -148,8 +148,8 @@ If the embedded TLS payload or verifier initialization cannot be
 loaded, the call returns `Error(...)` rather than crashing or
 panicking.
 
-Remaining cleanup work is now focused on explicit Linux arm64 runtime
-validation and removing dormant transitional code rather than on the
+Remaining cleanup work is now focused on broader cross-backend runtime
+coverage and removing dormant transitional code rather than on the
 active user-facing runtime contract.
 
 ------------------------------------------------------------------------
