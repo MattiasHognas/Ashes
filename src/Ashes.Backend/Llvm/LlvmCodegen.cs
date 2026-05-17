@@ -93,6 +93,7 @@ internal static partial class LlvmCodegen
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
     private const string HttpsRequiresOpenSslRuntimeMessage = "https requires OpenSSL 3 (libssl) at runtime";
     private const int RustlsResultOk = 7000;
+    private const int RustlsResultPlaintextEmpty = 7011;
     private const string TlsRuntimeInitFailedMessage = "Ashes TLS runtime initialization failed";
     private const string TlsHandshakeFailedMessage = "Ashes TLS handshake failed";
     private const string TlsSendFailedMessage = "Ashes TLS send failed";

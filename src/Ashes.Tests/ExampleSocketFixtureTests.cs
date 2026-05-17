@@ -369,7 +369,18 @@ Ashes.IO.print(match Ashes.Async.run(async
             {
             }
 
-            throw;
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            throw new TimeoutException($"Compiled CLI process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+
         }
 
         return (process.ExitCode, await stdoutTask, await stderrTask);

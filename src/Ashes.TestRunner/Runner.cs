@@ -114,6 +114,7 @@ public static class Runner
                 }
 
                 var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
+                loopbackServer?.StartAccepting();
                 var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures, environmentVariables);
                 exit = runExit;
                 actual = (stdout ?? "").TrimEnd();
@@ -912,6 +913,8 @@ public static class Runner
     {
         public abstract int Port { get; }
 
+        public abstract void StartAccepting();
+
         public virtual IReadOnlyDictionary<string, string>? GetEnvironmentVariables()
         {
             return null;
@@ -925,12 +928,13 @@ public static class Runner
     private sealed class TcpServerInstance : LoopbackServerInstance
     {
         private readonly TcpListener _listener;
-        private readonly Task<string?> _serverTask;
+        private readonly TcpServerFixture _fixture;
+        private Task<string?>? _serverTask;
 
-        private TcpServerInstance(TcpListener listener, Task<string?> serverTask, int port)
+        private TcpServerInstance(TcpListener listener, TcpServerFixture fixture, int port)
         {
             _listener = listener;
-            _serverTask = serverTask;
+            _fixture = fixture;
             Port = port;
         }
 
@@ -941,19 +945,24 @@ public static class Runner
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var serverTask = Task.Run(async () =>
+            return new TcpServerInstance(listener, fixture, port);
+        }
+
+        public override void StartAccepting()
+        {
+            _serverTask ??= Task.Run(async () =>
             {
                 try
                 {
                     using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = client.GetStream();
 
-                    if (fixture.ExpectedText is not null)
+                    if (_fixture.ExpectedText is not null)
                     {
-                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(fixture.ExpectedText);
+                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText);
                         var receivedBytes = new byte[expectedBytes.Length];
                         var read = 0;
                         while (read < expectedBytes.Length)
@@ -961,7 +970,7 @@ public static class Runner
                             var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
                             if (n == 0)
                             {
-                                return $"tcp fixture expected '{fixture.ExpectedText}' but connection closed early";
+                                return $"tcp fixture expected '{_fixture.ExpectedText}' but connection closed early";
                             }
 
                             read += n;
@@ -969,13 +978,13 @@ public static class Runner
 
                         if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
                         {
-                            return $"tcp fixture expected '{fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
+                            return $"tcp fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
                         }
                     }
 
-                    if (fixture.SendText is not null)
+                    if (_fixture.SendText is not null)
                     {
-                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(fixture.SendText);
+                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
                         await stream.WriteAsync(sendBytes);
                         await stream.FlushAsync();
                     }
@@ -992,16 +1001,14 @@ public static class Runner
                 }
                 finally
                 {
-                    listener.Stop();
+                    _listener.Stop();
                 }
             });
-
-            return new TcpServerInstance(listener, serverTask, port);
         }
 
         public override string? Complete()
         {
-            return _serverTask.GetAwaiter().GetResult();
+            return _serverTask?.GetAwaiter().GetResult();
         }
 
         public override void Dispose()
@@ -1019,21 +1026,22 @@ public static class Runner
     private sealed class TlsServerInstance : LoopbackServerInstance
     {
         private readonly TcpListener _listener;
-        private readonly Task<string?> _serverTask;
+        private readonly TlsServerFixture _fixture;
         private readonly TlsFixtureHost _host;
         private readonly TlsFixtureTrustMode _trustMode;
         private readonly X509Certificate2? _trustedCertificate;
+        private Task<string?>? _serverTask;
 
         private TlsServerInstance(
             TcpListener listener,
-            Task<string?> serverTask,
             int port,
+            TlsServerFixture fixture,
             TlsFixtureHost host,
             TlsFixtureTrustMode trustMode,
             X509Certificate2? trustedCertificate)
         {
             _listener = listener;
-            _serverTask = serverTask;
+            _fixture = fixture;
             _host = host;
             _trustMode = trustMode;
             _trustedCertificate = trustedCertificate;
@@ -1051,43 +1059,48 @@ public static class Runner
             X509Certificate2? trustedCertificate = null;
             if (fixture.TrustMode == TlsFixtureTrustMode.Trusted && OperatingSystem.IsWindows())
             {
-                trustedCertificate = X509CertificateLoader.LoadCertificate(host.ServerCertificate.Export(X509ContentType.Cert));
+                trustedCertificate = X509CertificateLoader.LoadCertificate(host.TrustCertificate.Export(X509ContentType.Cert));
                 using var rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
                 rootStore.Open(OpenFlags.ReadWrite);
                 rootStore.Add(trustedCertificate);
             }
 
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var serverTask = Task.Run(async () =>
+            return new TlsServerInstance(listener, port, fixture, host, fixture.TrustMode, trustedCertificate);
+        }
+
+        public override void StartAccepting()
+        {
+            _serverTask ??= Task.Run(async () =>
             {
                 try
                 {
                     using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
                     try
                     {
-                        await stream.AuthenticateAsServerAsync(host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
+                        await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
                     }
-                    catch (AuthenticationException) when (fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    catch (AuthenticationException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                     {
                         return null;
                     }
-                    catch (IOException) when (fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    catch (IOException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                     {
                         return null;
                     }
 
-                    if (fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    if (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                     {
                         return "tls fixture expected the client handshake to fail, but it succeeded";
                     }
 
-                    if (fixture.ExpectedText is not null)
+                    if (_fixture.ExpectedText is not null)
                     {
-                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(fixture.ExpectedText);
+                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText);
                         var receivedBytes = new byte[expectedBytes.Length];
                         var read = 0;
                         while (read < expectedBytes.Length)
@@ -1095,7 +1108,7 @@ public static class Runner
                             var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
                             if (n == 0)
                             {
-                                return $"tls fixture expected '{fixture.ExpectedText}' but connection closed early";
+                                return $"tls fixture expected '{_fixture.ExpectedText}' but connection closed early";
                             }
 
                             read += n;
@@ -1103,15 +1116,16 @@ public static class Runner
 
                         if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
                         {
-                            return $"tls fixture expected '{fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
+                            return $"tls fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
                         }
                     }
 
-                    if (fixture.SendText is not null)
+                    if (_fixture.SendText is not null)
                     {
-                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(fixture.SendText);
+                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
                         await stream.WriteAsync(sendBytes);
                         await stream.FlushAsync();
+                        await stream.ShutdownAsync();
                     }
 
                     return null;
@@ -1126,11 +1140,9 @@ public static class Runner
                 }
                 finally
                 {
-                    listener.Stop();
+                    _listener.Stop();
                 }
             });
-
-            return new TlsServerInstance(listener, serverTask, port, host, fixture.TrustMode, trustedCertificate);
         }
 
         public override IReadOnlyDictionary<string, string>? GetEnvironmentVariables()
@@ -1148,7 +1160,7 @@ public static class Runner
 
         public override string? Complete()
         {
-            return _serverTask.GetAwaiter().GetResult();
+            return _serverTask?.GetAwaiter().GetResult();
         }
 
         public override void Dispose()
@@ -1184,24 +1196,41 @@ public static class Runner
     {
         private readonly string _tempDirectory;
 
-        private TlsFixtureHost(string tempDirectory, X509Certificate2 serverCertificate, string trustCertificatePath)
+        private TlsFixtureHost(string tempDirectory, X509Certificate2 serverCertificate, X509Certificate2 trustCertificate, string trustCertificatePath)
         {
             _tempDirectory = tempDirectory;
             ServerCertificate = serverCertificate;
+            TrustCertificate = trustCertificate;
             TrustCertificatePath = trustCertificatePath;
         }
 
         public X509Certificate2 ServerCertificate { get; }
 
+        public X509Certificate2 TrustCertificate { get; }
+
         public string TrustCertificatePath { get; }
 
         public static TlsFixtureHost Create(string hostName)
         {
-            using RSA rsa = RSA.Create(2048);
-            var request = new CertificateRequest($"CN={hostName}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
-            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
-            request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+            var notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var rootNotAfter = notBefore.AddDays(2);
+            var serverNotAfter = notBefore.AddDays(1);
+
+            using RSA rootKey = RSA.Create(2048);
+            var rootRequest = new CertificateRequest("CN=Ashes Test Root CA", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+            rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+            rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
+
+            using var rootCertificateEphemeral = rootRequest.CreateSelfSigned(notBefore, rootNotAfter);
+            byte[] rootCertificatePfx = rootCertificateEphemeral.Export(X509ContentType.Pfx);
+            var rootCertificate = X509CertificateLoader.LoadPkcs12(rootCertificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+
+            using RSA serverKey = RSA.Create(2048);
+            var serverRequest = new CertificateRequest($"CN={hostName}", serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            serverRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+            serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
+            serverRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(serverRequest.PublicKey, false));
             var subjectAlternativeNames = new SubjectAlternativeNameBuilder();
             if (IPAddress.TryParse(hostName, out var ipAddress))
             {
@@ -1212,23 +1241,31 @@ public static class Runner
                 subjectAlternativeNames.AddDnsName(hostName);
             }
 
-            request.CertificateExtensions.Add(subjectAlternativeNames.Build());
+            serverRequest.CertificateExtensions.Add(subjectAlternativeNames.Build());
 
-            using X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-            byte[] certificatePfx = certificate.Export(X509ContentType.Pfx);
-            var serverCertificate = X509CertificateLoader.LoadPkcs12(certificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+            byte[] serialNumber = new byte[16];
+            RandomNumberGenerator.Fill(serialNumber);
+            using var serverCertificateEphemeral = serverRequest.Create(rootCertificate, notBefore, serverNotAfter, serialNumber);
+            var serverCertificateWithKey = serverCertificateEphemeral.CopyWithPrivateKey(serverKey);
+            byte[] serverCertificatePfx = serverCertificateWithKey.Export(X509ContentType.Pfx);
+            var serverCertificate = X509CertificateLoader.LoadPkcs12(serverCertificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+            serverCertificateWithKey.Dispose();
+
+            byte[] trustCertificateBytes = rootCertificate.Export(X509ContentType.Cert);
+            var trustCertificate = X509CertificateLoader.LoadCertificate(trustCertificateBytes);
 
             var tempDirectory = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
             var trustCertificatePath = Path.Combine(tempDirectory, "tls-fixture-cert.pem");
-            File.WriteAllText(trustCertificatePath, certificate.ExportCertificatePem());
+            File.WriteAllText(trustCertificatePath, rootCertificate.ExportCertificatePem());
 
-            return new TlsFixtureHost(tempDirectory, serverCertificate, trustCertificatePath);
+            return new TlsFixtureHost(tempDirectory, serverCertificate, trustCertificate, trustCertificatePath);
         }
 
         public void Dispose()
         {
             ServerCertificate.Dispose();
+            TrustCertificate.Dispose();
             TryDeleteFile(TrustCertificatePath);
             TryDeleteDirectory(_tempDirectory);
         }

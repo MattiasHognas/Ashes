@@ -24,23 +24,45 @@ internal sealed class TlsLoopbackTestHost : IDisposable
 
     public static async Task<TlsLoopbackTestHost> CreateAsync(string hostName = "localhost")
     {
-        using RSA rsa = RSA.Create(2048);
-        var request = new CertificateRequest($"CN={hostName}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
-        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
-        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+        DateTimeOffset notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
+        DateTimeOffset rootNotAfter = notBefore.AddDays(2);
+        DateTimeOffset serverNotAfter = notBefore.AddDays(1);
+
+        using RSA rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest("CN=Ashes Test Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+        rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
+
+        using X509Certificate2 rootCertificate = rootRequest.CreateSelfSigned(notBefore, rootNotAfter);
+
+        using RSA serverKey = RSA.Create(2048);
+        var serverRequest = new CertificateRequest($"CN={hostName}", serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        serverRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
+        var enhancedKeyUsage = new OidCollection
+        {
+            new("1.3.6.1.5.5.7.3.1", "Server Authentication")
+        };
+        serverRequest.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(enhancedKeyUsage, true));
+        serverRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(serverRequest.PublicKey, false));
         var subjectAlternativeNames = new SubjectAlternativeNameBuilder();
         subjectAlternativeNames.AddDnsName(hostName);
-        request.CertificateExtensions.Add(subjectAlternativeNames.Build());
+        serverRequest.CertificateExtensions.Add(subjectAlternativeNames.Build());
 
-        using X509Certificate2 certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-        byte[] certificatePfx = certificate.Export(X509ContentType.Pfx);
-        var serverCertificate = X509CertificateLoader.LoadPkcs12(certificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+        using X509Certificate2 serverCertificatePublic = serverRequest.Create(
+            rootCertificate,
+            notBefore,
+            serverNotAfter,
+            RandomNumberGenerator.GetBytes(16));
+        using X509Certificate2 serverCertificateWithKey = serverCertificatePublic.CopyWithPrivateKey(serverKey);
+        byte[] serverCertificatePfx = serverCertificateWithKey.Export(X509ContentType.Pfx);
+        var serverCertificate = X509CertificateLoader.LoadPkcs12(serverCertificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
 
         string tempDirectory = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
-        string trustCertificatePath = Path.Combine(tempDirectory, "localhost-cert.pem");
-        await File.WriteAllTextAsync(trustCertificatePath, certificate.ExportCertificatePem());
+        string trustCertificatePath = Path.Combine(tempDirectory, "test-root-ca.pem");
+        await File.WriteAllTextAsync(trustCertificatePath, rootCertificate.ExportCertificatePem());
 
         return new TlsLoopbackTestHost(tempDirectory, serverCertificate, trustCertificatePath);
     }
@@ -108,6 +130,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
             .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
         await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
         await stream.FlushAsync();
+        await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout);
     }
 
     private static void TryDeleteFile(string path)
