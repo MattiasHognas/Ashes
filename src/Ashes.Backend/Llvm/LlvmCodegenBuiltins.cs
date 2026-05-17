@@ -2297,10 +2297,10 @@ internal static partial class LlvmCodegen
             platformVerifierType,
             [verifierSlot],
             prefix + "_platform_verifier_call");
-        LlvmValueHandle verifierHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, verifierSlot, prefix + "_verifier_handle");
+        LlvmValueHandle platformVerifierHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, verifierSlot, prefix + "_platform_verifier_handle");
         LlvmValueHandle verifierOk = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildZExt(builder, verifierStatus, state.I64, prefix + "_verifier_status_i64"), LlvmApi.ConstInt(state.I64, RustlsResultOk, 0), prefix + "_verifier_status_ok"),
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildPtrToInt(builder, verifierHandle, state.I64, prefix + "_verifier_i64"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_verifier"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildPtrToInt(builder, platformVerifierHandle, state.I64, prefix + "_verifier_i64"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_verifier"),
             prefix + "_verifier_ok");
         LlvmApi.BuildCondBr(builder, verifierOk, createBuilderBlock, failInitBlock);
 
@@ -2383,6 +2383,12 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle afterWriteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_write");
         LlvmBasicBlockHandle resolveSymbolsBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_resolve_symbols");
         LlvmBasicBlockHandle initializeConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_initialize_config");
+        LlvmBasicBlockHandle checkCertFileLengthBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_cert_file_length");
+        LlvmBasicBlockHandle createPemRootStoreBuilderBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create_pem_root_store_builder");
+        LlvmBasicBlockHandle buildPemRootStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_pem_root_store");
+        LlvmBasicBlockHandle createPemVerifierBuilderBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create_pem_verifier_builder");
+        LlvmBasicBlockHandle buildPemVerifierBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_pem_verifier");
+        LlvmBasicBlockHandle createPlatformVerifierBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create_platform_verifier");
         LlvmBasicBlockHandle createBuilderBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create_builder");
         LlvmBasicBlockHandle attachVerifierBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_attach_verifier");
         LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success");
@@ -2419,6 +2425,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle configBuilderSetVerifierFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_client_config_builder_set_server_verifier", prefix + "_resolve_set_verifier");
         LlvmValueHandle configBuilderBuildFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_client_config_builder_build", prefix + "_resolve_build");
         LlvmValueHandle verifierFreeFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_server_cert_verifier_free", prefix + "_resolve_verifier_free");
+        LlvmValueHandle rootStoreBuilderNewFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_root_cert_store_builder_new", prefix + "_resolve_root_store_builder_new");
+        LlvmValueHandle rootStoreBuilderLoadRootsFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_root_cert_store_builder_load_roots_from_file", prefix + "_resolve_root_store_builder_load_roots");
+        LlvmValueHandle rootStoreBuilderBuildFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_root_cert_store_builder_build", prefix + "_resolve_root_store_builder_build");
+        LlvmValueHandle rootStoreBuilderFreeFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_root_cert_store_builder_free", prefix + "_resolve_root_store_builder_free");
+        LlvmValueHandle rootStoreFreeFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_root_cert_store_free", prefix + "_resolve_root_store_free");
+        LlvmValueHandle pemVerifierBuilderNewFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_web_pki_server_cert_verifier_builder_new", prefix + "_resolve_pem_verifier_builder_new");
+        LlvmValueHandle pemVerifierBuilderBuildFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_web_pki_server_cert_verifier_builder_build", prefix + "_resolve_pem_verifier_builder_build");
+        LlvmValueHandle pemVerifierBuilderFreeFn = EmitTlsResolveSymbol(state, libsslHandle, "rustls_web_pki_server_cert_verifier_builder_free", prefix + "_resolve_pem_verifier_builder_free");
         LlvmValueHandle haveAllSymbols = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, platformVerifierFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_platform_verifier"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, configBuilderNewFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_builder_new"),
@@ -2434,14 +2448,172 @@ internal static partial class LlvmCodegen
         haveAllSymbols = LlvmApi.BuildAnd(builder,
             haveAllSymbols,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, verifierFreeFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_verifier_free"),
+            prefix + "_have_fourth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreBuilderNewFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store_builder_new"),
+            prefix + "_have_fifth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreBuilderLoadRootsFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store_builder_load_roots"),
+            prefix + "_have_sixth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreBuilderBuildFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store_builder_build"),
+            prefix + "_have_seventh_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreBuilderFreeFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store_builder_free"),
+            prefix + "_have_eighth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreFreeFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store_free"),
+            prefix + "_have_ninth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, pemVerifierBuilderNewFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_pem_verifier_builder_new"),
+            prefix + "_have_tenth_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, pemVerifierBuilderBuildFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_pem_verifier_builder_build"),
+            prefix + "_have_eleventh_symbols");
+        haveAllSymbols = LlvmApi.BuildAnd(builder,
+            haveAllSymbols,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, pemVerifierBuilderFreeFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_pem_verifier_builder_free"),
             prefix + "_have_all_symbols");
         LlvmApi.BuildCondBr(builder, haveAllSymbols, initializeConfigBlock, failMissingSymbolBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, initializeConfigBlock);
         LlvmValueHandle verifierSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_verifier_slot");
         LlvmValueHandle configSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_config_slot");
+        LlvmValueHandle rootStoreBuilderSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_root_store_builder_slot");
+        LlvmValueHandle rootStoreSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_root_store_slot");
+        LlvmValueHandle pemVerifierBuilderSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_pem_verifier_builder_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), verifierSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), configSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), rootStoreBuilderSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), rootStoreSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), pemVerifierBuilderSlot);
+        LlvmValueHandle certFileName = EmitStringToCString(state, EmitHeapStringLiteral(state, "SSL_CERT_FILE"), prefix + "_ssl_cert_file_name");
+        LlvmValueHandle kernel32Path = EmitStringToCString(state, EmitHeapStringLiteral(state, "KERNEL32.DLL"), prefix + "_kernel32_path");
+        LlvmValueHandle kernel32Handle = EmitWindowsLoadLibrary(state, kernel32Path, prefix + "_load_kernel32");
+        LlvmValueHandle haveKernel32 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, kernel32Handle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_kernel32");
+        LlvmValueHandle certFileBufferSize = LlvmApi.ConstInt(state.I32, 4096, 0);
+        LlvmValueHandle certFileBufferSizeI64 = LlvmApi.ConstInt(state.I64, 4096, 0);
+        LlvmValueHandle certFileBuffer = LlvmApi.BuildArrayAlloca(builder, state.I8, certFileBufferSizeI64, prefix + "_ssl_cert_file_buffer");
+        LlvmBasicBlockHandle resolveGetEnvBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_resolve_get_env");
+        LlvmApi.BuildCondBr(builder, haveKernel32, resolveGetEnvBlock, createPlatformVerifierBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, resolveGetEnvBlock);
+        LlvmValueHandle getEnvSymbol = EmitStringToCString(state, EmitHeapStringLiteral(state, "GetEnvironmentVariableA"), prefix + "_get_env_symbol");
+        LlvmValueHandle getEnvFn = EmitWindowsGetProcAddress(state, kernel32Handle, getEnvSymbol, prefix + "_resolve_get_env");
+        LlvmValueHandle haveGetEnv = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, getEnvFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_get_env");
+        LlvmApi.BuildCondBr(builder, haveGetEnv, checkCertFileLengthBlock, createPlatformVerifierBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkCertFileLengthBlock);
+        LlvmTypeHandle getEnvType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]);
+        LlvmValueHandle certFileLength = EmitCallFunctionAddress(
+            state,
+            getEnvFn,
+            getEnvType,
+            [certFileName, certFileBuffer, certFileBufferSize],
+            prefix + "_get_env_call");
+        LlvmValueHandle hasNonEmptyCertFile = LlvmApi.BuildICmp(builder,
+            LlvmIntPredicate.Ne,
+            LlvmApi.BuildZExt(builder, certFileLength, state.I64, prefix + "_ssl_cert_file_length_i64"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            prefix + "_has_non_empty_ssl_cert_file");
+        LlvmValueHandle certFileFitsBuffer = LlvmApi.BuildICmp(builder,
+            LlvmIntPredicate.Ult,
+            certFileLength,
+            certFileBufferSize,
+            prefix + "_ssl_cert_file_fits_buffer");
+        LlvmValueHandle usePemRoots = LlvmApi.BuildAnd(builder, hasNonEmptyCertFile, certFileFitsBuffer, prefix + "_use_pem_roots");
+        LlvmApi.BuildCondBr(builder, usePemRoots, createPemRootStoreBuilderBlock, createPlatformVerifierBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createPemRootStoreBuilderBlock);
+        LlvmTypeHandle rootStoreBuilderNewType = LlvmApi.FunctionType(state.I8Ptr, []);
+        LlvmValueHandle rootStoreBuilderHandle = EmitCallFunctionAddress(
+            state,
+            rootStoreBuilderNewFn,
+            rootStoreBuilderNewType,
+            Array.Empty<LlvmValueHandle>(),
+            prefix + "_root_store_builder_new_call");
+        LlvmApi.BuildStore(builder, rootStoreBuilderHandle, rootStoreBuilderSlot);
+        LlvmValueHandle haveRootStoreBuilder = LlvmApi.BuildICmp(builder,
+            LlvmIntPredicate.Ne,
+            LlvmApi.BuildPtrToInt(builder, rootStoreBuilderHandle, state.I64, prefix + "_root_store_builder_i64"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            prefix + "_have_root_store_builder");
+        LlvmApi.BuildCondBr(builder, haveRootStoreBuilder, buildPemRootStoreBlock, failInitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildPemRootStoreBlock);
+        LlvmValueHandle rootStoreBuilderHandleValue = LlvmApi.BuildLoad2(builder, state.I8Ptr, rootStoreBuilderSlot, prefix + "_root_store_builder_handle");
+        LlvmTypeHandle rootStoreBuilderLoadRootsType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I8]);
+        LlvmValueHandle loadRootsStatus = EmitCallFunctionAddress(
+            state,
+            rootStoreBuilderLoadRootsFn,
+            rootStoreBuilderLoadRootsType,
+            [rootStoreBuilderHandleValue, certFileBuffer, LlvmApi.ConstInt(state.I8, 1, 0)],
+            prefix + "_root_store_builder_load_roots_call");
+        LlvmTypeHandle rootStoreBuilderBuildType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, LlvmApi.PointerTypeInContext(state.Target.Context, 0)]);
+        LlvmValueHandle buildRootStoreStatus = EmitCallFunctionAddress(
+            state,
+            rootStoreBuilderBuildFn,
+            rootStoreBuilderBuildType,
+            [rootStoreBuilderHandleValue, rootStoreSlot],
+            prefix + "_root_store_builder_build_call");
+        LlvmTypeHandle rootStoreBuilderFreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
+        _ = EmitCallFunctionAddress(state, rootStoreBuilderFreeFn, rootStoreBuilderFreeType, [rootStoreBuilderHandleValue], string.Empty);
+        LlvmValueHandle rootStoreHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, rootStoreSlot, prefix + "_root_store_handle");
+        LlvmValueHandle rootStoreOk = LlvmApi.BuildAnd(builder,
+            EmitRustlsResultIsOk(state, loadRootsStatus, prefix + "_load_roots_status_ok"),
+            EmitRustlsResultIsOk(state, buildRootStoreStatus, prefix + "_build_root_store_status_ok"),
+            prefix + "_root_store_status_ok");
+        rootStoreOk = LlvmApi.BuildAnd(builder,
+            rootStoreOk,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildPtrToInt(builder, rootStoreHandle, state.I64, prefix + "_root_store_i64"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_root_store"),
+            prefix + "_root_store_ok");
+        LlvmApi.BuildCondBr(builder, rootStoreOk, createPemVerifierBuilderBlock, failInitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createPemVerifierBuilderBlock);
+        LlvmValueHandle rootStoreHandleValue = LlvmApi.BuildLoad2(builder, state.I8Ptr, rootStoreSlot, prefix + "_root_store_handle_value");
+        LlvmTypeHandle pemVerifierBuilderNewType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr]);
+        LlvmValueHandle pemVerifierBuilderHandle = EmitCallFunctionAddress(
+            state,
+            pemVerifierBuilderNewFn,
+            pemVerifierBuilderNewType,
+            [rootStoreHandleValue],
+            prefix + "_pem_verifier_builder_new_call");
+        LlvmTypeHandle rootStoreFreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
+        _ = EmitCallFunctionAddress(state, rootStoreFreeFn, rootStoreFreeType, [rootStoreHandleValue], string.Empty);
+        LlvmApi.BuildStore(builder, pemVerifierBuilderHandle, pemVerifierBuilderSlot);
+        LlvmValueHandle havePemVerifierBuilder = LlvmApi.BuildICmp(builder,
+            LlvmIntPredicate.Ne,
+            LlvmApi.BuildPtrToInt(builder, pemVerifierBuilderHandle, state.I64, prefix + "_pem_verifier_builder_i64"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            prefix + "_have_pem_verifier_builder");
+        LlvmApi.BuildCondBr(builder, havePemVerifierBuilder, buildPemVerifierBlock, failInitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildPemVerifierBlock);
+        LlvmValueHandle pemVerifierBuilderHandleValue = LlvmApi.BuildLoad2(builder, state.I8Ptr, pemVerifierBuilderSlot, prefix + "_pem_verifier_builder_handle");
+        LlvmTypeHandle pemVerifierBuilderBuildType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, LlvmApi.PointerTypeInContext(state.Target.Context, 0)]);
+        LlvmValueHandle pemVerifierStatus = EmitCallFunctionAddress(
+            state,
+            pemVerifierBuilderBuildFn,
+            pemVerifierBuilderBuildType,
+            [pemVerifierBuilderHandleValue, verifierSlot],
+            prefix + "_pem_verifier_builder_build_call");
+        LlvmTypeHandle pemVerifierBuilderFreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
+        _ = EmitCallFunctionAddress(state, pemVerifierBuilderFreeFn, pemVerifierBuilderFreeType, [pemVerifierBuilderHandleValue], string.Empty);
+        LlvmValueHandle pemVerifierHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, verifierSlot, prefix + "_pem_verifier_handle");
+        LlvmValueHandle pemVerifierOk = LlvmApi.BuildAnd(builder,
+            EmitRustlsResultIsOk(state, pemVerifierStatus, prefix + "_pem_verifier_status_ok"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildPtrToInt(builder, pemVerifierHandle, state.I64, prefix + "_pem_verifier_i64"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_pem_verifier"),
+            prefix + "_pem_verifier_ok");
+        LlvmApi.BuildCondBr(builder, pemVerifierOk, createBuilderBlock, failInitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createPlatformVerifierBlock);
         LlvmTypeHandle platformVerifierType = LlvmApi.FunctionType(state.I32, [LlvmApi.PointerTypeInContext(state.Target.Context, 0)]);
         LlvmValueHandle verifierStatus = EmitCallFunctionAddress(
             state,
@@ -2468,12 +2640,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, haveBuilder, attachVerifierBlock, failInitBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, attachVerifierBlock);
+        LlvmValueHandle selectedVerifierHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, verifierSlot, prefix + "_selected_verifier_handle");
         LlvmTypeHandle setVerifierType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr, state.I8Ptr]);
         _ = EmitCallFunctionAddress(
             state,
             configBuilderSetVerifierFn,
             setVerifierType,
-            [configBuilder, verifierHandle],
+            [configBuilder, selectedVerifierHandle],
             string.Empty);
         LlvmTypeHandle configBuilderBuildType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, LlvmApi.PointerTypeInContext(state.Target.Context, 0)]);
         LlvmValueHandle buildStatus = EmitCallFunctionAddress(
@@ -2483,7 +2656,7 @@ internal static partial class LlvmCodegen
             [configBuilder, configSlot],
             prefix + "_build_call");
         LlvmTypeHandle verifierFreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
-        _ = EmitCallFunctionAddress(state, verifierFreeFn, verifierFreeType, [verifierHandle], string.Empty);
+        _ = EmitCallFunctionAddress(state, verifierFreeFn, verifierFreeType, [selectedVerifierHandle], string.Empty);
         LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, configSlot, prefix + "_config_handle");
         LlvmValueHandle buildOk = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildZExt(builder, buildStatus, state.I64, prefix + "_build_status_i64"), LlvmApi.ConstInt(state.I64, RustlsResultOk, 0), prefix + "_build_status_ok"),

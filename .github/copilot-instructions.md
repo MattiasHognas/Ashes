@@ -128,7 +128,7 @@ This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries, as well 
 When native arm64 hardware is unavailable, linux-arm64 backend/runtime validation may run through `qemu-aarch64` or `qemu-aarch64-static` with an arm64 sysroot (for example `/usr/aarch64-linux-gnu`).
 The repo's linux-arm64 coverage helper checks both `PATH` and the rootless Arch-style unpack location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
 win-x64 backend/runtime validation may also run on Linux through `wine64` or `wine` when the test helper is wired for PE execution.
-Do not claim Windows TLS/root-store coverage through that path unless the relevant trust setup is implemented; cert-store-dependent TLS tests still require native Windows today.
+The Windows TLS runtime still uses the platform verifier by default, but tests may also supply `SSL_CERT_FILE` to load PEM roots explicitly, which allows Wine-backed loopback TLS coverage on Linux hosts.
 
 ---
 

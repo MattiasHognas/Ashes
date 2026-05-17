@@ -123,18 +123,19 @@ qemu-aarch64-static -L /usr/aarch64-linux-gnu ./hello-arm64
 
 ### Optional win-x64 execution from linux-x64 hosts
 
-Non-TLS `win-x64` backend outputs can also be executed from an x64 Linux
-host when `wine64` or `wine` is available in `PATH`.
+`win-x64` backend outputs can also be executed from an x64 Linux host
+when `wine64` or `wine` is available in `PATH`.
 
 `src/Ashes.Tests/TestProcessHelper.cs` auto-detects Wine for test-time PE
-execution, so `EndToEndWindowsBackendTests` and the non-TLS runtime slice
-of `WindowsBackendCoverageTests` can run from Linux hosts once Wine is
+execution, so `EndToEndWindowsBackendTests` and
+`WindowsBackendCoverageTests` can run from Linux hosts once Wine is
 installed.
 
-Current limitation: the HTTPS/TLS loopback coverage in
-`WindowsBackendCoverageTests` still trusts the loopback certificate through
-the Windows CurrentUser root store. Those trust-dependent TLS scenarios
-remain native-Windows-only.
+The Windows TLS runtime still defaults to the platform verifier. For
+loopback TLS tests and other controlled overrides, the coverage helper
+passes `SSL_CERT_FILE` to the compiled PE program using a Wine-visible
+path so the vendored `rustls.dll` can load PEM roots without touching a
+host Windows certificate store.
 
 ------------------------------------------------------------------------
 

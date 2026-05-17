@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -328,7 +327,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_https_against_loopback_tls_fixture()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -347,7 +346,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_https_trust_failures_against_loopback_tls_fixture()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -370,7 +369,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_https_hostname_mismatches_against_loopback_tls_fixture()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -394,7 +393,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_return_first_completed_https_race_task_against_loopback_tls_fixture()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -426,7 +425,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_treat_https_close_notify_eof_as_end_of_body()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -629,13 +628,25 @@ public sealed class WindowsBackendCoverageTests
         return ir;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(
+        string source,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode);
+        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(
+        IrProgram ir,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
 
@@ -653,6 +664,13 @@ public sealed class WindowsBackendCoverageTests
             if (workingDirectory is not null)
             {
                 psi.WorkingDirectory = workingDirectory;
+            }
+            if (environmentVariables is not null)
+            {
+                foreach (var entry in environmentVariables)
+                {
+                    psi.Environment[entry.Key] = entry.Value;
+                }
             }
             if (args is not null)
             {
@@ -694,42 +712,28 @@ public sealed class WindowsBackendCoverageTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
-        X509Certificate2? trustedCertificate = null;
-        X509Store? rootStore = null;
-        if (trustServerCertificate)
+        IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
+            ? new Dictionary<string, string>
+            {
+                ["SSL_CERT_FILE"] = TestProcessHelper.ConvertHostPathForWindowsExecution(tlsHost.TrustCertificatePath)
+            }
+            : null;
+
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
+        var result = await CompileRunWithWindowsLlvmAsync(source, environmentVariables: environmentVariables);
+        var serverException = await serverTask;
+        if (allowServerHandshakeFailure && serverException is IOException ioException)
         {
-            trustedCertificate = X509CertificateLoader.LoadCertificate(tlsHost.ServerCertificate.Export(X509ContentType.Cert));
-            rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
-            rootStore.Open(OpenFlags.ReadWrite);
-            rootStore.Add(trustedCertificate);
+            ioException.Message.ShouldContain("unexpected EOF");
+        }
+        else
+        {
+            serverException.ShouldBeNull(serverException?.ToString());
         }
 
-        try
-        {
-            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
-            var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
-            var result = await CompileRunWithWindowsLlvmAsync(source);
-            var serverException = await serverTask;
-            if (allowServerHandshakeFailure && serverException is IOException ioException)
-            {
-                ioException.Message.ShouldContain("unexpected EOF");
-            }
-            else
-            {
-                serverException.ShouldBeNull(serverException?.ToString());
-            }
-            return result;
-        }
-        finally
-        {
-            if (rootStore is not null && trustedCertificate is not null)
-            {
-                rootStore.Remove(trustedCertificate);
-                rootStore.Dispose();
-                trustedCertificate.Dispose();
-            }
-        }
+        return result;
     }
 
     private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)

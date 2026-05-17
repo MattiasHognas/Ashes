@@ -3,10 +3,9 @@
 Transparent `https://` in `Ashes.Http.get` / `Ashes.Http.post` is now
 landed. The active native-backend implementation is now the hermetic
 `rustls` path shared by Linux x64, Linux arm64, and Windows x64,
-although broader cross-backend runtime coverage and final cleanup/documentation
-alignment remain open.
-This document records the completed work and the remaining follow-up
-items.
+and the base roadmap in this document is now complete.
+This document records the completed work and the follow-up items that
+remain intentionally outside the base HTTPS/TLS milestone.
 
 The implementation shipped in this branch prioritizes:
 
@@ -16,9 +15,9 @@ The implementation shipped in this branch prioritizes:
    dependency)
 
 The long-term direction is now decided, and Step 3 is now the active
-runtime path. The remaining work is validation, cleanup, and
-documentation alignment rather than selecting or building a second
-default TLS implementation.
+runtime path. The remaining work is no longer about selecting or
+building a second default TLS implementation; follow-on work now lives
+under the post-completion considerations at the end of this document.
 
 ## Locked Decisions
 
@@ -34,7 +33,7 @@ default TLS implementation.
   foundation as `Ashes.Http`
 
 No further product-direction decisions are required for the base
-HTTPS/TLS roadmap. The remaining work is implementation and validation.
+HTTPS/TLS roadmap. That base roadmap is now implemented and validated.
 
 HTTPS support layers on top of the async TCP runtime that already
 landed in [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md). It does not
@@ -59,6 +58,7 @@ runtime foundation.
 | **TLS leaf tasks** | Dedicated internal TLS handshake/send/receive/close leaf tasks now exist in IR, backend dispatch, wait integration, and generated runtime helpers. |
 | **HTTP staging integration** | The staged HTTP client now accepts `https://`, defaults to port 443, persists the secure stage across resumes, inserts a TLS handshake stage, and routes send/receive/close through TLS task states on Linux x64, Linux arm64, and Windows x64. |
 | **Public raw TLS API** | `Ashes.Net.Tls.connect/send/receive/close` now ships as a public built-in module using the same current TLS runtime path as `Ashes.Http`, with `TlsSocket` as a first-class resource type. |
+| **Cross-backend runtime coverage** | Linux x64, Linux arm64, and Windows x64 backend coverage now all exercise HTTPS success, trust failure, hostname mismatch, async race behavior, and close-notify EOF semantics on the hermetic runtime path. Linux arm64 coverage runs natively on arm64 Linux or through qemu on x64 Linux, and Windows x64 coverage can run natively on Windows or through Wine-backed Linux CI by supplying `SSL_CERT_FILE` PEM roots to the compiled program. |
 | **Examples and tests** | Added `examples/https_get.ash`, Linux/backend, Windows/backend, and CLI loopback TLS fixture coverage, updated ASH012 coverage for HTTPS, replaced the old `.ash` expectation that HTTPS is unsupported, and aligned end-to-end TLS failure expectations with the more specific rustls certificate diagnostics. |
 
 ------------------------------------------------------------------------
@@ -136,8 +136,9 @@ runtime payload embedded per TLS-using executable:
   uses the platform verifier for system trust; when `SSL_CERT_FILE` is
   set, it loads that PEM bundle instead.
 - **Windows x64**: the generated program writes and loads the vendored
-  `rustls.dll` payload on first TLS use and uses the platform verifier
-  against the Windows trust store.
+  `rustls.dll` payload on first TLS use. By default it uses the
+  platform verifier against the Windows trust store; when
+  `SSL_CERT_FILE` is set, it loads that PEM bundle instead.
 
 The compiler itself does **not** link against OpenSSL for the active
 HTTPS/TLS path, and user programs no longer require an external
@@ -148,9 +149,8 @@ If the embedded TLS payload or verifier initialization cannot be
 loaded, the call returns `Error(...)` rather than crashing or
 panicking.
 
-Remaining cleanup work is now focused on broader cross-backend runtime
-coverage and removing dormant transitional code rather than on the
-active user-facing runtime contract.
+The transitional OpenSSL loader/runtime path is gone; the shipped
+runtime contract is the hermetic `rustls` path described above.
 
 ------------------------------------------------------------------------
 
@@ -187,7 +187,7 @@ HTTPS reuses all of that:
   (`ashes_tls_runtime_init`) writes and loads the vendored `rustls`
   payload, resolves the `rustls_*` ABI, builds a client config with a
   system-trust verifier by default, and supports PEM trust overrides
-  via `SSL_CERT_FILE` on Linux when explicitly configured.
+  via `SSL_CERT_FILE` when explicitly configured.
 
 User-visible `Task(Str, Str)` semantics are unchanged.
 
@@ -235,13 +235,17 @@ item below is done.
   The default policy should stay aligned with the host OS trust store
   rather than shipping a bundled CA set by default. The current
   implementation uses the platform verifier by default and falls back
-  to `SSL_CERT_FILE` PEM roots on Linux only when explicitly supplied.
+  to `SSL_CERT_FILE` PEM roots when explicitly supplied.
 - [x] Repoint the staged `Ashes.Http` TLS leaf tasks from the current
   OpenSSL ABI to the hermetic TLS ABI.
-- [ ] Add backend/runtime coverage for the hermetic path on every
+- [x] Add backend/runtime coverage for the hermetic path on every
   shipped native backend.
   At minimum this should cover success, trust failure, hostname
   mismatch, EOF/close semantics, and async combinator behavior.
+  `LinuxBackendCoverageTests`, `LinuxArm64BackendCoverageTests`, and
+  `WindowsBackendCoverageTests` now cover that matrix, with qemu-backed
+  arm64 execution on x64 Linux hosts and Wine-backed Windows backend
+  execution in Linux CI.
 
 ### Phase C — Expose Raw TLS Publicly
 
@@ -261,8 +265,10 @@ item below is done.
   `win-x64`.
 - [x] Remove the runtime OpenSSL requirement from user-facing docs once
   the hermetic path is landed.
-- [ ] Delete the transitional OpenSSL loader/runtime path once the
+- [x] Delete the transitional OpenSSL loader/runtime path once the
   hermetic path is proven on all shipped native backends.
+  The old OpenSSL loader/fallback path is no longer part of the shipped
+  runtime; TLS programs now load only the embedded `rustls-ffi` payload.
 - [x] Update `docs/future/FUTURE_FEATURES.md`,
   `docs/future/ASYNC_NETWORKING.md`, and related architecture docs to
   describe hermetic TLS as landed rather than planned.
@@ -271,12 +277,12 @@ item below is done.
 
 HTTPS/TLS is 100% complete only when all of the following are true:
 
-- [ ] `Ashes.Http` HTTPS works on `linux-x64`, `linux-arm64`, and
+- [x] `Ashes.Http` HTTPS works on `linux-x64`, `linux-arm64`, and
   `win-x64` without any external OpenSSL installation.
 - [x] `Ashes.Net.Tls` is public, documented, and tested.
 - [x] `Ashes.Tests`, `Ashes.Lsp.Tests`, the `.ash` suite, and
   formatting checks pass with the hermetic path enabled.
-- [ ] The transitional OpenSSL path has been removed rather than kept
+- [x] The transitional OpenSSL path has been removed rather than kept
   as a default or silent fallback.
 
 ## Vendored Dependency Policy
@@ -292,8 +298,7 @@ policy:
 - target patch window of 7 days for high-severity TLS issues
 - medium- and low-severity updates batched into scheduled maintenance
   unless they affect correctness or interoperability
-- the transitional system-OpenSSL path remains bug-fix only until it is
-  removed
+- no transitional system-OpenSSL runtime remains in the shipped path
 
 ------------------------------------------------------------------------
 
@@ -304,14 +309,20 @@ The landed coverage uses the existing loopback fixture style:
 1. `LinuxBackendCoverageTests` hosts a local `SslStream` listener,
   writes a temporary PEM trust bundle, and runs a Linux LLVM HTTPS
   program with `SSL_CERT_FILE` set for that child process only.
-2. `WindowsBackendCoverageTests` hosts the same style of TLS listener,
-  and runs the Windows LLVM HTTPS program against that fixture.
-3. `ExampleSocketFixtureTests` exercises `examples/https_get.ash`
+2. `LinuxArm64BackendCoverageTests` mirrors the same HTTPS success,
+  trust-failure, hostname-mismatch, async-race, and close-notify EOF
+  matrix on the Linux arm64 backend, running either natively on arm64
+  Linux or through `qemu-aarch64` / `qemu-aarch64-static` on x64 Linux.
+3. `WindowsBackendCoverageTests` mirrors the same HTTPS matrix on the
+  Windows backend and can run natively on Windows or through Wine-backed
+  Linux CI by passing a Windows-visible `SSL_CERT_FILE` PEM bundle into
+  the compiled program.
+4. `ExampleSocketFixtureTests` exercises `examples/https_get.ash`
   against the same kind of loopback TLS listener.
-4. `TestRunnerFixtureTests` and `Ashes.Cli test` now exercise built-in
+5. `TestRunnerFixtureTests` and `Ashes.Cli test` now exercise built-in
   HTTPS fixture modes for success, trust failure, and hostname
   mismatch.
-5. End-to-end `.ash` coverage now includes success and certificate
+6. End-to-end `.ash` coverage now includes success and certificate
   failure expectations for both `Ashes.Http` and `Ashes.Net.Tls` on the
   hermetic path.
 
@@ -327,8 +338,8 @@ The landed coverage uses the existing loopback fixture style:
   support, and `Ashes.Net.Tls` is documented as a public built-in
   module on the hermetic TLS runtime.
 - `docs/future/FUTURE_FEATURES.md` — HTTPS/TLS row links to this
-  document and now marks the feature as partial while describing the
-  hermetic runtime as landed rather than planned.
+  document and now marks the feature as landed on the hermetic runtime
+  path rather than partial.
 - New public builtins are exposed under `Ashes.Net.Tls` and lower through
   a staged TLS connect task plus dedicated TLS send/receive/close task states.
 - No new diagnostics codes.
@@ -370,6 +381,7 @@ the Definition of Complete section.
 3. **TLS server support.** Server-side accept/listen support is not
    part of the client-focused roadmap above.
 4. **ALPN, HTTP/2, and HTTP/3.** Each is a separate protocol milestone.
-5. **Legacy TLS compatibility cleanup.** Only relevant if any dormant
-  transitional TLS code survives long enough to justify more
-  compatibility work.
+5. **TLS/runtime maintenance.** Vendored runtime upgrades, verifier
+  compatibility updates, and related interoperability work remain
+  normal maintenance tasks even though the base HTTPS/TLS roadmap is
+  complete.

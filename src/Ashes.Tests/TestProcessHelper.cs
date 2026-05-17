@@ -84,6 +84,21 @@ internal static class TestProcessHelper
         return psi;
     }
 
+    internal static string ConvertHostPathForWindowsExecution(string path)
+    {
+        if (!TryResolveWindowsExecutionEnvironment(out var environment) || environment.RunnerPath is null)
+        {
+            return path;
+        }
+
+        if (!Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        return "Z:" + path.Replace('/', '\\');
+    }
+
     private static bool TryResolveWindowsExecutionEnvironment(out WindowsExecutionEnvironment environment)
     {
         if (OperatingSystem.IsWindows())
