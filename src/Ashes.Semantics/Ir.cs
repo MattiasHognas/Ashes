@@ -371,7 +371,7 @@ public abstract record IrInst
     public sealed record CreateTlsReceiveTask(int Target, int SslTemp, int MaxBytesTemp) : IrInst;
 
     /// <summary>
-    /// Creates a leaf networking task for closing a TLS session (SSL_shutdown + SSL_free).
+    /// Creates a leaf networking task for closing a TLS session (close-notify flush + connection free).
     /// </summary>
     public sealed record CreateTlsCloseTask(int Target, int SslTemp) : IrInst;
 
@@ -464,9 +464,9 @@ public static class TaskStructLayout
     public const long WaitSocketRead = 1;
     /// <summary>The task is waiting for a socket to become writable.</summary>
     public const long WaitSocketWrite = 2;
-    /// <summary>The task is waiting for a TLS read to make progress (SSL_ERROR_WANT_READ).</summary>
+    /// <summary>The task is waiting for a TLS read path to make progress.</summary>
     public const long WaitTlsWantRead = 3;
-    /// <summary>The task is waiting for a TLS write to make progress (SSL_ERROR_WANT_WRITE).</summary>
+    /// <summary>The task is waiting for a TLS write path to make progress.</summary>
     public const long WaitTlsWantWrite = 4;
 }
 

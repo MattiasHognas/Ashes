@@ -91,7 +91,6 @@ internal static partial class LlvmCodegen
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
-    private const string HttpsRequiresOpenSslRuntimeMessage = "https requires OpenSSL 3 (libssl) at runtime";
     private const int RustlsResultOk = 7000;
     private const int RustlsResultPlaintextEmpty = 7011;
     private const string TlsRuntimeInitFailedMessage = "Ashes TLS runtime initialization failed";

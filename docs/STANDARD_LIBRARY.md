@@ -49,7 +49,8 @@ Current HTTP support is intentionally small:
 
 - `http://` and `https://` URLs are supported.
 - `https://` defaults to port 443 and currently ships on the Linux x64,
-  Linux arm64, and Windows x64 backends via OpenSSL 3 loaded at runtime.
+  Linux arm64, and Windows x64 backends via the hermetic `rustls`
+  runtime embedded into TLS-using executables.
 - Other backends may still return a runtime error for `https://` until their
   TLS runtime support lands.
 - Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
@@ -70,9 +71,10 @@ Current HTTP support is intentionally small:
 - `close(socket)` returning `Task(Str, Unit)`
 
 `Ashes.Net.Tls` uses the same TLS runtime path as `https://` in `Ashes.Http`.
-On Linux x64, Linux arm64, and Windows x64 that currently means OpenSSL 3
-must be available at runtime. Hostname verification and system-trust
-validation are mandatory for successful TLS connections.
+On Linux x64, Linux arm64, and Windows x64 that currently means the
+hermetic `rustls` runtime embedded per TLS-using executable. No
+external OpenSSL installation is required. Hostname verification and
+system-trust validation are mandatory for successful TLS connections.
 
 ## Shipped Helper Modules
 

@@ -1,3 +1,8 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -9,6 +14,8 @@ namespace Ashes.Tests;
 public sealed class LinuxArm64BackendCoverageTests
 {
     private const string HttpsProgram = """match Ashes.Async.run(async await Ashes.Http.get("https://localhost/")) with | Ok(text) -> text | Error(msg) -> msg""";
+    private static readonly string[] LinuxArm64EmulatorCandidates = ["qemu-aarch64", "qemu-aarch64-static"];
+    private static readonly string[] LinuxArm64SysrootCandidates = ["/usr/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/aarch64-linux-gnu", "/opt/aarch64-linux-gnu"];
 
     [Test]
     public void Linux_arm64_backend_compile_should_link_hermetic_rustls_payload_for_https_programs()
@@ -38,10 +45,113 @@ public sealed class LinuxArm64BackendCoverageTests
         ContainsAscii(bytes, "rustls_platform_server_cert_verifier").ShouldBeFalse();
     }
 
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_run_https_against_loopback_tls_fixture()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET / HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+
+        result.Stdout.ShouldBe("hello from https\n");
+    }
+
     private static byte[] CompileForLinuxArm64(string source)
     {
         var ir = LowerExpression(source);
         return new LinuxArm64LlvmBackend().Compile(ir);
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmAsync(
+        string source,
+        IReadOnlyDictionary<string, string>? environmentVariables = null,
+        int expectedExitCode = 0)
+    {
+        var ir = LowerExpression(source);
+        return await CompileRunWithLinuxArm64LlvmAsync(ir, environmentVariables, expectedExitCode);
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmAsync(
+        IrProgram ir,
+        IReadOnlyDictionary<string, string>? environmentVariables = null,
+        int expectedExitCode = 0)
+    {
+        var elfBytes = new LinuxArm64LlvmBackend().Compile(ir);
+
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_arm64_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+
+            var psi = CreateLinuxArm64ProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            if (environmentVariables is not null)
+            {
+                foreach (var entry in environmentVariables)
+                {
+                    psi.Environment[entry.Key] = entry.Value;
+                }
+            }
+
+            using var proc = await TestProcessHelper.StartProcessAsync(psi);
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            try
+            {
+                await proc.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout);
+            }
+            catch (TimeoutException)
+            {
+                TryKillProcess(proc);
+                var stdout = await stdoutTask;
+                var stderr = await stderrTask;
+                throw new TimeoutException($"Compiled linux-arm64 process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+            }
+
+            var finalStdout = await stdoutTask;
+            var finalStderr = await stderrTask;
+            proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {finalStderr}");
+            return new ExecutionResult(finalStdout, finalStderr, proc.ExitCode);
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(string sourceTemplate, Func<SslStream, Task> handleClientAsync, string host = "localhost")
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(host);
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount: 1, tlsHost.ServerCertificate, handleClientAsync);
+        var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: new Dictionary<string, string>
+        {
+            ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
+        });
+        var serverException = await serverTask;
+        serverException.ShouldBeNull(serverException?.ToString());
+        return result;
     }
 
     private static IrProgram LowerExpression(string source)
@@ -60,4 +170,190 @@ public sealed class LinuxArm64BackendCoverageTests
         byte[] needle = Encoding.ASCII.GetBytes(text);
         return bytes.AsSpan().IndexOf(needle) >= 0;
     }
+
+    private static bool TryResolveLinuxArm64ExecutionEnvironment(out LinuxArm64ExecutionEnvironment environment)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            environment = default;
+            return false;
+        }
+
+        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            environment = new LinuxArm64ExecutionEnvironment(null, null);
+            return true;
+        }
+
+        var emulatorPath = FindCommandOnPath(LinuxArm64EmulatorCandidates);
+        var sysrootPath = FindLinuxArm64Sysroot();
+        if (emulatorPath is null || sysrootPath is null)
+        {
+            environment = default;
+            return false;
+        }
+
+        environment = new LinuxArm64ExecutionEnvironment(emulatorPath, sysrootPath);
+        return true;
+    }
+
+    private static ProcessStartInfo CreateLinuxArm64ProcessStartInfo(string exePath)
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out var environment))
+        {
+            throw new InvalidOperationException("Linux arm64 execution requires either a native arm64 Linux host or qemu-aarch64 with an arm64 sysroot.");
+        }
+
+        if (environment.EmulatorPath is null)
+        {
+            return new ProcessStartInfo(exePath);
+        }
+
+        var psi = new ProcessStartInfo(environment.EmulatorPath);
+        psi.ArgumentList.Add("-L");
+        psi.ArgumentList.Add(environment.SysrootPath!);
+        psi.ArgumentList.Add(exePath);
+        return psi;
+    }
+
+    private static string? FindCommandOnPath(IEnumerable<string> candidates)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var fullPath = Path.Combine(directory, candidate);
+                if (File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? FindLinuxArm64Sysroot()
+    {
+        foreach (var candidate in LinuxArm64SysrootCandidates)
+        {
+            if (File.Exists(Path.Combine(candidate, "lib", "ld-linux-aarch64.so.1")))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static void TryKillProcess(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        try
+        {
+            process.WaitForExit();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
+    {
+        var buffer = new byte[maxBytes];
+        var total = 0;
+        byte[] headerTerminator = "\r\n\r\n"u8.ToArray();
+
+        while (total < buffer.Length)
+        {
+            try
+            {
+                using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                total += count;
+                if (buffer.AsSpan(0, total).IndexOf(headerTerminator) >= 0)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, total);
+    }
+
+    private static string CreateTempDirectory()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        return tmpDir;
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void DeleteFileIfExists(string path)
+    {
+        const int maxAttempts = 5;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+        }
+    }
+
+    private readonly record struct LinuxArm64ExecutionEnvironment(string? EmulatorPath, string? SysrootPath);
+
+    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
 }

@@ -3,7 +3,7 @@
 Transparent `https://` in `Ashes.Http.get` / `Ashes.Http.post` is now
 landed. The active native-backend implementation is now the hermetic
 `rustls` path shared by Linux x64, Linux arm64, and Windows x64,
-although explicit Linux arm64 runtime fixture validation and final
+although broader cross-backend runtime coverage and final
 cleanup/documentation alignment remain open.
 This document records the completed work and the remaining follow-up
 items.
@@ -50,8 +50,8 @@ runtime foundation.
 
 | Area | What was done |
 |------|---------------|
-| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Http.get` / `Ashes.Http.post` as accepting `http://` and `https://` URLs, with default port 443 for HTTPS, and documents the public `Ashes.Net.Tls` surface plus `TlsSocket`. Phase D doc cleanup still needs to remove stale OpenSSL wording. |
-| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now describes HTTPS support in `Ashes.Http` and documents the public `Ashes.Net.Tls` module. Phase D cleanup still needs to replace stale OpenSSL wording with the hermetic runtime description. |
+| **Language specification** | `docs/LANGUAGE_SPEC.md` now documents `Ashes.Http.get` / `Ashes.Http.post` as accepting `http://` and `https://` URLs, with default port 443 for HTTPS, and documents the public `Ashes.Net.Tls` surface plus `TlsSocket` on the hermetic runtime path. |
+| **Standard library docs** | `docs/STANDARD_LIBRARY.md` now describes HTTPS support in `Ashes.Http` and documents the public `Ashes.Net.Tls` module on the hermetic runtime path. |
 | **Linux dynamic-import foundation** | The Linux x64 ELF linker now emits the dynamic loader/interpreter metadata and import tables needed for runtime `dlopen` / `dlsym` calls from generated executables. |
 | **Windows dynamic-import foundation** | The Windows PE linker now emits the import tables needed for runtime `LoadLibraryA` / `GetProcAddress` calls plus Crypt32 root-store access from generated executables. |
 | **Hermetic TLS runtime initialization** | The generated runtime now writes and loads a vendored `rustls-ffi` payload on first TLS use, resolves the `rustls_*` ABI, and builds a shared client configuration used by both `Ashes.Http` and `Ashes.Net.Tls`. |
@@ -148,8 +148,9 @@ If the embedded TLS payload or verifier initialization cannot be
 loaded, the call returns `Error(...)` rather than crashing or
 panicking.
 
-The remaining OpenSSL-specific wording in user-facing docs is stale and
-tracked under Phase D cleanup below.
+Remaining cleanup work is now focused on explicit Linux arm64 runtime
+validation and removing dormant transitional code rather than on the
+active user-facing runtime contract.
 
 ------------------------------------------------------------------------
 
@@ -199,18 +200,20 @@ item below is done.
 
 ### Phase A — Finish the Current Shipped Path
 
-- [ ] Add explicit Linux arm64 HTTPS runtime validation.
-  The Linux TLS implementation path is shared across Linux x64 and
-  Linux arm64, but this branch does not yet have dedicated arm64
-  runtime fixture coverage comparable to the current Linux x64 and
-  Windows x64 backend tests.
+- [x] Add explicit Linux arm64 HTTPS runtime validation.
+  `src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` now includes a
+  dedicated HTTPS loopback runtime test that executes on native arm64
+  Linux hosts and on x64 Linux when `qemu-aarch64` plus an arm64
+  sysroot are available.
 - [x] Add first-class HTTPS harness support to end-to-end `.ash` tests.
   The backend coverage tests and `Ashes.Cli test` flow now both have
   built-in HTTPS fixture coverage for successful HTTPS, trust-failure,
   and hostname-mismatch scenarios.
-- [ ] Keep any remaining transitional OpenSSL-specific code and docs in
-  bug-fix-only mode while the hermetic runtime cleanup is being
-  finished.
+- [x] Clean up remaining transitional OpenSSL-specific code and docs
+  that still described the old runtime path.
+  The active runtime path is hermetic `rustls`; dead OpenSSL-only
+  helper code and stale user-facing OpenSSL requirement wording have
+  been removed from the shipped path.
 
 ### Phase B — Build the Hermetic TLS Runtime
 
@@ -253,14 +256,14 @@ item below is done.
 
 ### Phase D — Cut Over and Clean Up
 
-- [ ] Make hermetic TLS the default shipping path for both
+- [x] Make hermetic TLS the default shipping path for both
   `Ashes.Http` and `Ashes.Net.Tls` on `linux-x64`, `linux-arm64`, and
   `win-x64`.
-- [ ] Remove the runtime OpenSSL requirement from user-facing docs once
+- [x] Remove the runtime OpenSSL requirement from user-facing docs once
   the hermetic path is landed.
 - [ ] Delete the transitional OpenSSL loader/runtime path once the
   hermetic path is proven on all shipped native backends.
-- [ ] Update `docs/future/FUTURE_FEATURES.md`,
+- [x] Update `docs/future/FUTURE_FEATURES.md`,
   `docs/future/ASYNC_NETWORKING.md`, and related architecture docs to
   describe hermetic TLS as landed rather than planned.
 
@@ -317,17 +320,15 @@ The landed coverage uses the existing loopback fixture style:
 ## Standard Library and Spec Impact
 
 - `docs/LANGUAGE_SPEC.md` — HTTP rules section now allows `https://`,
-  documents default port 443, and documents the public `Ashes.Net.Tls`
-  module plus the `TlsSocket` resource type. Remaining OpenSSL runtime
-  wording in that file is stale and should be cleaned up in Phase D.
+  documents default port 443, documents the public `Ashes.Net.Tls`
+  module plus the `TlsSocket` resource type, and now describes the
+  hermetic TLS runtime instead of the old OpenSSL dependency.
 - `docs/STANDARD_LIBRARY.md` — HTTP module section now notes HTTPS
   support, and `Ashes.Net.Tls` is documented as a public built-in
-  module. Remaining OpenSSL runtime wording in that file is stale and
-  should be cleaned up in Phase D.
+  module on the hermetic TLS runtime.
 - `docs/future/FUTURE_FEATURES.md` — HTTPS/TLS row links to this
-  document and now marks the feature as partial rather than purely
-  planned. Its summary text still needs to be updated from the old
-  OpenSSL-centered wording once the remaining cleanup items land.
+  document and now marks the feature as partial while describing the
+  hermetic runtime as landed rather than planned.
 - New public builtins are exposed under `Ashes.Net.Tls` and lower through
   a staged TLS connect task plus dedicated TLS send/receive/close task states.
 - No new diagnostics codes.
@@ -347,13 +348,13 @@ This document follows the
    default port, error propagation, and ASH012 enforcement all
    covered before this is considered landed.
 4. **No user-visible `Drop`.** TLS sockets are cleaned up
-   automatically; `SSL_free` is part of the leaf-task close path
-   and the `Drop(Socket)` cleanup path.
+  automatically; the TLS close-notify/connection-free path is part of
+  leaf-task cleanup and the existing resource cleanup path.
 5. **Purity preserved.** HTTPS calls return `Task(Str, Str)`; no
    mutation, no in-place updates.
-6. **No GC.** TLS contexts and `SSL*` handles are freed
-   deterministically by the leaf-task close stage and the existing
-   resource cleanup path.
+6. **No GC.** TLS configs and connection handles are freed
+  deterministically by the leaf-task close stage and the existing
+  resource cleanup path.
 
 ------------------------------------------------------------------------
 
@@ -369,6 +370,6 @@ the Definition of Complete section.
 3. **TLS server support.** Server-side accept/listen support is not
    part of the client-focused roadmap above.
 4. **ALPN, HTTP/2, and HTTP/3.** Each is a separate protocol milestone.
-5. **OpenSSL 1.1 transitional compatibility.** Only relevant if the
-   temporary OpenSSL-backed path survives long enough to justify more
-   compatibility work.
+5. **Legacy TLS compatibility cleanup.** Only relevant if any dormant
+  transitional TLS code survives long enough to justify more
+  compatibility work.

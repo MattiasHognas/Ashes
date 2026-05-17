@@ -1342,7 +1342,6 @@ internal static partial class LlvmCodegen
                 CreateInternalI64Global("__ashes_tls_init_status"),
                 CreateInternalI64Global("__ashes_tls_ctx"),
                 CreateInternalI64Global("__ashes_tls_libssl_handle"),
-                CreateInternalI64Global("__ashes_tls_libcrypto_handle"),
                 rustlsReadCallback,
                 rustlsWriteCallback)
             : default;
@@ -2100,7 +2099,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, afterWriteBlock);
         LlvmValueHandle libsslHandle = EmitLinuxDlopen(state, payloadPathCstr, prefix + "_dlopen_rustls");
         LlvmApi.BuildStore(builder, libsslHandle, globals.LibsslHandleGlobal);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), globals.LibcryptoHandleGlobal);
         LlvmValueHandle hasLibssl = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, libsslHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_rustls");
         LlvmApi.BuildCondBr(builder, hasLibssl, resolveSymbolsBlock, failMissingLibraryBlock);
 
@@ -2350,119 +2348,6 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, globals.InitStatusGlobal, prefix + "_status");
     }
 
-    private static LlvmValueHandle EmitPopulateWindowsTlsTrustStore(LlvmCodegenState state, LlvmValueHandle sslCtx, LlvmValueHandle libsslHandle, LlvmValueHandle libcryptoHandle, string prefix)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle rootStoreSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_root_store_slot");
-        LlvmValueHandle sslStoreSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_ssl_store_slot");
-        LlvmValueHandle previousContextSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_previous_context_slot");
-        LlvmValueHandle importedAnySlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_imported_any_slot");
-        LlvmValueHandle encodedBytesSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, prefix + "_encoded_bytes_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), rootStoreSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), sslStoreSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), previousContextSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), importedAnySlot);
-
-        LlvmValueHandle sslCtxGetCertStoreFn = EmitTlsResolveSymbol(state, libsslHandle, "SSL_CTX_get_cert_store", prefix + "_resolve_get_cert_store");
-        LlvmValueHandle d2iX509Fn = EmitTlsResolveSymbol(state, libcryptoHandle, "d2i_X509", prefix + "_resolve_d2i_x509");
-        LlvmValueHandle x509StoreAddCertFn = EmitTlsResolveSymbol(state, libcryptoHandle, "X509_STORE_add_cert", prefix + "_resolve_store_add_cert");
-        LlvmValueHandle x509FreeFn = EmitTlsResolveSymbol(state, libcryptoHandle, "X509_free", prefix + "_resolve_x509_free");
-        LlvmValueHandle haveSymbols = LlvmApi.BuildAnd(builder,
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, sslCtxGetCertStoreFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_get_cert_store"),
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, d2iX509Fn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_d2i_x509"),
-            prefix + "_have_first_symbols");
-        haveSymbols = LlvmApi.BuildAnd(builder,
-            haveSymbols,
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, x509StoreAddCertFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_store_add_cert"),
-            prefix + "_have_second_symbols");
-        haveSymbols = LlvmApi.BuildAnd(builder,
-            haveSymbols,
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, x509FreeFn, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_x509_free"),
-            prefix + "_have_all_symbols");
-
-        LlvmBasicBlockHandle openStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_open_store");
-        LlvmBasicBlockHandle checkSslStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_ssl_store");
-        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
-        LlvmBasicBlockHandle decodeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_decode");
-        LlvmBasicBlockHandle addBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_add");
-        LlvmBasicBlockHandle loopAdvanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop_advance");
-        LlvmBasicBlockHandle closeCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_check");
-        LlvmBasicBlockHandle closeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmApi.BuildCondBr(builder, haveSymbols, openStoreBlock, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, openStoreBlock);
-        LlvmValueHandle rootStore = EmitWindowsCertOpenSystemStore(state,
-            EmitStringToCString(state, EmitHeapStringLiteral(state, "ROOT"), prefix + "_root_name"),
-            prefix + "_open_root");
-        LlvmApi.BuildStore(builder, rootStore, rootStoreSlot);
-        LlvmValueHandle hasRootStore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStore, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_root_store");
-        LlvmApi.BuildCondBr(builder, hasRootStore, checkSslStoreBlock, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkSslStoreBlock);
-        LlvmTypeHandle sslCtxGetCertStoreType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr]);
-        LlvmValueHandle sslStorePtr = EmitCallFunctionAddress(state,
-            sslCtxGetCertStoreFn,
-            sslCtxGetCertStoreType,
-            [sslCtx],
-            prefix + "_get_cert_store_call");
-        LlvmValueHandle sslStoreHandle = LlvmApi.BuildPtrToInt(builder, sslStorePtr, state.I64, prefix + "_ssl_store_handle");
-        LlvmApi.BuildStore(builder, sslStoreHandle, sslStoreSlot);
-        LlvmValueHandle hasSslStore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, sslStoreHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_ssl_store");
-        LlvmApi.BuildCondBr(builder, hasSslStore, loopBlock, closeCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
-        LlvmValueHandle previousContext = LlvmApi.BuildLoad2(builder, state.I64, previousContextSlot, prefix + "_previous_context");
-        LlvmValueHandle currentContext = EmitWindowsCertEnumCertificatesInStore(state,
-            LlvmApi.BuildLoad2(builder, state.I64, rootStoreSlot, prefix + "_root_store_handle"),
-            previousContext,
-            prefix + "_enum_cert");
-        LlvmApi.BuildStore(builder, currentContext, previousContextSlot);
-        LlvmValueHandle hasCurrentContext = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, currentContext, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_current_context");
-        LlvmApi.BuildCondBr(builder, hasCurrentContext, decodeBlock, closeCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, decodeBlock);
-        LlvmValueHandle encodedBytesHandle = LoadMemory(state, currentContext, 8, prefix + "_encoded_bytes_handle");
-        LlvmValueHandle encodedLength = LlvmApi.BuildZExt(builder, EmitLoadI32AtOffset(state, currentContext, 16, prefix + "_encoded_length"), state.I64, prefix + "_encoded_length_i64");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildIntToPtr(builder, encodedBytesHandle, state.I8Ptr, prefix + "_encoded_bytes_ptr"), encodedBytesSlot);
-        LlvmTypeHandle d2iX509Type = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I8Ptr, state.I64]);
-        LlvmValueHandle certificatePtr = EmitCallFunctionAddress(state,
-            d2iX509Fn,
-            d2iX509Type,
-            [LlvmApi.ConstNull(state.I8Ptr), encodedBytesSlot, encodedLength],
-            prefix + "_d2i_x509_call");
-        LlvmValueHandle certificateHandle = LlvmApi.BuildPtrToInt(builder, certificatePtr, state.I64, prefix + "_certificate_handle");
-        LlvmValueHandle haveCertificate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, certificateHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_have_certificate");
-        LlvmApi.BuildCondBr(builder, haveCertificate, addBlock, loopAdvanceBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, addBlock);
-        LlvmTypeHandle x509StoreAddCertType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr]);
-        _ = EmitCallFunctionAddress(state,
-            x509StoreAddCertFn,
-            x509StoreAddCertType,
-            [LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildLoad2(builder, state.I64, sslStoreSlot, prefix + "_ssl_store_handle_value"), state.I8Ptr, prefix + "_ssl_store_ptr"), certificatePtr],
-            prefix + "_store_add_cert_call");
-        LlvmTypeHandle x509FreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
-        _ = EmitCallFunctionAddress(state, x509FreeFn, x509FreeType, [certificatePtr], string.Empty);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), importedAnySlot);
-        LlvmApi.BuildBr(builder, loopAdvanceBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopAdvanceBlock);
-        LlvmApi.BuildBr(builder, loopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, closeCheckBlock);
-        LlvmValueHandle rootStoreHandle = LlvmApi.BuildLoad2(builder, state.I64, rootStoreSlot, prefix + "_root_store_value");
-        LlvmValueHandle shouldClose = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rootStoreHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_should_close");
-        LlvmApi.BuildCondBr(builder, shouldClose, closeBlock, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, closeBlock);
-        EmitWindowsCertCloseStore(state, rootStoreHandle, prefix + "_close_root_store");
-        LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, importedAnySlot, prefix + "_imported_any");
-    }
-
     private static LlvmValueHandle EmitEnsureWindowsTlsRuntimeInitialized(LlvmCodegenState state, LinuxTlsGlobals globals, HermeticTlsRuntimeAsset? rustlsSharedLibrary, LlvmValueHandle linkedTlsPayloadStartGlobal, LlvmValueHandle linkedTlsPayloadEndGlobal, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -2512,7 +2397,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, afterWriteBlock);
         LlvmValueHandle libsslHandle = EmitWindowsLoadLibrary(state, payloadPathCstr, prefix + "_load_rustls");
         LlvmApi.BuildStore(builder, libsslHandle, globals.LibsslHandleGlobal);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), globals.LibcryptoHandleGlobal);
         LlvmValueHandle hasLibssl = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, libsslHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_rustls");
         LlvmApi.BuildCondBr(builder, hasLibssl, resolveSymbolsBlock, failMissingLibraryBlock);
 
@@ -2653,7 +2537,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle InitStatusGlobal,
         LlvmValueHandle ContextGlobal,
         LlvmValueHandle LibsslHandleGlobal,
-        LlvmValueHandle LibcryptoHandleGlobal,
         LlvmValueHandle RustlsReadCallback,
         LlvmValueHandle RustlsWriteCallback);
 

@@ -172,7 +172,7 @@ Networking rules:
 - `Ashes.Net.Tls.connect` performs a TCP connect followed by a TLS client handshake.
 - TLS connections require SNI, hostname verification, and system-trust validation.
 - On the current Linux x64, Linux arm64, and Windows x64 backends, `Ashes.Net.Tls`
-  uses the same OpenSSL 3 runtime dependency as `https://` in `Ashes.Http`.
+  uses the same hermetic `rustls` runtime path as `https://` in `Ashes.Http`.
 - `close` is explicit and deterministic; using a closed `Socket` or `TlsSocket`
   returns `Error(...)`.
 - **Automatic cleanup**: `Socket` and `TlsSocket` are **resource types**. The compiler
@@ -203,8 +203,8 @@ Current HTTP rules:
 
 - `http://` and `https://` URLs are supported.
 - `https://` defaults to port 443 and, on the current Linux x64,
-  Linux arm64, and Windows x64 backends, requires OpenSSL 3 to be
-  available at runtime.
+  Linux arm64, and Windows x64 backends, uses the hermetic `rustls`
+  runtime embedded into TLS-using executables.
 - Other backends may still return a runtime error for `https://` until
   their TLS runtime support lands.
 - Non-2xx responses return `Error("HTTP <status>")`.
