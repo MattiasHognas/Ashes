@@ -212,24 +212,24 @@ item below is done.
 
 ### Phase B — Build the Hermetic TLS Runtime
 
-- [ ] Implement built-in hermetic TLS as the long-term runtime model.
+- [x] Implement built-in hermetic TLS as the long-term runtime model.
   Embed the vendored TLS payload per executable rather than shipping a
   shared Ashes TLS runtime library.
-- [ ] Use `rustls` behind a thin C ABI wrapper as the default hermetic
+- [x] Use `rustls` behind a thin C ABI wrapper as the default hermetic
   TLS engine.
   This is the current recommended direction because it preserves the
   memory-safety goal better than vendored C TLS stacks while still
   supporting the shipped Linux and Windows targets. Binary size should
   still be minimized, but size is secondary to speed, memory safety,
   and functionality.
-- [ ] Link the TLS payload only into compiled outputs that actually
+- [x] Link the TLS payload only into compiled outputs that actually
   require HTTPS or `Ashes.Net.Tls`.
   Programs that never touch TLS should not pay the binary-size cost of
   the vendored runtime.
 - [ ] Import system trust roots at runtime for hermetic TLS.
   The default policy should stay aligned with the host OS trust store
   rather than shipping a bundled CA set by default.
-- [ ] Repoint the staged `Ashes.Http` TLS leaf tasks from the current
+- [x] Repoint the staged `Ashes.Http` TLS leaf tasks from the current
   OpenSSL ABI to the hermetic TLS ABI.
 - [ ] Add backend/runtime coverage for the hermetic path on every
   shipped native backend.

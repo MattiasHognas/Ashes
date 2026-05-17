@@ -295,7 +295,7 @@ Ashes.IO.print(match Ashes.Async.run(async
         {
             var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
             var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
-            var serverException = await serverTask;
+            var serverException = await serverTask.WaitAsync(SocketTestConstants.SocketTimeout);
 
             var serverDiagnostic = serverException is null
                 ? null
@@ -355,7 +355,22 @@ Ashes.IO.print(match Ashes.Async.run(async
         using var process = Process.Start(startInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout);
+        }
+        catch (TimeoutException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            throw;
+        }
 
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }

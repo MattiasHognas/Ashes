@@ -103,8 +103,10 @@ internal sealed class TlsLoopbackTestHost : IDisposable
     private static async Task HandleClientAsync(TcpClient client, X509Certificate2 serverCertificate, Func<SslStream, Task> handleClientAsync)
     {
         using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
-        await stream.AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
-        await handleClientAsync(stream);
+        await stream
+            .AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false)
+            .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
+        await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
         await stream.FlushAsync();
     }
 
