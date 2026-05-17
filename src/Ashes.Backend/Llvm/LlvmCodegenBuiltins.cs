@@ -2272,12 +2272,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, haveBuilder, attachVerifierBlock, failInitBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, attachVerifierBlock);
+        LlvmValueHandle selectedVerifierHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, verifierSlot, prefix + "_selected_verifier_handle");
         LlvmTypeHandle setVerifierType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr, state.I8Ptr]);
         _ = EmitCallFunctionAddress(
             state,
             configBuilderSetVerifierFn,
             setVerifierType,
-            [configBuilder, verifierHandle],
+            [configBuilder, selectedVerifierHandle],
             string.Empty);
         LlvmTypeHandle configBuilderBuildType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, LlvmApi.PointerTypeInContext(state.Target.Context, 0)]);
         LlvmValueHandle buildStatus = EmitCallFunctionAddress(
@@ -2287,7 +2288,7 @@ internal static partial class LlvmCodegen
             [configBuilder, configSlot],
             prefix + "_build_call");
         LlvmTypeHandle verifierFreeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
-        _ = EmitCallFunctionAddress(state, verifierFreeFn, verifierFreeType, [verifierHandle], string.Empty);
+        _ = EmitCallFunctionAddress(state, verifierFreeFn, verifierFreeType, [selectedVerifierHandle], string.Empty);
         LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I8Ptr, configSlot, prefix + "_config_handle");
         LlvmValueHandle buildOk = LlvmApi.BuildAnd(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildZExt(builder, buildStatus, state.I64, prefix + "_build_status_i64"), LlvmApi.ConstInt(state.I64, RustlsResultOk, 0), prefix + "_build_status_ok"),
