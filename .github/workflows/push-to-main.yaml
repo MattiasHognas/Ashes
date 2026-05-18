@@ -40,8 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 'lts/*'
-          check-latest: true
+          node-version: '26'
 
       - name: Restore
         run: dotnet restore Ashes.slnx
