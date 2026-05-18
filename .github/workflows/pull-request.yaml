@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: '26'
 
+      - name: Restore
+        run: dotnet restore Ashes.slnx
+
       - name: Build
         run: dotnet build Ashes.slnx --configuration Release --no-restore
 
