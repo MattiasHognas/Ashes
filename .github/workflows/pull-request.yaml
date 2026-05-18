@@ -38,11 +38,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 'lts/*'
-          check-latest: true
-
-      - name: Restore
-        run: dotnet restore Ashes.slnx
+          node-version: '26'
 
       - name: Build
         run: dotnet build Ashes.slnx --configuration Release --no-restore
