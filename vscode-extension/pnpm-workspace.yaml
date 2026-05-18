@@ -2,4 +2,4 @@ allowBuilds:
   esbuild: true
 
 policies:
-  minimumReleaseAge: 0
+  minimumReleaseAge: "0 seconds"
