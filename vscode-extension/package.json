@@ -9,8 +9,8 @@
     "url": "https://github.com/MattiasHognas/Ashes"
   },
   "engines": {
-    "vscode": "^1.118.0",
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "vscode": "^1.120.0",
+    "node": "^26.0.0"
   },
   "icon": "icon.png",
   "categories": [
@@ -214,7 +214,7 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.6.2",
+    "@types/node": "^25.9.0",
     "@types/vscode": "^1.120.0",
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.3",
