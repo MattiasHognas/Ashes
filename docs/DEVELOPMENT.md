@@ -59,8 +59,10 @@ dotnet build Ashes.slnx --configuration Release
 ## Native Runtime Libraries
 
 The native backend requires LLVM libraries, and HTTPS/TLS workloads also
-require rustls-ffi shared libraries. Provision both before running
-backend or end-to-end tests:
+require rustls-ffi shared libraries. LLVM must be provisioned before
+running backend or end-to-end tests; the rustls-ffi payloads are
+vendored under `runtimes/{linux-x64,linux-arm64,win-x64}/` and only need
+to be refreshed when bumping `RustlsFfiVersion`:
 
 ```sh
 # LLVM: all platforms (linux-x64, linux-arm64, win-x64):
@@ -72,13 +74,10 @@ bash scripts/download-llvm-native.sh
 # LLVM: specific architecture:
 bash scripts/download-llvm-native.sh 22 arm64
 
-# rustls-ffi: all supported payloads (linux-x64, linux-arm64, win-x64):
+# rustls-ffi: refresh all vendored payloads (linux-x64, linux-arm64, win-x64):
 bash scripts/download-rustls-ffi.sh --all
 
-# rustls-ffi: native Linux payload only:
-bash scripts/download-rustls-ffi.sh
-
-# rustls-ffi: selected targets:
+# rustls-ffi: refresh selected vendored payloads:
 bash scripts/download-rustls-ffi.sh --linux-x64 --win-x64
 ```
 
@@ -87,17 +86,21 @@ because upstream does not publish a prebuilt Linux arm64 shared
 library. The default rustls-ffi version is read from
 `Directory.Build.props`.
 
-On Windows, run the bash scripts from WSL:
+On Windows, run the bash scripts from WSL. A normal checkout already
+includes the rustls-ffi payloads; only LLVM must be downloaded for test
+setup unless you are intentionally refreshing the vendored rustls files:
 
 ```sh
-# Download all supported runtimes, including win-x64 payloads:
+# Download all supported LLVM payloads:
 bash scripts/download-llvm-native.sh --all
+
+# Optional: refresh the vendored rustls payloads:
 bash scripts/download-rustls-ffi.sh --all
 ```
 
-The scripts stage native payloads under
+The scripts stage LLVM payloads and refreshed rustls payloads under
 `runtimes/{linux-x64,linux-arm64,win-x64}/`. `Ashes.Backend.csproj`
-validates the provisioned rustls-ffi version and copies both LLVM and
+validates the vendored rustls-ffi version and copies both LLVM and
 rustls assets into build output.
 
 ### Optional linux-arm64 execution from linux-x64 hosts
@@ -124,7 +127,10 @@ qemu-aarch64-static -L /usr/aarch64-linux-gnu ./hello-arm64
 ### Optional win-x64 execution from linux-x64 hosts
 
 `win-x64` backend outputs can also be executed from an x64 Linux host
-when `wine64` or `wine` is available in `PATH`.
+when a Wine launcher is available, such as `wine64`, `wine`, or
+`wine-stable` in `PATH`. On Ubuntu 24.04, installing the `wine` package
+provides `wine-stable`, while `wine64` alone lives at
+`/usr/lib/wine/wine64`.
 
 `src/Ashes.Tests/TestProcessHelper.cs` auto-detects Wine for test-time PE
 execution, so `EndToEndWindowsBackendTests` and

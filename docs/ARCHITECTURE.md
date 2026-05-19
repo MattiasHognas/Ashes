@@ -164,7 +164,7 @@ the target ID.
 | Dependency | Source | Purpose |
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
-| rustls-ffi (native) | Downloaded via `scripts/download-rustls-ffi.sh` | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
+| rustls-ffi (native) | Vendored under `runtimes/` (refreshed via `scripts/download-rustls-ffi.sh`) | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
@@ -185,6 +185,10 @@ rustls-ffi payload exist for the active RID. LLVM is copied into the
 build output root, while rustls-ffi payloads and `rustls.version` are
 copied under `runtimes/<rid>/`; `Directory.Build.targets` reapplies the
 RID-specific copies during `dotnet publish`.
+
+The rustls-ffi payloads are committed to the repository. Re-run
+`scripts/download-rustls-ffi.sh` only when updating `RustlsFfiVersion`
+or refreshing the vendored binaries.
 
 To bump the LLVM version, pass the new version to the download script —
 no source changes are needed because the LLVM C API is stable across

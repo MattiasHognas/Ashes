@@ -116,14 +116,13 @@ Formatting is considered part of correctness, not style.
 
 # Runtime Prerequisites
 
-Before running backend or end-to-end tests, download all LLVM native runtimes and Rustls FFIs using the provided scripts:
+Before running backend or end-to-end tests, download all LLVM native runtimes using the provided script. The rustls FFIs are vendored under `runtimes/` and only need to be refreshed when `RustlsFfiVersion` changes:
 
 ```bash
 bash scripts/download-llvm-native.sh --all
-bash scripts/download-rustls-ffi.sh --all
 ```
 
-This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries, as well as Rustls FFIs.
+This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries.
 
 When native arm64 hardware is unavailable, linux-arm64 backend/runtime validation may run through `qemu-aarch64` or `qemu-aarch64-static` with an arm64 sysroot (for example `/usr/aarch64-linux-gnu`).
 The repo's linux-arm64 coverage helper checks both `PATH` and the rootless Arch-style unpack location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.

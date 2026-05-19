@@ -14,28 +14,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Restore Runtimes Cache
-        id: cache-runtimes
+      - name: Restore LLVM cache
+        id: cache-llvm
         uses: actions/cache/restore@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
-      - name: Download all Rustls FFIs
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
-        run: bash scripts/download-rustls-ffi.sh --all
-
-      - name: Save Runtimes Cache
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+      - name: Save LLVM cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
   build-compiler:
@@ -63,11 +65,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Restore Runtimes Cache
+      - name: Restore LLVM cache
         uses: actions/cache/restore@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
       - name: Get version
@@ -156,11 +161,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Restore Runtimes Cache
+      - name: Restore LLVM cache
         uses: actions/cache/restore@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
       - name: Get version

@@ -8,7 +8,7 @@ namespace Ashes.Tests;
 /// </summary>
 internal static class TestProcessHelper
 {
-    private static readonly string[] WineExecutableCandidates = ["wine64", "wine"];
+    private static readonly string[] WineExecutableCandidates = ["wine64", "wine", "wine-stable", "/usr/lib/wine/wine64"];
 
     /// <summary>
     /// Starts a process, retrying on transient ETXTBSY ("Text file busy") errors.
@@ -126,7 +126,19 @@ internal static class TestProcessHelper
 
     private static string? FindCommandOnPath(IEnumerable<string> candidates)
     {
-        var path = Environment.GetEnvironmentVariable("PATH");
+        return FindCommand(candidates, Environment.GetEnvironmentVariable("PATH"));
+    }
+
+    internal static string? FindCommand(IEnumerable<string> candidates, string? path)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (Path.IsPathRooted(candidate) && File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(path))
         {
             return null;
@@ -134,6 +146,11 @@ internal static class TestProcessHelper
 
         foreach (var candidate in candidates)
         {
+            if (Path.IsPathRooted(candidate))
+            {
+                continue;
+            }
+
             foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var fullPath = Path.Combine(directory, candidate);

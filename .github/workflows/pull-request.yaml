@@ -14,28 +14,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache Runtimes
-        id: cache-runtimes
+      - name: Cache LLVM runtimes
+        id: cache-llvm
         uses: actions/cache@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
 
-      - name: Download all Rustls FFIs
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
-        run: bash scripts/download-rustls-ffi.sh --all
-
-      - name: Save Runtimes Cache
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+      - name: Save LLVM cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: runtimes
-          key: runtimes-llvm-rustls
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm
           enableCrossOsArchive: true
 
       - name: Setup .NET
@@ -56,8 +58,21 @@ jobs:
       - name: Install Wine
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64
-          wine64 --version || wine --version
+          sudo apt-get install -y --no-install-recommends wine
+          for candidate in wine64 wine wine-stable /usr/lib/wine/wine64; do
+            if [ -x "$candidate" ]; then
+              "$candidate" --version
+              exit 0
+            fi
+
+            if runner_path="$(command -v "$candidate" 2>/dev/null)"; then
+              "$runner_path" --version
+              exit 0
+            fi
+          done
+
+          echo "Unable to locate a Wine executable after installation." >&2
+          exit 1
 
       - name: Install linux-arm64 execution prerequisites
         run: |
