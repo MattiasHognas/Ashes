@@ -19,7 +19,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: runtimes
-          key: runtimes-22
+          key: runtimes-llvm-rustls
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: runtimes
-          key: runtimes-22
+          key: runtimes-llvm-rustls
           enableCrossOsArchive: true
 
   build-compiler:
@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: runtimes
-          key: runtimes-22
+          key: runtimes-llvm-rustls
           enableCrossOsArchive: true
 
       - name: Get version
@@ -160,7 +160,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: runtimes
-          key: runtimes-22
+          key: runtimes-llvm-rustls
           enableCrossOsArchive: true
 
       - name: Get version
