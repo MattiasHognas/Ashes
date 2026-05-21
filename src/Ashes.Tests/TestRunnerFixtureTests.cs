@@ -56,6 +56,22 @@ public sealed class TestRunnerFixtureTests
     }
 
     [Test]
+    public void ParseTestDirectives_reads_skip_on_targets()
+    {
+        const string source = """
+            // skip-on: win-x64, linux-arm64
+            // expect: ok
+            Ashes.IO.print(1)
+            """;
+
+        var directives = Runner.ParseTestDirectives(source);
+
+        directives.SkipOnTargets.Count.ShouldBe(2);
+        directives.SkipOnTargets[0].ShouldBe("win-x64");
+        directives.SkipOnTargets[1].ShouldBe("linux-arm64");
+    }
+
+    [Test]
     public void MaterializeTestFixtures_creates_nested_files()
     {
         var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));

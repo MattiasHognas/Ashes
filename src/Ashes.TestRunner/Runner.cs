@@ -77,7 +77,8 @@ public static class Runner
         string? Stdin,
         IReadOnlyList<TestFileFixture> FileFixtures,
         TcpServerFixture TcpServer,
-        TlsServerFixture TlsServer);
+        TlsServerFixture TlsServer,
+        IReadOnlyList<string> SkipOnTargets);
 
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
@@ -111,6 +112,13 @@ public static class Runner
             {
                 results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
                 console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP[/]");
+                continue;
+            }
+
+            if (directives.SkipOnTargets.Any(t => string.Equals(t, targetId, StringComparison.OrdinalIgnoreCase)))
+            {
+                results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
+                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP ({Markup.Escape(targetId)})[/]");
                 continue;
             }
 
@@ -341,6 +349,7 @@ public static class Runner
         var tlsTrustMode = TlsFixtureTrustMode.Trusted;
         var tlsHandshakeMode = TlsFixtureHandshakeMode.Success;
         var tlsCertificateHost = "localhost";
+        var skipOnTargets = new List<string>();
 
         using var sr = new StringReader(source);
         string? line;
@@ -479,6 +488,19 @@ public static class Runner
                     throw new InvalidOperationException("TLS fixture certificate host cannot be empty.");
                 }
             }
+
+            if (commentText.StartsWith("skip-on:", StringComparison.OrdinalIgnoreCase))
+            {
+                var list = commentText.Substring("skip-on:".Length);
+                foreach (var raw in list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (raw.Length > 0)
+                    {
+                        skipOnTargets.Add(raw);
+                    }
+                }
+                continue;
+            }
         }
 
         if (tcpServerEnabled && tlsServerEnabled)
@@ -494,7 +516,8 @@ public static class Runner
             stdin,
             fileFixtures,
             new TcpServerFixture(tcpServerEnabled, tcpExpectedText, tcpSendText),
-            new TlsServerFixture(tlsServerEnabled, tlsExpectedText, tlsSendText, tlsTrustMode, tlsHandshakeMode, tlsCertificateHost));
+            new TlsServerFixture(tlsServerEnabled, tlsExpectedText, tlsSendText, tlsTrustMode, tlsHandshakeMode, tlsCertificateHost),
+            skipOnTargets);
     }
 
     private static TlsFixtureTrustMode ParseTlsFixtureTrustMode(string value)
