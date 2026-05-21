@@ -116,13 +116,18 @@ Formatting is considered part of correctness, not style.
 
 # Runtime Prerequisites
 
-Before running backend or end-to-end tests, download all LLVM native runtimes:
+Before running backend or end-to-end tests, download all LLVM native runtimes using the provided script. The rustls FFIs are vendored under `runtimes/` and only need to be refreshed when `RustlsFfiVersion` changes:
 
 ```bash
 bash scripts/download-llvm-native.sh --all
 ```
 
 This provisions Linux x64, Linux arm64, and Windows x64 LLVM libraries.
+
+When native arm64 hardware is unavailable, linux-arm64 backend/runtime validation may run through `qemu-aarch64` or `qemu-aarch64-static` with an arm64 sysroot (for example `/usr/aarch64-linux-gnu`).
+The repo's linux-arm64 coverage helper checks both `PATH` and the rootless Arch-style unpack location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+win-x64 backend/runtime validation may also run on Linux through `wine64` or `wine` when the test helper is wired for PE execution.
+The Windows TLS runtime still uses the platform verifier by default, but tests may also supply `SSL_CERT_FILE` to load PEM roots explicitly, which allows Wine-backed loopback TLS coverage on Linux hosts.
 
 ---
 

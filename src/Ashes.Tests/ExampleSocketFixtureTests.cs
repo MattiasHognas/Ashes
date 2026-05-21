@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -28,6 +29,24 @@ public sealed class ExampleSocketFixtureTests
                 await stream.FlushAsync();
             },
             expectedStdout: "hello from http\n");
+    }
+
+    [Test]
+    public async Task Https_get_example_should_run_against_loopback_tls_fixture()
+    {
+        await RunExampleWithTlsServerAsync(
+            "https_get.ash",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET / HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            expectedStdout: "hello from https\n");
     }
 
     [Test]
@@ -79,6 +98,7 @@ Ashes.IO.print(match Ashes.Async.run(async
     | Error(err) -> err)
 """;
 
+        var fastResponded = new TaskCompletionSource();
         await RunSourceWithServerAsync(
             source,
             expectedClientCount: 2,
@@ -89,13 +109,31 @@ Ashes.IO.print(match Ashes.Async.run(async
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
                 if (isSlow)
                 {
-                    await Task.Delay(250);
+                    // Block until /fast has actually sent its response so the client deterministically
+                    // observes /fast winning the race regardless of CI scheduling jitter.
+                    await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
+                    // Additional gap so the client unambiguously observes /fast as the first-completed
+                    // task before /slow's response arrives (Ashes.Async.race resolves based on the
+                    // first completed task as observed by the runtime).
+                    await Task.Delay(500);
                 }
 
                 var responseBody = isSlow ? "slow" : "fast";
                 var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                try
+                {
+                    await stream.WriteAsync(response);
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // The race loser's connection may have been closed by the client; ignore.
+                }
+
+                if (!isSlow)
+                {
+                    fastResponded.TrySetResult();
+                }
             },
             expectedStdout: "fast\n");
     }
@@ -211,6 +249,13 @@ Ashes.IO.print(match Ashes.Async.run(async
         await RunPathWithServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout);
     }
 
+    private static async Task RunExampleWithTlsServerAsync(string exampleName, Func<SslStream, Task> handleClientAsync, string expectedStdout)
+    {
+        var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
+        File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
+        await RunPathWithTlsServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout);
+    }
+
     private static async Task RunSourceWithServerAsync(string source, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
     {
         var tempPath = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N") + ".ash");
@@ -240,6 +285,36 @@ Ashes.IO.print(match Ashes.Async.run(async
             var serverTask = RunServerAsync(listener, expectedClientCount, handleClientAsync);
             var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
             var serverException = await serverTask;
+
+            var serverDiagnostic = serverException is null
+                ? null
+                : $"{serverException}{Environment.NewLine}exit={exitCode}{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}";
+            serverException.ShouldBeNull(serverDiagnostic);
+            exitCode.ShouldBe(0, stderr);
+            stdout.ShouldBe(expectedStdout, customMessage: stderr);
+            stderr.ShouldBeEmpty();
+        }
+        finally
+        {
+            TryDeleteFile(tempSourcePath);
+        }
+    }
+
+    private static async Task RunPathWithTlsServerAsync(string sourcePath, int expectedClientCount, Func<SslStream, Task> handleClientAsync, string expectedStdout)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync("localhost");
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath);
+        tlsHost.Configure(startInfo);
+
+        try
+        {
+            var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+            var serverException = await serverTask.WaitAsync(SocketTestConstants.SocketTimeout);
 
             var serverDiagnostic = serverException is null
                 ? null
@@ -299,15 +374,42 @@ Ashes.IO.print(match Ashes.Async.run(async
         using var process = Process.Start(startInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout);
+        }
+        catch (TimeoutException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            throw new TimeoutException($"Compiled CLI process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+
+        }
 
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
-    private static async Task<string> ReadTextAsync(NetworkStream stream, int maxBytes)
+    private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
     {
         var buffer = new byte[maxBytes];
         var total = 0;
+        byte[] headerTerminator = "\r\n\r\n"u8.ToArray();
 
         while (total < buffer.Length)
         {
@@ -321,10 +423,19 @@ Ashes.IO.print(match Ashes.Async.run(async
                 }
 
                 total += count;
-                if (!stream.DataAvailable)
+                if (total >= headerTerminator.Length && buffer.AsSpan(0, total).IndexOf(headerTerminator) >= 0)
                 {
                     break;
                 }
+
+                if (stream is NetworkStream networkStream && !networkStream.DataAvailable)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException) when (total > 0)
+            {
+                break;
             }
             catch (IOException) when (total > 0)
             {

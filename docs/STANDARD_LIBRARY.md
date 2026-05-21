@@ -13,6 +13,7 @@ These types are always available without imports:
 - `Result(E, A)` with constructors `Error(E)` and `Ok(A)`
 - `List<T>` as the type shown for list syntax and list values
 - `Socket`
+- `TlsSocket`
 
 ## Built-in Modules
 
@@ -46,8 +47,12 @@ All networking APIs are async-only and must be awaited inside `async` blocks.
 
 Current HTTP support is intentionally small:
 
-- Only `http://` URLs are supported.
-- `https://` returns `Error("https not supported")`.
+- `http://` and `https://` URLs are supported.
+- `https://` defaults to port 443 and currently ships on the Linux x64,
+  Linux arm64, and Windows x64 backends via the hermetic `rustls`
+  runtime embedded into TLS-using executables.
+- Other backends may still return a runtime error for `https://` until their
+  TLS runtime support lands.
 - Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
 - `Transfer-Encoding: chunked` currently returns `Error("unsupported transfer encoding")`.
 
@@ -57,6 +62,19 @@ Current HTTP support is intentionally small:
 - `send(socket)(text)` returning `Task(Str, Int)`
 - `receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `close(socket)` returning `Task(Str, Unit)`
+
+### `Ashes.Net.Tls`
+
+- `connect(host)(port)` returning `Task(Str, TlsSocket)`
+- `send(socket)(text)` returning `Task(Str, Int)`
+- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `close(socket)` returning `Task(Str, Unit)`
+
+`Ashes.Net.Tls` uses the same TLS runtime path as `https://` in `Ashes.Http`.
+On Linux x64, Linux arm64, and Windows x64 that currently means the
+hermetic `rustls` runtime embedded per TLS-using executable. No
+external OpenSSL installation is required. Hostname verification and
+system-trust validation are mandatory for successful TLS connections.
 
 ## Shipped Helper Modules
 

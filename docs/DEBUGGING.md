@@ -105,12 +105,14 @@ code --install-extension mattiashognas.ashes-vscode
 
 **Local development build:**
 
-```powershell
-.\scripts\install-vscode-extension-local.ps1
+```bash
+bash scripts/install-vscode-extension-local.sh
 ```
 
 This script publishes the LSP server, DAP server, and compiler locally,
 builds the extension, packages a VSIX, and installs it into VS Code.
+On Windows, run it from WSL. If you are targeting the Windows VS Code build,
+pass `--target-rid win-x64`.
 
 Alternatively, build the extension without bundled servers (they will be
 downloaded from GitHub Releases on first activation):
@@ -124,8 +126,8 @@ npm run compile           # Build the extension
 Then install via **Ctrl+Shift+P** → **Extensions: Install from VSIX…** or
 use the local install script:
 
-```powershell
-.\scripts\install-vscode-extension-local.ps1
+```bash
+bash scripts/install-vscode-extension-local.sh
 ```
 
 The extension automatically uses the bundled DAP server — no manual PATH
@@ -494,8 +496,8 @@ the VS Code notifications for download errors.
 
 For local development, use the install script which bundles the DAP server:
 
-```powershell
-.\scripts\install-vscode-extension-local.ps1
+```bash
+bash scripts/install-vscode-extension-local.sh
 ```
 
 If you installed from the marketplace, try reinstalling the extension.

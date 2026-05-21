@@ -56,31 +56,92 @@ dotnet build Ashes.slnx --configuration Release
 
 ------------------------------------------------------------------------
 
-## LLVM Native Libraries
+## Native Runtime Libraries
 
-The backend requires native LLVM libraries. Download them before running
-any backend or end-to-end tests:
+The native backend requires LLVM libraries, and HTTPS/TLS workloads also
+require rustls-ffi shared libraries. LLVM must be provisioned before
+running backend or end-to-end tests; the rustls-ffi payloads are
+vendored under `runtimes/{linux-x64,linux-arm64,win-x64}/` and only need
+to be refreshed when bumping `RustlsFfiVersion`:
 
 ```sh
-# All platforms (linux-x64, linux-arm64, win-x64):
+# LLVM: all platforms (linux-x64, linux-arm64, win-x64):
 bash scripts/download-llvm-native.sh --all
 
-# Current architecture only:
+# LLVM: current architecture only:
 bash scripts/download-llvm-native.sh
 
-# Specific architecture:
+# LLVM: specific architecture:
 bash scripts/download-llvm-native.sh 22 arm64
+
+# rustls-ffi: refresh all vendored payloads (linux-x64, linux-arm64, win-x64):
+bash scripts/download-rustls-ffi.sh --all
+
+# rustls-ffi: refresh selected vendored payloads:
+bash scripts/download-rustls-ffi.sh --linux-x64 --win-x64
 ```
 
-On Windows (PowerShell):
+For rustls-ffi, `--linux-arm64` builds the arm64 payload from source
+because upstream does not publish a prebuilt Linux arm64 shared
+library. The default rustls-ffi version is read from
+`Directory.Build.props`.
 
-```powershell
-.\scripts\download-llvm-native.ps1
-.\scripts\download-llvm-native.ps1 -Linux    # also fetch linux .so
+On Windows, run the bash scripts from WSL. A normal checkout already
+includes the rustls-ffi payloads; only LLVM must be downloaded for test
+setup unless you are intentionally refreshing the vendored rustls files:
+
+```sh
+# Download all supported LLVM payloads:
+bash scripts/download-llvm-native.sh --all
+
+# Optional: refresh the vendored rustls payloads:
+bash scripts/download-rustls-ffi.sh --all
 ```
 
-The libraries are placed under `runtimes/{linux-x64,linux-arm64,win-x64}/`
-and are automatically copied to build output by `Ashes.Backend.csproj`.
+The scripts stage LLVM payloads and refreshed rustls payloads under
+`runtimes/{linux-x64,linux-arm64,win-x64}/`. `Ashes.Backend.csproj`
+validates the vendored rustls-ffi version and copies both LLVM and
+rustls assets into build output.
+
+### Optional linux-arm64 execution from linux-x64 hosts
+
+The repo can also execute `linux-arm64` backend outputs from an x64 Linux
+host when all of the following are available:
+
+- `qemu-aarch64` or `qemu-aarch64-static`
+- an arm64 sysroot containing `lib/ld-linux-aarch64.so.1`
+   (for example `/usr/aarch64-linux-gnu`)
+
+`src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` auto-detects emulator
+binaries from both `PATH` and the rootless Arch-style unpack location
+`~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+
+For manual runs outside the test helper, add the rootless install to
+`PATH` if needed:
+
+```sh
+export PATH="$HOME/.local/share/ashes-tools/qemu-user-static/root/usr/bin:$PATH"
+qemu-aarch64-static -L /usr/aarch64-linux-gnu ./hello-arm64
+```
+
+### Optional win-x64 execution from linux-x64 hosts
+
+`win-x64` backend outputs can also be executed from an x64 Linux host
+when a Wine launcher is available, such as `wine64`, `wine`, or
+`wine-stable` in `PATH`. On Ubuntu 24.04, installing the `wine` package
+provides `wine-stable`, while `wine64` alone lives at
+`/usr/lib/wine/wine64`.
+
+`src/Ashes.Tests/TestProcessHelper.cs` auto-detects Wine for test-time PE
+execution, so `EndToEndWindowsBackendTests` and
+`WindowsBackendCoverageTests` can run from Linux hosts once Wine is
+installed.
+
+The Windows TLS runtime still defaults to the platform verifier. For
+loopback TLS tests and other controlled overrides, the coverage helper
+passes `SSL_CERT_FILE` to the compiled PE program using a Wine-visible
+path so the vendored `rustls.dll` can load PEM roots without touching a
+host Windows certificate store.
 
 ------------------------------------------------------------------------
 
@@ -200,30 +261,8 @@ bash scripts/install-vscode-extension-local.sh --code-command code-insiders
 bash scripts/install-vscode-extension-local.sh --target-rid win-x64
 ```
 
-On Windows:
-
-```powershell
-.\scripts\install-vscode-extension-local.ps1
-```
-
-Useful PowerShell options:
-
-```powershell
-# Package only, do not install the VSIX:
-.\scripts\install-vscode-extension-local.ps1 -SkipInstall
-
-# Publish all supported bundled RIDs:
-.\scripts\install-vscode-extension-local.ps1 -AllRids
-
-# Force a clean pnpm dependency reinstall before building:
-.\scripts\install-vscode-extension-local.ps1 -ForceInstallDependencies
-
-# Override the VS Code CLI to use for install:
-.\scripts\install-vscode-extension-local.ps1 -CodeCommand code-insiders
-```
-
-On Windows, prefer the PowerShell script for local install into the same
-VS Code instance you are using for development.
+On Windows, run the same script from WSL. Use `--target-rid win-x64` when
+you need to bundle binaries for the Windows VS Code build.
 
 ### Extension Only (No Publish)
 
@@ -248,11 +287,7 @@ Build self-contained executables for distribution:
 bash scripts/publish.sh
 ```
 
-On Windows:
-
-```powershell
-.\scripts\publish.ps1
-```
+On Windows, run the same command from WSL.
 
 ------------------------------------------------------------------------
 

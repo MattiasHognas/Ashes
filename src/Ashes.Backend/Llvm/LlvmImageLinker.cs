@@ -2,6 +2,8 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmImageLinker
 {
+    internal readonly record struct LinkedImagePayload(string StartSymbolName, string EndSymbolName, byte[] Bytes, int Alignment);
+
     private static int Align(int value, int align)
     {
         int mask = align - 1;

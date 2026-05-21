@@ -167,6 +167,69 @@ internal static partial class LlvmCodegen
             name);
     }
 
+    private static LlvmValueHandle EmitWindowsLoadLibrary(LlvmCodegenState state, LlvmValueHandle pathCstr, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr]);
+        LlvmValueHandle functionPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsLoadLibraryImport,
+            name + "_ptr");
+        LlvmValueHandle handlePtr = LlvmApi.BuildCall2(builder, functionType, functionPtr, [pathCstr], name);
+        return LlvmApi.BuildPtrToInt(builder, handlePtr, state.I64, name + "_handle");
+    }
+
+    private static LlvmValueHandle EmitWindowsGetProcAddress(LlvmCodegenState state, LlvmValueHandle moduleHandle, LlvmValueHandle symbolCstr, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle functionPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsGetProcAddressImport,
+            name + "_ptr");
+        LlvmValueHandle modulePtr = LlvmApi.BuildIntToPtr(builder, moduleHandle, state.I8Ptr, name + "_module_ptr");
+        LlvmValueHandle addressPtr = LlvmApi.BuildCall2(builder, functionType, functionPtr, [modulePtr, symbolCstr], name);
+        return LlvmApi.BuildPtrToInt(builder, addressPtr, state.I64, name + "_address");
+    }
+
+    private static LlvmValueHandle EmitWindowsCertOpenSystemStore(LlvmCodegenState state, LlvmValueHandle storeNameCstr, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I64, state.I8Ptr]);
+        LlvmValueHandle functionPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsCertOpenSystemStoreImport,
+            name + "_ptr");
+        LlvmValueHandle storePtr = LlvmApi.BuildCall2(builder, functionType, functionPtr, [LlvmApi.ConstInt(state.I64, 0, 0), storeNameCstr], name);
+        return LlvmApi.BuildPtrToInt(builder, storePtr, state.I64, name + "_handle");
+    }
+
+    private static LlvmValueHandle EmitWindowsCertEnumCertificatesInStore(LlvmCodegenState state, LlvmValueHandle storeHandle, LlvmValueHandle previousContextHandle, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle functionPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsCertEnumCertificatesInStoreImport,
+            name + "_ptr");
+        LlvmValueHandle storePtr = LlvmApi.BuildIntToPtr(builder, storeHandle, state.I8Ptr, name + "_store_ptr");
+        LlvmValueHandle previousPtr = LlvmApi.BuildIntToPtr(builder, previousContextHandle, state.I8Ptr, name + "_previous_ptr");
+        LlvmValueHandle certificatePtr = LlvmApi.BuildCall2(builder, functionType, functionPtr, [storePtr, previousPtr], name);
+        return LlvmApi.BuildPtrToInt(builder, certificatePtr, state.I64, name + "_handle");
+    }
+
+    private static void EmitWindowsCertCloseStore(LlvmCodegenState state, LlvmValueHandle storeHandle, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I32]);
+        LlvmValueHandle functionPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsCertCloseStoreImport,
+            name + "_ptr");
+        LlvmValueHandle storePtr = LlvmApi.BuildIntToPtr(builder, storeHandle, state.I8Ptr, name + "_store_ptr");
+        _ = LlvmApi.BuildCall2(builder, functionType, functionPtr, [storePtr, LlvmApi.ConstInt(state.I32, 0, 0)], name);
+    }
+
     private static LlvmValueHandle EmitWindowsBind(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle sockaddrPtr, int sockaddrLen, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

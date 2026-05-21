@@ -14,17 +14,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Cache Runtimes
-        id: cache-runtimes
+      - name: Install Wine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine
+          wine --version
+
+      - name: Cache LLVM runtimes
+        id: cache-llvm
         uses: actions/cache@v5
         with:
-          path: runtimes
-          key: runtimes-22
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
-        if: steps.cache-runtimes.outputs.cache-hit != 'true'
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: bash scripts/download-llvm-native.sh --all
+
+      - name: Save LLVM cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            runtimes/linux-x64/libLLVM.so
+            runtimes/linux-arm64/libLLVM.so
+            runtimes/win-x64/libLLVM.dll
+          key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
+          enableCrossOsArchive: true
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -39,6 +59,13 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '26'
+
+      - name: Install linux-arm64 execution prerequisites
+        run: |
+          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross libgcc-s1-arm64-cross
+          qemu-aarch64 --version
+          test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+          test -f /usr/aarch64-linux-gnu/lib/libgcc_s.so.1
 
       - name: Restore
         run: dotnet restore Ashes.slnx
@@ -136,7 +163,7 @@ jobs:
           ASHES_CLI="./${{ matrix.cli-path }}"
           for example in examples/*.ash; do
             case "$(basename "$example")" in
-              http_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash)
+              http_get.ash|https_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash)
                 continue
                 ;;
             esac
@@ -150,7 +177,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $ashesCli = ".\${{ matrix.cli-path }}"
           Get-ChildItem examples\*.ash |
-            Where-Object { $_.Name -notin @('http_get.ash', 'tcp_close.ash', 'tcp_connect.ash', 'tcp_receive.ash', 'tcp_send.ash') } |
+            Where-Object { $_.Name -notin @('http_get.ash', 'https_get.ash', 'tcp_close.ash', 'tcp_connect.ash', 'tcp_receive.ash', 'tcp_send.ash') } |
             ForEach-Object {
             & $ashesCli run $_.FullName
             if ($LASTEXITCODE -ne 0) {
@@ -160,13 +187,13 @@ jobs:
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: |
           "./${{ matrix.cli-path }}" test tests
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        timeout-minutes: 2
+        timeout-minutes: 10
         shell: pwsh
         run: |
           & ".\${{ matrix.cli-path }}" test tests

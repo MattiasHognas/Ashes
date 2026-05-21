@@ -82,7 +82,7 @@ The following option is accepted by **compile** and **run** only:
 |-------|----------|
 | `linux-x64` | Linux x86-64 — emits a native ELF64 binary |
 | `linux-arm64` | Linux AArch64 — emits a native ELF64 binary |
-| `windows-x64` | Windows x86-64 — emits a native PE32+ binary |
+| `win-x64` | Windows x86-64 — emits a native PE32+ binary |
 
 Any other value is rejected with an error message and exit code **1**.
 
@@ -117,7 +117,7 @@ ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g
 |--------|-----------|-----------|---------|------------|-------------|
 | `-o` | `--out` | file path | Derived from input name (see below) | No | Path for the compiled output binary. |
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
-| `--target` | | enum | OS default | No | Target back end (`linux-x64` or `windows-x64`). |
+| `--target` | | enum | OS default | No | Target back end (`linux-x64` or `win-x64`). |
 | `--target-cpu` | | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
@@ -133,7 +133,7 @@ ashes compile [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--debug|-g
 
 | Property | Default value |
 |----------|---------------|
-| `--target` | `linux-x64` on Linux x86-64, `linux-arm64` on Linux ARM64, `windows-x64` on Windows |
+| `--target` | `linux-x64` on Linux x86-64, `linux-arm64` on Linux ARM64, `win-x64` on Windows |
 | `--target-cpu` | `x86-64` for x86-64 targets, `generic` for ARM64 |
 | `-o` / `--out` | Derived from input (see above) |
 | `-O0`..`-O3` | `-O2` (standard optimizations) |
@@ -177,7 +177,7 @@ ashes compile examples/hello.ash -o build/hello
 ashes compile --expr 'Ashes.IO.print(40 + 2)' -o out
 
 # Cross-compile to Windows PE
-ashes compile examples/hello.ash --target windows-x64 -o hello.exe
+ashes compile examples/hello.ash --target win-x64 -o hello.exe
 
 # Compile the project rooted at ashes.json
 ashes compile --project path/to/ashes.json
@@ -282,7 +282,7 @@ ashes repl [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3]
 | `:help` | `:h` | Show REPL help. |
 | `:quit` | `:q`, `:exit` | Exit the REPL (exit code 0). |
 | `:target` | | Show the current target. |
-| `:target linux-x64\|windows-x64` | | Change the active target for subsequent expressions. |
+| `:target linux-x64\|linux-arm64\|win-x64` | | Change the active target for subsequent expressions. |
 
 Multi-line input is supported: if the parser detects an incomplete expression (unbalanced parentheses or an expected-token error), the REPL shows a `...>` continuation prompt.
 

@@ -16,6 +16,8 @@
 #   ./scripts/download-llvm-native.sh 23            # specify a different major
 #   ./scripts/download-llvm-native.sh 22 arm64      # cross-download arm64 .so on x64 host
 #   ./scripts/download-llvm-native.sh 22 x64        # cross-download x64 .so on arm64 host
+#   ./scripts/download-llvm-native.sh --win-x64     # download Windows x64 DLL only
+#   ./scripts/download-llvm-native.sh --win-x64 22.1.2
 #   ./scripts/download-llvm-native.sh --all         # download all three: linux-x64, linux-arm64, win-x64
 #   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for Windows DLL
 #
@@ -24,12 +26,19 @@
 set -euo pipefail
 
 ALL_MODE=false
+WIN_X64_MODE=false
 LLVM_MAJOR="22"
 LLVM_FULL_VERSION="22.1.2"
 TARGET_ARCH=""
 
 if [ "${1:-}" = "--all" ] || [ "${1:-}" = "-a" ]; then
     ALL_MODE=true
+    if [ -n "${2:-}" ]; then
+        LLVM_FULL_VERSION="$2"
+        LLVM_MAJOR="${LLVM_FULL_VERSION%%.*}"
+    fi
+elif [ "${1:-}" = "--win-x64" ]; then
+    WIN_X64_MODE=true
     if [ -n "${2:-}" ]; then
         LLVM_FULL_VERSION="$2"
         LLVM_MAJOR="${LLVM_FULL_VERSION%%.*}"
@@ -514,6 +523,11 @@ if [ "$ALL_MODE" = true ]; then
 
     echo ""
     echo "=== Done (LLVM ${LLVM_MAJOR}, all runtimes: linux-x64, linux-arm64, win-x64) ==="
+elif [ "$WIN_X64_MODE" = true ]; then
+    download_windows_dll "$LLVM_FULL_VERSION"
+
+    echo ""
+    echo "=== Done (LLVM ${LLVM_FULL_VERSION}, win-x64) ==="
 else
     # Single-target mode (original behavior)
     if [ -n "$TARGET_ARCH" ]; then

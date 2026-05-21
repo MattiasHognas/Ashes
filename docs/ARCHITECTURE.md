@@ -138,7 +138,7 @@ flowchart TD
 
     Factory -->|"linux-x64"| Linux
     Factory -->|"linux-arm64"| LinuxArm64
-    Factory -->|"windows-x64"| Windows
+    Factory -->|"win-x64"| Windows
     Linux --> Codegen
     LinuxArm64 --> Codegen
     Windows --> Codegen
@@ -164,30 +164,37 @@ the target ID.
 | Dependency | Source | Purpose |
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
+| rustls-ffi (native) | Vendored under `runtimes/` (refreshed via `scripts/download-rustls-ffi.sh`) | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
 are used.
 
-#### Updating LLVM native libraries
+#### Updating native runtime libraries
 
-The native libraries live in `runtimes/{linux-x64,linux-arm64,win-x64}/`
-and are provisioned before building `Ashes.Backend` with the following
-scripts:
+The native payloads live in `runtimes/{linux-x64,linux-arm64,win-x64}/`
+and are provisioned for build/publish with the following scripts:
 
-| Platform | Command |
-|----------|---------|
-| Linux / WSL | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) |
-| Windows | `.\scripts\download-llvm-native.ps1 [-LlvmVersion X.Y.Z]` |
-| Windows + Linux .so | `.\scripts\download-llvm-native.ps1 -Linux` |
+| Dependency | Linux / WSL | Windows (run from WSL) |
+|------------|-------------|------------------------|
+| libLLVM | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) | `./scripts/download-llvm-native.sh --all [LLVM_VERSION]` |
+| rustls-ffi | `./scripts/download-rustls-ffi.sh` (native Linux), `./scripts/download-rustls-ffi.sh --linux-arm64`, or `./scripts/download-rustls-ffi.sh --all` | `./scripts/download-rustls-ffi.sh --win-x64` or `./scripts/download-rustls-ffi.sh --all` |
 
-`Ashes.Backend.csproj` contains OS-conditional `<None>` items that copy
-the appropriate native library to the build output directory so that
-`dotnet run` / `dotnet test` can locate it at runtime.
+`Ashes.Backend.csproj` validates that the expected LLVM library and
+rustls-ffi payload exist for the active RID. LLVM is copied into the
+build output root, while rustls-ffi payloads and `rustls.version` are
+copied under `runtimes/<rid>/`; `Directory.Build.targets` reapplies the
+RID-specific copies during `dotnet publish`.
+
+The rustls-ffi payloads are committed to the repository. Re-run
+`scripts/download-rustls-ffi.sh` only when updating `RustlsFfiVersion`
+or refreshing the vendored binaries.
 
 To bump the LLVM version, pass the new version to the download script —
 no source changes are needed because the LLVM C API is stable across
-releases.
+releases. For rustls-ffi, update `RustlsFfiVersion` in
+`Directory.Build.props` and re-run `scripts/download-rustls-ffi.sh` to
+provision matching payloads.
 
 ------------------------------------------------------------------------
 
@@ -373,4 +380,4 @@ Adding a new compile target requires:
 |-----------|--------|---------------|-------------------|
 | `linux-x64` | `x86_64-unknown-linux-gnu` | ELF64 | ELF64 (x86-64) |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
-| `windows-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
+| `win-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
