@@ -17,12 +17,8 @@ jobs:
       - name: Install Wine
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64
-          if command -v wine64 >/dev/null 2>&1; then
-            wine64 --version
-          else
-            /usr/lib/wine/wine64 --version
-          fi
+          sudo apt-get install -y --no-install-recommends wine
+          wine --version
 
       - name: Cache LLVM runtimes
         id: cache-llvm
@@ -67,9 +63,10 @@ jobs:
 
       - name: Install linux-arm64 execution prerequisites
         run: |
-          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross
+          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross libgcc-s1-arm64-cross
           qemu-aarch64 --version
           test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+          test -f /usr/aarch64-linux-gnu/lib/libgcc_s.so.1
 
       - name: Restore
         run: dotnet restore Ashes.slnx
