@@ -76,6 +76,10 @@ public sealed class DiagnosticCodeTests
         var diag = LowerExpression("Ashes.Http.get(\"http://example.com\")");
 
         diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
+
+        var httpsDiag = LowerExpression("Ashes.Http.get(\"https://example.com\")");
+
+        httpsDiag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
     }
 
     private static Diagnostics LowerExpression(string source)

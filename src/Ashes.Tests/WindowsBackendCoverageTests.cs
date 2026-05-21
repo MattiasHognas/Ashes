@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -151,6 +155,12 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_llvm_support_check_should_accept_https_network_programs()
+    {
+        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("https://localhost/")) with | Ok(text) -> text | Error(msg) -> msg"""));
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_panic_programs()
     {
         AssertWindowsLlvmCompiles(LowerExpression("Ashes.IO.panic(\"boom\")"));
@@ -159,7 +169,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_first_order_closure_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -171,7 +181,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_nested_heap_backed_closure_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -183,7 +193,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_program_args_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -197,7 +207,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_read_line_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -211,7 +221,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_return_none_at_read_line_eof()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -225,7 +235,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_read_text_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -249,7 +259,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_missing_file_read_errors()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -271,7 +281,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_report_invalid_utf8_file_read_errors()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -295,7 +305,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_write_text_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -315,9 +325,128 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_run_https_against_loopback_tls_fixture()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+            });
+
+        result.Stdout.ShouldBe("hello from https\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_report_https_trust_failures_against_loopback_tls_fixture()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            trustServerCertificate: false,
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_report_https_hostname_mismatches_against_loopback_tls_fixture()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                _ = await ReadTextAsync(stream, 4096);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "127.0.0.1",
+            certificateHost: "localhost",
+            allowServerHandshakeFailure: true);
+
+        result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: NotValidForName\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_return_first_completed_https_race_task_against_loopback_tls_fixture()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("Host: localhost");
+                // Both endpoints respond with the same body ("ok") so the test result is
+                // deterministic regardless of which Async.race task technically completes first
+                // (avoids timing flakiness on Wine / CI runners).
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost",
+            expectedClientCount: 2,
+            tolerateClientDisconnect: true);
+
+        result.Stdout.ShouldBe("ok\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_treat_https_close_notify_eof_as_end_of_body()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET /empty HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+
+        result.Stdout.ShouldBe("empty\n");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_uncons_unicode_scalars()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -330,7 +459,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_parse_integers()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -343,7 +472,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_parse_floats_with_exponents()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -356,7 +485,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_file_exists_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -380,7 +509,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_float_arithmetic_and_comparisons()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -392,7 +521,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_heap_backed_tuple_and_list_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -404,7 +533,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_string_compare_and_concat_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -416,7 +545,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_print_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -428,7 +557,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_adt_field_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -445,7 +574,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_run_panic_programs()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!CanRunWindowsRuntimePrograms())
         {
             return;
         }
@@ -495,13 +624,25 @@ public sealed class WindowsBackendCoverageTests
         return ir;
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(string source, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(
+        string source,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode);
+        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(IrProgram ir, IReadOnlyList<string>? args = null, string? stdin = null, string? workingDirectory = null, int expectedExitCode = 0)
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(
+        IrProgram ir,
+        IReadOnlyList<string>? args = null,
+        string? stdin = null,
+        string? workingDirectory = null,
+        int expectedExitCode = 0,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var exeBytes = new WindowsX64LlvmBackend().Compile(ir);
 
@@ -511,16 +652,18 @@ public sealed class WindowsBackendCoverageTests
         {
             await File.WriteAllBytesAsync(exePath, exeBytes);
 
-            var psi = new ProcessStartInfo(exePath)
+            var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+            psi.RedirectStandardInput = stdin is not null;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = workingDirectory ?? tmpDir;
+            if (environmentVariables is not null)
             {
-                RedirectStandardInput = stdin is not null,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            if (workingDirectory is not null)
-            {
-                psi.WorkingDirectory = workingDirectory;
+                foreach (var entry in environmentVariables)
+                {
+                    psi.Environment[entry.Key] = entry.Value;
+                }
             }
             if (args is not null)
             {
@@ -548,6 +691,79 @@ public sealed class WindowsBackendCoverageTests
             DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
         }
+    }
+
+    private static async Task<ExecutionResult> CompileRunWithWindowsLlvmTlsLoopbackAsync(
+        string sourceTemplate,
+        Func<SslStream, Task> handleClientAsync,
+        string host = "localhost",
+        string? certificateHost = null,
+        bool trustServerCertificate = true,
+        int expectedClientCount = 1,
+        bool allowServerHandshakeFailure = false,
+        bool tolerateClientDisconnect = false)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
+        IReadOnlyDictionary<string, string>? environmentVariables = new Dictionary<string, string>
+        {
+            ["SSL_CERT_FILE"] = TestProcessHelper.ConvertHostPathForWindowsExecution(
+                trustServerCertificate ? tlsHost.TrustCertificatePath : tlsHost.UntrustedCertificatePath)
+        };
+
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync, tolerateClientDisconnect);
+        var result = await CompileRunWithWindowsLlvmAsync(source, environmentVariables: environmentVariables);
+        var serverException = await serverTask;
+        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        {
+            ioException.Message.ShouldContain("unexpected EOF");
+        }
+        else
+        {
+            serverException.ShouldBeNull(serverException?.ToString());
+        }
+
+        return result;
+    }
+
+    private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
+    {
+        var buffer = new byte[maxBytes];
+        var total = 0;
+        byte[] headerTerminator = "\r\n\r\n"u8.ToArray();
+
+        while (total < buffer.Length)
+        {
+            try
+            {
+                using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                total += count;
+                if (buffer.AsSpan(0, total).IndexOf(headerTerminator) >= 0)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, total);
+    }
+
+    private static bool CanRunWindowsRuntimePrograms()
+    {
+        return TestProcessHelper.CanRunWindowsExecutables();
     }
 
     private static string CreateTempDirectory()

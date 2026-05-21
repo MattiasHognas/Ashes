@@ -33,6 +33,24 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_net_tls_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Net.Tls", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Net.Tls");
+        module.Members.ContainsKey("connect").ShouldBeTrue();
+        module.Members.ContainsKey("send").ShouldBeTrue();
+        module.Members.ContainsKey("receive").ShouldBeTrue();
+        module.Members.ContainsKey("close").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Ashes_net_tls_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.Net.Tls").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Net.Tls");
+    }
+
+    [Test]
     public void Ashes_http_module_is_registered()
     {
         BuiltinRegistry.TryGetModule("Ashes.Http", out var module).ShouldBeTrue();
@@ -128,6 +146,28 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_net_tls_builtins_typecheck_through_result_flow()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            Ashes.IO.print(match Ashes.Async.run(async
+                let sock = await Ashes.Net.Tls.connect("localhost")(443)
+                in
+                    let _ = await Ashes.Net.Tls.close(sock)
+                    in "ok") with
+                | Error(_) -> "fail"
+                | Ok(text) -> text)
+            """,
+            diag).ParseProgram();
+        var lowering = new Lowering(diag);
+
+        lowering.Lower(program);
+
+        diag.Errors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Ashes_test_module_is_registered()
     {
         BuiltinRegistry.TryGetModule("Ashes.Test", out var module).ShouldBeTrue();
@@ -158,5 +198,13 @@ public sealed class BuiltinModuleRegistryTests
     public void Task_is_a_reserved_type_name()
     {
         BuiltinRegistry.IsReservedTypeName("Task").ShouldBeTrue();
+    }
+
+    [Test]
+    public void TlsSocket_builtin_type_is_registered()
+    {
+        BuiltinRegistry.TryGetType("TlsSocket", out var tlsSocketType).ShouldBeTrue();
+        tlsSocketType.Name.ShouldBe("TlsSocket");
+        tlsSocketType.TypeParameters.ShouldBeEmpty();
     }
 }

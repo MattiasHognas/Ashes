@@ -33,7 +33,7 @@ public sealed class BackendFactoryEdgeCaseTests
     {
         TargetIds.LinuxX64.ShouldBe("linux-x64");
         TargetIds.LinuxArm64.ShouldBe("linux-arm64");
-        TargetIds.WindowsX64.ShouldBe("windows-x64");
+        TargetIds.WindowsX64.ShouldBe("win-x64");
     }
 
     [Test]

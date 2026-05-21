@@ -8,6 +8,8 @@ namespace Ashes.Tests;
 /// </summary>
 internal static class TestProcessHelper
 {
+    private static readonly string[] WineExecutableCandidates = ["wine64", "wine", "wine-stable", "/usr/lib/wine/wine64"];
+
     /// <summary>
     /// Starts a process, retrying on transient ETXTBSY ("Text file busy") errors.
     /// On Linux, a freshly-written executable can briefly fail to exec while the
@@ -58,4 +60,109 @@ internal static class TestProcessHelper
 #pragma warning restore CA1416
         }
     }
+
+    internal static bool CanRunWindowsExecutables()
+    {
+        return TryResolveWindowsExecutionEnvironment(out _);
+    }
+
+    internal static ProcessStartInfo CreateWindowsProcessStartInfo(string exePath)
+    {
+        if (!TryResolveWindowsExecutionEnvironment(out var environment))
+        {
+            throw new InvalidOperationException("Windows executable execution requires either a native Windows host or Wine on Linux.");
+        }
+
+        if (environment.RunnerPath is null)
+        {
+            return new ProcessStartInfo(exePath);
+        }
+
+        var psi = new ProcessStartInfo(environment.RunnerPath);
+        psi.ArgumentList.Add(exePath);
+        psi.Environment["WINEDEBUG"] = "-all";
+        return psi;
+    }
+
+    internal static string ConvertHostPathForWindowsExecution(string path)
+    {
+        if (!TryResolveWindowsExecutionEnvironment(out var environment) || environment.RunnerPath is null)
+        {
+            return path;
+        }
+
+        if (!Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        return "Z:" + path.Replace('/', '\\');
+    }
+
+    private static bool TryResolveWindowsExecutionEnvironment(out WindowsExecutionEnvironment environment)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            environment = new WindowsExecutionEnvironment(null);
+            return true;
+        }
+
+        if (!OperatingSystem.IsLinux())
+        {
+            environment = default;
+            return false;
+        }
+
+        var runnerPath = FindCommandOnPath(WineExecutableCandidates);
+        if (runnerPath is null)
+        {
+            environment = default;
+            return false;
+        }
+
+        environment = new WindowsExecutionEnvironment(runnerPath);
+        return true;
+    }
+
+    private static string? FindCommandOnPath(IEnumerable<string> candidates)
+    {
+        return FindCommand(candidates, Environment.GetEnvironmentVariable("PATH"));
+    }
+
+    internal static string? FindCommand(IEnumerable<string> candidates, string? path)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (Path.IsPathRooted(candidate) && File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (Path.IsPathRooted(candidate))
+            {
+                continue;
+            }
+
+            foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var fullPath = Path.Combine(directory, candidate);
+                if (File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private readonly record struct WindowsExecutionEnvironment(string? RunnerPath);
 }

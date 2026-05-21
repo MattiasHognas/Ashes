@@ -62,8 +62,17 @@ internal static partial class LlvmCodegen
     private const int WindowsWsaErrorAlready = 10037;
     private const int WindowsWsaErrorIsConnected = 10056;
     private const int WindowsErrorIoPending = 997;
+    private const ushort WindowsPollReadNormal = 0x0100;
+    private const ushort WindowsPollWriteNormal = 0x0010;
+    private const int WindowsPollFdSize = 16;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
+    private const int LinuxRtldNow = 2;
+    private const int TlsVerifyPeer = 0x01;
+    private const int TlsCtrlSetSni = 55;
+    private const int TlsErrorWantRead = 2;
+    private const int TlsErrorWantWrite = 3;
+    private const int TlsErrorZeroReturn = 6;
     private const string FileReadFailedMessage = "Ashes.File.readText() failed";
     private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
     private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
@@ -82,6 +91,14 @@ internal static partial class LlvmCodegen
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
     private const string HttpUnsupportedTransferEncodingMessage = "unsupported transfer encoding";
+    private const int RustlsResultOk = 7000;
+    private const int RustlsResultPlaintextEmpty = 7011;
+    private const string TlsRuntimeInitFailedMessage = "Ashes TLS runtime initialization failed";
+    private const string TlsHandshakeFailedMessage = "Ashes TLS handshake failed";
+    private const string TlsSendFailedMessage = "Ashes TLS send failed";
+    private const string TlsReceiveFailedMessage = "Ashes TLS receive failed";
+    private const string TlsCloseFailedMessage = "Ashes TLS close failed";
+    private const string TlsInvalidUtf8Message = "Ashes TLS receive() encountered invalid UTF-8";
 
     private static class WindowsIocpOperationLayout
     {
@@ -93,6 +110,13 @@ internal static partial class LlvmCodegen
         internal const long StatePending = 0;
         internal const long StateCompleted = 1;
         internal const long StateFailed = 2;
+    }
+
+    private static class TlsSessionLayout
+    {
+        internal const int Socket = 0;
+        internal const int SslHandle = 8;
+        internal const int TotalSize = 16;
     }
 
     public static byte[] Compile(IrProgram program, string targetId, BackendCompileOptions options)
@@ -110,36 +134,39 @@ internal static partial class LlvmCodegen
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.WindowsX64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry");
+        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxX64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry");
+        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options);
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxArm64);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, rustlsSharedLibrary);
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry");
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
     }
 
     private static void VerifyModule(LlvmTargetContext target)
@@ -250,7 +277,8 @@ internal static partial class LlvmCodegen
         IrProgram program,
         string entryFunctionName,
         LlvmCodegenFlavor flavor,
-        Backends.BackendCompileOptions options)
+        Backends.BackendCompileOptions options,
+        HermeticTlsRuntimeAsset? rustlsSharedLibrary)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
@@ -292,6 +320,11 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
             || ProgramUsesInstruction<IrInst.RunTask>(program)
             || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
@@ -320,6 +353,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsIoctlSocketImport = default;
         LlvmValueHandle windowsWsaGetLastErrorImport = default;
         LlvmValueHandle windowsWsaPollImport = default;
+        LlvmValueHandle windowsLoadLibraryImport = default;
+        LlvmValueHandle windowsGetProcAddressImport = default;
+        LlvmValueHandle windowsCertOpenSystemStoreImport = default;
+        LlvmValueHandle windowsCertEnumCertificatesInStoreImport = default;
+        LlvmValueHandle windowsCertCloseStoreImport = default;
         LlvmValueHandle windowsBindImport = default;
         LlvmValueHandle windowsSetSockOptImport = default;
         LlvmValueHandle windowsWsaIoctlImport = default;
@@ -349,7 +387,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsStdout || usesWindowsFileOps)
+        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi)
         {
             LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
@@ -369,7 +407,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps)
+        if (usesWindowsFileOps || usesNetworkingRuntimeAbi)
         {
             LlvmTypeHandle createFileType = LlvmApi.FunctionType(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
             LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(i32, [i8Ptr]);
@@ -408,6 +446,10 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
             windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
             LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            windowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
+            LlvmApi.SetLinkage(windowsLoadLibraryImport, LlvmLinkage.External);
+            windowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");
+            LlvmApi.SetLinkage(windowsGetProcAddressImport, LlvmLinkage.External);
             windowsBindImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_bind");
             LlvmApi.SetLinkage(windowsBindImport, LlvmLinkage.External);
             windowsSetSockOptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_setsockopt");
@@ -425,6 +467,16 @@ internal static partial class LlvmCodegen
             windowsIocpPortGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_windows_iocp_port");
             LlvmApi.SetLinkage(windowsIocpPortGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(windowsIocpPortGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        }
+
+        if (flavor == LlvmCodegenFlavor.WindowsX64 && usesNetworkingRuntimeAbi)
+        {
+            windowsCertOpenSystemStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertOpenSystemStoreA");
+            LlvmApi.SetLinkage(windowsCertOpenSystemStoreImport, LlvmLinkage.External);
+            windowsCertEnumCertificatesInStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertEnumCertificatesInStore");
+            LlvmApi.SetLinkage(windowsCertEnumCertificatesInStoreImport, LlvmLinkage.External);
+            windowsCertCloseStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertCloseStore");
+            LlvmApi.SetLinkage(windowsCertCloseStoreImport, LlvmLinkage.External);
         }
 
         if (usesWindowsExitProcess)
@@ -504,6 +556,11 @@ internal static partial class LlvmCodegen
                 windowsIoctlSocketImport,
                 windowsWsaGetLastErrorImport,
                 windowsWsaPollImport,
+                windowsLoadLibraryImport,
+                windowsGetProcAddressImport,
+                windowsCertOpenSystemStoreImport,
+                windowsCertEnumCertificatesInStoreImport,
+                windowsCertCloseStoreImport,
                 windowsBindImport,
                 windowsSetSockOptImport,
                 windowsWsaIoctlImport,
@@ -520,6 +577,7 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                rustlsSharedLibrary,
                 nounwindAttr);
         }
 
@@ -578,6 +636,11 @@ internal static partial class LlvmCodegen
             windowsIoctlSocketImport,
             windowsWsaGetLastErrorImport,
             windowsWsaPollImport,
+            windowsLoadLibraryImport,
+            windowsGetProcAddressImport,
+            windowsCertOpenSystemStoreImport,
+            windowsCertEnumCertificatesInStoreImport,
+            windowsCertCloseStoreImport,
             windowsBindImport,
             windowsSetSockOptImport,
             windowsWsaIoctlImport,
@@ -626,6 +689,11 @@ internal static partial class LlvmCodegen
                 windowsIoctlSocketImport,
                 windowsWsaGetLastErrorImport,
                 windowsWsaPollImport,
+                windowsLoadLibraryImport,
+                windowsGetProcAddressImport,
+                windowsCertOpenSystemStoreImport,
+                windowsCertEnumCertificatesInStoreImport,
+                windowsCertCloseStoreImport,
                 windowsBindImport,
                 windowsSetSockOptImport,
                 windowsWsaIoctlImport,
@@ -654,6 +722,48 @@ internal static partial class LlvmCodegen
     {
         return program.EntryFunction.Instructions.Any(static instruction => instruction is TInstruction)
             || program.Functions.Any(static function => function.Instructions.Any(static instruction => instruction is TInstruction));
+    }
+
+    private static bool ProgramUsesTlsRuntimeAbi(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.HttpGet>(program)
+            || ProgramUsesInstruction<IrInst.HttpPost>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
+    }
+
+    private static HermeticTlsRuntimeAsset? LoadLinkedTlsRuntimeAsset(IrProgram program, string targetId)
+    {
+        return ProgramUsesTlsRuntimeAbi(program)
+            ? HermeticTlsRuntimeAssets.GetRustlsSharedLibrary(targetId)
+            : null;
+    }
+
+    private static LlvmImageLinker.LinkedImagePayload? CreateLinkedTlsPayload(HermeticTlsRuntimeAsset? rustlsSharedLibrary)
+    {
+        return rustlsSharedLibrary is null
+            ? null
+            : new LlvmImageLinker.LinkedImagePayload(
+                HermeticTlsLinkPayloadSymbols.StartSymbolName,
+                HermeticTlsLinkPayloadSymbols.EndSymbolName,
+                rustlsSharedLibrary.Bytes,
+                HermeticTlsLinkPayloadSymbols.Alignment);
+    }
+
+    private static string GetTargetIdForFlavor(LlvmCodegenFlavor flavor)
+    {
+        return flavor switch
+        {
+            LlvmCodegenFlavor.LinuxX64 => Backends.TargetIds.LinuxX64,
+            LlvmCodegenFlavor.LinuxArm64 => Backends.TargetIds.LinuxArm64,
+            LlvmCodegenFlavor.WindowsX64 => Backends.TargetIds.WindowsX64,
+            _ => throw new ArgumentOutOfRangeException(nameof(flavor), $"Unsupported codegen flavor '{flavor}'.")
+        };
     }
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
@@ -688,6 +798,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsIoctlSocketImport,
         LlvmValueHandle windowsWsaGetLastErrorImport,
         LlvmValueHandle windowsWsaPollImport,
+        LlvmValueHandle windowsLoadLibraryImport,
+        LlvmValueHandle windowsGetProcAddressImport,
+        LlvmValueHandle windowsCertOpenSystemStoreImport,
+        LlvmValueHandle windowsCertEnumCertificatesInStoreImport,
+        LlvmValueHandle windowsCertCloseStoreImport,
         LlvmValueHandle windowsBindImport,
         LlvmValueHandle windowsSetSockOptImport,
         LlvmValueHandle windowsWsaIoctlImport,
@@ -795,6 +910,11 @@ internal static partial class LlvmCodegen
             windowsIoctlSocketImport,
             windowsWsaGetLastErrorImport,
             windowsWsaPollImport,
+            windowsLoadLibraryImport,
+            windowsGetProcAddressImport,
+            windowsCertOpenSystemStoreImport,
+            windowsCertEnumCertificatesInStoreImport,
+            windowsCertCloseStoreImport,
             windowsBindImport,
             windowsSetSockOptImport,
             windowsWsaIoctlImport,
@@ -926,6 +1046,16 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
             IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpPost, LoadTemp(state, httpPostTask.UrlTemp), LoadTemp(state, httpPostTask.BodyTemp), "http_post_task")),
+            IrInst.CreateTlsConnectTask tlsConnectTask => StoreTemp(state, tlsConnectTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsConnect, LoadTemp(state, tlsConnectTask.HostTemp), LoadTemp(state, tlsConnectTask.PortTemp), "tls_connect_task")),
+            IrInst.CreateTlsHandshakeTask tlsHandshakeTask => StoreTemp(state, tlsHandshakeTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsHandshake, LoadTemp(state, tlsHandshakeTask.SocketTemp), LoadTemp(state, tlsHandshakeTask.HostTemp), "tls_handshake_task")),
+            IrInst.CreateTlsSendTask tlsSendTask => StoreTemp(state, tlsSendTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsSend, LoadTemp(state, tlsSendTask.SslTemp), LoadTemp(state, tlsSendTask.TextTemp), "tls_send_task")),
+            IrInst.CreateTlsReceiveTask tlsReceiveTask => StoreTemp(state, tlsReceiveTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsReceive, LoadTemp(state, tlsReceiveTask.SslTemp), LoadTemp(state, tlsReceiveTask.MaxBytesTemp), "tls_receive_task")),
+            IrInst.CreateTlsCloseTask tlsCloseTask => StoreTemp(state, tlsCloseTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsClose, LoadTemp(state, tlsCloseTask.SslTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tls_close_task")),
             // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
@@ -1060,6 +1190,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsIoctlSocketImport,
         LlvmValueHandle WindowsWsaGetLastErrorImport,
         LlvmValueHandle WindowsWsaPollImport,
+        LlvmValueHandle WindowsLoadLibraryImport,
+        LlvmValueHandle WindowsGetProcAddressImport,
+        LlvmValueHandle WindowsCertOpenSystemStoreImport,
+        LlvmValueHandle WindowsCertEnumCertificatesInStoreImport,
+        LlvmValueHandle WindowsCertCloseStoreImport,
         LlvmValueHandle WindowsBindImport,
         LlvmValueHandle WindowsSetSockOptImport,
         LlvmValueHandle WindowsWsaIoctlImport,

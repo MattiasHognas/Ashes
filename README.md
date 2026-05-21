@@ -173,15 +173,17 @@ in
 |---|---|
 | `Ashes.IO` | Console I/O, `print`, `panic`, `args`, line-based input |
 | `Ashes.File` | UTF-8 file read/write/exists returning `Result` |
-| `Ashes.Http` | HTTP/1.1 GET/POST for plain `http://` URLs |
-| `Ashes.Net.Tcp` | Blocking TCP client (connect, send, receive, close) |
+| `Ashes.Http` | HTTP/1.1 GET/POST for `http://` and `https://` URLs |
+| `Ashes.Net.Tcp` | Async TCP client (connect, send, receive, close) |
+| `Ashes.Net.Tls` | Async TLS client (connect, send, receive, close) |
 | `Ashes.Async` | `run`, `fromResult`, `sleep`, `all`, `race` |
 | `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
 | `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
 | `Ashes.Result` | Helpers for the built-in `Result(E, A)` type |
+| `Ashes.Text` | Unicode-aware `uncons` plus `parseInt` and `parseFloat` |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types: `Int`, `Float`, `Bool`, `String`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`
+Built-in types: `Int`, `Float`, `Bool`, `Str`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`, `TlsSocket`
 
 ---
 
@@ -206,7 +208,7 @@ Ashes is split into focused phases:
 |---|---|---|
 | `linux-x64` | ELF64 | x86-64 |
 | `linux-arm64` | ELF64 | AArch64 |
-| `windows-x64` | PE32+ | x86-64 |
+| `win-x64` | PE32+ | x86-64 |
 
 ```sh
 dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello
@@ -291,6 +293,7 @@ Explore the [`examples/`](examples/) directory:
 | [`closures.ash`](examples/closures.ash) | Closures capturing bindings |
 | [`result_flow.ash`](examples/result_flow.ash) | `Result` pipelines |
 | [`stdlib_overview.ash`](examples/stdlib_overview.ash) | Standard library tour |
+| [`text_parsing_demo.ash`](examples/text_parsing_demo.ash) | `Ashes.Text` parsing primitives |
 | [`polymorphism_basics.ash`](examples/polymorphism_basics.ash) | Let-polymorphism |
 | [`io_echo_all.ash`](examples/io_echo_all.ash) | Recursive I/O until EOF |
 | [`http_get.ash`](examples/http_get.ash) | HTTP GET request |

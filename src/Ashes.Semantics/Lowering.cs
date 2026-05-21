@@ -110,6 +110,10 @@ public sealed class Lowering
         NetTcpSend,
         NetTcpReceive,
         NetTcpClose,
+        NetTlsConnect,
+        NetTlsSend,
+        NetTlsReceive,
+        NetTlsClose,
         Panic,
         AsyncRun,
         AsyncFromResult,
@@ -819,6 +823,10 @@ public sealed class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsConnectBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsSendBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsReceiveBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
@@ -2033,7 +2041,11 @@ public sealed class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpConnect
             or BuiltinRegistry.BuiltinValueKind.NetTcpSend
             or BuiltinRegistry.BuiltinValueKind.NetTcpReceive
-            or BuiltinRegistry.BuiltinValueKind.NetTcpClose;
+            or BuiltinRegistry.BuiltinValueKind.NetTcpClose
+            or BuiltinRegistry.BuiltinValueKind.NetTlsConnect
+            or BuiltinRegistry.BuiltinValueKind.NetTlsSend
+            or BuiltinRegistry.BuiltinValueKind.NetTlsReceive
+            or BuiltinRegistry.BuiltinValueKind.NetTlsClose;
     }
 
     private static bool IsAsyncOnlyNetworkingIntrinsic(IntrinsicKind kind)
@@ -2043,7 +2055,11 @@ public sealed class Lowering
             or IntrinsicKind.NetTcpConnect
             or IntrinsicKind.NetTcpSend
             or IntrinsicKind.NetTcpReceive
-            or IntrinsicKind.NetTcpClose;
+            or IntrinsicKind.NetTcpClose
+            or IntrinsicKind.NetTlsConnect
+            or IntrinsicKind.NetTlsSend
+            or IntrinsicKind.NetTlsReceive
+            or IntrinsicKind.NetTlsClose;
     }
 
     private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
@@ -2053,19 +2069,22 @@ public sealed class Lowering
         IntrinsicKind.NetTcpConnect => 2,
         IntrinsicKind.NetTcpSend => 2,
         IntrinsicKind.NetTcpReceive => 2,
+        IntrinsicKind.NetTlsConnect => 2,
+        IntrinsicKind.NetTlsSend => 2,
+        IntrinsicKind.NetTlsReceive => 2,
         _ => 1
     };
 
-    private bool TryRequireSocketType(TypeRef type, Expr origin, string diagnosticMessage)
+    private bool TryRequireBuiltinNamedType(TypeRef type, string builtinTypeName, Expr origin, string diagnosticMessage)
     {
         var prunedType = Prune(type);
         if (prunedType is TypeRef.TVar)
         {
-            Unify(prunedType, _resolvedTypes["Socket"]);
+            Unify(prunedType, _resolvedTypes[builtinTypeName]);
             return true;
         }
 
-        if (prunedType is TypeRef.TNamedType named && string.Equals(named.Symbol.Name, "Socket", StringComparison.Ordinal))
+        if (prunedType is TypeRef.TNamedType named && string.Equals(named.Symbol.Name, builtinTypeName, StringComparison.Ordinal))
         {
             return true;
         }
@@ -2073,6 +2092,12 @@ public sealed class Lowering
         ReportDiagnostic(GetSpan(origin), $"{diagnosticMessage} Got {Pretty(prunedType)}.");
         return false;
     }
+
+    private bool TryRequireSocketType(TypeRef type, Expr origin, string diagnosticMessage)
+        => TryRequireBuiltinNamedType(type, "Socket", origin, diagnosticMessage);
+
+    private bool TryRequireTlsSocketType(TypeRef type, Expr origin, string diagnosticMessage)
+        => TryRequireBuiltinNamedType(type, "TlsSocket", origin, diagnosticMessage);
 
     private (int, TypeRef) LowerNetTcpConnect(Expr hostArg, Expr portArg)
     {
@@ -2119,6 +2144,53 @@ public sealed class Lowering
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpConnectTask(taskTemp, hostTemp, portTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTlsConnect(Expr hostArg, Expr portArg)
+    {
+        using var hostSpan = PushDiagnosticSpan(hostArg);
+        var (hostTemp, hostType) = LowerExpr(hostArg);
+        var prunedHostType = Prune(hostType);
+        if (prunedHostType is TypeRef.TNever)
+        {
+            return (hostTemp, prunedHostType);
+        }
+
+        if (prunedHostType is TypeRef.TVar)
+        {
+            Unify(prunedHostType, new TypeRef.TStr());
+            prunedHostType = new TypeRef.TStr();
+        }
+
+        if (prunedHostType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(hostArg), $"Ashes.Net.Tls.connect() expects Str for host but got {Pretty(prunedHostType)}.");
+            return (hostTemp, prunedHostType);
+        }
+
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tls.connect() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTlsConnectTask(taskTemp, hostTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["TlsSocket"]));
     }
 
     private (int, TypeRef) LowerHttpGet(Expr urlArg)
@@ -2236,6 +2308,47 @@ public sealed class Lowering
         return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
+    private (int, TypeRef) LowerNetTlsSend(Expr socketArg, Expr textArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireTlsSocketType(prunedSocketType, socketArg, "Ashes.Net.Tls.send() expects TlsSocket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        using var textSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var prunedTextType = Prune(textType);
+        if (prunedTextType is TypeRef.TNever)
+        {
+            return (textTemp, prunedTextType);
+        }
+
+        if (prunedTextType is TypeRef.TVar)
+        {
+            Unify(prunedTextType, new TypeRef.TStr());
+            prunedTextType = new TypeRef.TStr();
+        }
+
+        if (prunedTextType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Net.Tls.send() expects Str for text but got {Pretty(prunedTextType)}.");
+            return (textTemp, prunedTextType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTlsSendTask(taskTemp, socketTemp, textTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
+    }
+
     private (int, TypeRef) LowerNetTcpReceive(Expr socketArg, Expr maxBytesArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
@@ -2277,6 +2390,47 @@ public sealed class Lowering
         return (taskTemp, CreateStringTaskType(new TypeRef.TStr()));
     }
 
+    private (int, TypeRef) LowerNetTlsReceive(Expr socketArg, Expr maxBytesArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireTlsSocketType(prunedSocketType, socketArg, "Ashes.Net.Tls.receive() expects TlsSocket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        using var maxBytesSpan = PushDiagnosticSpan(maxBytesArg);
+        var (maxBytesTemp, maxBytesType) = LowerExpr(maxBytesArg);
+        var prunedMaxBytesType = Prune(maxBytesType);
+        if (prunedMaxBytesType is TypeRef.TNever)
+        {
+            return (maxBytesTemp, prunedMaxBytesType);
+        }
+
+        if (prunedMaxBytesType is TypeRef.TVar)
+        {
+            Unify(prunedMaxBytesType, new TypeRef.TInt());
+            prunedMaxBytesType = new TypeRef.TInt();
+        }
+
+        if (prunedMaxBytesType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(maxBytesArg), $"Ashes.Net.Tls.receive() expects Int for maxBytes but got {Pretty(prunedMaxBytesType)}.");
+            return (maxBytesTemp, prunedMaxBytesType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTlsReceiveTask(taskTemp, socketTemp, maxBytesTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TStr()));
+    }
+
     private (int, TypeRef) LowerNetTcpClose(Expr socketArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
@@ -2313,6 +2467,43 @@ public sealed class Lowering
 
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpCloseTask(taskTemp, socketTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Unit"]));
+    }
+
+    private (int, TypeRef) LowerNetTlsClose(Expr socketArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+
+        if (socketArg is Expr.Var v)
+        {
+            var info = LookupOwnedValue(v.Name);
+            if (info is not null && info.IsDropped)
+            {
+                ReportDiagnostic(GetSpan(socketArg),
+                    $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
+                    DiagnosticCodes.DoubleDrop);
+            }
+        }
+
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireTlsSocketType(prunedSocketType, socketArg, "Ashes.Net.Tls.close() expects TlsSocket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (socketArg is Expr.Var varExpr)
+        {
+            TryMarkDropped(varExpr.Name);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTlsCloseTask(taskTemp, socketTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Unit"]));
     }
 
@@ -3094,6 +3285,10 @@ public sealed class Lowering
                 IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
@@ -3150,6 +3345,10 @@ public sealed class Lowering
                     BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
@@ -6509,6 +6708,38 @@ public sealed class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.NetTcpClose,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Unit"])))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTlsConnectBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTlsConnect,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["TlsSocket"]))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTlsSendBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTlsSend,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["TlsSocket"], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TInt()))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTlsReceiveBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTlsReceive,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["TlsSocket"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TStr()))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTlsCloseBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTlsClose,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["TlsSocket"], CreateStringTaskType(_resolvedTypes["Unit"])))
         );
     }
 

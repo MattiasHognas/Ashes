@@ -2,7 +2,11 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -14,14 +18,56 @@ namespace Ashes.TestRunner;
 public static class Runner
 {
     private const string TcpPortPlaceholder = "__TCP_PORT__";
-    internal static TimeSpan TcpFixtureAcceptTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    private const string TlsPortPlaceholder = "__TLS_PORT__";
+
+    // These timeouts are intentionally per-async-context (AsyncLocal) rather than
+    // process-wide statics. The TUnit suite runs tests in parallel, and tests that
+    // exercise the timeout paths (e.g. RunTests_times_out_test_process_when_program_hangs,
+    // RunTests_times_out_tcp_fixture_when_program_never_connects) need to lower these
+    // values without leaking the override into concurrently-running fixture tests
+    // (which would otherwise be killed mid-handshake). Using AsyncLocal keeps the
+    // override scoped to the test's execution context.
+    private static readonly AsyncLocal<TimeSpan?> _tcpFixtureAcceptTimeout = new();
+    private static readonly AsyncLocal<TimeSpan?> _testProcessTimeout = new();
+
+    internal static TimeSpan TcpFixtureAcceptTimeout
+    {
+        get => _tcpFixtureAcceptTimeout.Value ?? TimeSpan.FromSeconds(5);
+        set => _tcpFixtureAcceptTimeout.Value = value;
+    }
+
+    internal static TimeSpan TestProcessTimeout
+    {
+        get => _testProcessTimeout.Value ?? TimeSpan.FromSeconds(30);
+        set => _testProcessTimeout.Value = value;
+    }
 
     public sealed record TestFileFixture(string RelativePath, byte[] Content);
+
+    public enum TlsFixtureTrustMode
+    {
+        Trusted,
+        Untrusted,
+    }
+
+    public enum TlsFixtureHandshakeMode
+    {
+        Success,
+        Failure,
+    }
 
     public sealed record TcpServerFixture(
         bool Enabled,
         string? ExpectedText,
         string? SendText);
+
+    public sealed record TlsServerFixture(
+        bool Enabled,
+        string? ExpectedText,
+        string? SendText,
+        TlsFixtureTrustMode TrustMode,
+        TlsFixtureHandshakeMode HandshakeMode,
+        string CertificateHost);
 
     public sealed record TestDirectives(
         string Expected,
@@ -30,7 +76,9 @@ public static class Runner
         bool IsCompileError,
         string? Stdin,
         IReadOnlyList<TestFileFixture> FileFixtures,
-        TcpServerFixture TcpServer);
+        TcpServerFixture TcpServer,
+        TlsServerFixture TlsServer,
+        IReadOnlyList<string> SkipOnTargets);
 
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
@@ -63,6 +111,14 @@ public static class Runner
             if (!hasExpected)
             {
                 results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
+                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP[/]");
+                continue;
+            }
+
+            if (directives.SkipOnTargets.Any(t => string.Equals(t, targetId, StringComparison.OrdinalIgnoreCase)))
+            {
+                results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
+                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP ({Markup.Escape(targetId)})[/]");
                 continue;
             }
 
@@ -70,24 +126,32 @@ public static class Runner
             int exit;
             string actual;
             string stderr = "";
-            TcpServerInstance? tcpServer = null;
+            LoopbackServerInstance? loopbackServer = null;
             try
             {
                 string? sourceOverride = null;
+                IReadOnlyDictionary<string, string>? environmentVariables = null;
                 if (directives.TcpServer.Enabled)
                 {
-                    tcpServer = TcpServerInstance.Start(directives.TcpServer);
-                    sourceOverride = rawSource.Replace(TcpPortPlaceholder, tcpServer.Port.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+                    loopbackServer = TcpServerInstance.Start(directives.TcpServer);
+                    sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
+                }
+                else if (directives.TlsServer.Enabled)
+                {
+                    loopbackServer = TlsServerInstance.Start(directives.TlsServer);
+                    sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
+                    environmentVariables = loopbackServer.GetEnvironmentVariables();
                 }
 
                 var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
-                var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures);
+                loopbackServer?.StartAccepting();
+                var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures, environmentVariables);
                 exit = runExit;
                 actual = (stdout ?? "").TrimEnd();
                 stderr = runStderr ?? "";
-                if (tcpServer is not null)
+                if (loopbackServer is not null)
                 {
-                    var fixtureError = tcpServer.Complete();
+                    var fixtureError = loopbackServer.Complete();
                     if (!string.IsNullOrWhiteSpace(fixtureError))
                     {
                         exit = 1;
@@ -113,7 +177,7 @@ public static class Runner
             }
             finally
             {
-                tcpServer?.Dispose();
+                loopbackServer?.Dispose();
             }
             sw.Stop();
 
@@ -129,6 +193,7 @@ public static class Runner
             }
 
             results.Add(new TestResult(file, passed, exp, actual, exit, expectedExitCode, ElapsedMs: sw.ElapsedMilliseconds));
+            console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")} [grey]{FormatElapsed(sw.ElapsedMilliseconds)}[/]");
         }
 
         RenderResults(results, console);
@@ -278,6 +343,13 @@ public static class Runner
         var tcpServerEnabled = false;
         string? tcpExpectedText = null;
         string? tcpSendText = null;
+        var tlsServerEnabled = false;
+        string? tlsExpectedText = null;
+        string? tlsSendText = null;
+        var tlsTrustMode = TlsFixtureTrustMode.Trusted;
+        var tlsHandshakeMode = TlsFixtureHandshakeMode.Success;
+        var tlsCertificateHost = "localhost";
+        var skipOnTargets = new List<string>();
 
         using var sr = new StringReader(source);
         string? line;
@@ -364,7 +436,76 @@ public static class Runner
             {
                 tcpServerEnabled = true;
                 tcpSendText = DecodeTestInput(commentText.Substring("tcp-send:".Length).Trim());
+                continue;
             }
+
+            if (commentText.StartsWith("tls-server:", StringComparison.OrdinalIgnoreCase))
+            {
+                var mode = commentText.Substring("tls-server:".Length).Trim();
+                if (!string.Equals(mode, "accept", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Unsupported tls-server mode '{mode}'. Expected 'accept'.");
+                }
+
+                tlsServerEnabled = true;
+                continue;
+            }
+
+            if (commentText.StartsWith("tls-expect:", StringComparison.OrdinalIgnoreCase))
+            {
+                tlsServerEnabled = true;
+                tlsExpectedText = DecodeTestInput(commentText.Substring("tls-expect:".Length).Trim());
+                continue;
+            }
+
+            if (commentText.StartsWith("tls-send:", StringComparison.OrdinalIgnoreCase))
+            {
+                tlsServerEnabled = true;
+                tlsSendText = DecodeTestInput(commentText.Substring("tls-send:".Length).Trim());
+                continue;
+            }
+
+            if (commentText.StartsWith("tls-trust:", StringComparison.OrdinalIgnoreCase))
+            {
+                tlsServerEnabled = true;
+                tlsTrustMode = ParseTlsFixtureTrustMode(commentText.Substring("tls-trust:".Length).Trim());
+                continue;
+            }
+
+            if (commentText.StartsWith("tls-handshake:", StringComparison.OrdinalIgnoreCase))
+            {
+                tlsServerEnabled = true;
+                tlsHandshakeMode = ParseTlsFixtureHandshakeMode(commentText.Substring("tls-handshake:".Length).Trim());
+                continue;
+            }
+
+            if (commentText.StartsWith("tls-cert-host:", StringComparison.OrdinalIgnoreCase))
+            {
+                tlsServerEnabled = true;
+                tlsCertificateHost = commentText.Substring("tls-cert-host:".Length).Trim();
+                if (string.IsNullOrWhiteSpace(tlsCertificateHost))
+                {
+                    throw new InvalidOperationException("TLS fixture certificate host cannot be empty.");
+                }
+            }
+
+            if (commentText.StartsWith("skip-on:", StringComparison.OrdinalIgnoreCase))
+            {
+                var list = commentText.Substring("skip-on:".Length);
+                foreach (var raw in list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (raw.Length > 0)
+                    {
+                        skipOnTargets.Add(raw);
+                    }
+                }
+                continue;
+            }
+        }
+
+        if (tcpServerEnabled && tlsServerEnabled)
+        {
+            throw new InvalidOperationException("A test cannot declare both tcp-server and tls-server fixtures.");
         }
 
         return new TestDirectives(
@@ -374,7 +515,29 @@ public static class Runner
             isCompileError,
             stdin,
             fileFixtures,
-            new TcpServerFixture(tcpServerEnabled, tcpExpectedText, tcpSendText));
+            new TcpServerFixture(tcpServerEnabled, tcpExpectedText, tcpSendText),
+            new TlsServerFixture(tlsServerEnabled, tlsExpectedText, tlsSendText, tlsTrustMode, tlsHandshakeMode, tlsCertificateHost),
+            skipOnTargets);
+    }
+
+    private static TlsFixtureTrustMode ParseTlsFixtureTrustMode(string value)
+    {
+        return value.ToLowerInvariant() switch
+        {
+            "trusted" => TlsFixtureTrustMode.Trusted,
+            "untrusted" => TlsFixtureTrustMode.Untrusted,
+            _ => throw new InvalidOperationException($"Unsupported tls-trust mode '{value}'. Expected 'trusted' or 'untrusted'."),
+        };
+    }
+
+    private static TlsFixtureHandshakeMode ParseTlsFixtureHandshakeMode(string value)
+    {
+        return value.ToLowerInvariant() switch
+        {
+            "success" => TlsFixtureHandshakeMode.Success,
+            "failure" => TlsFixtureHandshakeMode.Failure,
+            _ => throw new InvalidOperationException($"Unsupported tls-handshake mode '{value}'. Expected 'success' or 'failure'."),
+        };
     }
 
     public static void MaterializeTestFixtures(string rootDirectory, IReadOnlyList<TestFileFixture> fixtures)
@@ -493,6 +656,14 @@ public static class Runner
         }
 
         return builder.ToString();
+    }
+
+    private static string ReplacePortPlaceholders(string source, int port)
+    {
+        var portText = port.ToString(CultureInfo.InvariantCulture);
+        return source
+            .Replace(TcpPortPlaceholder, portText, StringComparison.Ordinal)
+            .Replace(TlsPortPlaceholder, portText, StringComparison.Ordinal);
     }
 
     private static readonly Regex ImportPattern = new(
@@ -629,7 +800,12 @@ public static class Runner
         return string.Join('\n', lines);
     }
 
-    private static (int ExitCode, string Stdout, string Stderr) RunImageCapture(byte[] image, string targetId, string? stdin = null, IReadOnlyList<TestFileFixture>? fileFixtures = null)
+    private static (int ExitCode, string Stdout, string Stderr) RunImageCapture(
+        byte[] image,
+        string targetId,
+        string? stdin = null,
+        IReadOnlyList<TestFileFixture>? fileFixtures = null,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "ashes-tests");
         Directory.CreateDirectory(tempRoot);
@@ -675,6 +851,14 @@ public static class Runner
                 WorkingDirectory = workDir
             };
 
+            if (environmentVariables is not null)
+            {
+                foreach (var (key, value) in environmentVariables)
+                {
+                    psi.Environment[key] = value;
+                }
+            }
+
             using var p = StartProcessWithRetry(psi);
             if (stdin is not null)
             {
@@ -684,9 +868,43 @@ public static class Runner
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync();
             var stderrTask = p.StandardError.ReadToEndAsync();
-            Task.WaitAll(stdoutTask, stderrTask);
+            var timeout = TestProcessTimeout;
+            var timedOut = false;
+            if (timeout > TimeSpan.Zero && !p.WaitForExit((int)timeout.TotalMilliseconds))
+            {
+                timedOut = true;
+                try
+                {
+                    p.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+                try
+                {
+                    p.WaitForExit(5000);
+                }
+                catch
+                {
+                }
+            }
+            try
+            {
+                Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+            }
             p.WaitForExit();
-            return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
+            var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+            var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+            if (timedOut)
+            {
+                var notice = $"test process timed out after {(long)timeout.TotalMilliseconds} ms and was killed";
+                stderr = string.IsNullOrEmpty(stderr) ? notice : stderr.TrimEnd() + "\n" + notice;
+                return (1, stdout, stderr);
+            }
+            return (p.ExitCode, stdout, stderr);
         }
         finally
         {
@@ -771,38 +989,60 @@ public static class Runner
             : (seconds / 60.0).ToString("F2", CultureInfo.InvariantCulture) + "min";
     }
 
-    private sealed class TcpServerInstance : IDisposable
+    private abstract class LoopbackServerInstance : IDisposable
+    {
+        public abstract int Port { get; }
+
+        public abstract void StartAccepting();
+
+        public virtual IReadOnlyDictionary<string, string>? GetEnvironmentVariables()
+        {
+            return null;
+        }
+
+        public abstract string? Complete();
+
+        public abstract void Dispose();
+    }
+
+    private sealed class TcpServerInstance : LoopbackServerInstance
     {
         private readonly TcpListener _listener;
-        private readonly Task<string?> _serverTask;
+        private readonly TcpServerFixture _fixture;
+        private Task<string?>? _serverTask;
 
-        private TcpServerInstance(TcpListener listener, Task<string?> serverTask, int port)
+        private TcpServerInstance(TcpListener listener, TcpServerFixture fixture, int port)
         {
             _listener = listener;
-            _serverTask = serverTask;
+            _fixture = fixture;
             Port = port;
         }
 
-        public int Port { get; }
+        public override int Port { get; }
 
         public static TcpServerInstance Start(TcpServerFixture fixture)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var serverTask = Task.Run(async () =>
+            return new TcpServerInstance(listener, fixture, port);
+        }
+
+        public override void StartAccepting()
+        {
+            _serverTask ??= Task.Run(async () =>
             {
                 try
                 {
                     using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = client.GetStream();
 
-                    if (fixture.ExpectedText is not null)
+                    if (_fixture.ExpectedText is not null)
                     {
-                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(fixture.ExpectedText);
+                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText);
                         var receivedBytes = new byte[expectedBytes.Length];
                         var read = 0;
                         while (read < expectedBytes.Length)
@@ -810,7 +1050,7 @@ public static class Runner
                             var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
                             if (n == 0)
                             {
-                                return $"tcp fixture expected '{fixture.ExpectedText}' but connection closed early";
+                                return $"tcp fixture expected '{_fixture.ExpectedText}' but connection closed early";
                             }
 
                             read += n;
@@ -818,13 +1058,13 @@ public static class Runner
 
                         if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
                         {
-                            return $"tcp fixture expected '{fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
+                            return $"tcp fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
                         }
                     }
 
-                    if (fixture.SendText is not null)
+                    if (_fixture.SendText is not null)
                     {
-                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(fixture.SendText);
+                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
                         await stream.WriteAsync(sendBytes);
                         await stream.FlushAsync();
                     }
@@ -841,25 +1081,283 @@ public static class Runner
                 }
                 finally
                 {
-                    listener.Stop();
+                    _listener.Stop();
                 }
             });
-
-            return new TcpServerInstance(listener, serverTask, port);
         }
 
-        public string? Complete()
+        public override string? Complete()
         {
-            return _serverTask.GetAwaiter().GetResult();
+            return _serverTask?.GetAwaiter().GetResult();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             try
             {
                 _listener.Stop();
             }
             catch
+            {
+            }
+        }
+    }
+
+    private sealed class TlsServerInstance : LoopbackServerInstance
+    {
+        private readonly TcpListener _listener;
+        private readonly TlsServerFixture _fixture;
+        private readonly TlsFixtureHost _host;
+        private readonly TlsFixtureTrustMode _trustMode;
+        private Task<string?>? _serverTask;
+
+        private TlsServerInstance(
+            TcpListener listener,
+            int port,
+            TlsServerFixture fixture,
+            TlsFixtureHost host,
+            TlsFixtureTrustMode trustMode)
+        {
+            _listener = listener;
+            _fixture = fixture;
+            _host = host;
+            _trustMode = trustMode;
+            Port = port;
+        }
+
+        public override int Port { get; }
+
+        public static TlsServerInstance Start(TlsServerFixture fixture)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            var host = TlsFixtureHost.Create(fixture.CertificateHost);
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            return new TlsServerInstance(listener, port, fixture, host, fixture.TrustMode);
+        }
+
+        public override void StartAccepting()
+        {
+            _serverTask ??= Task.Run(async () =>
+            {
+                try
+                {
+                    using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
+                    client.ReceiveTimeout = 5000;
+                    client.SendTimeout = 5000;
+                    using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+                    try
+                    {
+                        await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
+                    }
+                    catch (AuthenticationException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    {
+                        return null;
+                    }
+                    catch (IOException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    {
+                        return null;
+                    }
+
+                    if (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                    {
+                        return "tls fixture expected the client handshake to fail, but it succeeded";
+                    }
+
+                    if (_fixture.ExpectedText is not null)
+                    {
+                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText);
+                        var receivedBytes = new byte[expectedBytes.Length];
+                        var read = 0;
+                        while (read < expectedBytes.Length)
+                        {
+                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
+                            if (n == 0)
+                            {
+                                return $"tls fixture expected '{_fixture.ExpectedText}' but connection closed early";
+                            }
+
+                            read += n;
+                        }
+
+                        if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
+                        {
+                            return $"tls fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
+                        }
+                    }
+
+                    if (_fixture.SendText is not null)
+                    {
+                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
+                        await stream.WriteAsync(sendBytes);
+                        await stream.FlushAsync();
+                        await stream.ShutdownAsync();
+                    }
+
+                    return null;
+                }
+                catch (OperationCanceledException)
+                {
+                    return $"tls fixture timed out waiting for connection after {FormatElapsed((long)TcpFixtureAcceptTimeout.TotalMilliseconds)}";
+                }
+                catch (Exception ex)
+                {
+                    return $"tls fixture failed: {ex.Message}";
+                }
+                finally
+                {
+                    _listener.Stop();
+                }
+            });
+        }
+
+        public override IReadOnlyDictionary<string, string>? GetEnvironmentVariables()
+        {
+            if (_trustMode != TlsFixtureTrustMode.Trusted)
+            {
+                return null;
+            }
+
+            // Always route trust verification through rustls' PEM verifier by pointing
+            // SSL_CERT_FILE at the fixture's CA PEM. This is portable across Linux, Wine,
+            // and Windows hosts, and avoids touching the Windows certificate store
+            // (CurrentUser\Root.Add can trigger a SmartScreen confirmation prompt that
+            // hangs indefinitely on headless GitHub Actions Windows runners).
+            return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["SSL_CERT_FILE"] = _host.TrustCertificatePath,
+            };
+        }
+
+        public override string? Complete()
+        {
+            return _serverTask?.GetAwaiter().GetResult();
+        }
+
+        public override void Dispose()
+        {
+            try
+            {
+                _listener.Stop();
+            }
+            catch
+            {
+            }
+
+            _host.Dispose();
+        }
+    }
+
+    private sealed class TlsFixtureHost : IDisposable
+    {
+        private readonly string _tempDirectory;
+
+        private TlsFixtureHost(string tempDirectory, X509Certificate2 serverCertificate, X509Certificate2 trustCertificate, string trustCertificatePath)
+        {
+            _tempDirectory = tempDirectory;
+            ServerCertificate = serverCertificate;
+            TrustCertificate = trustCertificate;
+            TrustCertificatePath = trustCertificatePath;
+        }
+
+        public X509Certificate2 ServerCertificate { get; }
+
+        public X509Certificate2 TrustCertificate { get; }
+
+        public string TrustCertificatePath { get; }
+
+        public static TlsFixtureHost Create(string hostName)
+        {
+            var notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var rootNotAfter = notBefore.AddDays(2);
+            var serverNotAfter = notBefore.AddDays(1);
+
+            using RSA rootKey = RSA.Create(2048);
+            var rootRequest = new CertificateRequest("CN=Ashes Test Root CA", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+            rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+            rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
+
+            using var rootCertificateEphemeral = rootRequest.CreateSelfSigned(notBefore, rootNotAfter);
+            byte[] rootCertificatePfx = rootCertificateEphemeral.Export(X509ContentType.Pfx);
+            var rootCertificate = X509CertificateLoader.LoadPkcs12(rootCertificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+
+            using RSA serverKey = RSA.Create(2048);
+            var serverRequest = new CertificateRequest($"CN={hostName}", serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            serverRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+            serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
+            serverRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(serverRequest.PublicKey, false));
+            var subjectAlternativeNames = new SubjectAlternativeNameBuilder();
+            if (IPAddress.TryParse(hostName, out var ipAddress))
+            {
+                subjectAlternativeNames.AddIpAddress(ipAddress);
+            }
+            else
+            {
+                subjectAlternativeNames.AddDnsName(hostName);
+            }
+
+            serverRequest.CertificateExtensions.Add(subjectAlternativeNames.Build());
+
+            byte[] serialNumber = new byte[16];
+            RandomNumberGenerator.Fill(serialNumber);
+            using var serverCertificateEphemeral = serverRequest.Create(rootCertificate, notBefore, serverNotAfter, serialNumber);
+            var serverCertificateWithKey = serverCertificateEphemeral.CopyWithPrivateKey(serverKey);
+            byte[] serverCertificatePfx = serverCertificateWithKey.Export(X509ContentType.Pfx);
+            var serverCertificate = X509CertificateLoader.LoadPkcs12(serverCertificatePfx, string.Empty, X509KeyStorageFlags.Exportable, Pkcs12LoaderLimits.Defaults);
+            serverCertificateWithKey.Dispose();
+
+            byte[] trustCertificateBytes = rootCertificate.Export(X509ContentType.Cert);
+            var trustCertificate = X509CertificateLoader.LoadCertificate(trustCertificateBytes);
+
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var trustCertificatePath = Path.Combine(tempDirectory, "tls-fixture-cert.pem");
+            File.WriteAllText(trustCertificatePath, rootCertificate.ExportCertificatePem());
+
+            return new TlsFixtureHost(tempDirectory, serverCertificate, trustCertificate, trustCertificatePath);
+        }
+
+        public void Dispose()
+        {
+            ServerCertificate.Dispose();
+            TrustCertificate.Dispose();
+            TryDeleteFile(TrustCertificatePath);
+            TryDeleteDirectory(_tempDirectory);
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        private static void TryDeleteDirectory(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
             {
             }
         }

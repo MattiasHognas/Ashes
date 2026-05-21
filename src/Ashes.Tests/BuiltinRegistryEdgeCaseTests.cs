@@ -122,6 +122,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.IsBuiltinModule("Ashes.Text").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Http").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tcp").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tls").ShouldBeTrue();
     }
 
     [Test]
@@ -153,6 +154,8 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.IsReservedTypeName("Unit").ShouldBeTrue();
         BuiltinRegistry.IsReservedTypeName("Maybe").ShouldBeTrue();
         BuiltinRegistry.IsReservedTypeName("Result").ShouldBeTrue();
+        BuiltinRegistry.IsReservedTypeName("Socket").ShouldBeTrue();
+        BuiltinRegistry.IsReservedTypeName("TlsSocket").ShouldBeTrue();
         BuiltinRegistry.IsReservedTypeName("Float").ShouldBeTrue();
     }
 
@@ -196,6 +199,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes.Text");
         names.ShouldContain("Ashes.Http");
         names.ShouldContain("Ashes.Net.Tcp");
+        names.ShouldContain("Ashes.Net.Tls");
         names.ShouldContain("Ashes.Result");
         names.ShouldContain("Ashes.List");
         names.ShouldContain("Ashes.Maybe");
@@ -210,6 +214,8 @@ public sealed class BuiltinRegistryEdgeCaseTests
         types.ShouldContain(t => t.Name == "Unit");
         types.ShouldContain(t => t.Name == "Maybe");
         types.ShouldContain(t => t.Name == "Result");
+        types.ShouldContain(t => t.Name == "Socket");
+        types.ShouldContain(t => t.Name == "TlsSocket");
     }
 
     [Test]

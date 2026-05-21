@@ -29,6 +29,10 @@ public static class BuiltinRegistry
         NetTcpSend,
         NetTcpReceive,
         NetTcpClose,
+        NetTlsConnect,
+        NetTlsSend,
+        NetTlsReceive,
+        NetTlsClose,
         AsyncRun,
         AsyncFromResult,
         AsyncSleep,
@@ -129,6 +133,16 @@ public static class BuiltinRegistry
                     ["receive"] = new("receive", BuiltinValueKind.NetTcpReceive, IsCallable: true, Arity: 2),
                     ["close"] = new("close", BuiltinValueKind.NetTcpClose, IsCallable: true, Arity: 1)
                 }),
+            ["Ashes.Net.Tls"] = new(
+                "Ashes.Net.Tls",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["connect"] = new("connect", BuiltinValueKind.NetTlsConnect, IsCallable: true, Arity: 2),
+                    ["send"] = new("send", BuiltinValueKind.NetTlsSend, IsCallable: true, Arity: 2),
+                    ["receive"] = new("receive", BuiltinValueKind.NetTlsReceive, IsCallable: true, Arity: 2),
+                    ["close"] = new("close", BuiltinValueKind.NetTlsClose, IsCallable: true, Arity: 1)
+                }),
             ["Ashes.Async"] = new(
                 "Ashes.Async",
                 null,
@@ -149,7 +163,8 @@ public static class BuiltinRegistry
     /// </summary>
     private static readonly HashSet<string> ResourceTypeNames = new(StringComparer.Ordinal)
     {
-        "Socket"
+        "Socket",
+        "TlsSocket"
     };
 
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
@@ -279,6 +294,12 @@ public static class BuiltinRegistry
             [],
             []);
 
+        var tlsSocketTypeParameters = Array.Empty<TypeParameterSymbol>();
+        var tlsSocketDecl = new TypeDecl(
+            "TlsSocket",
+            [],
+            []);
+
         var taskTypeParameters = new[]
         {
             new TypeParameterSymbol("E"),
@@ -339,6 +360,11 @@ public static class BuiltinRegistry
                 socketTypeParameters,
                 [],
                 socketDecl),
+            ["TlsSocket"] = new(
+                "TlsSocket",
+                tlsSocketTypeParameters,
+                [],
+                tlsSocketDecl),
             ["Task"] = new(
                 "Task",
                 taskTypeParameters,
