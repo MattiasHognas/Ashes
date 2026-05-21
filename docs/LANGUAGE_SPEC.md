@@ -1729,7 +1729,7 @@ of the **first task to complete**:
   either complete or park on a wait point (socket I/O, etc.).
 - The first task that completes (whether with `Ok` or `Err`) provides
   the result of the race; its value is returned and remaining tasks
-  are **cancelled**.
+  are cancelled.
 - Cancellation closes any OS socket a losing leaf task is parked on and
   recursively cancels awaited sub-tasks; cancelled task results are
   discarded. Cancellation is best-effort: TLS userspace session memory
