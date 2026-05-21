@@ -98,6 +98,7 @@ Ashes.IO.print(match Ashes.Async.run(async
     | Error(err) -> err)
 """;
 
+        var fastResponded = new TaskCompletionSource();
         await RunSourceWithServerAsync(
             source,
             expectedClientCount: 2,
@@ -108,13 +109,31 @@ Ashes.IO.print(match Ashes.Async.run(async
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
                 if (isSlow)
                 {
-                    await Task.Delay(2000);
+                    // Block until /fast has actually sent its response so the client deterministically
+                    // observes /fast winning the race regardless of CI scheduling jitter.
+                    await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
+                    // Additional gap so the client unambiguously observes /fast as the first-completed
+                    // task before /slow's response arrives (Ashes.Async.race resolves based on the
+                    // first completed task as observed by the runtime).
+                    await Task.Delay(500);
                 }
 
                 var responseBody = isSlow ? "slow" : "fast";
                 var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                try
+                {
+                    await stream.WriteAsync(response);
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // The race loser's connection may have been closed by the client; ignore.
+                }
+
+                if (!isSlow)
+                {
+                    fastResponded.TrySetResult();
+                }
             },
             expectedStdout: "fast\n");
     }

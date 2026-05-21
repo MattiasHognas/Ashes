@@ -125,6 +125,7 @@ public sealed class LinuxArm64BackendCoverageTests
             return;
         }
 
+        var fastResponded = new TaskCompletionSource();
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
             """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/slow"), Ashes.Http.get("https://__HOST__:__PORT__/fast")])) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
@@ -135,13 +136,23 @@ public sealed class LinuxArm64BackendCoverageTests
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
                 if (isSlow)
                 {
-                    await Task.Delay(2000);
+                    // Block until /fast has actually sent its response so the client deterministically
+                    // observes /fast winning the race regardless of qemu / CI scheduling jitter.
+                    await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
+                    // Additional gap so the client unambiguously observes /fast as the first-completed
+                    // task before /slow's response arrives.
+                    await Task.Delay(500);
                 }
 
                 var responseBody = isSlow ? "slow" : "fast";
                 var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
                 await stream.WriteAsync(response);
                 await stream.FlushAsync();
+
+                if (!isSlow)
+                {
+                    fastResponded.TrySetResult();
+                }
             },
             host: "localhost",
             expectedClientCount: 2,
