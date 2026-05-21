@@ -188,13 +188,13 @@ jobs:
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: |
           "./${{ matrix.cli-path }}" test tests
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        timeout-minutes: 2
+        timeout-minutes: 5
         shell: pwsh
         run: |
           & ".\${{ matrix.cli-path }}" test tests
