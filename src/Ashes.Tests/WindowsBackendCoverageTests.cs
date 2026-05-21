@@ -722,12 +722,11 @@ public sealed class WindowsBackendCoverageTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
-        IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
-            ? new Dictionary<string, string>
-            {
-                ["SSL_CERT_FILE"] = TestProcessHelper.ConvertHostPathForWindowsExecution(tlsHost.TrustCertificatePath)
-            }
-            : null;
+        IReadOnlyDictionary<string, string>? environmentVariables = new Dictionary<string, string>
+        {
+            ["SSL_CERT_FILE"] = TestProcessHelper.ConvertHostPathForWindowsExecution(
+                trustServerCertificate ? tlsHost.TrustCertificatePath : tlsHost.UntrustedCertificatePath)
+        };
 
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);

@@ -11,16 +11,25 @@ internal sealed class TlsLoopbackTestHost : IDisposable
 {
     private readonly string tempDirectory;
 
-    private TlsLoopbackTestHost(string tempDirectory, X509Certificate2 serverCertificate, string trustCertificatePath)
+    private TlsLoopbackTestHost(string tempDirectory, X509Certificate2 serverCertificate, string trustCertificatePath, string untrustedCertificatePath)
     {
         this.tempDirectory = tempDirectory;
         ServerCertificate = serverCertificate;
         TrustCertificatePath = trustCertificatePath;
+        UntrustedCertificatePath = untrustedCertificatePath;
     }
 
     public X509Certificate2 ServerCertificate { get; }
 
     public string TrustCertificatePath { get; }
+
+    /// <summary>
+    /// Path to a PEM file containing a different, unrelated self-signed root CA. When supplied
+    /// to the runtime via SSL_CERT_FILE this routes verification through the deterministic PEM
+    /// verifier (instead of Wine's platform verifier) and yields a stable UnknownIssuer error
+    /// for the server certificate produced by this host.
+    /// </summary>
+    public string UntrustedCertificatePath { get; }
 
     public static async Task<TlsLoopbackTestHost> CreateAsync(string hostName = "localhost")
     {
@@ -64,7 +73,19 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         string trustCertificatePath = Path.Combine(tempDirectory, "test-root-ca.pem");
         await File.WriteAllTextAsync(trustCertificatePath, rootCertificate.ExportCertificatePem());
 
-        return new TlsLoopbackTestHost(tempDirectory, serverCertificate, trustCertificatePath);
+        // Generate a second, unrelated self-signed root CA and write its PEM. Tests that exercise
+        // untrusted-certificate behavior point SSL_CERT_FILE at this file so verification goes
+        // through the PEM verifier (deterministic UnknownIssuer) rather than the platform verifier.
+        using RSA untrustedRootKey = RSA.Create(2048);
+        var untrustedRootRequest = new CertificateRequest("CN=Ashes Test Untrusted Root", untrustedRootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        untrustedRootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        untrustedRootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+        untrustedRootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(untrustedRootRequest.PublicKey, false));
+        using X509Certificate2 untrustedRootCertificate = untrustedRootRequest.CreateSelfSigned(notBefore, rootNotAfter);
+        string untrustedCertificatePath = Path.Combine(tempDirectory, "test-untrusted-root-ca.pem");
+        await File.WriteAllTextAsync(untrustedCertificatePath, untrustedRootCertificate.ExportCertificatePem());
+
+        return new TlsLoopbackTestHost(tempDirectory, serverCertificate, trustCertificatePath, untrustedCertificatePath);
     }
 
     public void Configure(ProcessStartInfo startInfo)
@@ -120,6 +141,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
     {
         ServerCertificate.Dispose();
         TryDeleteFile(TrustCertificatePath);
+        TryDeleteFile(UntrustedCertificatePath);
         TryDeleteDirectory(tempDirectory);
     }
 
