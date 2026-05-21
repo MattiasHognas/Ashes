@@ -29,6 +29,6 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\rustls.version"
       DestinationFiles="$(PublishDir)runtimes\$(RuntimeIdentifier)\rustls.version"
       SkipUnchangedFiles="false"
-      Condition="('$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' or '$(RuntimeIdentifier)' == 'win-x64') and Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\rustls.version')" />
+      Condition="Exists('$(MSBuildThisFileDirectory)runtimes\$(RuntimeIdentifier)\rustls.version')" />
   </Target>
 </Project>
