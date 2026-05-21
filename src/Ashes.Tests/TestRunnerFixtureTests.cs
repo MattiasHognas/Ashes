@@ -105,6 +105,44 @@ public sealed class TestRunnerFixtureTests
     }
 
     [Test]
+    public void RunTests_times_out_test_process_when_program_hangs()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
+        var filePath = Path.Combine(root, "process-timeout.ash");
+        var originalTimeout = Runner.TestProcessTimeout;
+
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(
+                filePath,
+                "// expect: never\nAshes.IO.print(match Ashes.Async.run(async\n    await Ashes.Async.sleep(60000)) with\n    | Ok(_) -> \"never\"\n    | Error(_) -> \"never\")\n");
+
+            Runner.TestProcessTimeout = TimeSpan.FromMilliseconds(500);
+
+            using var output = new StringWriter();
+            var console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output)
+            });
+
+            var exitCode = Runner.RunTests([filePath], BackendFactory.DefaultForCurrentOS(), console);
+
+            exitCode.ShouldBe(1);
+            output.ToString().ShouldContain("test process timed out");
+        }
+        finally
+        {
+            Runner.TestProcessTimeout = originalTimeout;
+
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
     public void RunTests_times_out_tcp_fixture_when_program_never_connects()
     {
         var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));

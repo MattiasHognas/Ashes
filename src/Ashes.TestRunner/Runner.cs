@@ -20,6 +20,7 @@ public static class Runner
     private const string TcpPortPlaceholder = "__TCP_PORT__";
     private const string TlsPortPlaceholder = "__TLS_PORT__";
     internal static TimeSpan TcpFixtureAcceptTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    internal static TimeSpan TestProcessTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     public sealed record TestFileFixture(string RelativePath, byte[] Content);
 
@@ -822,9 +823,43 @@ public static class Runner
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync();
             var stderrTask = p.StandardError.ReadToEndAsync();
-            Task.WaitAll(stdoutTask, stderrTask);
+            var timeout = TestProcessTimeout;
+            var timedOut = false;
+            if (timeout > TimeSpan.Zero && !p.WaitForExit((int)timeout.TotalMilliseconds))
+            {
+                timedOut = true;
+                try
+                {
+                    p.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+                try
+                {
+                    p.WaitForExit(5000);
+                }
+                catch
+                {
+                }
+            }
+            try
+            {
+                Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+            }
             p.WaitForExit();
-            return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
+            var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+            var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+            if (timedOut)
+            {
+                var notice = $"test process timed out after {(long)timeout.TotalMilliseconds} ms and was killed";
+                stderr = string.IsNullOrEmpty(stderr) ? notice : stderr.TrimEnd() + "\n" + notice;
+                return (1, stdout, stderr);
+            }
+            return (p.ExitCode, stdout, stderr);
         }
         finally
         {
