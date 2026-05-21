@@ -18,7 +18,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends wine64
-          wine64 --version
+          if command -v wine64 >/dev/null 2>&1; then
+            wine64 --version
+          else
+            /usr/lib/wine/wine64 --version
+          fi
 
       - name: Cache LLVM runtimes
         id: cache-llvm
