@@ -1717,7 +1717,7 @@ collecting results into a list in the original order:
 ### 19.7.3 Ashes.Async.race
 
 `Ashes.Async.race(tasks)` takes a list of tasks and returns the result
-of the **first task to complete**:
+of the first task to complete:
 
     async
         let result = await Ashes.Async.race([async 42, async 99])
