@@ -135,7 +135,7 @@ public sealed class LinuxArm64BackendCoverageTests
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
                 if (isSlow)
                 {
-                    await Task.Delay(250);
+                    await Task.Delay(2000);
                 }
 
                 var responseBody = isSlow ? "slow" : "fast";
@@ -144,7 +144,8 @@ public sealed class LinuxArm64BackendCoverageTests
                 await stream.FlushAsync();
             },
             host: "localhost",
-            expectedClientCount: 2);
+            expectedClientCount: 2,
+            tolerateClientDisconnect: true);
 
         result.Stdout.ShouldBe("fast\n");
     }
@@ -248,14 +249,15 @@ public sealed class LinuxArm64BackendCoverageTests
         string? certificateHost = null,
         bool trustServerCertificate = true,
         int expectedClientCount = 1,
-        bool allowServerHandshakeFailure = false)
+        bool allowServerHandshakeFailure = false,
+        bool tolerateClientDisconnect = false)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
-        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
+        var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync, tolerateClientDisconnect);
         IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
             ? new Dictionary<string, string>
             {

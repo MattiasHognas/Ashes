@@ -76,7 +76,8 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         TcpListener listener,
         int expectedClientCount,
         X509Certificate2 serverCertificate,
-        Func<SslStream, Task> handleClientAsync)
+        Func<SslStream, Task> handleClientAsync,
+        bool tolerateClientDisconnect = false)
     {
         try
         {
@@ -93,7 +94,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
                     clients.Add(client);
                 }
 
-                await Task.WhenAll(clients.Select(client => HandleClientAsync(client, serverCertificate, handleClientAsync)));
+                await Task.WhenAll(clients.Select(client => HandleClientAsync(client, serverCertificate, handleClientAsync, tolerateClientDisconnect)));
             }
             finally
             {
@@ -122,15 +123,24 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         TryDeleteDirectory(tempDirectory);
     }
 
-    private static async Task HandleClientAsync(TcpClient client, X509Certificate2 serverCertificate, Func<SslStream, Task> handleClientAsync)
+    private static async Task HandleClientAsync(TcpClient client, X509Certificate2 serverCertificate, Func<SslStream, Task> handleClientAsync, bool tolerateClientDisconnect = false)
     {
         using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
         await stream
             .AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false)
             .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
-        await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
-        await stream.FlushAsync();
-        await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout);
+        try
+        {
+            await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
+            await stream.FlushAsync();
+            await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout);
+        }
+        catch (IOException) when (tolerateClientDisconnect)
+        {
+            // The client side may close its end before the server finishes writing or shutting
+            // down (e.g. in race-style scenarios where the loser's connection is abandoned).
+            // Treat such post-handshake socket failures as benign when the caller opts in.
+        }
     }
 
     private static void TryDeleteFile(string path)

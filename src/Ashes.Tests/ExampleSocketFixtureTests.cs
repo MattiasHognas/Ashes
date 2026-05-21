@@ -108,7 +108,7 @@ Ashes.IO.print(match Ashes.Async.run(async
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
                 if (isSlow)
                 {
-                    await Task.Delay(250);
+                    await Task.Delay(2000);
                 }
 
                 var responseBody = isSlow ? "slow" : "fast";
