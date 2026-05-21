@@ -442,7 +442,8 @@ public sealed class WindowsBackendCoverageTests
                 await stream.WriteAsync(response);
                 await stream.FlushAsync();
             },
-            host: "localhost");
+            host: "localhost",
+            allowServerHandshakeFailure: true);
 
         result.Stdout.ShouldBe("empty\n");
     }
