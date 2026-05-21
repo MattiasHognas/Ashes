@@ -1523,6 +1523,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle pendingCountSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_pending_count");
         LlvmValueHandle preferredWaitHandleSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_preferred_wait_handle");
         LlvmValueHandle preferredCursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_preferred_cursor");
+        LlvmValueHandle cancelCursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "race_cancel_cursor");
 
         LlvmApi.BuildStore(builder, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), resultSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultTaskSlot);
@@ -1541,6 +1542,10 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle resultBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_result");
         LlvmBasicBlockHandle afterScanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_after_scan");
         LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_wait");
+        LlvmBasicBlockHandle cancelInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_cancel_init");
+        LlvmBasicBlockHandle cancelCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_cancel_check");
+        LlvmBasicBlockHandle cancelBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_cancel_body");
+        LlvmBasicBlockHandle cancelOneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_cancel_one");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "race_done");
 
         LlvmApi.BuildBr(builder, preferredCheckBlock);
@@ -1611,7 +1616,33 @@ internal static partial class LlvmCodegen
         LlvmValueHandle resultTask = LlvmApi.BuildLoad2(builder, state.I64, resultTaskSlot, "race_result_task_value");
         LlvmValueHandle raceResult = LoadMemory(state, resultTask, TaskStructLayout.ResultSlot, "race_task_result");
         LlvmApi.BuildStore(builder, raceResult, resultSlot);
-        LlvmApi.BuildBr(builder, doneBlock);
+        LlvmApi.BuildBr(builder, cancelInitBlock);
+
+        // Walk the original input task list and cancel every entry that is
+        // not the winning task by calling ashes_cancel_task (which internally
+        // closes any OS socket the loser is parked on via EmitTcpClose and
+        // recursively cancels awaited sub-tasks), so race releases resources
+        // promptly per LANGUAGE_SPEC §19.7.3.
+        LlvmApi.PositionBuilderAtEnd(builder, cancelInitBlock);
+        LlvmApi.BuildStore(builder, taskListPtr, cancelCursorSlot);
+        LlvmApi.BuildBr(builder, cancelCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cancelCheckBlock);
+        LlvmValueHandle cancelCursor = LlvmApi.BuildLoad2(builder, state.I64, cancelCursorSlot, "race_cancel_cursor_value");
+        LlvmValueHandle cancelDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cancelCursor, LlvmApi.ConstInt(state.I64, 0, 0), "race_cancel_done");
+        LlvmApi.BuildCondBr(builder, cancelDone, doneBlock, cancelBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cancelBodyBlock);
+        LlvmValueHandle cancelNode = LlvmApi.BuildLoad2(builder, state.I64, cancelCursorSlot, "race_cancel_node");
+        LlvmValueHandle cancelCandidate = LoadMemory(state, cancelNode, 0, "race_cancel_candidate");
+        LlvmValueHandle cancelTail = LoadMemory(state, cancelNode, 8, "race_cancel_tail");
+        LlvmApi.BuildStore(builder, cancelTail, cancelCursorSlot);
+        LlvmValueHandle isWinner = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cancelCandidate, resultTask, "race_cancel_is_winner");
+        LlvmApi.BuildCondBr(builder, isWinner, cancelCheckBlock, cancelOneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cancelOneBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [cancelCandidate], "race_cancel_call");
+        LlvmApi.BuildBr(builder, cancelCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, afterScanBlock);
         LlvmValueHandle pendingAfterScan = LlvmApi.BuildLoad2(builder, state.I64, pendingCountSlot, "race_pending_after_scan");

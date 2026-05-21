@@ -1717,7 +1717,7 @@ collecting results into a list in the original order:
 ### 19.7.3 Ashes.Async.race
 
 `Ashes.Async.race(tasks)` takes a list of tasks and returns the result
-of the first task:
+of the **first task to complete**:
 
     async
         let result = await Ashes.Async.race([async 42, async 99])
@@ -1725,7 +1725,18 @@ of the first task:
 
 - The argument is a `List(Task(E, A))`.
 - The returned task has type `Task(E, A)`.
-- Only the first task in the list is run.
+- All tasks in the list are started concurrently and run until they
+  either complete or park on a wait point (socket I/O, etc.).
+- The first task that completes (whether with `Ok` or `Err`) provides
+  the result of the race; its value is returned and remaining tasks
+  are **cancelled**.
+- Cancellation closes any OS socket a losing leaf task is parked on and
+  recursively cancels awaited sub-tasks; cancelled task results are
+  discarded. Cancellation is best-effort: TLS userspace session memory
+  is released only when the process exits, and tasks that hold a socket
+  but have not yet entered a wait are not closed by cancellation (in
+  practice unreachable from `race` because the scheduler only surfaces
+  tasks at wait points).
 - An empty input list produces `0` (unit placeholder).
 
 ## 19.8 Diagnostics

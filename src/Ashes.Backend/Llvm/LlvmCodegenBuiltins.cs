@@ -1375,6 +1375,7 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_wait_pending_task_list", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_http_get_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_http_post_task", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_cancel_task", LlvmApi.FunctionType(i64, [i64]));
 
         EmitRuntimeFunction(
             "ashes_tcp_connect",
@@ -1487,6 +1488,11 @@ internal static partial class LlvmCodegen
             "ashes_step_http_post_task",
             LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitStepHttpPostTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_cancel_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitCancelTask(state, LlvmApi.GetParam(fn, 0)));
 
         LlvmValueHandle CreateInternalI64Global(string symbolName)
         {
@@ -2745,6 +2751,73 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_done");
         return EmitLeafTaskCompletedStatus(state);
+    }
+
+    /// <summary>
+    /// Emits the body of <c>ashes_cancel_task(taskPtr) -> i64</c>.
+    /// Cancellation closes any OS socket the task is currently parked on
+    /// (via <see cref="EmitTcpClose"/>, which routes to the platform close),
+    /// recursively cancels any awaited sub-task, and marks the task
+    /// <see cref="TaskStructLayout.StateCompleted"/> with <c>Ok(0)</c>.
+    /// Already-completed tasks are a no-op.
+    /// Always returns 0.
+    /// Used by <c>Ashes.Async.race</c> to release resources held by losers
+    /// as soon as the first task in the race completes.
+    /// Known limitations: rustls userspace session memory held by TLS leaf
+    /// tasks is not freed (released at process exit); leaf tasks not yet
+    /// parked on a wait (no <see cref="TaskStructLayout.WaitHandle"/>) leak
+    /// any socket they hold in <see cref="TaskStructLayout.IoArg0"/>. The
+    /// latter case is unreachable from <c>race</c> with the current scheduler
+    /// because <c>ashes_step_task_until_wait_or_done</c> only surfaces tasks
+    /// at wait points or completion; the limitation is recorded here for any
+    /// future scheduler that exposes mid-step tasks to cancellation.
+    /// </summary>
+    private static LlvmValueHandle EmitCancelTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmBasicBlockHandle workBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_work");
+        LlvmBasicBlockHandle closeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_close");
+        LlvmBasicBlockHandle afterCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_after_close");
+        LlvmBasicBlockHandle cancelAwaitedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_awaited");
+        LlvmBasicBlockHandle afterAwaitedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_after_awaited");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_done");
+
+        LlvmValueHandle stateIdx = LoadMemory(state, taskPtr, TaskStructLayout.StateIndex, "cancel_state");
+        LlvmValueHandle alreadyDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "cancel_already_done");
+        LlvmApi.BuildCondBr(builder, alreadyDone, doneBlock, workBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, workBlock);
+        LlvmValueHandle waitHandle = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "cancel_wait_handle");
+        LlvmValueHandle hasSocket = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitHandle, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_has_socket");
+        LlvmApi.BuildCondBr(builder, hasSocket, closeBlock, afterCloseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, closeBlock);
+        _ = EmitTcpClose(state, waitHandle);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_clear_wait_handle");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitNone, 0), "cancel_clear_wait_kind");
+        LlvmApi.BuildBr(builder, afterCloseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterCloseBlock);
+        LlvmValueHandle awaited = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "cancel_awaited_value");
+        LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_has_awaited");
+        LlvmApi.BuildCondBr(builder, hasAwaited, cancelAwaitedBlock, afterAwaitedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cancelAwaitedBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [awaited], "cancel_recurse");
+        StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_clear_awaited");
+        LlvmApi.BuildBr(builder, afterAwaitedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterAwaitedBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
+            EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), "cancel_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "cancel_mark_done");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
     }
 
     private static LlvmValueHandle EmitPendingLeafTask(LlvmCodegenState state, LlvmValueHandle taskPtr, long waitKind, LlvmValueHandle waitHandle, string prefix)
