@@ -1066,7 +1066,6 @@ public static class Runner
         private readonly TlsServerFixture _fixture;
         private readonly TlsFixtureHost _host;
         private readonly TlsFixtureTrustMode _trustMode;
-        private readonly X509Certificate2? _trustedCertificate;
         private Task<string?>? _serverTask;
 
         private TlsServerInstance(
@@ -1074,14 +1073,12 @@ public static class Runner
             int port,
             TlsServerFixture fixture,
             TlsFixtureHost host,
-            TlsFixtureTrustMode trustMode,
-            X509Certificate2? trustedCertificate)
+            TlsFixtureTrustMode trustMode)
         {
             _listener = listener;
             _fixture = fixture;
             _host = host;
             _trustMode = trustMode;
-            _trustedCertificate = trustedCertificate;
             Port = port;
         }
 
@@ -1093,17 +1090,8 @@ public static class Runner
             listener.Start();
 
             var host = TlsFixtureHost.Create(fixture.CertificateHost);
-            X509Certificate2? trustedCertificate = null;
-            if (fixture.TrustMode == TlsFixtureTrustMode.Trusted && OperatingSystem.IsWindows())
-            {
-                trustedCertificate = X509CertificateLoader.LoadCertificate(host.TrustCertificate.Export(X509ContentType.Cert));
-                using var rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
-                rootStore.Open(OpenFlags.ReadWrite);
-                rootStore.Add(trustedCertificate);
-            }
-
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            return new TlsServerInstance(listener, port, fixture, host, fixture.TrustMode, trustedCertificate);
+            return new TlsServerInstance(listener, port, fixture, host, fixture.TrustMode);
         }
 
         public override void StartAccepting()
@@ -1184,11 +1172,16 @@ public static class Runner
 
         public override IReadOnlyDictionary<string, string>? GetEnvironmentVariables()
         {
-            if (_trustMode != TlsFixtureTrustMode.Trusted || OperatingSystem.IsWindows())
+            if (_trustMode != TlsFixtureTrustMode.Trusted)
             {
                 return null;
             }
 
+            // Always route trust verification through rustls' PEM verifier by pointing
+            // SSL_CERT_FILE at the fixture's CA PEM. This is portable across Linux, Wine,
+            // and Windows hosts, and avoids touching the Windows certificate store
+            // (CurrentUser\Root.Add can trigger a SmartScreen confirmation prompt that
+            // hangs indefinitely on headless GitHub Actions Windows runners).
             return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["SSL_CERT_FILE"] = _host.TrustCertificatePath,
@@ -1208,21 +1201,6 @@ public static class Runner
             }
             catch
             {
-            }
-
-            if (_trustedCertificate is not null)
-            {
-                try
-                {
-                    using var rootStore = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
-                    rootStore.Open(OpenFlags.ReadWrite);
-                    rootStore.Remove(_trustedCertificate);
-                }
-                catch
-                {
-                }
-
-                _trustedCertificate.Dispose();
             }
 
             _host.Dispose();
