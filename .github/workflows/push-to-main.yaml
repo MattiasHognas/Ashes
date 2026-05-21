@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      LLVM_FULL_VERSION: 22.1.2
 
     steps:
       - name: Checkout repository
@@ -30,12 +32,12 @@ jobs:
             runtimes/linux-x64/libLLVM.so
             runtimes/linux-arm64/libLLVM.so
             runtimes/win-x64/libLLVM.dll
-          key: runtimes-llvm
+          key: runtimes-llvm-${{ env.LLVM_FULL_VERSION }}
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
         if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: bash scripts/download-llvm-native.sh --all
+        run: bash scripts/download-llvm-native.sh --all "${LLVM_FULL_VERSION}"
 
       - name: Save LLVM cache
         if: steps.cache-llvm.outputs.cache-hit != 'true'
@@ -45,7 +47,7 @@ jobs:
             runtimes/linux-x64/libLLVM.so
             runtimes/linux-arm64/libLLVM.so
             runtimes/win-x64/libLLVM.dll
-          key: runtimes-llvm
+          key: runtimes-llvm-${{ env.LLVM_FULL_VERSION }}
           enableCrossOsArchive: true
 
       - name: Setup .NET
