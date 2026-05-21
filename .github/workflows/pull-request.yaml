@@ -28,7 +28,7 @@ jobs:
             runtimes/linux-x64/libLLVM.so
             runtimes/linux-arm64/libLLVM.so
             runtimes/win-x64/libLLVM.dll
-          key: runtimes-llvm
+          key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
           enableCrossOsArchive: true
 
       - name: Download all LLVM native libraries
@@ -43,7 +43,7 @@ jobs:
             runtimes/linux-x64/libLLVM.so
             runtimes/linux-arm64/libLLVM.so
             runtimes/win-x64/libLLVM.dll
-          key: runtimes-llvm
+          key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
           enableCrossOsArchive: true
 
       - name: Setup .NET
