@@ -90,6 +90,7 @@ public static class Runner
             if (!hasExpected)
             {
                 results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
+                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP[/]");
                 continue;
             }
 
@@ -164,6 +165,7 @@ public static class Runner
             }
 
             results.Add(new TestResult(file, passed, exp, actual, exit, expectedExitCode, ElapsedMs: sw.ElapsedMilliseconds));
+            console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")} [grey]{FormatElapsed(sw.ElapsedMilliseconds)}[/]");
         }
 
         RenderResults(results, console);

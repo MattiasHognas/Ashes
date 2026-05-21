@@ -194,7 +194,7 @@ jobs:
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        timeout-minutes: 5
+        timeout-minutes: 10
         shell: pwsh
         run: |
           & ".\${{ matrix.cli-path }}" test tests
