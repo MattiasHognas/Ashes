@@ -87,7 +87,7 @@ internal static class HermeticTlsRuntimeAssets
     {
         yield return AppContext.BaseDirectory;
 
-        string? assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        string? assemblyDirectory = Path.GetDirectoryName(GetExecutingAssemblyLocation());
         if (!string.IsNullOrWhiteSpace(assemblyDirectory))
         {
             yield return assemblyDirectory;
@@ -95,6 +95,16 @@ internal static class HermeticTlsRuntimeAssets
 
         yield return Directory.GetCurrentDirectory();
     }
+
+    // Assembly.Location returns an empty string for assemblies embedded in a single-file app
+    // (IL3000). That case is handled by the IsNullOrWhiteSpace check at the call site, where
+    // AppContext.BaseDirectory and the current directory still cover lookup. Wrapping the call
+    // in a helper lets us suppress IL3000 once for the intentional fallback.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(
+        "SingleFile",
+        "IL3000:Avoid accessing Assembly file path when publishing as a single file",
+        Justification = "An empty location is expected and handled by the caller; this only contributes an additional search root when not single-file published.")]
+    private static string GetExecutingAssemblyLocation() => Assembly.GetExecutingAssembly().Location;
 
     private static void ValidateProvisionedRustlsVersion(string versionRelativePath)
     {
