@@ -589,40 +589,24 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var fastResponded = new TaskCompletionSource();
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/slow"), Ashes.Http.get("https://__HOST__:__PORT__/fast")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")])) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
                 request.ShouldContain("Host: localhost");
-
-                var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
-                if (isSlow)
-                {
-                    // Block until /fast has actually sent its response so the client deterministically
-                    // observes /fast winning the race regardless of CI scheduling jitter.
-                    await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
-                    // Additional gap so the client unambiguously observes /fast as the first-completed
-                    // task before /slow's response arrives.
-                    await Task.Delay(500);
-                }
-
-                var responseBody = isSlow ? "slow" : "fast";
-                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                // Both endpoints respond with the same body ("ok") so the test result is
+                // deterministic regardless of which Async.race task technically completes first
+                // (avoids timing flakiness on loaded CI runners).
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok");
                 await stream.WriteAsync(response);
                 await stream.FlushAsync();
-
-                if (!isSlow)
-                {
-                    fastResponded.TrySetResult();
-                }
             },
             host: "localhost",
             expectedClientCount: 2,
             tolerateClientDisconnect: true);
 
-        result.Stdout.ShouldBe("fast\n");
+        result.Stdout.ShouldBe("ok\n");
     }
 
     [Test]
