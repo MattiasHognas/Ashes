@@ -19,8 +19,28 @@ public static class Runner
 {
     private const string TcpPortPlaceholder = "__TCP_PORT__";
     private const string TlsPortPlaceholder = "__TLS_PORT__";
-    internal static TimeSpan TcpFixtureAcceptTimeout { get; set; } = TimeSpan.FromSeconds(5);
-    internal static TimeSpan TestProcessTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    // These timeouts are intentionally per-async-context (AsyncLocal) rather than
+    // process-wide statics. The TUnit suite runs tests in parallel, and tests that
+    // exercise the timeout paths (e.g. RunTests_times_out_test_process_when_program_hangs,
+    // RunTests_times_out_tcp_fixture_when_program_never_connects) need to lower these
+    // values without leaking the override into concurrently-running fixture tests
+    // (which would otherwise be killed mid-handshake). Using AsyncLocal keeps the
+    // override scoped to the test's execution context.
+    private static readonly AsyncLocal<TimeSpan?> _tcpFixtureAcceptTimeout = new();
+    private static readonly AsyncLocal<TimeSpan?> _testProcessTimeout = new();
+
+    internal static TimeSpan TcpFixtureAcceptTimeout
+    {
+        get => _tcpFixtureAcceptTimeout.Value ?? TimeSpan.FromSeconds(5);
+        set => _tcpFixtureAcceptTimeout.Value = value;
+    }
+
+    internal static TimeSpan TestProcessTimeout
+    {
+        get => _testProcessTimeout.Value ?? TimeSpan.FromSeconds(30);
+        set => _testProcessTimeout.Value = value;
+    }
 
     public sealed record TestFileFixture(string RelativePath, byte[] Content);
 
