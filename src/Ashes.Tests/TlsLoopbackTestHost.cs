@@ -37,18 +37,24 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         DateTimeOffset rootNotAfter = notBefore.AddDays(2);
         DateTimeOffset serverNotAfter = notBefore.AddDays(1);
 
-        using RSA rootKey = RSA.Create(2048);
-        var rootRequest = new CertificateRequest("CN=Ashes Test Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        // ECDSA P-256 is used (instead of RSA-2048) because the loopback TLS fixture must
+        // negotiate full TLS handshakes under qemu-aarch64 user-mode emulation on x64 CI hosts,
+        // where RSA modular exponentiation is the dominant handshake cost. ECDSA P-256 signature
+        // verification is an order of magnitude cheaper under emulation, which keeps the
+        // compiled arm64 process well under the SocketTestConstants.ProcessExitTimeout budget
+        // for the https-via-loopback tests. rustls supports ecdsa_secp256r1_sha256 natively.
+        using ECDsa rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var rootRequest = new CertificateRequest("CN=Ashes Test Root", rootKey, HashAlgorithmName.SHA256);
         rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
         rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
 
         using X509Certificate2 rootCertificate = rootRequest.CreateSelfSigned(notBefore, rootNotAfter);
 
-        using RSA serverKey = RSA.Create(2048);
-        var serverRequest = new CertificateRequest($"CN={hostName}", serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using ECDsa serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var serverRequest = new CertificateRequest($"CN={hostName}", serverKey, HashAlgorithmName.SHA256);
         serverRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
-        serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
+        serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
         var enhancedKeyUsage = new OidCollection
         {
             new("1.3.6.1.5.5.7.3.1", "Server Authentication")
@@ -76,8 +82,8 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         // Generate a second, unrelated self-signed root CA and write its PEM. Tests that exercise
         // untrusted-certificate behavior point SSL_CERT_FILE at this file so verification goes
         // through the PEM verifier (deterministic UnknownIssuer) rather than the platform verifier.
-        using RSA untrustedRootKey = RSA.Create(2048);
-        var untrustedRootRequest = new CertificateRequest("CN=Ashes Test Untrusted Root", untrustedRootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using ECDsa untrustedRootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var untrustedRootRequest = new CertificateRequest("CN=Ashes Test Untrusted Root", untrustedRootKey, HashAlgorithmName.SHA256);
         untrustedRootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         untrustedRootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
         untrustedRootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(untrustedRootRequest.PublicKey, false));
