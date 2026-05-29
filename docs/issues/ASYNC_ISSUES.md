@@ -107,4 +107,4 @@ Priority summary
 
 4. Bug 3 / Bug 4 — performance/round-trips and blocking sleep.
 
-I did not make any code changes (this was a review). If you’d like, I can implement the Bug 1 fix (sync the liveness switches) and add a depth-3 nested-await regression test, which together close the two confirmed wrong-output defects.
+This document records the confirmed findings only; fixes and regression tests should be tracked in follow-up issues or PRs.
