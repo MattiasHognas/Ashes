@@ -31,7 +31,7 @@ ComputeLiveTempsAcrossAwaits: definedBefore calls GetDefinedTemps(TextParseInt) 
 
 Bug 2 — `Ashes.Async.run` only handles 2 levels of nested awaited coroutines (Q3)
 
-EmitRunTask (LlvmCodegenExpressions.cs:867) drives the top task; for a normal (non-leaf) awaited sub-task it calls EmitRunTaskRecursive (985). But EmitRunTaskRecursive‘s nested handling (nestedStepBlock, 1094‑1116) only re-calls the awaited coroutine in a loop — it never drives that coroutine’s own awaited sub-task. When the nested coroutine suspends, line 1106‑1108 loops back to nestedStepBlock and re-enters it without ever populating its ResultSlot.
+EmitRunTask (LlvmCodegenExpressions.cs:867) drives the top task; for a normal (non-leaf) awaited sub-task it calls EmitRunTaskRecursive (985). But EmitRunTaskRecursive's nested handling (nestedStepBlock, 1094‑1116) only re-calls the awaited coroutine in a loop — it never drives that coroutine’s own awaited sub-task. When the nested coroutine suspends, line 1106‑1108 loops back to nestedStepBlock and re-enters it without ever populating its ResultSlot.
 
 Trace — minimal failing program (4 nested async blocks):
 Ashes.Async.run(async            // T0  -> EmitRunTask
