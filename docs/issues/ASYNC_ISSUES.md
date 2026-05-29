@@ -89,7 +89,7 @@ The generated coroutine bodies are stackless: all live state lives in the heap f
 
 Bug 5 — Async tail calls are categorically un-optimized (Q10)
 
-LowerAsync force-disables TCO for the whole coroutine body: _tcoCtx = null; at Lowering.cs:3880 (restored after the body at Lowering.cs:3974; a separate coroutine-building path restores at Lowering.cs:2026). So a tail-recursive async function — including return await self(...) — is never turned into a loop. There is no async tail-call elision anywhere: the final segment always allocates a fresh state, loads ResultSlot, and returns (StateMachineTransform.cs:279‑288); a return await f() could instead splice f’s task as the continuation but does not.
+LowerAsync force-disables TCO for the whole coroutine body: _tcoCtx = null; at Lowering.cs:3880 (restored after the body at Lowering.cs:3974; a separate coroutine-building path restores at Lowering.cs:2026). So a tail-recursive async function — including return await self(...) — is never turned into a loop. There is no async tail-call elision anywhere: the final segment stores the result into ResultSlot, marks StateIndex = -1 (completed), and returns COMPLETED (StateMachineTransform.cs:279‑288); a return await f() could instead splice f’s task as the continuation but does not.
 
 
 Q7 — Save/restore CFG correctness with branches/match
