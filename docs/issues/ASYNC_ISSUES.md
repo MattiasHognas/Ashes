@@ -78,20 +78,18 @@ The transform emits the suspend sequence unconditionally at every await (StateMa
 So await Ashes.Async.fromResult(x) (a CreateCompletedTask, already state = -1) still forces: full live-var save → return 0 → driver reloads AwaitedTask, steps the completed task, copies result, re-enters and resumes. In Ashes.Async.all/race and the cooperative scheduler (EmitStepTaskUntilPendingOrDone, which surfaces control back to its caller at 581‑586), each already-complete await costs a scheduler round-trip plus a redundant save/restore. Functionally the result is correct (Q6: I did not find an incorrect value from immediate completion), but it is a guaranteed extra round-trip per await — directly answering Q4 in the affirmative.
 
 
-Bug 4 — `run` path is not truly stackless; sleep blocks the thread (Q9)
+Bug 4 — `run` path is not fully cooperative; sleep blocks the thread (Q9)
 
-Two issues on the synchronous run path:
+The generated coroutine bodies are stackless: all live state lives in the heap frame, and nothing relies on caller stack after Return SUSPENDED. The issues are in the synchronous drivers, not the state machine:
 
-1. EmitRunTaskRecursive recursion is real native recursion (967, and the nested loop), so a chain of awaited coroutines consumes native C stack proportional to await-nesting depth. Combined with Bug 2 this is both incorrect and stack-bound.
+1. The synchronous `run` driver does not use the general recursive runtime stepping path used by the cooperative driver. Instead, EmitRunTaskRecursive inlines a bounded nested handler: after one nested coroutine suspends, nestedStepBlock simply re-enters that same coroutine (1094‑1108) without driving its awaited sub-task. This is the correctness hole described in Bug 2. The name `EmitRunTaskRecursive` is misleading here; this is code-generation structure, not evidence that the generated program performs unbounded native recursive calls for each await nesting level.
 
 2. EmitStepLeafTask’s sleep case performs a blocking nanosleep/Sleep on the OS thread (LlvmCodegenExpressions.cs:352‑360; also EmitHandleSubTask 1243‑1245) and marks the task complete in place, rather than yielding to the scheduler. While a sleep is pending, no other ready task makes progress — the “stackless cooperative” property holds for the generated coroutine frames themselves, but not for these drivers.
 
-The generated coroutine bodies are correctly stackless (all live state lives in the heap frame; nothing relies on caller stack after Return SUSPENDED) — the violations are in the drivers, not the state machine.
 
+Bug 5 — Async tail calls are categorically un-optimized (Q10)
 
-Bug 5 — Async tail calls are categorically un-optimizable (Q10)
-
-LowerAsync force-disables TCO for the whole coroutine body: _tcoCtx = null; at Lowering.cs:3880 (restored after the body at Lowering.cs:3974; a separate coroutine-building path restores at Lowering.cs:2026). So a tail-recursive async function — including return await self(...) — is never turned into a loop, and combined with the real native recursion in EmitRunTaskRecursive, deep async recursion overflows the stack. There is no async tail-call elision anywhere: the final segment always allocates a fresh state, loads ResultSlot, and returns (StateMachineTransform.cs:279‑288); a return await f() could instead splice f’s task as the continuation but does not.
+LowerAsync force-disables TCO for the whole coroutine body: _tcoCtx = null; at Lowering.cs:3880 (restored after the body at Lowering.cs:3974; a separate coroutine-building path restores at Lowering.cs:2026). So a tail-recursive async function — including return await self(...) — is never turned into a loop. There is no async tail-call elision anywhere: the final segment always allocates a fresh state, loads ResultSlot, and returns (StateMachineTransform.cs:279‑288); a return await f() could instead splice f’s task as the continuation but does not.
 
 
 Q7 — Save/restore CFG correctness with branches/match
