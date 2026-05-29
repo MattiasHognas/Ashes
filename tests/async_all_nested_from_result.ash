@@ -4,7 +4,7 @@ let task = async
     let sum = match pair with
         | a :: b :: [] -> a + b
         | _ -> 0
-    in let both = await Ashes.Async.all([Ashes.Async.fromResult(sum), async 3]) in
+    in let both = await Ashes.Async.all([Ashes.Async.fromResult(Ok(sum)), async 3]) in
     match both with
         | a :: b :: [] -> a + b
         | _ -> 0
