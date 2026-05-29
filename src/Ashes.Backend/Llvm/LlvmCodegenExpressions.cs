@@ -1048,72 +1048,24 @@ internal static partial class LlvmCodegen
         // --- Suspended: handle nested await (run sub-sub-task) ---
         LlvmApi.PositionBuilderAtEnd(builder, subSuspendedBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "sub_awaited_task");
-        // For nested tasks, we check if already completed and if not, step them inline.
-        // Since we can't recurse infinitely at compile time, we handle one level:
-        // the nested task's coroutine either completes immediately or we panic.
-        // This handles the common case (fromResult creates completed tasks,
-        // and inner async blocks have their own coroutines that are stepped).
+        LlvmBasicBlockHandle awaitedDoneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_awaited_done");
+        LlvmBasicBlockHandle awaitedPendingBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "sub_awaited_pending");
 
-        // Check if the nested awaited task is already completed
-        LlvmValueHandle nestedStateIdx = LoadMemory(state, awaitedTask, TaskStructLayout.StateIndex, "nested_state_idx");
-        LlvmValueHandle nestedIsDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            nestedStateIdx, minusOne, "nested_is_done");
-        LlvmValueHandle nestedIsLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
-            nestedStateIdx, minusOne, "nested_is_leaf");
+        LlvmValueHandle awaitedStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [awaitedTask], "sub_awaited_status");
+        LlvmValueHandle awaitedCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            awaitedStatus, LlvmApi.ConstInt(state.I64, 0, 0), "sub_awaited_completed");
+        LlvmApi.BuildCondBr(builder, awaitedCompleted, awaitedDoneBlock, awaitedPendingBlock);
 
-        LlvmBasicBlockHandle nestedDoneBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_done");
-        LlvmBasicBlockHandle nestedLeafBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_leaf");
-        LlvmBasicBlockHandle nestedLeafDoneBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_leaf_done");
-        LlvmBasicBlockHandle nestedLeafPendingBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_leaf_pending");
-        LlvmBasicBlockHandle nestedStepBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_step");
-
-        LlvmBasicBlockHandle nestedNotDoneBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "nested_not_done");
-        LlvmApi.BuildCondBr(builder, nestedIsDone, nestedDoneBlock, nestedNotDoneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, nestedNotDoneBlock);
-        LlvmApi.BuildCondBr(builder, nestedIsLeaf, nestedLeafBlock, nestedStepBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, nestedLeafBlock);
-        LlvmValueHandle nestedLeafStatus = EmitStepLeafTask(state, awaitedTask, "nested_leaf");
-        LlvmValueHandle nestedLeafCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
-            nestedLeafStatus, LlvmApi.ConstInt(state.I64, 0, 0), "nested_leaf_completed");
-        LlvmApi.BuildCondBr(builder, nestedLeafCompleted, nestedLeafDoneBlock, nestedLeafPendingBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, nestedLeafDoneBlock);
-        LlvmApi.BuildBr(builder, nestedDoneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, nestedLeafPendingBlock);
-        LlvmApi.BuildBr(builder, nestedNotDoneBlock);
-
-        // --- Nested step: call nested coroutine in a loop ---
-        LlvmApi.PositionBuilderAtEnd(builder, nestedStepBlock);
-        LlvmValueHandle nestedFn = LoadMemory(state, awaitedTask, TaskStructLayout.CoroutineFn, "nested_fn");
-        LlvmValueHandle nestedFnPtr = LlvmApi.BuildIntToPtr(builder, nestedFn, coroutineFnPtrType, "nested_fn_ptr");
-        LlvmValueHandle nestedStatus = LlvmApi.BuildCall2(builder,
-            coroutineFnType,
-            nestedFnPtr,
-            [awaitedTask, LlvmApi.ConstInt(state.I64, 0, 0)],
-            "nested_status");
-
-        // If nested task completed, fall through to nestedDone.
-        // If suspended, the nested task has its own awaited sub-task; loop.
-        LlvmValueHandle nestedSuspended = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            nestedStatus, zero, "nested_suspended");
-        LlvmApi.BuildCondBr(builder, nestedSuspended, nestedStepBlock, nestedDoneBlock);
-
-        // --- Nested done: get result ---
-        LlvmApi.PositionBuilderAtEnd(builder, nestedDoneBlock);
-        LlvmValueHandle nestedResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "nested_result");
-        // Store into our task's result slot
-        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, nestedResult, "sub_nested_result_store");
-        // Loop back to step our coroutine
+        LlvmApi.PositionBuilderAtEnd(builder, awaitedDoneBlock);
+        LlvmValueHandle awaitedResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, "sub_awaited_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, awaitedResult, "sub_awaited_result_store");
         LlvmApi.BuildBr(builder, subStepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, awaitedPendingBlock);
+        EmitWaitForPendingLeafTask(state, awaitedTask, "sub_awaited_pending");
+        LlvmApi.BuildBr(builder, subSuspendedBlock);
 
         // --- Done: extract result ---
         LlvmApi.PositionBuilderAtEnd(builder, subDoneBlock);
