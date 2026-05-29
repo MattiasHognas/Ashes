@@ -2549,19 +2549,28 @@ public sealed class Lowering
 
         var (resultTemp, resultType) = LowerExpr(resultArg);
 
-        if (!TryGetStandardResultParts(out var resultSymbol, out _, out _)
+        if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
             || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
         {
             return ReturnNeverWithDummyTemp();
         }
 
         var errorType = NewTypeVar();
-        var successType = NewTypeVar();
-        var expectedResultType = new TypeRef.TNamedType(resultSymbol, [errorType, successType]);
-        Unify(resultType, expectedResultType);
+        TypeRef successType;
+        var finalResultTemp = resultTemp;
+        if (TryGetResultTypeArgs(Prune(resultType), resultSymbol, out var resultErrorType, out var resultSuccessType))
+        {
+            Unify(errorType, resultErrorType);
+            successType = resultSuccessType;
+        }
+        else
+        {
+            successType = resultType;
+            finalResultTemp = LowerSingleFieldConstructorValue(okConstructor, resultTemp);
+        }
 
         int finalTemp = NewTemp();
-        Emit(new IrInst.CreateCompletedTask(finalTemp, resultTemp));
+        Emit(new IrInst.CreateCompletedTask(finalTemp, finalResultTemp));
         return (finalTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
     }
 
