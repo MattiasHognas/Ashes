@@ -1,10 +1,34 @@
+Questions asked:
+
+Q1: Whether my liveness analysis can incorrectly miss variables that must survive an await.
+
+Q2: Whether temps or locals can be restored incorrectly after resume.
+
+Q3: Whether recursion or nested async calls can break the transform.
+
+Q4: Whether completed tasks can unnecessarily suspend and cause scheduler round-trips.
+
+Q5: Whether the state struct layout is sufficient for all values that may cross await boundaries.
+
+Q6: Whether any async function can observe incorrect behavior if an awaited task completes immediately.
+
+Q7: Whether my save/restore logic is CFG-correct in the presence of branches, pattern matching, and recursive calls.
+
+Q8: Whether there are lifetime or ownership issues with values stored in the coroutine frame.
+
+Q9: Whether my implementation is truly stackless or accidentally relies on caller stack state after suspension.
+
+Q10: Any cases where async tail-call optimization would be possible but currently prevented.
+
+Knowledge gained:
+
 Bug 1 — Liveness analysis silently drops several instruction kinds (Q1, Q2, Q5)
 
 StateMachineTransform.GetDefinedTemps (lines 470‑541) and GetUsedTemps (548‑618) are missing cases for instructions that do define/use temps:
 
-• TextUncons, TextParseInt, TextParseFloat (Ir.cs:95‑97)
+- TextUncons, TextParseInt, TextParseFloat (Ir.cs:95‑97)
 
-• CopyOutArena, CopyOutList, CopyOutClosure, CopyOutTcoListCell (Ir.cs:183,218,235,261)
+- CopyOutArena, CopyOutList, CopyOutClosure, CopyOutTcoListCell (Ir.cs:183,218,235,261)
 
 That these are real def/use temps is proven by IrOptimizer.cs:930‑944, which handles all of them correctly. The two switches have drifted out of sync (exactly the hazard the comments at StateMachineTransform.cs:466‑469 warn about).
 
@@ -39,10 +63,10 @@ Ashes.Async.run(async            // T0  -> EmitRunTask
     await (async                  // T2  -> handled inline (nestedStepBlock)
       await (async 1))))          // T3  -> NEVER stepped
 
-• EmitRunTask(T0): T0 suspends on T1 → normalSubBlock → EmitRunTaskRecursive(T1).
-• EmitRunTaskRecursive(T1): T1 suspends on T2 → subSuspendedBlock, awaitedTask = T2.
-• T2 is a coroutine (state 0) → nestedStepBlock: call T2. T2 suspends on T3 (state→1), returns SUSPENDED. nestedSuspended is true → loop back to nestedStepBlock.
-• Call T2 again: it dispatches to state 1 and loads its own ResultSlot, which was never filled with T3’s result (T3 was never stepped). It reads 0.
+- EmitRunTask(T0): T0 suspends on T1 → normalSubBlock → EmitRunTaskRecursive(T1).
+- EmitRunTaskRecursive(T1): T1 suspends on T2 → subSuspendedBlock, awaitedTask = T2.
+- T2 is a coroutine (state 0) → nestedStepBlock: call T2. T2 suspends on T3 (state→1), returns SUSPENDED. nestedSuspended is true → loop back to nestedStepBlock.
+- Call T2 again: it dispatches to state 1 and loads its own ResultSlot, which was never filled with T3’s result (T3 was never stepped). It reads 0.
 
 Result: Ok(0) instead of Ok(1). The existing tests/async_nested_tasks.ash sits exactly one level below this boundary (its innermost async 3 has no await, so a single nestedStepBlock call completes it), which is why the gap is untested. Note the cooperative driver EmitStepTaskUntilPendingOrDone (518) does not have this bug — it makes a genuine recursive runtime call ashes_step_task_until_wait_or_done(awaitedTask) (568). The two drivers have inconsistent capabilities.
 
@@ -74,9 +98,8 @@ Q7 — Save/restore CFG correctness with branches/match
 
 The save/restore is positional, not CFG-based (ComputeLiveTempsAcrossAwaits/ComputeLiveLocalsAcrossAwaits scan by instruction index, 354‑434). I traced match-with-await-in-arms and match/let lowering and it is currently sound for branches, but only by two fragile accidents:
 
-• Cross-state control labels (e.g. L_armB, L_merge) are emitted inside their segment, after the resume prologue, and intra-body jumps target those labels directly — so a branch entering a “future” state’s code lands after its restore prologue and doesn’t double-restore.
-
-• The body is loop-free: TCO is off (3880) and the language has no loop construct, so there are no backward edges. Positional “defined-before ∧ used-after” can therefore only over-approximate (safe).
+- Cross-state control labels (e.g. L_armB, L_merge) are emitted inside their segment, after the resume prologue, and intra-body jumps target those labels directly — so a branch entering a “future” state’s code lands after its restore prologue and doesn’t double-restore.
+- The body is loop-free: TCO is off (3880) and the language has no loop construct, so there are no backward edges. Positional “defined-before ∧ used-after” can therefore only over-approximate (safe).
 
 This is the latent risk to flag: the moment any backward edge appears in a coroutine body (re-enabling async TCO, or adding a loop construct), positional liveness will under-approximate and silently drop variables live around the back-edge. A value defined late in a loop body and consumed early on the next iteration across an await would never be saved. The design needs real CFG liveness before any of that is added.
 
@@ -85,9 +108,8 @@ Q8 — Lifetime/ownership of values in the frame
 
 The frame saves raw i64 by value (StoreMemOffset/LoadMemOffset), which is correct for scalars and heap pointers, but the transform has no guard that a saved temp/local isn’t a pointer into memory that is reclaimed across the suspend:
 
-• SaveArenaState/RestoreArenaState only save the arena cursor/end local slots (StateMachineTransform.cs:440‑463), not the arena contents. If an arena region is reset while a coroutine is suspended, any restored pointer into it dangles.
-
-• AllocStack/AllocAdtStack/MakeClosureStack (Lowering.cs:2755,2937,3492,3556) produce alloca memory. The coroutine’s native stack frame is destroyed at Return SUSPENDED; if such a pointer were ever live across an await, restoring it on re-entry yields a pointer to dead stack.
+- SaveArenaState/RestoreArenaState only save the arena cursor/end local slots (StateMachineTransform.cs:440‑463), not the arena contents. If an arena region is reset while a coroutine is suspended, any restored pointer into it dangles.
+- AllocStack/AllocAdtStack/MakeClosureStack (Lowering.cs:2755,2937,3492,3556) produce alloca memory. The coroutine’s native stack frame is destroyed at Return SUSPENDED; if such a pointer were ever live across an await, restoring it on re-entry yields a pointer to dead stack.
 
 Today these stack-allocation sites are limited to immediately-consumed, non-escaping values (e.g. single-arm constructor match scrutinee, ShouldStackAllocateImmediateMatchScrutinee 5576‑5579), so I could not construct a current crash — but nothing in the transform enforces this invariant, so it’s a real latent ownership hazard.
 
@@ -95,7 +117,6 @@ Today these stack-allocation sites are limited to immediately-consumed, non-esca
 Q5 — Is the state-struct layout sufficient?
 
 Size-wise, yes: every scalar fits one 8-byte slot, including floats (stored bit-cast to i64: LlvmCodegen.cs:1141‑1143,1152), and aggregates (strings/lists/tuples/ADTs/closures) are single heap pointers. Slots are unioned per temp/local, which over-allocates but is correct. The only “insufficiency” is missing slots for the instructions in Bug 1 — a coverage bug, not a width/layout bug.
-
 
 Priority summary
 
