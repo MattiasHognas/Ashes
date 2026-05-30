@@ -554,4 +554,42 @@ public sealed class FormatterTests
         var secondPass = FormatFixtureSource(formatted);
         secondPass.ShouldBe("async\n    await f(x)\n");
     }
+
+    [Test]
+    public void Format_should_round_trip_extern_function_declaration()
+    {
+        const string source = "extern strlen(Str) -> Int\nstrlen(\"abc\")\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("extern strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
+
+        // Idempotent: second pass produces the same output
+        var secondPass = FormatFixtureSource(formatted);
+        secondPass.ShouldBe("extern strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
+    }
+
+    [Test]
+    public void Format_should_round_trip_extern_function_with_symbol_name()
+    {
+        const string source = "extern getpid() -> Int = \"getpid\"\ngetpid()\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("extern getpid() -> Int = \"getpid\"\n\ngetpid()\n");
+    }
+
+    [Test]
+    public void Format_should_round_trip_extern_opaque_type_and_functions()
+    {
+        const string source = "extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\nmakeHandle(42)\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
+
+        // Idempotent: second pass produces the same output
+        var secondPass = FormatFixtureSource(formatted);
+        secondPass.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
+    }
 }
