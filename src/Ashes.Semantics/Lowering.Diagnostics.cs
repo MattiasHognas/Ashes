@@ -106,4 +106,34 @@ public sealed partial class Lowering
         var span = AstSpans.GetOrDefault(typeConstructor);
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
+
+    private (int, TypeRef) ReportArityMismatch(Expr callee, int expectedArgs, int providedArgs)
+    {
+        var calleeName = TryGetCalleeDisplayName(callee);
+        if (calleeName is not null)
+        {
+            ReportDiagnostic(GetSpan(callee), $"Call to '{calleeName}' expects {expectedArgs} argument(s) but got {providedArgs}.");
+        }
+        else
+        {
+            ReportDiagnostic(GetSpan(callee), $"Call expects {expectedArgs} argument(s) but got {providedArgs}.");
+        }
+
+        return ReturnNeverWithDummyTemp();
+    }
+
+    private (int, TypeRef) ReportNonFunctionCall(Expr callee, TypeRef actualType, int providedArgs)
+    {
+        var calleeName = TryGetCalleeDisplayName(callee);
+        if (calleeName is not null)
+        {
+            ReportDiagnostic(GetSpan(callee), $"Attempted to call '{calleeName}' with {providedArgs} argument(s), but its type is {Pretty(actualType)}, not a function.");
+        }
+        else
+        {
+            ReportDiagnostic(GetSpan(callee), $"Attempted to call non-function type {Pretty(actualType)}.");
+        }
+
+        return ReturnNeverWithDummyTemp();
+    }
 }

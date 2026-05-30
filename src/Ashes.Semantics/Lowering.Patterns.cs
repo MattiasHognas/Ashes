@@ -156,7 +156,6 @@ public sealed partial class Lowering
         return (resultTemp, Prune(resultType));
     }
 
-
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
     {
         if (valueType is not TypeRef.TTuple tupleType || pattern is not Pattern.Tuple tuplePattern)
@@ -292,6 +291,11 @@ public sealed partial class Lowering
         return resultType;
     }
 
+    /// <summary>
+    /// Emits tests and bindings for a pattern. Any mismatch jumps to
+    /// <paramref name="failLabel"/>, letting the enclosing match arm perform
+    /// guard failure and arena cleanup in one place.
+    /// </summary>
     private void EmitPattern(Pattern pattern, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
     {
         switch (pattern)
@@ -436,7 +440,6 @@ public sealed partial class Lowering
         Emit(new IrInst.CmpIntEq(cmpTemp, valueTemp, expectedTemp));
         Emit(new IrInst.JumpIfFalse(cmpTemp, failLabel));
     }
-
 
     private static IEnumerable<string> PatternBindings(Pattern p)
     {
@@ -1131,5 +1134,91 @@ public sealed partial class Lowering
             TypeRef.TNamedType named => $"{named.Symbol.Name}<{string.Join(", ", named.TypeArgs.Select(FormatConstructorParameterType))}>",
             _ => type.GetType().Name
         };
+    }
+
+    /// <summary>
+    /// Returns a dummy (int 0) temp with type <see cref="TypeRef.TNever"/>.
+    /// Used as a sentinel return value after emitting a diagnostic so that
+    /// downstream code can detect and suppress cascading type errors.
+    /// </summary>
+    private (int Temp, TypeRef Type) ReturnNeverWithDummyTemp()
+    {
+        int t = NewTemp();
+        Emit(new IrInst.LoadConstInt(t, 0));
+        return (t, new TypeRef.TNever());
+    }
+
+    private string BuildUnknownConstructorHint(string name)
+    {
+        if (_constructorSymbols.Count == 0)
+        {
+            return "";
+        }
+
+        // Only suggest constructors within a reasonable edit-distance threshold
+        // to avoid surfacing very dissimilar names as suggestions.
+        int threshold = Math.Max(3, name.Length / 2);
+        var candidates = _constructorSymbols.Keys
+            .Select(k => (Name: k, Dist: EditDistance(name, k)))
+            .Where(x => x.Dist <= threshold)
+            .OrderBy(x => x.Dist)
+            .Take(3)
+            .Select(x => x.Name)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return "";
+        }
+
+        return $" Did you mean: {string.Join(", ", candidates)}?";
+    }
+
+    private static string BuildUnknownVariableHint(string name)
+    {
+        foreach (var moduleName in BuiltinRegistry.StandardModuleNames)
+        {
+            if (!BuiltinRegistry.TryGetModule(moduleName, out var module))
+            {
+                continue;
+            }
+
+            if (module.Members.ContainsKey(name))
+            {
+                return $" Did you mean '{moduleName}.{name}'?";
+            }
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// Computes the Levenshtein edit distance between two strings.
+    /// Used to rank constructor name suggestions for diagnostic hints.
+    /// </summary>
+    private static int EditDistance(string a, string b)
+    {
+        int m = a.Length, n = b.Length;
+        var d = new int[m + 1, n + 1];
+        for (int i = 0; i <= m; i++)
+        {
+            d[i, 0] = i;
+        }
+
+        for (int j = 0; j <= n; j++)
+        {
+            d[0, j] = j;
+        }
+
+        for (int i = 1; i <= m; i++)
+        {
+            for (int j = 1; j <= n; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+            }
+        }
+
+        return d[m, n];
     }
 }

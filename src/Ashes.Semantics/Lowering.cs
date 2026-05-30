@@ -8,8 +8,8 @@ public sealed partial class Lowering
     public readonly record struct HoverTypeInfo(TextSpan Span, string? Name, TypeRef Type);
 
     private readonly Diagnostics _diag;
-    private int _nextTemp;
-    private int _nextLocal;
+    private int _nextTempSlot;
+    private int _nextLocalSlot;
     private int _nextTypeVar;
     private int _nextLambdaId;
     private int _nextLabelId;
@@ -42,6 +42,20 @@ public sealed partial class Lowering
     private readonly List<string> _diagnosticContext = [];
     private readonly Stack<TextSpan> _diagnosticSpans = new();
     private readonly Stack<string> _diagnosticCodes = new();
+
+
+
+
+
+    private TcoContext? _tcoCtx;
+
+    // Async context tracking — true when lowering inside an async block body
+    private bool _insideAsync;
+    // The error type variable for the current async block; unified from each await's E.
+    // Uses save/restore pattern to support nested async blocks.
+    private TypeRef? _currentAsyncErrorType;
+
+
 
 
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
@@ -117,11 +131,19 @@ public sealed partial class Lowering
     }
 
 
+
+
+
     public IrProgram Lower(Program program)
     {
         RegisterTypeDeclarations(program.TypeDecls);
         return Lower(program.Body);
     }
+
+
+
+
+
 
 
     public IrProgram Lower(Expr expr)
@@ -134,8 +156,8 @@ public sealed partial class Lowering
         var entry = new IrFunction(
             Label: "_start_main",
             Instructions: _inst,
-            LocalCount: _nextLocal,
-            TempCount: _nextTemp,
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
             HasEnvAndArgParams: false,
             LocalNames: new Dictionary<int, string>(_localNames),
             LocalTypes: SnapshotLocalTypes()
@@ -915,40 +937,62 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerLet(Expr.Let let)
     {
-        // Value is NOT in tail position
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        // Save the arena watermark BEFORE lowering the let-bound value so that
-        // heap allocations from the value expression are covered by the arena scope.
+        // Save the arena watermark before the bound value so allocations from
+        // both value and body belong to this let scope.
         EmitArenaWatermark();
 
-        bool stackAllocateClosure = let.Value is Expr.Lambda && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
-        bool stackAllocateAdt = IsConstructorExpression(let.Value) && IsImmediateSingleArmAdtDestructuringMatch(let.Name, let.Body);
-
-        (int valTemp, TypeRef valType) = stackAllocateClosure && let.Value is Expr.Lambda lam
-            ? LowerLambda(lam, stackAllocateClosure: true)
-            : stackAllocateAdt && TryLowerConstructorExpression(let.Value, stackAllocate: true, out var loweredAdt)
-                ? loweredAdt
-                : LowerExpr(let.Value);
+        var (valueTemp, valueType) = LowerLetValue(let);
 
         int slot = NewLocal();
-        Emit(new IrInst.StoreLocal(slot, valTemp));
-        RecordLocalDebugInfo(slot, let.Name, valType);
-        var scheme = Generalize(Prune(valType));
+        Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalDebugInfo(slot, let.Name, valueType);
+        var scheme = Generalize(Prune(valueType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
 
+        PushLetScope(let, slot, scheme);
+        PushOwnershipScope();
+        TrackLetOwnership(let, slot, valueType);
+
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        var (bodyTemp, bodyType) = LowerExpr(let.Body);
+
+        return PopLetScope(bodyTemp, bodyType);
+    }
+
+    private (int Temp, TypeRef Type) LowerLetValue(Expr.Let let)
+    {
+        var stackAllocateClosure = let.Value is Expr.Lambda && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        if (stackAllocateClosure && let.Value is Expr.Lambda lambda)
+        {
+            return LowerLambda(lambda, stackAllocateClosure: true);
+        }
+
+        var stackAllocateAdt = IsConstructorExpression(let.Value)
+            && IsImmediateSingleArmAdtDestructuringMatch(let.Name, let.Body);
+        if (stackAllocateAdt && TryLowerConstructorExpression(let.Value, stackAllocate: true, out var loweredAdt))
+        {
+            return loweredAdt;
+        }
+
+        return LowerExpr(let.Value);
+    }
+
+    private void PushLetScope(Expr.Let let, int slot, TypeScheme scheme)
+    {
         var parent = _scopes.Peek();
-        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
+        _scopes.Push(new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
         {
             [let.Name] = new Binding.Scheme(slot, scheme, AstSpans.GetLetNameOrDefault(let))
-        };
-        _scopes.Push(child);
+        });
+    }
 
-        // Track owned bindings for deterministic cleanup
-        PushOwnershipScope();
-        var prunedValType = Prune(valType);
-        var ownedTypeName = GetOwnedTypeName(prunedValType);
+    private void TrackLetOwnership(Expr.Let let, int slot, TypeRef valueType)
+    {
+        var prunedValueType = Prune(valueType);
+        var ownedTypeName = GetOwnedTypeName(prunedValueType);
         if (ownedTypeName is not null)
         {
             // Alias detection: when `let y = x` and x is already tracked as owned,
@@ -964,19 +1008,18 @@ public sealed partial class Lowering
             }
             else
             {
-                var isResource = GetResourceTypeName(prunedValType) is not null;
+                var isResource = GetResourceTypeName(prunedValueType) is not null;
                 TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
             }
         }
+    }
 
-        // Body IS in tail position (if the let itself is)
-        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-        var (bodyTemp, bodyType) = LowerExpr(let.Body);
-
-        // Only emit result preservation when there are alive owned values to drop
+    private (int Temp, TypeRef Type) PopLetScope(int bodyTemp, TypeRef bodyType)
+    {
+        // Preserve the result only when the scope has drops that could otherwise
+        // invalidate or overwrite the temp holding the body result.
         if (HasAliveOwnedValuesInCurrentScope())
         {
-            // Save the result pointer in a local slot so it survives drop instructions.
             int resultSlot = NewLocal();
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
             int finalTemp = PopOwnershipScope(bodyType, bodyTemp);
@@ -986,17 +1029,15 @@ public sealed partial class Lowering
                 // Copy-out occurred: finalTemp is the freshly allocated copy.
                 return (finalTemp, bodyType);
             }
-            // No copy-out: reload from the preserved slot (standard path).
+
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
             return (resultTemp, bodyType);
         }
 
-        {
-            int finalTemp = PopOwnershipScope(bodyType, bodyTemp);
-            _scopes.Pop();
-            return (finalTemp, bodyType);
-        }
+        int finalScopeTemp = PopOwnershipScope(bodyType, bodyTemp);
+        _scopes.Pop();
+        return (finalScopeTemp, bodyType);
     }
 
     private (int, TypeRef) LowerLetResult(Expr.LetResult letResult)
@@ -1184,7 +1225,39 @@ public sealed partial class Lowering
         return root is Expr.Var v && string.Equals(v.Name, selfName, StringComparison.Ordinal) && args.Count == expectedArgs;
     }
 
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     private (int, TypeRef) LowerIf(Expr.If iff)
     {
@@ -1300,16 +1373,16 @@ public sealed partial class Lowering
 
         // Build function body IR in isolation
         var savedInst = new List<IrInst>(_inst);
-        var savedTemp = _nextTemp;
-        var savedLocal = _nextLocal;
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
         var savedScopes = _scopes.ToArray();
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
 
         // new function state
         _inst.Clear();
-        _nextTemp = 0;
-        _nextLocal = 0;
+        _nextTempSlot = 0;
+        _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
 
@@ -1432,8 +1505,8 @@ public sealed partial class Lowering
         var func = new IrFunction(
             Label: label,
             Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocal,
-            TempCount: _nextTemp,
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
             HasEnvAndArgParams: true,
             LocalNames: new Dictionary<int, string>(_localNames),
             LocalTypes: SnapshotLocalTypes()
@@ -1444,8 +1517,8 @@ public sealed partial class Lowering
 
         _inst.Clear();
         _inst.AddRange(savedInst);
-        _nextTemp = savedTemp;
-        _nextLocal = savedLocal;
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
         _localNames.Clear();
         _localTypes.Clear();
         foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
@@ -1516,35 +1589,21 @@ public sealed partial class Lowering
     }
 
 
-    private (int, TypeRef) ReportArityMismatch(Expr callee, int expectedArgs, int providedArgs)
-    {
-        var calleeName = TryGetCalleeDisplayName(callee);
-        if (calleeName is not null)
-        {
-            ReportDiagnostic(GetSpan(callee), $"Call to '{calleeName}' expects {expectedArgs} argument(s) but got {providedArgs}.");
-        }
-        else
-        {
-            ReportDiagnostic(GetSpan(callee), $"Call expects {expectedArgs} argument(s) but got {providedArgs}.");
-        }
 
-        return ReturnNeverWithDummyTemp();
-    }
 
-    private (int, TypeRef) ReportNonFunctionCall(Expr callee, TypeRef actualType, int providedArgs)
-    {
-        var calleeName = TryGetCalleeDisplayName(callee);
-        if (calleeName is not null)
-        {
-            ReportDiagnostic(GetSpan(callee), $"Attempted to call '{calleeName}' with {providedArgs} argument(s), but its type is {Pretty(actualType)}, not a function.");
-        }
-        else
-        {
-            ReportDiagnostic(GetSpan(callee), $"Attempted to call non-function type {Pretty(actualType)}.");
-        }
 
-        return ReturnNeverWithDummyTemp();
-    }
+
+
+
+
+
+
+
+
+
+
+
+
 
     private (int, TypeRef) LowerCall(Expr.Call call)
     {
@@ -1897,16 +1956,11 @@ public sealed partial class Lowering
         return (currentTemp, currentType);
     }
 
-    private (int, TypeRef) LowerPanic(Expr arg)
-    {
-        using var diagnosticSpan = PushDiagnosticSpan(arg);
-        var (msgTemp, msgType) = LowerExpr(arg);
-        Unify(msgType, new TypeRef.TStr());
-        Emit(new IrInst.PanicStr(msgTemp));
-        return (msgTemp, new TypeRef.TNever());
-    }
 
-    }
+
+
+
+
 
     private (int, TypeRef) LowerListLit(Expr.ListLit list)
     {
@@ -1971,6 +2025,7 @@ public sealed partial class Lowering
 
         return LowerConsCell(headTemp, tailTemp, headType, tailType);
     }
+
 
     private (int, TypeRef) LowerAsync(Expr.Async asyncExpr)
     {
@@ -2037,8 +2092,8 @@ public sealed partial class Lowering
 
         // --- Save outer lowering state ---
         var savedInst = new List<IrInst>(_inst);
-        var savedTemp = _nextTemp;
-        var savedLocal = _nextLocal;
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
         var savedScopes = _scopes.ToArray();
         var savedOwnershipScopes = _ownershipScopes.ToArray();
         var savedArenaWatermarks = _arenaWatermarks.ToArray();
@@ -2049,8 +2104,8 @@ public sealed partial class Lowering
 
         // --- Reset state for coroutine function ---
         _inst.Clear();
-        _nextTemp = 0;
-        _nextLocal = 0;
+        _nextTempSlot = 0;
+        _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
 
@@ -2102,8 +2157,8 @@ public sealed partial class Lowering
         var coroutineFunc = new IrFunction(
             Label: coroutineLabel,
             Instructions: new List<IrInst>(transformResult.Instructions),
-            LocalCount: _nextLocal,
-            TempCount: Math.Max(_nextTemp, transformResult.MaxTemp + 1),
+            LocalCount: _nextLocalSlot,
+            TempCount: Math.Max(_nextTempSlot, transformResult.MaxTemp + 1),
             HasEnvAndArgParams: true,
             Coroutine: new CoroutineInfo(
                 StateCount: transformResult.StateCount,
@@ -2118,8 +2173,8 @@ public sealed partial class Lowering
         // --- Restore outer state ---
         _inst.Clear();
         _inst.AddRange(savedInst);
-        _nextTemp = savedTemp;
-        _nextLocal = savedLocal;
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
         _localNames.Clear();
         _localTypes.Clear();
         foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
@@ -2223,24 +2278,70 @@ public sealed partial class Lowering
         return (finalTemp, Prune(successType));
     }
 
-    // ---------------- Type vars + unification ----------------
 
 
-                ReportDiagnostic(GetSpan(expr),
-                    $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
-                    DiagnosticCodes.UseAfterDrop);
-            }
-        }
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     private int NewTemp()
     {
-        return _nextTemp++;
+        return _nextTempSlot++;
     }
 
     private int NewLocal()
     {
-        return _nextLocal++;
+        return _nextLocalSlot++;
     }
 
     private void RecordLocalDebugInfo(int slot, string name, TypeRef type)
@@ -2785,106 +2886,62 @@ public sealed partial class Lowering
     }
 
 
-    /// <summary>
-    /// Returns a dummy (int 0) temp with type <see cref="TypeRef.TNever"/>.
-    /// Used as a sentinel return value after emitting a diagnostic so that
-    /// downstream code can detect and suppress cascading type errors.
-    /// </summary>
-    private (int Temp, TypeRef Type) ReturnNeverWithDummyTemp()
-    {
-        int t = NewTemp();
-        Emit(new IrInst.LoadConstInt(t, 0));
-        return (t, new TypeRef.TNever());
-    }
 
-    private string BuildUnknownConstructorHint(string name)
-    {
-        if (_constructorSymbols.Count == 0)
-        {
-            return "";
-        }
 
-        // Only suggest constructors within a reasonable edit-distance threshold
-        // to avoid surfacing very dissimilar names as suggestions.
-        int threshold = Math.Max(3, name.Length / 2);
-        var candidates = _constructorSymbols.Keys
-            .Select(k => (Name: k, Dist: EditDistance(name, k)))
-            .Where(x => x.Dist <= threshold)
-            .OrderBy(x => x.Dist)
-            .Take(3)
-            .Select(x => x.Name)
-            .ToList();
 
-        if (candidates.Count == 0)
-        {
-            return "";
-        }
 
-        return $" Did you mean: {string.Join(", ", candidates)}?";
-    }
 
-    private static string BuildUnknownVariableHint(string name)
-    {
-        foreach (var moduleName in BuiltinRegistry.StandardModuleNames)
-        {
-            if (!BuiltinRegistry.TryGetModule(moduleName, out var module))
-            {
-                continue;
-            }
 
-            if (module.Members.ContainsKey(name))
-            {
-                return $" Did you mean '{moduleName}.{name}'?";
-            }
-        }
 
-        return "";
-    }
 
-    /// <summary>
-    /// Computes the Levenshtein edit distance between two strings.
-    /// Used to rank constructor name suggestions for diagnostic hints.
-    /// </summary>
-    private static int EditDistance(string a, string b)
-    {
-        int m = a.Length, n = b.Length;
-        var d = new int[m + 1, n + 1];
-        for (int i = 0; i <= m; i++)
-        {
-            d[i, 0] = i;
-        }
 
-        for (int j = 0; j <= n; j++)
-        {
-            d[0, j] = j;
-        }
 
-        for (int i = 1; i <= m; i++)
-        {
-            for (int j = 1; j <= n; j++)
-            {
-                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
-                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
-            }
-        }
 
-        return d[m, n];
-    }
 
-    {
-        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
-        {
-            throw new InvalidOperationException("Built-in Task type is not registered.");
-        }
 
-        var e = new TypeRef.TVar(_nextTypeVar++);
-        var a = new TypeRef.TVar(_nextTypeVar++);
-        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
-        var inputType = new TypeRef.TList(innerTaskType);
-        var resultType = new TypeRef.TNamedType(taskSymbol, [e, a]);
-        return new Binding.Intrinsic(
-            IntrinsicKind.AsyncRace,
-            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
-        );
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }

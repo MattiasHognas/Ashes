@@ -46,14 +46,6 @@ public sealed partial class Lowering
         public int ArenaEndSlot { get; set; } = -1;
     }
 
-    private TcoContext? _tcoCtx;
-
-    // Async context tracking — true when lowering inside an async block body
-    private bool _insideAsync;
-    // The error type variable for the current async block; unified from each await's E.
-    // Uses save/restore pattern to support nested async blocks.
-    private TypeRef? _currentAsyncErrorType;
-
     private enum IntrinsicKind
     {
         Print,
@@ -142,5 +134,22 @@ public sealed partial class Lowering
         /// this count is informational for future optimization passes.
         /// </summary>
         public int ActiveBorrows { get; set; }
+    }
+
+    /// <summary>
+    /// Describes the kind of arena copy-out to emit for a given result type.
+    /// </summary>
+    private enum CopyOutKind
+    {
+        /// <summary>Not eligible for copy-out.</summary>
+        None,
+        /// <summary>Shallow memcpy of a fixed or dynamic-size object (String, ADT, single cons cell).</summary>
+        Shallow,
+        /// <summary>Deep cons-chain walk for lists.</summary>
+        List,
+        /// <summary>Closure struct + env copy.</summary>
+        Closure,
+        /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
+        TcoListCell,
     }
 }

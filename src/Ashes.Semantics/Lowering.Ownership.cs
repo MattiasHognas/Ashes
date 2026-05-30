@@ -5,6 +5,8 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    // ---------------- scopes / helpers ----------------
+
     private Binding? Lookup(string name)
     {
         return _scopes.Peek().TryGetValue(name, out var b) ? b : null;
@@ -245,23 +247,6 @@ public sealed partial class Lowering
     {
         var pruned = Prune(type);
         return pruned is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
-    }
-
-    /// <summary>
-    /// Describes the kind of arena copy-out to emit for a given result type.
-    /// </summary>
-    private enum CopyOutKind
-    {
-        /// <summary>Not eligible for copy-out.</summary>
-        None,
-        /// <summary>Shallow memcpy of a fixed or dynamic-size object (String, ADT, single cons cell).</summary>
-        Shallow,
-        /// <summary>Deep cons-chain walk for lists.</summary>
-        List,
-        /// <summary>Closure struct + env copy.</summary>
-        Closure,
-        /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
-        TcoListCell,
     }
 
     /// <summary>
@@ -529,4 +514,10 @@ public sealed partial class Lowering
             var info = LookupOwnedValue(v.Name);
             if (info is not null && info.IsResource && info.IsDropped)
             {
+                ReportDiagnostic(GetSpan(expr),
+                    $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
+                    DiagnosticCodes.UseAfterDrop);
+            }
+        }
+    }
 }

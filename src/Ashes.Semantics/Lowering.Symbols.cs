@@ -322,4 +322,5 @@ public sealed partial class Lowering
         var typeSym = _typeSymbols[ctor.ParentType];
         var freshArgs = typeSym.TypeParameters.Select(_ => (TypeRef)NewTypeVar()).ToList();
         return new TypeRef.TNamedType(typeSym, freshArgs);
+    }
 }

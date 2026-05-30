@@ -5,6 +5,8 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    // ---------------- Type vars + unification ----------------
+
     private TypeRef NewTypeVar()
     {
         return new TypeRef.TVar(_nextTypeVar++);
@@ -149,6 +151,11 @@ public sealed partial class Lowering
         return t;
     }
 
+    /// <summary>
+    /// Unifies two type references by updating the type-variable substitution
+    /// table in place. Compound types recurse into their children; open
+    /// variables are bound after an occurs check to reject recursive types.
+    /// </summary>
     private void Unify(TypeRef a, TypeRef b)
     {
         a = Prune(a);
@@ -258,6 +265,37 @@ public sealed partial class Lowering
         return Pretty(t, new Dictionary<int, string>(), parentPrecedence: 0);
     }
 
+    private string Pretty(TypeRef t, Dictionary<int, string> typeVarNames, int parentPrecedence)
+    {
+        const int precArrow = 1;
+        const int precAtom = 2;
+
+        t = Prune(t);
+
+        var (rendered, precedence) = t switch
+        {
+            TypeRef.TInt => ("Int", precAtom),
+            TypeRef.TFloat => ("Float", precAtom),
+            TypeRef.TStr => ("Str", precAtom),
+            TypeRef.TBool => ("Bool", precAtom),
+            TypeRef.TNever => ("Never", precAtom),
+            TypeRef.TList l => ($"List<{Pretty(l.Element, typeVarNames, parentPrecedence: precAtom)}>", precAtom),
+            TypeRef.TTuple tuple => ($"({string.Join(", ", tuple.Elements.Select(e => Pretty(e, typeVarNames, parentPrecedence: 0)))})", precAtom),
+            TypeRef.TVar v => (GetTypeVarName(v.Id, typeVarNames), precAtom),
+            TypeRef.TFun f => (
+                $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}",
+                precArrow
+            ),
+            TypeRef.TNamedType n => n.TypeArgs.Count == 0
+                ? (n.Symbol.Name, precAtom)
+                : ($"{n.Symbol.Name}<{string.Join(", ", n.TypeArgs.Select(a => Pretty(a, typeVarNames, parentPrecedence: precAtom)))}>", precAtom),
+            TypeRef.TTypeParam tp => (tp.Symbol.Name, precAtom),
+            _ => (t.GetType().Name, precAtom)
+        };
+
+        return precedence < parentPrecedence ? $"({rendered})" : rendered;
+    }
+
     private void RecordExprHoverType(Expr expr, TypeRef type)
     {
         RecordHoverType(GetSpan(expr), null, type);
@@ -317,37 +355,6 @@ public sealed partial class Lowering
         );
     }
 
-    private string Pretty(TypeRef t, Dictionary<int, string> typeVarNames, int parentPrecedence)
-    {
-        const int precArrow = 1;
-        const int precAtom = 2;
-
-        t = Prune(t);
-
-        var (rendered, precedence) = t switch
-        {
-            TypeRef.TInt => ("Int", precAtom),
-            TypeRef.TFloat => ("Float", precAtom),
-            TypeRef.TStr => ("Str", precAtom),
-            TypeRef.TBool => ("Bool", precAtom),
-            TypeRef.TNever => ("Never", precAtom),
-            TypeRef.TList l => ($"List<{Pretty(l.Element, typeVarNames, parentPrecedence: precAtom)}>", precAtom),
-            TypeRef.TTuple tuple => ($"({string.Join(", ", tuple.Elements.Select(e => Pretty(e, typeVarNames, parentPrecedence: 0)))})", precAtom),
-            TypeRef.TVar v => (GetTypeVarName(v.Id, typeVarNames), precAtom),
-            TypeRef.TFun f => (
-                $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}",
-                precArrow
-            ),
-            TypeRef.TNamedType n => n.TypeArgs.Count == 0
-                ? (n.Symbol.Name, precAtom)
-                : ($"{n.Symbol.Name}<{string.Join(", ", n.TypeArgs.Select(a => Pretty(a, typeVarNames, parentPrecedence: precAtom)))}>", precAtom),
-            TypeRef.TTypeParam tp => (tp.Symbol.Name, precAtom),
-            _ => (t.GetType().Name, precAtom)
-        };
-
-        return precedence < parentPrecedence ? $"({rendered})" : rendered;
-    }
-
     private static string GetTypeVarName(int id, Dictionary<int, string> typeVarNames)
     {
         if (typeVarNames.TryGetValue(id, out var existing))
@@ -367,6 +374,4 @@ public sealed partial class Lowering
         typeVarNames[id] = typeVarName;
         return typeVarName;
     }
-
-    // ---------------- scopes / helpers ----------------
 }

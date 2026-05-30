@@ -339,8 +339,8 @@ public sealed partial class Lowering
         string coroutineLabel = $"coroutine_{_nextLambdaId++}";
 
         var savedInst = new List<IrInst>(_inst);
-        var savedTemp = _nextTemp;
-        var savedLocal = _nextLocal;
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
         var savedScopes = _scopes.ToArray();
         var savedOwnershipScopes = _ownershipScopes.ToArray();
         var savedArenaWatermarks = _arenaWatermarks.ToArray();
@@ -350,8 +350,8 @@ public sealed partial class Lowering
         _tcoCtx = null;
 
         _inst.Clear();
-        _nextTemp = 0;
-        _nextLocal = 0;
+        _nextTempSlot = 0;
+        _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
 
@@ -380,8 +380,8 @@ public sealed partial class Lowering
         var coroutineFunc = new IrFunction(
             Label: coroutineLabel,
             Instructions: new List<IrInst>(transformResult.Instructions),
-            LocalCount: _nextLocal,
-            TempCount: Math.Max(_nextTemp, transformResult.MaxTemp + 1),
+            LocalCount: _nextLocalSlot,
+            TempCount: Math.Max(_nextTempSlot, transformResult.MaxTemp + 1),
             HasEnvAndArgParams: true,
             Coroutine: new CoroutineInfo(
                 StateCount: transformResult.StateCount,
@@ -395,8 +395,8 @@ public sealed partial class Lowering
 
         _inst.Clear();
         _inst.AddRange(savedInst);
-        _nextTemp = savedTemp;
-        _nextLocal = savedLocal;
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
         _localNames.Clear();
         _localTypes.Clear();
         foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
@@ -1050,6 +1050,16 @@ public sealed partial class Lowering
 
         // Return type: Task(E, A)
         return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(errorType), Prune(successType)]));
+    }
+
+    private (int, TypeRef) LowerPanic(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (msgTemp, msgType) = LowerExpr(arg);
+        Unify(msgType, new TypeRef.TStr());
+        Emit(new IrInst.PanicStr(msgTemp));
+        return (msgTemp, new TypeRef.TNever());
+    }
 
     private void AddStdIOBindings(Dictionary<string, Binding> scope)
     {
@@ -1319,4 +1329,20 @@ public sealed partial class Lowering
 
     // Ashes.Async.race : List(Task(E, A)) -> Task(E, A)
     private Binding.Intrinsic CreateAsyncRaceBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var innerTaskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var inputType = new TypeRef.TList(innerTaskType);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncRace,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
+        );
+    }
 }
