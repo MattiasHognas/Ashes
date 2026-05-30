@@ -54,15 +54,15 @@ Current status: a first user-facing `extern` surface now exists. Ashes
 source can declare top-level C ABI functions (`extern strlen(Str) -> Int`),
 declare opaque native handle types (`extern type LLVMModuleRef`), call
 extern functions directly, and pass `Str` arguments as null-terminated C
-strings. Linux dynamic imports can be requested for non-built-in symbols via
-the symbol override form (`extern foo(Int) -> Int = "foo@libfoo.so"`).
+strings. Dynamic imports can be requested for non-built-in symbols via the
+symbol override form (`extern foo(Int) -> Int = "foo@libfoo.so"` on Linux, or
+`extern tick() -> Int = "GetTickCount64@KERNEL32.DLL"` on Windows).
 
 Remaining gaps before this is enough for LLVM self-hosting:
 
 - richer C type coverage (unsigned integers, `void`, pointer-to-buffer,
   pointer-to-pointer/out parameters);
 - extern functions as first-class values or module exports;
-- Windows import-library mapping for user-declared FFI symbols;
 - safe wrappers and ownership conventions for opaque handles returned by
   LLVM-C APIs.
 

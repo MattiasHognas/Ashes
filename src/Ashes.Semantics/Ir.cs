@@ -262,7 +262,7 @@ public abstract record IrInst
     public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
 
     public sealed record ToCString(int Target, int StrTemp) : IrInst;
-    public sealed record CallExtern(int Target, string SymbolName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;
+    public sealed record CallExtern(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing

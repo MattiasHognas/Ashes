@@ -454,9 +454,9 @@ Rules:
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
 - Opaque extern types are represented as native pointer-sized words and are
   intended for handles such as LLVM-C references.
-- The optional string after `=` overrides the C symbol name. On Linux, a symbol
-  override may use `symbol@library` to request a dynamic import from that shared
-  library.
+- The optional string after `=` overrides the C symbol name. A symbol override
+  may use `symbol@library` to request a dynamic import from that shared library
+  or DLL. Windows extern imports require an explicit DLL name.
 - Extern functions must be called directly; they are not first-class function
   values in this initial FFI surface.
 

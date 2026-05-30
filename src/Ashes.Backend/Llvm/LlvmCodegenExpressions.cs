@@ -79,6 +79,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCallExtern(
         LlvmCodegenState state,
         string symbolName,
+        string? libraryName,
         IReadOnlyList<int> argTemps,
         IReadOnlyList<FfiType> parameterTypes,
         FfiType returnType)
@@ -86,10 +87,24 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle llvmReturnType = GetLlvmFfiType(state, returnType);
         var llvmParameterTypes = parameterTypes.Select(type => GetLlvmFfiType(state, type)).ToArray();
         LlvmTypeHandle functionType = LlvmApi.FunctionType(llvmReturnType, llvmParameterTypes);
-        LlvmValueHandle function = LlvmApi.GetNamedFunction(state.Target.Module, symbolName);
-        if (function.Ptr == 0)
+        LlvmValueHandle function;
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
         {
-            function = LlvmApi.AddFunction(state.Target.Module, symbolName, functionType);
+            if (string.IsNullOrWhiteSpace(libraryName))
+            {
+                throw new InvalidOperationException($"Windows extern symbol '{symbolName}' requires an explicit DLL name using symbol@library.");
+            }
+
+            LlvmValueHandle import = GetOrAddWindowsExternImport(state, symbolName);
+            function = LlvmApi.BuildLoad2(state.Target.Builder, state.I8Ptr, import, "ffi_import");
+        }
+        else
+        {
+            function = LlvmApi.GetNamedFunction(state.Target.Module, symbolName);
+            if (function.Ptr == 0)
+            {
+                function = LlvmApi.AddFunction(state.Target.Module, symbolName, functionType);
+            }
         }
 
         var args = new LlvmValueHandle[argTemps.Count];
@@ -99,6 +114,19 @@ internal static partial class LlvmCodegen
         }
 
         return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, "ffi_call");
+    }
+
+    private static LlvmValueHandle GetOrAddWindowsExternImport(LlvmCodegenState state, string symbolName)
+    {
+        if (state.WindowsExternImports.TryGetValue(symbolName, out LlvmValueHandle import))
+        {
+            return import;
+        }
+
+        import = LlvmApi.AddGlobal(state.Target.Module, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "__imp_" + symbolName);
+        LlvmApi.SetLinkage(import, LlvmLinkage.External);
+        state.WindowsExternImports[symbolName] = import;
+        return import;
     }
 
     private static LlvmTypeHandle GetLlvmFfiType(LlvmCodegenState state, FfiType type)

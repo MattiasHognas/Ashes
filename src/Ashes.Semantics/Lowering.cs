@@ -2002,7 +2002,7 @@ public sealed partial class Lowering
         }
 
         int target = NewTemp();
-        Emit(new IrInst.CallExtern(target, externFunction.SymbolName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
+        Emit(new IrInst.CallExtern(target, externFunction.SymbolName, externFunction.LibraryName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
         return (target, FromFfiType(externFunction.ReturnType));
     }
 

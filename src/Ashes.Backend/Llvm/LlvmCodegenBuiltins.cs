@@ -1574,6 +1574,7 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
                 flavor,
                 false,
                 false);
@@ -1654,6 +1655,7 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
                 flavor,
                 false,
                 false);
