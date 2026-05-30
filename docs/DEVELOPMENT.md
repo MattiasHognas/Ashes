@@ -111,6 +111,8 @@ host when all of the following are available:
 - `qemu-aarch64` or `qemu-aarch64-static`
 - an arm64 sysroot containing `lib/ld-linux-aarch64.so.1`
    (for example `/usr/aarch64-linux-gnu`)
+- arm64 runtime support libraries including `libgcc_s.so.1` and
+  `libstdc++.so.6`
 
 `src/Ashes.Tests/LinuxArm64BackendCoverageTests.cs` auto-detects emulator
 binaries from both `PATH` and the rootless Arch-style unpack location
