@@ -82,6 +82,8 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TypeSymbol> _typeSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ConstructorSymbol> _constructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeRef.TNamedType> _resolvedTypes = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _externOpaqueTypes = new(StringComparer.Ordinal);
+    private readonly List<IrExternFunction> _externFunctions = new();
 
     public IReadOnlyDictionary<string, TypeSymbol> TypeSymbols => _typeSymbols;
     public IReadOnlyDictionary<string, ConstructorSymbol> ConstructorSymbols => _constructorSymbols;
@@ -137,6 +139,7 @@ public sealed partial class Lowering
     public IrProgram Lower(Program program)
     {
         RegisterTypeDeclarations(program.TypeDecls);
+        RegisterExternDeclarations(program.ExternDecls);
         return Lower(program.Body);
     }
 
@@ -167,6 +170,8 @@ public sealed partial class Lowering
             EntryFunction: entry,
             Functions: _funcs,
             StringLiterals: _strings,
+            ExternFunctions: _externFunctions,
+            ExternOpaqueTypes: new HashSet<string>(_externOpaqueTypes, StringComparer.Ordinal),
             UsesPrintInt: _usesPrintInt,
             UsesPrintStr: _usesPrintStr,
             UsesPrintBool: _usesPrintBool,
@@ -306,6 +311,12 @@ public sealed partial class Lowering
                 ReportDiagnostic(GetSpan(v), $"Intrinsic '{v.Name}' must be called directly.");
                 Emit(new IrInst.LoadConstInt(temp, 0));
                 result = (temp, intrinsic.Type);
+                break;
+
+            case Binding.ExternFunction externFunction:
+                ReportDiagnostic(GetSpan(v), $"Extern function '{v.Name}' must be called directly.");
+                Emit(new IrInst.LoadConstInt(temp, 0));
+                result = (temp, externFunction.Type);
                 break;
 
             case Binding.PreludeValue value:
@@ -1784,6 +1795,11 @@ public sealed partial class Lowering
             };
         }
 
+        if (rootExpr is Expr.Var externVar && Lookup(externVar.Name) is Binding.ExternFunction externFunction)
+        {
+            return LowerExternCall(rootExpr, externFunction.Function, collectedArgs);
+        }
+
         // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
         if (rootExpr is Expr.QualifiedVar qv)
         {
@@ -1954,6 +1970,53 @@ public sealed partial class Lowering
         }
 
         return (currentTemp, currentType);
+    }
+
+    private (int, TypeRef) LowerExternCall(Expr rootExpr, IrExternFunction externFunction, List<Expr> args)
+    {
+        if (args.Count != externFunction.ParameterTypes.Count)
+        {
+            return ReportArityMismatch(rootExpr, externFunction.ParameterTypes.Count, args.Count);
+        }
+
+        var loweredArgTemps = new List<int>(args.Count);
+        for (int i = 0; i < args.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            var expectedType = FromFfiType(externFunction.ParameterTypes[i]);
+            using (PushDiagnosticContext($"in argument #{i + 1} of extern call to '{externFunction.Name}'"))
+            {
+                Unify(expectedType, argType);
+            }
+
+            if (externFunction.ParameterTypes[i] is FfiType.Str)
+            {
+                int cStringTemp = NewTemp();
+                Emit(new IrInst.ToCString(cStringTemp, argTemp));
+                loweredArgTemps.Add(cStringTemp);
+            }
+            else
+            {
+                loweredArgTemps.Add(argTemp);
+            }
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.CallExtern(target, externFunction.SymbolName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
+        return (target, FromFfiType(externFunction.ReturnType));
+    }
+
+    private static TypeRef FromFfiType(FfiType ffiType)
+    {
+        return ffiType switch
+        {
+            FfiType.Int => new TypeRef.TInt(),
+            FfiType.Float => new TypeRef.TFloat(),
+            FfiType.Bool => new TypeRef.TBool(),
+            FfiType.Str => new TypeRef.TStr(),
+            FfiType.Opaque opaque => new TypeRef.TOpaque(opaque.Name),
+            _ => throw new InvalidOperationException($"Unknown FFI type '{ffiType.GetType().Name}'.")
+        };
     }
 
 

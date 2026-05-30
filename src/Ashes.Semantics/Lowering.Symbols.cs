@@ -88,6 +88,97 @@ public sealed partial class Lowering
         }
     }
 
+    private void RegisterExternDeclarations(IReadOnlyList<ExternDecl> externDecls)
+    {
+        foreach (var externDecl in externDecls)
+        {
+            if (externDecl is ExternDecl.OpaqueType opaqueType)
+            {
+                if (!_externOpaqueTypes.Add(opaqueType.Name))
+                {
+                    ReportDiagnostic(GetSpan(externDecl), $"Duplicate extern type '{opaqueType.Name}'.");
+                }
+
+                continue;
+            }
+
+            if (externDecl is ExternDecl.Function function)
+            {
+                var parameterTypes = function.ParameterTypes.Select(ResolveExternParsedType).ToList();
+                var returnType = ResolveExternParsedType(function.ReturnType);
+                if (parameterTypes.Any(t => t is null) || returnType is null)
+                {
+                    continue;
+                }
+
+                var resolvedParameterTypes = parameterTypes.Select(t => t!).ToList();
+
+                var symbolName = function.SymbolName ?? function.Name;
+                string? libraryName = null;
+                var atIndex = symbolName.LastIndexOf('@');
+                if (atIndex >= 0)
+                {
+                    libraryName = symbolName[(atIndex + 1)..];
+                    symbolName = symbolName[..atIndex];
+                }
+
+                var irFunction = new IrExternFunction(
+                    function.Name,
+                    symbolName,
+                    resolvedParameterTypes.Select(ToFfiType).ToList(),
+                    ToFfiType(returnType),
+                    string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
+                _externFunctions.Add(irFunction);
+
+                var type = BuildFunctionType(resolvedParameterTypes, returnType);
+                _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
+            }
+        }
+    }
+
+    private TypeRef? ResolveExternParsedType(ParsedType parsedType)
+    {
+        if (parsedType is not ParsedType.Named named)
+        {
+            ReportDiagnostic(0, "Unsupported extern type syntax.");
+            return null;
+        }
+
+        return named.Name switch
+        {
+            "Int" => new TypeRef.TInt(),
+            "Float" => new TypeRef.TFloat(),
+            "Bool" => new TypeRef.TBool(),
+            "Str" => new TypeRef.TStr(),
+            _ when _externOpaqueTypes.Contains(named.Name) => new TypeRef.TOpaque(named.Name),
+            _ => ResolveTypeName(named.Name)
+        };
+    }
+
+    private static TypeRef BuildFunctionType(IReadOnlyList<TypeRef> parameterTypes, TypeRef returnType)
+    {
+        var result = returnType;
+        for (int i = parameterTypes.Count - 1; i >= 0; i--)
+        {
+            result = new TypeRef.TFun(parameterTypes[i], result);
+        }
+
+        return result;
+    }
+
+    private static FfiType ToFfiType(TypeRef type)
+    {
+        return type switch
+        {
+            TypeRef.TInt => new FfiType.Int(),
+            TypeRef.TFloat => new FfiType.Float(),
+            TypeRef.TBool => new FfiType.Bool(),
+            TypeRef.TStr => new FfiType.Str(),
+            TypeRef.TOpaque opaque => new FfiType.Opaque(opaque.Name),
+            _ => throw new InvalidOperationException($"Type '{type}' is not supported in extern declarations.")
+        };
+    }
+
     private void RegisterBuiltinSymbols()
     {
         foreach (var builtinType in BuiltinRegistry.Types)

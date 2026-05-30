@@ -246,16 +246,17 @@ public sealed class ParserTests
         var program = ParseProgram("extern strlen(Str) -> Int\nextern getpid() -> Int = \"getpid\"\nstrlen(\"abc\")");
 
         program.ExternDecls.Count.ShouldBe(2);
-        program.ExternDecls[0].ShouldBe(new ExternDecl.Function(
-            Name: "strlen",
-            ParameterTypes: [new ParsedType.Named("Str")],
-            ReturnType: new ParsedType.Named("Int"),
-            SymbolName: null));
-        program.ExternDecls[1].ShouldBe(new ExternDecl.Function(
-            Name: "getpid",
-            ParameterTypes: [],
-            ReturnType: new ParsedType.Named("Int"),
-            SymbolName: "getpid"));
+        var strlen = program.ExternDecls[0].ShouldBeOfType<ExternDecl.Function>();
+        strlen.Name.ShouldBe("strlen");
+        strlen.ParameterTypes.ShouldBe([new ParsedType.Named("Str")]);
+        strlen.ReturnType.ShouldBe(new ParsedType.Named("Int"));
+        strlen.SymbolName.ShouldBeNull();
+
+        var getpid = program.ExternDecls[1].ShouldBeOfType<ExternDecl.Function>();
+        getpid.Name.ShouldBe("getpid");
+        getpid.ParameterTypes.ShouldBeEmpty();
+        getpid.ReturnType.ShouldBe(new ParsedType.Named("Int"));
+        getpid.SymbolName.ShouldBe("getpid");
         program.Body.ShouldBeOfType<Expr.Call>();
     }
 

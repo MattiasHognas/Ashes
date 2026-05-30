@@ -181,6 +181,8 @@ public static class IrOptimizer
             IrInst.MakeClosure mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.MakeClosureStack mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
+            IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
+            IrInst.CallExtern c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
             // ADTs.
             IrInst.SetAdtField sf => sf with { Ptr = R(sf.Ptr), Source = R(sf.Source) },
@@ -917,6 +919,10 @@ public static class IrOptimizer
             case IrInst.MakeClosure mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.MakeClosureStack mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.CallClosure cc: usedTemps.Add(cc.ClosureTemp); usedTemps.Add(cc.ArgTemp); break;
+            case IrInst.ToCString c: usedTemps.Add(c.StrTemp); break;
+            case IrInst.CallExtern c:
+                foreach (var argTemp in c.ArgTemps) usedTemps.Add(argTemp);
+                break;
             case IrInst.SetAdtField sf: usedTemps.Add(sf.Ptr); usedTemps.Add(sf.Source); break;
             case IrInst.GetAdtTag gt: usedTemps.Add(gt.Ptr); break;
             case IrInst.GetAdtField gf: usedTemps.Add(gf.Ptr); break;

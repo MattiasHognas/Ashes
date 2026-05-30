@@ -62,6 +62,68 @@ internal static partial class LlvmCodegen
         return callInst;
     }
 
+    private static LlvmValueHandle EmitToCString(LlvmCodegenState state, LlvmValueHandle stringRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle length = LoadStringLength(state, stringRef, "ffi_cstr_len");
+        LlvmValueHandle sizeWithTerminator = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 1, 0), "ffi_cstr_size");
+        LlvmValueHandle destRef = EmitAllocDynamic(state, sizeWithTerminator);
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, destRef, state.I8Ptr, "ffi_cstr_dest");
+        LlvmValueHandle sourceBytes = GetStringBytesPointer(state, stringRef, "ffi_cstr_src");
+        EmitCopyBytes(state, destBytes, sourceBytes, length, "ffi_cstr_copy");
+        LlvmValueHandle terminatorPtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [length], "ffi_cstr_terminator_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), terminatorPtr);
+        return destRef;
+    }
+
+    private static LlvmValueHandle EmitCallExtern(
+        LlvmCodegenState state,
+        string symbolName,
+        IReadOnlyList<int> argTemps,
+        IReadOnlyList<FfiType> parameterTypes,
+        FfiType returnType)
+    {
+        LlvmTypeHandle llvmReturnType = GetLlvmFfiType(state, returnType);
+        var llvmParameterTypes = parameterTypes.Select(type => GetLlvmFfiType(state, type)).ToArray();
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(llvmReturnType, llvmParameterTypes);
+        LlvmValueHandle function = LlvmApi.GetNamedFunction(state.Target.Module, symbolName);
+        if (function.Ptr == 0)
+        {
+            function = LlvmApi.AddFunction(state.Target.Module, symbolName, functionType);
+        }
+
+        var args = new LlvmValueHandle[argTemps.Count];
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            args[i] = ConvertFfiArgument(state, LoadTemp(state, argTemps[i]), parameterTypes[i]);
+        }
+
+        return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, "ffi_call");
+    }
+
+    private static LlvmTypeHandle GetLlvmFfiType(LlvmCodegenState state, FfiType type)
+    {
+        return type switch
+        {
+            FfiType.Int => state.I64,
+            FfiType.Float => state.F64,
+            FfiType.Bool => state.I64,
+            FfiType.Str => state.I8Ptr,
+            FfiType.Opaque => state.I64,
+            _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
+        };
+    }
+
+    private static LlvmValueHandle ConvertFfiArgument(LlvmCodegenState state, LlvmValueHandle value, FfiType type)
+    {
+        return type switch
+        {
+            FfiType.Float => LlvmApi.BuildBitCast(state.Target.Builder, value, state.F64, "ffi_arg_float"),
+            FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),
+            _ => value
+        };
+    }
+
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)
     {
         LlvmApi.BuildBr(state.Target.Builder, state.GetLabelBlock(targetLabel));

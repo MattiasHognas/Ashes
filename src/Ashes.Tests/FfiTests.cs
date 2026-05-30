@@ -16,7 +16,10 @@ public sealed class FfiTests
 
         diagnostics.Errors.ShouldBeEmpty();
         program.ExternFunctions.Count.ShouldBe(1);
-        program.ExternFunctions[0].ShouldBe(new IrExternFunction("strlen", "strlen", [new FfiType.Str()], new FfiType.Int()));
+        program.ExternFunctions[0].Name.ShouldBe("strlen");
+        program.ExternFunctions[0].SymbolName.ShouldBe("strlen");
+        program.ExternFunctions[0].ParameterTypes.ShouldBe([new FfiType.Str()]);
+        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.Int());
 
         var externalCall = program.EntryFunction.Instructions.OfType<IrInst.CallExtern>().Single();
         externalCall.SymbolName.ShouldBe("strlen");
