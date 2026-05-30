@@ -888,9 +888,23 @@ public static class Runner
                 {
                 }
             }
+
+            // When the process exits on its own its stdout/stderr handles are closed, so the
+            // read tasks are guaranteed to complete; wait for them unconditionally so a saturated
+            // thread pool under heavy parallel test load cannot truncate captured output (which
+            // previously surfaced as spurious "(empty)" fixture failures). Only when we had to
+            // kill the process do we bound the wait, because a leaked child may still hold the
+            // pipe open and block the read tasks from ever completing.
             try
             {
-                Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+                if (timedOut)
+                {
+                    Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+                }
+                else
+                {
+                    Task.WaitAll(stdoutTask, stderrTask);
+                }
             }
             catch
             {

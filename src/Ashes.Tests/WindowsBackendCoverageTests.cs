@@ -336,8 +336,14 @@ public sealed class WindowsBackendCoverageTests
             """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
+                // Drain the client's request before responding. If the server closes the
+                // connection while the client's HTTP request is still unread, the OS issues a
+                // TCP RST instead of a graceful FIN, which the client observes as a connection
+                // reset (errno 10054) and turns this into a flaky failure.
+                _ = await ReadTextAsync(stream, 4096);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
                 await stream.WriteAsync(response);
+                await stream.FlushAsync();
             });
 
         result.Stdout.ShouldBe("hello from https\n");

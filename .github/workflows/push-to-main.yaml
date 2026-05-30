@@ -66,10 +66,11 @@ jobs:
 
       - name: Install linux-arm64 execution prerequisites
         run: |
-          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross libgcc-s1-arm64-cross
+          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross
           qemu-aarch64 --version
           test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
           test -f /usr/aarch64-linux-gnu/lib/libgcc_s.so.1
+          test -f /usr/aarch64-linux-gnu/lib/libstdc++.so.6
 
       - name: Restore
         run: dotnet restore Ashes.slnx
