@@ -90,49 +90,44 @@ public sealed partial class Lowering
 
     private void RegisterExternDeclarations(IReadOnlyList<ExternDecl> externDecls)
     {
-        foreach (var externDecl in externDecls)
+        foreach (var opaqueType in externDecls.OfType<ExternDecl.OpaqueType>())
         {
-            if (externDecl is ExternDecl.OpaqueType opaqueType)
+            if (!_externOpaqueTypes.Add(opaqueType.Name))
             {
-                if (!_externOpaqueTypes.Add(opaqueType.Name))
-                {
-                    ReportDiagnostic(GetSpan(externDecl), $"Duplicate extern type '{opaqueType.Name}'.");
-                }
+                ReportDiagnostic(GetSpan(opaqueType), $"Duplicate extern type '{opaqueType.Name}'.");
+            }
+        }
 
+        foreach (var function in externDecls.OfType<ExternDecl.Function>())
+        {
+            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t)).ToList();
+            var returnType = ResolveExternParsedType(function, function.ReturnType);
+            if (parameterTypes.Any(t => t is null) || returnType is null)
+            {
                 continue;
             }
 
-            if (externDecl is ExternDecl.Function function)
+            var resolvedParameterTypes = parameterTypes.Select(t => t!).ToList();
+
+            var symbolName = function.SymbolName ?? function.Name;
+            string? libraryName = null;
+            var atIndex = symbolName.LastIndexOf('@');
+            if (atIndex >= 0)
             {
-                var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(externDecl, t)).ToList();
-                var returnType = ResolveExternParsedType(externDecl, function.ReturnType);
-                if (parameterTypes.Any(t => t is null) || returnType is null)
-                {
-                    continue;
-                }
-
-                var resolvedParameterTypes = parameterTypes.Select(t => t!).ToList();
-
-                var symbolName = function.SymbolName ?? function.Name;
-                string? libraryName = null;
-                var atIndex = symbolName.LastIndexOf('@');
-                if (atIndex >= 0)
-                {
-                    libraryName = symbolName[(atIndex + 1)..];
-                    symbolName = symbolName[..atIndex];
-                }
-
-                var irFunction = new IrExternFunction(
-                    function.Name,
-                    symbolName,
-                    resolvedParameterTypes.Select(ToFfiType).ToList(),
-                    ToFfiType(returnType),
-                    string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
-                _externFunctions.Add(irFunction);
-
-                var type = BuildFunctionType(resolvedParameterTypes, returnType);
-                _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
+                libraryName = symbolName[(atIndex + 1)..];
+                symbolName = symbolName[..atIndex];
             }
+
+            var irFunction = new IrExternFunction(
+                function.Name,
+                symbolName,
+                resolvedParameterTypes.Select(ToFfiType).ToList(),
+                ToFfiType(returnType),
+                string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
+            _externFunctions.Add(irFunction);
+
+            var type = BuildFunctionType(resolvedParameterTypes, returnType);
+            _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
         }
     }
 
@@ -151,8 +146,14 @@ public sealed partial class Lowering
             "Bool" => new TypeRef.TBool(),
             "Str" => new TypeRef.TStr(),
             _ when _externOpaqueTypes.Contains(named.Name) => new TypeRef.TOpaque(named.Name),
-            _ => ResolveTypeName(named.Name)
+            _ => ReportUnsupportedExternType(externDecl, named.Name)
         };
+    }
+
+    private TypeRef? ReportUnsupportedExternType(ExternDecl externDecl, string name)
+    {
+        ReportDiagnostic(GetSpan(externDecl), $"Type '{name}' is not supported in extern declarations.");
+        return null;
     }
 
     private static TypeRef BuildFunctionType(IReadOnlyList<TypeRef> parameterTypes, TypeRef returnType)

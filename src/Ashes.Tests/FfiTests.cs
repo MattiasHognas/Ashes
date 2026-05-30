@@ -45,6 +45,37 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void Extern_opaque_types_can_be_declared_after_functions()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern consumeHandle(NativeHandle) -> Int
+            extern type NativeHandle
+            0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternOpaqueTypes.ShouldContain("NativeHandle");
+        program.ExternFunctions.Count.ShouldBe(1);
+        program.ExternFunctions[0].ParameterTypes.ShouldBe([new FfiType.Opaque("NativeHandle")]);
+        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.Int());
+    }
+
+    [Test]
+    public void Extern_functions_report_diagnostics_for_non_ffi_types()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            type MyAdt = | Mk
+            extern foo(MyAdt) -> Int
+            extern bar(Unknown) -> Int
+            0
+            """);
+
+        program.ExternFunctions.ShouldBeEmpty();
+        diagnostics.Errors.ShouldContain(error => error.Contains("Type 'MyAdt' is not supported in extern declarations.", StringComparison.Ordinal));
+        diagnostics.Errors.ShouldContain(error => error.Contains("Type 'Unknown' is not supported in extern declarations.", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Extern_call_reports_type_mismatch_for_wrong_argument_type()
     {
         var (_, diagnostics) = LowerProgram("""
