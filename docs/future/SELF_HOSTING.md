@@ -21,7 +21,7 @@ codebase has grown well beyond the original ~10 000-line estimate):
 | Parser                  | ~885    | Recursive descent, backtracking, desugaring    |
 | Lowering / Semantics    | ~10 900 | Type inference (HM), ownership, closure analysis, IR emission |
 | LLVM Codegen + backend  | ~16 700 | IR → LLVM IR → machine code, linkers, runtime  |
-| CLI / Project Support   | ~600    | Orchestration, imports, test runner            |
+| CLI entry point         | ~1 400  | Orchestration, imports, test runner            |
 
 The ELF/PE image linkers (x64, ARM64, Windows) live inside the backend
 project alongside codegen.
