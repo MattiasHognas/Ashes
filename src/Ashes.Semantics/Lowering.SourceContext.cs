@@ -36,7 +36,7 @@ public sealed partial class Lowering
             _moduleLineStarts[i] = SourceTextUtils.GetLineStarts(moduleText);
         }
 
-        // Default to first entry module file
+        // Default fallback to entry module file (entry expression region is appended last).
         if (layout.ModuleOffsets.Count > 0)
         {
             _currentFilePath = layout.ModuleOffsets[^1].FilePath;
