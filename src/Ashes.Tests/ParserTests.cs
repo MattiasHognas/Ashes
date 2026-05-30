@@ -241,6 +241,34 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_extern_function_declarations()
+    {
+        var program = ParseProgram("extern strlen(Str) -> Int\nextern getpid() -> Int = \"getpid\"\nstrlen(\"abc\")");
+
+        program.ExternDecls.Count.ShouldBe(2);
+        program.ExternDecls[0].ShouldBe(new ExternDecl.Function(
+            Name: "strlen",
+            ParameterTypes: [new ParsedType.Named("Str")],
+            ReturnType: new ParsedType.Named("Int"),
+            SymbolName: null));
+        program.ExternDecls[1].ShouldBe(new ExternDecl.Function(
+            Name: "getpid",
+            ParameterTypes: [],
+            ReturnType: new ParsedType.Named("Int"),
+            SymbolName: "getpid"));
+        program.Body.ShouldBeOfType<Expr.Call>();
+    }
+
+    [Test]
+    public void ParseProgram_should_parse_extern_opaque_type_declarations()
+    {
+        var program = ParseProgram("extern type LLVMModuleRef\nextern dispose(LLVMModuleRef) -> Int\n0");
+
+        program.ExternDecls[0].ShouldBe(new ExternDecl.OpaqueType("LLVMModuleRef"));
+        program.ExternDecls[1].ShouldBeOfType<ExternDecl.Function>().ParameterTypes.ShouldBe([new ParsedType.Named("LLVMModuleRef")]);
+    }
+
+    [Test]
     public void ParseProgram_should_parse_multiline_type_declaration()
     {
         var program = ParseProgram("type Maybe =\n  | None\n  | Some(T)\nprint(1)");
