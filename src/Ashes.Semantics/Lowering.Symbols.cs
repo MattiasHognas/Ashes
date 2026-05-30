@@ -104,8 +104,8 @@ public sealed partial class Lowering
 
             if (externDecl is ExternDecl.Function function)
             {
-                var parameterTypes = function.ParameterTypes.Select(ResolveExternParsedType).ToList();
-                var returnType = ResolveExternParsedType(function.ReturnType);
+                var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(externDecl, t)).ToList();
+                var returnType = ResolveExternParsedType(externDecl, function.ReturnType);
                 if (parameterTypes.Any(t => t is null) || returnType is null)
                 {
                     continue;
@@ -136,11 +136,11 @@ public sealed partial class Lowering
         }
     }
 
-    private TypeRef? ResolveExternParsedType(ParsedType parsedType)
+    private TypeRef? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType)
     {
         if (parsedType is not ParsedType.Named named)
         {
-            ReportDiagnostic(0, "Unsupported extern type syntax.");
+            ReportDiagnostic(GetSpan(externDecl), "Unsupported extern type syntax.");
             return null;
         }
 

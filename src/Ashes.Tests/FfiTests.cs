@@ -55,6 +55,23 @@ public sealed class FfiTests
         diagnostics.Errors.ShouldContain(error => error.Contains("Type mismatch: Str vs Int", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Unsupported_extern_type_syntax_reports_the_extern_declaration_span()
+    {
+        var diagnostics = new Diagnostics();
+        var externDecl = new ExternDecl.Function("foo", [new UnsupportedParsedType()], new ParsedType.Named("Int"));
+        var program = new Program([], [externDecl], new Expr.IntLit(0));
+        AstSpans.Set(externDecl, TextSpan.FromBounds(5, 24));
+
+        _ = new Lowering(diagnostics).Lower(program);
+
+        diagnostics.StructuredErrors.ShouldContain(error =>
+            error.Message == "Unsupported extern type syntax." &&
+            error.Span == TextSpan.FromBounds(5, 24));
+    }
+
+    private sealed record UnsupportedParsedType : ParsedType;
+
     private static (IrProgram Program, Diagnostics Diagnostics) LowerProgram(string source)
     {
         var diagnostics = new Diagnostics();
