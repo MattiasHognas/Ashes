@@ -22,6 +22,15 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildXor(state.Target.Builder, value, LlvmApi.ConstInt(state.I64, 1, 0), name);
     }
 
+    private static LlvmValueHandle EmitShiftInt(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle amount, bool left, string name)
+    {
+        var builder = state.Target.Builder;
+        var maskedAmount = LlvmApi.BuildAnd(builder, amount, LlvmApi.ConstInt(state.I64, 63, 0), name + "_amount");
+        return left
+            ? LlvmApi.BuildShl(builder, value, maskedAmount, name)
+            : LlvmApi.BuildLShr(builder, value, maskedAmount, name);
+    }
+
     private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
     {
         LlvmValueHandle closurePtr = EmitAlloc(state, 24); // {code, env, env_size}

@@ -9,12 +9,16 @@ public static class Formatter
     // Precedence: larger = binds tighter
     private const int PrecLetIfLambda = 1;
     private const int PrecPipe = 3;
-    private const int PrecCmp = 4;   // ==, !=, >=, <=  (lower than + and ::)
-    private const int PrecCons = 5;
-    private const int PrecAdd = 6;
-    private const int PrecMul = 7;
-    private const int PrecUnary = 8;
-    private const int PrecCall = 9;
+    private const int PrecCmp = 4;   // ==, !=, >=, <=  (lower than bitwise, + and ::)
+    private const int PrecBitOr = 5;
+    private const int PrecBitXor = 6;
+    private const int PrecBitAnd = 7;
+    private const int PrecCons = 8;
+    private const int PrecShift = 9;
+    private const int PrecAdd = 10;
+    private const int PrecMul = 11;
+    private const int PrecUnary = 12;
+    private const int PrecCall = 13;
 
     public static string Format(Program program)
     {
@@ -168,6 +172,26 @@ public static class Formatter
         }
     }
 
+    private static void WriteLeftAssociativeBinary(StringBuilder sb, Expr left, string op, Expr right, int precedence, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        var needsParens = parentPrec > precedence;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        WriteExprInline(sb, left, indent, precedence, preferPipelines, options);
+        sb.Append(' ');
+        sb.Append(op);
+        sb.Append(' ');
+        WriteExprInline(sb, right, indent, precedence + 1, preferPipelines, options);
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
     private static bool IsSingleLine(Expr e, bool preferPipelines)
     {
         return e switch
@@ -177,6 +201,11 @@ public static class Formatter
             Expr.Subtract sub => IsSingleLine(sub.Left, preferPipelines) && IsSingleLine(sub.Right, preferPipelines),
             Expr.Multiply mul => IsSingleLine(mul.Left, preferPipelines) && IsSingleLine(mul.Right, preferPipelines),
             Expr.Divide div => IsSingleLine(div.Left, preferPipelines) && IsSingleLine(div.Right, preferPipelines),
+            Expr.BitwiseAnd bitAnd => IsSingleLine(bitAnd.Left, preferPipelines) && IsSingleLine(bitAnd.Right, preferPipelines),
+            Expr.BitwiseOr bitOr => IsSingleLine(bitOr.Left, preferPipelines) && IsSingleLine(bitOr.Right, preferPipelines),
+            Expr.BitwiseXor bitXor => IsSingleLine(bitXor.Left, preferPipelines) && IsSingleLine(bitXor.Right, preferPipelines),
+            Expr.ShiftLeft shiftLeft => IsSingleLine(shiftLeft.Left, preferPipelines) && IsSingleLine(shiftLeft.Right, preferPipelines),
+            Expr.ShiftRight shiftRight => IsSingleLine(shiftRight.Left, preferPipelines) && IsSingleLine(shiftRight.Right, preferPipelines),
             Expr.GreaterOrEqual ge => IsSingleLine(ge.Left, preferPipelines) && IsSingleLine(ge.Right, preferPipelines),
             Expr.LessOrEqual le => IsSingleLine(le.Left, preferPipelines) && IsSingleLine(le.Right, preferPipelines),
             Expr.Equal eq => IsSingleLine(eq.Left, preferPipelines) && IsSingleLine(eq.Right, preferPipelines),
@@ -786,6 +815,26 @@ public static class Formatter
                     return;
                 }
 
+            case Expr.BitwiseAnd bitAnd:
+                WriteLeftAssociativeBinary(sb, bitAnd.Left, "&", bitAnd.Right, PrecBitAnd, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.BitwiseOr bitOr:
+                WriteLeftAssociativeBinary(sb, bitOr.Left, "|", bitOr.Right, PrecBitOr, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.BitwiseXor bitXor:
+                WriteLeftAssociativeBinary(sb, bitXor.Left, "^", bitXor.Right, PrecBitXor, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.ShiftLeft shiftLeft:
+                WriteLeftAssociativeBinary(sb, shiftLeft.Left, "<<", shiftLeft.Right, PrecShift, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.ShiftRight shiftRight:
+                WriteLeftAssociativeBinary(sb, shiftRight.Left, ">>", shiftRight.Right, PrecShift, indent, parentPrec, preferPipelines, options);
+                return;
+
             case Expr.GreaterOrEqual ge:
                 {
                     var needsParens = parentPrec > PrecCmp;
@@ -926,7 +975,10 @@ public static class Formatter
                     }
 
                     // Function position: if it's a lambda/let/if/add, parenthesize
-                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Async or Expr.Await;
+                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If
+                        or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
+                        or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
+                        or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Async or Expr.Await;
                     if (funcNeedsParens)
                     {
                         sb.Append('(');

@@ -198,6 +198,11 @@ public sealed partial class Lowering
             Expr.Subtract sub => LowerSubtract(sub),
             Expr.Multiply mul => LowerMultiply(mul),
             Expr.Divide div => LowerDivide(div),
+            Expr.BitwiseAnd bitAnd => LowerBitwiseAnd(bitAnd),
+            Expr.BitwiseOr bitOr => LowerBitwiseOr(bitOr),
+            Expr.BitwiseXor bitXor => LowerBitwiseXor(bitXor),
+            Expr.ShiftLeft shiftLeft => LowerShiftLeft(shiftLeft),
+            Expr.ShiftRight shiftRight => LowerShiftRight(shiftRight),
             Expr.GreaterOrEqual ge => LowerGreaterOrEqual(ge),
             Expr.LessOrEqual le => LowerLessOrEqual(le),
             Expr.Equal eq => LowerEqual(eq),
@@ -544,6 +549,51 @@ public sealed partial class Lowering
         return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'");
     }
 
+    private (int, TypeRef) LowerBitwiseAnd(Expr.BitwiseAnd bitAnd)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bitAnd);
+        var (leftTemp, leftType) = LowerExpr(bitAnd.Left);
+        var (rightTemp, rightType) = LowerExpr(bitAnd.Right);
+
+        return LowerIntBinaryOp(bitAnd, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.AndInt(target, left, right), "'&'");
+    }
+
+    private (int, TypeRef) LowerBitwiseOr(Expr.BitwiseOr bitOr)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bitOr);
+        var (leftTemp, leftType) = LowerExpr(bitOr.Left);
+        var (rightTemp, rightType) = LowerExpr(bitOr.Right);
+
+        return LowerIntBinaryOp(bitOr, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.OrInt(target, left, right), "'|'");
+    }
+
+    private (int, TypeRef) LowerBitwiseXor(Expr.BitwiseXor bitXor)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bitXor);
+        var (leftTemp, leftType) = LowerExpr(bitXor.Left);
+        var (rightTemp, rightType) = LowerExpr(bitXor.Right);
+
+        return LowerIntBinaryOp(bitXor, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.XorInt(target, left, right), "'^'");
+    }
+
+    private (int, TypeRef) LowerShiftLeft(Expr.ShiftLeft shiftLeft)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(shiftLeft);
+        var (leftTemp, leftType) = LowerExpr(shiftLeft.Left);
+        var (rightTemp, rightType) = LowerExpr(shiftLeft.Right);
+
+        return LowerIntBinaryOp(shiftLeft, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.ShlInt(target, left, right), "'<<'");
+    }
+
+    private (int, TypeRef) LowerShiftRight(Expr.ShiftRight shiftRight)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(shiftRight);
+        var (leftTemp, leftType) = LowerExpr(shiftRight.Left);
+        var (rightTemp, rightType) = LowerExpr(shiftRight.Right);
+
+        return LowerIntBinaryOp(shiftRight, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.ShrInt(target, left, right), "'>>'");
+    }
+
     private (int, TypeRef) LowerGreaterOrEqual(Expr.GreaterOrEqual ge)
     {
         using var diagnosticSpan = PushDiagnosticSpan(ge);
@@ -792,6 +842,47 @@ public sealed partial class Lowering
 
         var types = PrettyPair(resolvedLeft, resolvedRight);
         ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int or Float{op}Float, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
+        return CreateIntErrorFallback();
+    }
+
+    private (int, TypeRef) LowerIntBinaryOp(
+        Expr expr,
+        int leftTemp,
+        TypeRef leftType,
+        int rightTemp,
+        TypeRef rightType,
+        Func<int, int, int, IrInst> intFactory,
+        string op)
+    {
+        var left = Prune(leftType);
+        var right = Prune(rightType);
+
+        if (left is TypeRef.TVar)
+        {
+            Unify(left, new TypeRef.TInt());
+            left = new TypeRef.TInt();
+        }
+
+        if (right is TypeRef.TVar)
+        {
+            Unify(right, new TypeRef.TInt());
+            right = new TypeRef.TInt();
+        }
+
+        if (left is TypeRef.TInt && right is TypeRef.TInt)
+        {
+            int target = NewTemp();
+            Emit(intFactory(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TInt());
+        }
+
+        var types = PrettyPair(left, right);
+        ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
+        return CreateIntErrorFallback();
+    }
+
+    private (int, TypeRef) CreateIntErrorFallback()
+    {
         int fallback = NewTemp();
         Emit(new IrInst.LoadConstInt(fallback, 0));
         return (fallback, new TypeRef.TInt());
@@ -2495,6 +2586,26 @@ public sealed partial class Lowering
                     Visit(div.Left, bnd);
                     Visit(div.Right, bnd);
                     return;
+                case Expr.BitwiseAnd bitAnd:
+                    Visit(bitAnd.Left, bnd);
+                    Visit(bitAnd.Right, bnd);
+                    return;
+                case Expr.BitwiseOr bitOr:
+                    Visit(bitOr.Left, bnd);
+                    Visit(bitOr.Right, bnd);
+                    return;
+                case Expr.BitwiseXor bitXor:
+                    Visit(bitXor.Left, bnd);
+                    Visit(bitXor.Right, bnd);
+                    return;
+                case Expr.ShiftLeft shiftLeft:
+                    Visit(shiftLeft.Left, bnd);
+                    Visit(shiftLeft.Right, bnd);
+                    return;
+                case Expr.ShiftRight shiftRight:
+                    Visit(shiftRight.Left, bnd);
+                    Visit(shiftRight.Right, bnd);
+                    return;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left, bnd);
                     Visit(ge.Right, bnd);
@@ -2664,6 +2775,26 @@ public sealed partial class Lowering
                 CollectQualifiedVarsVisit(d.Left, result);
                 CollectQualifiedVarsVisit(d.Right, result);
                 break;
+            case Expr.BitwiseAnd bitAnd:
+                CollectQualifiedVarsVisit(bitAnd.Left, result);
+                CollectQualifiedVarsVisit(bitAnd.Right, result);
+                break;
+            case Expr.BitwiseOr bitOr:
+                CollectQualifiedVarsVisit(bitOr.Left, result);
+                CollectQualifiedVarsVisit(bitOr.Right, result);
+                break;
+            case Expr.BitwiseXor bitXor:
+                CollectQualifiedVarsVisit(bitXor.Left, result);
+                CollectQualifiedVarsVisit(bitXor.Right, result);
+                break;
+            case Expr.ShiftLeft shiftLeft:
+                CollectQualifiedVarsVisit(shiftLeft.Left, result);
+                CollectQualifiedVarsVisit(shiftLeft.Right, result);
+                break;
+            case Expr.ShiftRight shiftRight:
+                CollectQualifiedVarsVisit(shiftRight.Left, result);
+                CollectQualifiedVarsVisit(shiftRight.Right, result);
+                break;
             case Expr.GreaterOrEqual ge:
                 CollectQualifiedVarsVisit(ge.Left, result);
                 CollectQualifiedVarsVisit(ge.Right, result);
@@ -2793,6 +2924,21 @@ public sealed partial class Lowering
             case Expr.Divide div:
                 return UsesNameOnlyAsDirectCallee(div.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(div.Right, targetName, shadowed);
+            case Expr.BitwiseAnd bitAnd:
+                return UsesNameOnlyAsDirectCallee(bitAnd.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(bitAnd.Right, targetName, shadowed);
+            case Expr.BitwiseOr bitOr:
+                return UsesNameOnlyAsDirectCallee(bitOr.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(bitOr.Right, targetName, shadowed);
+            case Expr.BitwiseXor bitXor:
+                return UsesNameOnlyAsDirectCallee(bitXor.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(bitXor.Right, targetName, shadowed);
+            case Expr.ShiftLeft shiftLeft:
+                return UsesNameOnlyAsDirectCallee(shiftLeft.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(shiftLeft.Right, targetName, shadowed);
+            case Expr.ShiftRight shiftRight:
+                return UsesNameOnlyAsDirectCallee(shiftRight.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(shiftRight.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return UsesNameOnlyAsDirectCallee(ge.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(ge.Right, targetName, shadowed);
@@ -2891,6 +3037,16 @@ public sealed partial class Lowering
                 return ExprReferencesName(mul.Left, targetName, shadowed) || ExprReferencesName(mul.Right, targetName, shadowed);
             case Expr.Divide div:
                 return ExprReferencesName(div.Left, targetName, shadowed) || ExprReferencesName(div.Right, targetName, shadowed);
+            case Expr.BitwiseAnd bitAnd:
+                return ExprReferencesName(bitAnd.Left, targetName, shadowed) || ExprReferencesName(bitAnd.Right, targetName, shadowed);
+            case Expr.BitwiseOr bitOr:
+                return ExprReferencesName(bitOr.Left, targetName, shadowed) || ExprReferencesName(bitOr.Right, targetName, shadowed);
+            case Expr.BitwiseXor bitXor:
+                return ExprReferencesName(bitXor.Left, targetName, shadowed) || ExprReferencesName(bitXor.Right, targetName, shadowed);
+            case Expr.ShiftLeft shiftLeft:
+                return ExprReferencesName(shiftLeft.Left, targetName, shadowed) || ExprReferencesName(shiftLeft.Right, targetName, shadowed);
+            case Expr.ShiftRight shiftRight:
+                return ExprReferencesName(shiftRight.Left, targetName, shadowed) || ExprReferencesName(shiftRight.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return ExprReferencesName(ge.Left, targetName, shadowed) || ExprReferencesName(ge.Right, targetName, shadowed);
             case Expr.LessOrEqual le:

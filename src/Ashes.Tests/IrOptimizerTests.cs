@@ -88,6 +88,199 @@ public sealed class IrOptimizerTests
             .ShouldBeFalse("CmpIntEq should be eliminated by constant folding.");
     }
 
+    // ── Bitwise and shift constant-folding tests ─────────────────────────
+
+    [Test]
+    public void Constant_folding_folds_bitwise_and()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0xFF),
+            new IrInst.LoadConstInt(1, 0x0F),
+            new IrInst.AndInt(2, 0, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 0x0F })
+            .ShouldBeTrue("Expected constant-folded value 0x0F from 0xFF & 0x0F.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AndInt)
+            .ShouldBeFalse("AndInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_folds_bitwise_or()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0xF0),
+            new IrInst.LoadConstInt(1, 0x0F),
+            new IrInst.OrInt(2, 0, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 0xFF })
+            .ShouldBeTrue("Expected constant-folded value 0xFF from 0xF0 | 0x0F.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.OrInt)
+            .ShouldBeFalse("OrInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_folds_bitwise_xor()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0xFF),
+            new IrInst.LoadConstInt(1, 0x0F),
+            new IrInst.XorInt(2, 0, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 0xF0 })
+            .ShouldBeTrue("Expected constant-folded value 0xF0 from 0xFF ^ 0x0F.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.XorInt)
+            .ShouldBeFalse("XorInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_folds_shift_left()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 1),
+            new IrInst.LoadConstInt(1, 3),
+            new IrInst.ShlInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 8 })
+            .ShouldBeTrue("Expected constant-folded value 8 from 1 << 3.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.ShlInt)
+            .ShouldBeFalse("ShlInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_shift_left_masks_shift_count_to_63()
+    {
+        // Shift count 64 is masked to 64 & 63 = 0, so 1 << 64 folds to 1 << 0 = 1.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 1),
+            new IrInst.LoadConstInt(1, 64),
+            new IrInst.ShlInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 1 })
+            .ShouldBeTrue("Shift count 64 should be masked to 0; expected 1 << 0 = 1.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.ShlInt)
+            .ShouldBeFalse("ShlInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_folds_shift_right_positive()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 8),
+            new IrInst.LoadConstInt(1, 1),
+            new IrInst.ShrInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 4 })
+            .ShouldBeTrue("Expected constant-folded value 4 from 8 >> 1.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.ShrInt)
+            .ShouldBeFalse("ShrInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_shift_right_is_logical_for_negative_inputs()
+    {
+        // Logical (unsigned) right shift: -1L >> 1 should zero-fill the high bit,
+        // producing long.MaxValue, not -1 (which would be an arithmetic shift).
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, -1L),
+            new IrInst.LoadConstInt(1, 1),
+            new IrInst.ShrInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: long.MaxValue })
+            .ShouldBeTrue("Logical right shift of -1 by 1 should produce long.MaxValue (zero-fill high bit).");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.ShrInt)
+            .ShouldBeFalse("ShrInt should be eliminated by constant folding.");
+    }
+
+    [Test]
+    public void Constant_folding_shift_right_masks_shift_count_to_63()
+    {
+        // Shift count 64 is masked to 64 & 63 = 0, so 8 >> 64 folds to 8 >> 0 = 8.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 8),
+            new IrInst.LoadConstInt(1, 64),
+            new IrInst.ShrInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 8 })
+            .ShouldBeTrue("Shift count 64 should be masked to 0; expected 8 >> 0 = 8.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.ShrInt)
+            .ShouldBeFalse("ShrInt should be eliminated by constant folding.");
+    }
+
     // ── Dead code elimination tests ─────────────────────────────────────
 
     [Test]

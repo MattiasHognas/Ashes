@@ -6,6 +6,7 @@ public sealed class Parser
     private readonly Diagnostics _diag;
     private Token _current;
     private Token _previous;
+    private int _matchCasePipeSuppressionDepth;
 
     public Parser(string text, Diagnostics diag)
     {
@@ -188,7 +189,7 @@ public sealed class Parser
             guard = ParseExpressionCore();
         }
         Consume(TokenKind.Arrow);
-        var body = ParseExpressionCore();
+        var body = ParseMatchCaseBody();
         cases.Add(new MatchCase(pattern, body, guard));
 
         while (_current.Kind == TokenKind.Pipe)
@@ -202,11 +203,24 @@ public sealed class Parser
                 guard = ParseExpressionCore();
             }
             Consume(TokenKind.Arrow);
-            body = ParseExpressionCore();
+            body = ParseMatchCaseBody();
             cases.Add(new MatchCase(pattern, body, guard));
         }
 
         return RegisterExpr(new Expr.Match(value, cases, matchPos), matchPos, LastConsumedEnd);
+    }
+
+    private Expr ParseMatchCaseBody()
+    {
+        _matchCasePipeSuppressionDepth++;
+        try
+        {
+            return ParseExpressionCore();
+        }
+        finally
+        {
+            _matchCasePipeSuppressionDepth--;
+        }
     }
 
     private Expr ParseAsync()
@@ -496,14 +510,14 @@ public sealed class Parser
 
     private Expr ParseComparison()
     {
-        var left = ParseCons();
+        var left = ParseBitwiseOr();
 
         while (_current.Kind == TokenKind.GreaterEquals || _current.Kind == TokenKind.LessEquals || _current.Kind == TokenKind.EqualsEquals || _current.Kind == TokenKind.BangEquals)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             var op = _current.Kind;
             Consume(op);
-            var right = ParseCons();
+            var right = ParseBitwiseOr();
             left = op switch
             {
                 TokenKind.GreaterEquals => RegisterExpr(new Expr.GreaterOrEqual(left, right), start, AstSpans.GetOrDefault(right).End),
@@ -517,9 +531,54 @@ public sealed class Parser
         return left;
     }
 
+    private Expr ParseBitwiseOr()
+    {
+        var left = ParseBitwiseXor();
+
+        while (_current.Kind == TokenKind.Pipe && _matchCasePipeSuppressionDepth == 0)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            Consume(TokenKind.Pipe);
+            var right = ParseBitwiseXor();
+            left = RegisterExpr(new Expr.BitwiseOr(left, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        return left;
+    }
+
+    private Expr ParseBitwiseXor()
+    {
+        var left = ParseBitwiseAnd();
+
+        while (_current.Kind == TokenKind.Caret)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            Consume(TokenKind.Caret);
+            var right = ParseBitwiseAnd();
+            left = RegisterExpr(new Expr.BitwiseXor(left, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        return left;
+    }
+
+    private Expr ParseBitwiseAnd()
+    {
+        var left = ParseCons();
+
+        while (_current.Kind == TokenKind.Ampersand)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            Consume(TokenKind.Ampersand);
+            var right = ParseCons();
+            left = RegisterExpr(new Expr.BitwiseAnd(left, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        return left;
+    }
+
     private Expr ParseCons()
     {
-        var left = ParseAdditive();
+        var left = ParseShift();
         if (_current.Kind != TokenKind.ColonColon)
         {
             return left;
@@ -529,6 +588,27 @@ public sealed class Parser
         Consume(TokenKind.ColonColon);
         var right = ParseCons();
         return RegisterExpr(new Expr.Cons(left, right), start, AstSpans.GetOrDefault(right).End);
+    }
+
+    private Expr ParseShift()
+    {
+        var left = ParseAdditive();
+
+        while (_current.Kind == TokenKind.LessLess || _current.Kind == TokenKind.GreaterGreater)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            var op = _current.Kind;
+            Consume(op);
+            var right = ParseAdditive();
+            left = op switch
+            {
+                TokenKind.LessLess => RegisterExpr(new Expr.ShiftLeft(left, right), start, AstSpans.GetOrDefault(right).End),
+                TokenKind.GreaterGreater => RegisterExpr(new Expr.ShiftRight(left, right), start, AstSpans.GetOrDefault(right).End),
+                _ => throw new InvalidOperationException()
+            };
+        }
+
+        return left;
     }
 
     private Expr ParseAdditive()
@@ -712,20 +792,29 @@ public sealed class Parser
     {
         var start = _current.Position;
         Consume(TokenKind.LParen);
-        var e = ParseExpressionCore();
-        if (_current.Kind == TokenKind.Comma)
+        var suppressedMatchCasePipeDepth = _matchCasePipeSuppressionDepth;
+        _matchCasePipeSuppressionDepth = 0;
+        try
         {
-            var elements = new List<Expr> { e };
-            while (_current.Kind == TokenKind.Comma)
+            var e = ParseExpressionCore();
+            if (_current.Kind == TokenKind.Comma)
             {
-                Consume(TokenKind.Comma);
-                elements.Add(ParseExpressionCore());
+                var elements = new List<Expr> { e };
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    elements.Add(ParseExpressionCore());
+                }
+                Consume(TokenKind.RParen);
+                return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
             }
             Consume(TokenKind.RParen);
-            return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
+            return e;
         }
-        Consume(TokenKind.RParen);
-        return e;
+        finally
+        {
+            _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
+        }
     }
 
     private Expr ParseList()
