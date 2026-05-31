@@ -62,11 +62,8 @@ Extern declarations also support unsigned C integer widths (`u8`, `u16`,
 nested `**T` out parameters), which map to Ashes `Int` call-site values,
 Ashes `Unit` results, and pointer-sized values respectively.
 
-Remaining gaps before this is enough for LLVM self-hosting:
-
-- extern functions as first-class values or module exports;
-- safe wrappers and ownership conventions for opaque handles returned by
-  LLVM-C APIs.
+The remaining FFI work is no longer on the immediate byte/linker path and
+is tracked in the later hard-foundations phase below.
 
 ### 2. Byte Type and Bitwise Operations
 
@@ -74,7 +71,9 @@ The ELF/PE linkers and parts of codegen manipulate raw bytes:
 
 - **Byte type** (`u8`) for constructing executable images.
 - **Bitwise operators** — AND, OR, XOR, shift left / right — for
-  encoding headers, relocations, and instruction operands.
+  encoding headers, relocations, and instruction operands. `Int` bitwise
+  `&`, `|`, `^`, `<<`, and `>>` have landed; byte/unsigned-specific
+  operators and unary bitwise NOT remain.
 - **Unsigned integers** — ELF/PE formats use unsigned 16/32/64-bit
   values for virtual addresses, section sizes, and offsets.
 - **Byte arrays / buffers** — mutable or builder-pattern sequences for
@@ -293,8 +292,8 @@ remains:
 
 | # | Capability                          | Why Needed                          | Status / Difficulty       |
 |---|-------------------------------------|-------------------------------------|---------------------------|
-| 1 | FFI / C Interop                     | LLVM API, syscalls                  | Medium–High (user `extern` exists; pointer/out-param support remains) |
-| 2 | Byte type + bitwise ops             | Linker, binary formats              | Medium                    |
+| 1 | FFI / C Interop                     | LLVM API, syscalls                  | Medium (core user `extern` exists; wrappers/exports deferred) |
+| 2 | Byte type + bitwise ops             | Linker, binary formats              | Medium (Int bitwise ops landed) |
 | 3 | Persistent (immutable) maps         | Type inference, scopes              | High                      |
 | 4 | String manipulation                 | Lexer, error messages               | Medium (uncons/parse landed) |
 | 5 | Type annotations                    | Codebase maintainability            | Medium                    |
@@ -312,9 +311,9 @@ remains:
 
 ## The Three Hardest Problems
 
-1. **FFI** — without it there is no way to call LLVM, so no code
-   generation at all. The runtime already contains native-interop
-   machinery; the missing piece is a user-facing `extern` surface.
+1. **FFI hardening** — the core `extern` surface exists, but
+   self-hosting still needs durable wrapper/ownership conventions around
+   LLVM handles before the compiler can safely be ported.
 2. **Persistent (immutable) data structures** — without them, type
    inference (the heart of the compiler) is impractical to implement
    while honouring the immutability commitment.
@@ -346,8 +345,9 @@ keeping with the immutability commitment (Ground Rule #5).
 2. **Byte type (`u8`) + byte literals** — the smallest unit for image
    construction.
 3. **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
-   ints/bytes. Pure and isolated; needed for header, relocation, and
-   instruction-operand encoding.
+   ints/bytes. `Int` `&`, `|`, `^`, `<<`, and `>>` have landed; byte/
+   unsigned-specific behaviour and `~` remain. Pure and isolated; needed
+   for header, relocation, and instruction-operand encoding.
 4. **`Int → Str` / `Float → Str` conversions** (`fromInt`, `fromFloat`)
    and **hex formatting** — completes the numeric round-trip (the parse
    side already shipped in `Ashes.Text`) and unblocks diagnostics.
@@ -395,10 +395,9 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 6 — The hard foundations (largest; can run as parallel research)
 
-15. **User-facing FFI** — `extern` declarations, opaque handle/pointer
-    types, null-terminated C-string passing, reusing the runtime's
-    existing native-interop machinery. Blocks all LLVM codegen from
-    Ashes.
+15. **Deferred FFI hardening** — extern functions as first-class values or
+    module exports, plus safe wrappers and ownership conventions for
+    opaque LLVM-C handles.
 16. **Memory-management hardening** — validate the chunked arena's
     steady-state behaviour under a real self-compile; add finer
     ownership-based freeing only if scope-granularity reclamation proves
@@ -408,7 +407,7 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Suggested first slice
 
-Items **1–4** (unsigned ints, byte type, bitwise ops, `Int`/`Float` →
-`Str` + hex). They are pure, fully testable in isolation with `.ash`
-fixtures, carry no architectural risk, and are hard prerequisites for the
-linker port.
+Items **1–4** (unsigned ints, byte type, remaining bitwise ops,
+`Int`/`Float` → `Str` + hex). They are pure, fully testable in isolation
+with `.ash` fixtures, carry no architectural risk, and are hard
+prerequisites for the linker port.

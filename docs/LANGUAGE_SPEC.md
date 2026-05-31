@@ -288,7 +288,22 @@ Examples:
 
 Both operands of `==` and `!=` must have the same type. Mixing `Int` and `Str` is a type error.
 
-## 3.3 Cons
+## 3.3 Bitwise
+
+Bitwise operators operate on `Int` values and return `Int`.
+
+| Operator | Types        | Description           |
+|----------|--------------|-----------------------|
+| `&`      | `Int & Int`  | Bitwise AND           |
+| `\|`     | `Int \| Int` | Bitwise OR            |
+| `^`      | `Int ^ Int`  | Bitwise XOR           |
+| `<<`     | `Int << Int` | Shift left            |
+| `>>`     | `Int >> Int` | Logical shift right   |
+
+Shift counts are masked to the low 6 bits for the 64-bit `Int`
+representation.
+
+## 3.4 Cons
 
 `::` constructs a new list by prepending a head value to a tail list.
 
@@ -296,7 +311,7 @@ Example:
 
 1 :: [2,3]  // => [1,2,3]
 
-## 3.4 Pipes
+## 3.5 Pipes
 
 Ashes supports three left-to-right pipeline operators.
 
@@ -357,7 +372,7 @@ let bumpIfOk2 result =
     in
     Ok(n + 1)
 
-## 3.5 Precedence and Associativity
+## 3.6 Precedence and Associativity
 
 From lowest precedence to highest:
 
@@ -365,11 +380,15 @@ From lowest precedence to highest:
 |-------|--------------------------------|---------------|
 | 1     | `|>`, `|?>`, `|!>`             | left          |
 | 2     | `>=`, `<=`, `==`, `!=`         | left          |
-| 3     | `::`                           | right         |
-| 4     | `+`, `-`                       | left          |
-| 5     | `*`, `/`                       | left          |
-| 6     | unary `-`                      | right         |
-| 7     | function application           | left          |
+| 3     | `\|`                           | left          |
+| 4     | `^`                            | left          |
+| 5     | `&`                            | left          |
+| 6     | `::`                           | right         |
+| 7     | `<<`, `>>`                     | left          |
+| 8     | `+`, `-`                       | left          |
+| 9     | `*`, `/`                       | left          |
+| 10    | unary `-`                      | right         |
+| 11    | function application           | left          |
 
 `>=`, `<=`, `==`, and `!=` share the same precedence level in the current grammar.
 Function application (both `f(x)` and `f x` whitespace syntax) binds tighter than
