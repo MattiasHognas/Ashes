@@ -20,6 +20,7 @@ public abstract record TypeRef
     public sealed record TVar(int Id) : TypeRef;
     public sealed record TNamedType(TypeSymbol Symbol, IReadOnlyList<TypeRef> TypeArgs) : TypeRef;
     public sealed record TTypeParam(TypeParameterSymbol Symbol) : TypeRef;
+    public sealed record TOpaque(string Name) : TypeRef;
 }
 
 public readonly record struct SourceLocation(string FilePath, int Line, int Column);
@@ -260,6 +261,9 @@ public abstract record IrInst
     /// </summary>
     public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
 
+    public sealed record ToCString(int Target, int StrTemp) : IrInst;
+    public sealed record CallExtern(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;
+
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
     /// the coroutine function pointer and captured environment.
@@ -400,6 +404,22 @@ public abstract record IrInst
 
 public sealed record IrStringLiteral(string Label, string Value);
 
+public abstract record FfiType
+{
+    public sealed record Int : FfiType;
+    public sealed record Float : FfiType;
+    public sealed record Bool : FfiType;
+    public sealed record Str : FfiType;
+    public sealed record Opaque(string Name) : FfiType;
+}
+
+public sealed record IrExternFunction(
+    string Name,
+    string SymbolName,
+    IReadOnlyList<FfiType> ParameterTypes,
+    FfiType ReturnType,
+    string? LibraryName = null);
+
 /// <summary>
 /// Metadata for a coroutine function generated from an async block.
 /// Describes the state machine layout computed by the state machine transform.
@@ -485,10 +505,28 @@ public sealed record IrProgram(
     IrFunction EntryFunction,
     List<IrFunction> Functions,
     List<IrStringLiteral> StringLiterals,
+    List<IrExternFunction> ExternFunctions,
+    IReadOnlySet<string> ExternOpaqueTypes,
     bool UsesPrintInt,
     bool UsesPrintStr,
     bool UsesPrintBool,
     bool UsesConcatStr,
     bool UsesClosures,
     bool UsesAsync
-);
+)
+{
+    public IrProgram(
+        IrFunction EntryFunction,
+        List<IrFunction> Functions,
+        List<IrStringLiteral> StringLiterals,
+        bool UsesPrintInt,
+        bool UsesPrintStr,
+        bool UsesPrintBool,
+        bool UsesConcatStr,
+        bool UsesClosures,
+        bool UsesAsync)
+        : this(EntryFunction, Functions, StringLiterals, [], new HashSet<string>(StringComparer.Ordinal),
+            UsesPrintInt, UsesPrintStr, UsesPrintBool, UsesConcatStr, UsesClosures, UsesAsync)
+    {
+    }
+}

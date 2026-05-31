@@ -42,17 +42,29 @@ requires:
 - A way to **declare and call external C functions** from Ashes source.
 - **Opaque pointer / handle types** wrapping native pointers returned by
   LLVM.
-- Ability to pass **null-terminated C strings** to foreign functions (the
-  runtime already adds terminators internally for syscalls, but this is
-  not exposed to user code).
+- Ability to pass **null-terminated C strings** to foreign functions.
 - The same FFI would cover GDB/DWARF debug-info APIs (LLVM DIBuilder).
 
 Note: the *runtime* has since grown substantial native interop (async
 TCP/HTTP and the hermetic `rustls` TLS runtime on `linux-x64`,
 `linux-arm64`, and `win-x64`), so the underlying native-interop
-machinery exists. What is still missing is a **user-facing** `extern`
-surface in Ashes source — the gap is exposure, not building interop from
-scratch.
+machinery exists.
+
+Current status: a first user-facing `extern` surface now exists. Ashes
+source can declare top-level C ABI functions (`extern strlen(Str) -> Int`),
+declare opaque native handle types (`extern type LLVMModuleRef`), call
+extern functions directly, and pass `Str` arguments as null-terminated C
+strings. Dynamic imports can be requested for non-built-in symbols via the
+symbol override form (`extern foo(Int) -> Int = "foo@libfoo.so"` on Linux, or
+`extern tick() -> Int = "GetTickCount64@KERNEL32.DLL"` on Windows).
+
+Remaining gaps before this is enough for LLVM self-hosting:
+
+- richer C type coverage (unsigned integers, `void`, pointer-to-buffer,
+  pointer-to-pointer/out parameters);
+- extern functions as first-class values or module exports;
+- safe wrappers and ownership conventions for opaque handles returned by
+  LLVM-C APIs.
 
 ### 2. Byte Type and Bitwise Operations
 

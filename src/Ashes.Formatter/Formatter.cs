@@ -34,6 +34,14 @@ public static class Formatter
         {
             WriteTypeDecl(sb, decl, formattingOptions);
         }
+        foreach (var decl in program.ExternDecls)
+        {
+            WriteExternDecl(sb, decl);
+        }
+        if (program.ExternDecls.Count > 0)
+        {
+            sb.Append('\n');
+        }
         WriteExpr(sb, program.Body, indent: 0, parentPrec: 0, preferPipelines, formattingOptions);
         if (sb.Length == 0 || sb[^1] != '\n')
         {
@@ -90,6 +98,42 @@ public static class Formatter
             sb.Append('\n');
         }
         sb.Append('\n');
+    }
+
+    private static string WriteParsedType(ParsedType type)
+    {
+        return type switch
+        {
+            ParsedType.Named named => named.Name,
+            _ => throw new InvalidOperationException($"Unexpected parsed type: {type}")
+        };
+    }
+
+    private static void WriteExternDecl(StringBuilder sb, ExternDecl decl)
+    {
+        switch (decl)
+        {
+            case ExternDecl.OpaqueType opaqueType:
+                sb.Append("extern type ");
+                sb.Append(opaqueType.Name);
+                sb.Append('\n');
+                break;
+            case ExternDecl.Function func:
+                sb.Append("extern ");
+                sb.Append(func.Name);
+                sb.Append('(');
+                sb.Append(string.Join(", ", func.ParameterTypes.Select(WriteParsedType)));
+                sb.Append(") -> ");
+                sb.Append(WriteParsedType(func.ReturnType));
+                if (func.SymbolName is not null)
+                {
+                    sb.Append(" = \"");
+                    sb.Append(EscapeString(func.SymbolName));
+                    sb.Append('"');
+                }
+                sb.Append('\n');
+                break;
+        }
     }
 
     private static bool EndsWithNewLine(StringBuilder sb, string newLine)

@@ -54,12 +54,16 @@ internal static partial class LlvmImageLinker
     private const int ElfHeaderSize = 64;
     private const int ElfProgramHeaderSize = 56;
 
-    public static byte[] LinkLinuxExecutable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
+    public static byte[] LinkLinuxExecutable(
+        byte[] objectBytes,
+        string entrySymbolName,
+        LinkedImagePayload? linkedPayload = null,
+        IReadOnlyDictionary<string, string>? externLibraries = null)
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + LinuxTrampolineLength;
         var parsed = ParseElfObject(objectBytes, entrySymbolName);
-        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed);
+        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed, externLibraries);
         int textFileOffset = PageSize;
         int codeLength = LinuxTrampolineLength + parsed.TextBytes.Length + imports.Count * LinuxImportStubLength;
         int dataFileOffset = Align(textFileOffset + codeLength, PageSize);
@@ -890,7 +894,10 @@ internal static partial class LlvmImageLinker
         throw new InvalidOperationException($"LLVM object did not define the '{entrySymbolName}' entry symbol.");
     }
 
-    private static List<LinuxDynamicImport> CollectLinuxDynamicImports(ReadOnlySpan<byte> objectBytes, ParsedElfObject parsed)
+    private static List<LinuxDynamicImport> CollectLinuxDynamicImports(
+        ReadOnlySpan<byte> objectBytes,
+        ParsedElfObject parsed,
+        IReadOnlyDictionary<string, string>? externLibraries = null)
     {
         byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)parsed.SymbolTable.Link));
         int symbolCount = checked((int)(parsed.SymbolTable.Size / parsed.SymbolTable.EntrySize));
@@ -920,7 +927,7 @@ internal static partial class LlvmImageLinker
             }
 
             string name = ReadNullTerminatedString(strtab, (int)symbol.NameIndex);
-            if (name.Length == 0 || definedNames.Contains(name) || !TryGetLinuxDynamicImportLibrary(name, out string? libraryName) || libraryName is null)
+            if (name.Length == 0 || definedNames.Contains(name) || !TryGetLinuxDynamicImportLibrary(name, externLibraries, out string? libraryName) || libraryName is null)
             {
                 continue;
             }
@@ -941,8 +948,15 @@ internal static partial class LlvmImageLinker
         return result;
     }
 
-    private static bool TryGetLinuxDynamicImportLibrary(string symbolName, out string? libraryName)
-        => LinuxDynamicImportLibraries.TryGetValue(symbolName, out libraryName);
+    private static bool TryGetLinuxDynamicImportLibrary(string symbolName, IReadOnlyDictionary<string, string>? externLibraries, out string? libraryName)
+    {
+        if (externLibraries is not null && externLibraries.TryGetValue(symbolName, out libraryName))
+        {
+            return true;
+        }
+
+        return LinuxDynamicImportLibraries.TryGetValue(symbolName, out libraryName);
+    }
 
     private static byte[] BuildLinuxDataBytes(byte[] existingDataBytes, IReadOnlyList<LinkerDataSegment> segments)
     {

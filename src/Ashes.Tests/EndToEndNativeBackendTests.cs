@@ -44,6 +44,21 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Extern_strlen_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = """
+            extern strlen(Str) -> Int
+            Ashes.IO.print(strlen("ashes"))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("5\n");
+    }
+
+    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())

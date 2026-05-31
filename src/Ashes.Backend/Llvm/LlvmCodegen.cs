@@ -140,7 +140,7 @@ internal static partial class LlvmCodegen
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
+        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
@@ -153,7 +153,7 @@ internal static partial class LlvmCodegen
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
+        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
@@ -166,7 +166,7 @@ internal static partial class LlvmCodegen
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary));
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
 
     private static void VerifyModule(LlvmTargetContext target)
@@ -183,6 +183,13 @@ internal static partial class LlvmCodegen
         {
             LlvmApi.DisposeMessage(verifyMsg);
         }
+    }
+
+    private static IReadOnlyDictionary<string, string> GetExternLibraries(IrProgram program)
+    {
+        return program.ExternFunctions
+            .Where(static f => !string.IsNullOrWhiteSpace(f.LibraryName))
+            .ToDictionary(static f => f.SymbolName, static f => f.LibraryName!, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -931,6 +938,7 @@ internal static partial class LlvmCodegen
             windowsSleepImport,
             windowsVirtualAllocImport,
             windowsVirtualFreeImport,
+            new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
             flavor,
             usesProgramArgs,
             isEntry);
@@ -1099,6 +1107,8 @@ internal static partial class LlvmCodegen
             IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target, EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp), makeClosureStack.EnvSizeBytes)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
+            IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
+            IrInst.CallExtern callExtern => StoreTemp(state, callExtern.Target, EmitCallExtern(state, callExtern.SymbolName, callExtern.LibraryName, callExtern.ArgTemps, callExtern.ParameterTypes, callExtern.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
@@ -1211,6 +1221,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsSleepImport,
         LlvmValueHandle WindowsVirtualAllocImport,
         LlvmValueHandle WindowsVirtualFreeImport,
+        Dictionary<string, LlvmValueHandle> WindowsExternImports,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)

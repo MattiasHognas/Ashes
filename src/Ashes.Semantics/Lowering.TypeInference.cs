@@ -136,6 +136,7 @@ public sealed partial class Lowering
             TypeRef.TList l => new TypeRef.TList(ApplyInstSubst(l.Element, subst)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(e => ApplyInstSubst(e, subst)).ToList()),
             TypeRef.TNamedType n => new TypeRef.TNamedType(n.Symbol, n.TypeArgs.Select(a => ApplyInstSubst(a, subst)).ToList()),
+            TypeRef.TOpaque => t,
             _ => t
         };
     }
@@ -256,6 +257,7 @@ public sealed partial class Lowering
             TypeRef.TList l => Occurs(id, l.Element),
             TypeRef.TTuple tuple => tuple.Elements.Any(e => Occurs(id, e)),
             TypeRef.TNamedType n => n.TypeArgs.Any(a => Occurs(id, a)),
+            TypeRef.TOpaque => false,
             _ => false
         };
     }
@@ -290,6 +292,7 @@ public sealed partial class Lowering
                 ? (n.Symbol.Name, precAtom)
                 : ($"{n.Symbol.Name}<{string.Join(", ", n.TypeArgs.Select(a => Pretty(a, typeVarNames, parentPrecedence: precAtom)))}>", precAtom),
             TypeRef.TTypeParam tp => (tp.Symbol.Name, precAtom),
+            TypeRef.TOpaque opaque => (opaque.Name, precAtom),
             _ => (t.GetType().Name, precAtom)
         };
 

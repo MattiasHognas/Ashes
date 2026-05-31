@@ -51,6 +51,7 @@ public enum TokenKind
     Async,
     Await,
     LetBang,
+    Extern,
 }
 
 public readonly record struct Token(

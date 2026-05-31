@@ -17,6 +17,7 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<Pattern, SpanBox> PatternSpans = new();
     private static readonly ConditionalWeakTable<TypeDecl, SpanBox> TypeDeclSpans = new();
     private static readonly ConditionalWeakTable<TypeConstructor, SpanBox> TypeConstructorSpans = new();
+    private static readonly ConditionalWeakTable<ExternDecl, SpanBox> ExternDeclSpans = new();
 
     public static void Set(Expr expr, TextSpan span)
     {
@@ -66,6 +67,12 @@ public static class AstSpans
         TypeConstructorSpans.Add(typeConstructor, new SpanBox(span));
     }
 
+    public static void Set(ExternDecl externDecl, TextSpan span)
+    {
+        ExternDeclSpans.Remove(externDecl);
+        ExternDeclSpans.Add(externDecl, new SpanBox(span));
+    }
+
     public static TextSpan GetOrDefault(Expr expr)
     {
         return ExprSpans.TryGetValue(expr, out var spanBox) ? spanBox.Span : default;
@@ -104,5 +111,10 @@ public static class AstSpans
     public static TextSpan GetOrDefault(TypeConstructor typeConstructor)
     {
         return TypeConstructorSpans.TryGetValue(typeConstructor, out var spanBox) ? spanBox.Span : default;
+    }
+
+    public static TextSpan GetOrDefault(ExternDecl externDecl)
+    {
+        return ExternDeclSpans.TryGetValue(externDecl, out var spanBox) ? spanBox.Span : default;
     }
 }

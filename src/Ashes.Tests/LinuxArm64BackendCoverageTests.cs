@@ -46,6 +46,21 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
+    public void Linux_arm64_backend_compile_should_support_user_extern_imports()
+    {
+        var bytes = new LinuxArm64LlvmBackend().Compile(LowerProgram("""
+            extern strlen(Str) -> Int = "strlen@libc.so.6"
+            Ashes.IO.print(strlen("ash" + "es"))
+            """));
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
     public async Task Linux_arm64_backend_llvm_should_run_https_against_loopback_tls_fixture()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
@@ -68,6 +83,21 @@ public sealed class LinuxArm64BackendCoverageTests
             host: "localhost");
 
         result.Stdout.ShouldBe("hello from https\n");
+    }
+
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_run_user_extern_imports()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgram("""
+            extern strlen(Str) -> Int = "strlen@libc.so.6"
+            Ashes.IO.print(strlen("ash" + "es"))
+            """));
+        result.Stdout.ShouldBe("5\n");
     }
 
     [Test]
@@ -357,6 +387,17 @@ public sealed class LinuxArm64BackendCoverageTests
         diagnostics.ThrowIfAny();
 
         var ir = new Lowering(diagnostics).Lower(ast);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }

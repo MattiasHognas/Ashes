@@ -27,12 +27,16 @@ internal static partial class LlvmImageLinker
     private const uint ElfRelocAArch64LdstImm12Lo12Nc128 = 299;
     private const uint ElfRelocAArch64Ld64GotLo12Nc = 312;
 
-    public static byte[] LinkLinuxArm64Executable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
+    public static byte[] LinkLinuxArm64Executable(
+        byte[] objectBytes,
+        string entrySymbolName,
+        LinkedImagePayload? linkedPayload = null,
+        IReadOnlyDictionary<string, string>? externLibraries = null)
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + (ulong)Arm64TrampolineLength;
         var parsed = ParseElfObject(objectBytes, entrySymbolName);
-        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed);
+        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed, externLibraries);
         int textFileOffset = PageSize;
         int codeLength = Arm64TrampolineLength + parsed.TextBytes.Length + imports.Count * Arm64ImportStubLength;
         int dataFileOffset = Align(textFileOffset + codeLength, PageSize);
