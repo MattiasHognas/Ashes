@@ -483,6 +483,22 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("35\n");
     }
 
+    [Test]
+    public async Task Bitwise_program_runs_and_prints_expected_output()
+    {
+            if (!OperatingSystem.IsLinux())
+            {
+                return;
+            }
+
+            var src = """
+                let flags = (5 | 2) ^ 1
+                in let shifted = (flags & 6) << 2
+                in Ashes.IO.print(shifted >> 1)
+                """;
+            (await CompileRunCaptureProgramAsync(src)).ShouldBe("12\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

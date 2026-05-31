@@ -231,6 +231,25 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_format_bitwise_operators_with_precedence()
+    {
+        var formatted = Ashes.Formatter.Formatter.Format(
+            new Expr.BitwiseOr(
+                new Expr.IntLit(1),
+                new Expr.BitwiseXor(
+                    new Expr.IntLit(2),
+                    new Expr.BitwiseAnd(
+                        new Expr.IntLit(3),
+                        new Expr.ShiftRight(
+                            new Expr.ShiftLeft(
+                                new Expr.IntLit(4),
+                                new Expr.Add(new Expr.IntLit(5), new Expr.IntLit(6))),
+                            new Expr.IntLit(7))))));
+
+        formatted.ShouldBe("1 | 2 ^ 3 & 4 << 5 + 6 >> 7\n");
+    }
+
+    [Test]
     public void Format_should_write_call_chains_as_pipeline()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
