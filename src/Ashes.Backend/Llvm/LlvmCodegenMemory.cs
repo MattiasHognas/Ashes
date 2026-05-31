@@ -1454,6 +1454,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle zeroFloat = LlvmApi.ConstReal(state.F64, 0.0);
         LlvmValueHandle isNegative = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Olt, value, zeroFloat, prefix + "_is_negative");
         LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildFSub(builder, zeroFloat, value, prefix + "_abs_neg"), value, prefix + "_abs");
+        // 2^63 is not representable in signed i64; using the next representable f64 below 2^63
+        // keeps FPToSI-to-i64 conversions in defined range for all values on the fixed-format path.
         LlvmValueHandle safeIntegerLimit = LlvmApi.ConstReal(state.F64, 9223372036854773760.0);
         LlvmValueHandle needsScientific = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Ogt, absValue, safeIntegerLimit, prefix + "_needs_scientific");
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
@@ -1507,6 +1509,7 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitUnsignedFloatToStringWithinI64Range(LlvmCodegenState state, LlvmValueHandle absValue, string prefix)
     {
+        // Caller must ensure absValue <= safeIntegerLimit from EmitFloatToString.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle integerPart = LlvmApi.BuildFPToSI(builder, absValue, state.I64, prefix + "_integer");
         LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
