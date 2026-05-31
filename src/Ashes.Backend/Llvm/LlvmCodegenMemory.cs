@@ -1454,6 +1454,60 @@ internal static partial class LlvmCodegen
         LlvmValueHandle zeroFloat = LlvmApi.ConstReal(state.F64, 0.0);
         LlvmValueHandle isNegative = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Olt, value, zeroFloat, prefix + "_is_negative");
         LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildFSub(builder, zeroFloat, value, prefix + "_abs_neg"), value, prefix + "_abs");
+        LlvmValueHandle safeIntegerLimit = LlvmApi.ConstReal(state.F64, 9223372036854773760.0);
+        LlvmValueHandle needsScientific = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Ogt, absValue, safeIntegerLimit, prefix + "_needs_scientific");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle normalizedSlot = LlvmApi.BuildAlloca(builder, state.F64, prefix + "_normalized");
+        LlvmValueHandle exponentSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_exponent");
+        LlvmValueHandle signText = LlvmApi.BuildSelect(builder, isNegative, EmitHeapStringLiteral(state, "-"), EmitHeapStringLiteral(state, ""), prefix + "_sign_text");
+
+        var fixedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fixed");
+        var scientificInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_init");
+        var scientificLoopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_loop_check");
+        var scientificLoopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_loop_body");
+        var scientificFinishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_finish");
+        var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_merge");
+
+        LlvmApi.BuildCondBr(builder, needsScientific, scientificInitBlock, fixedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fixedBlock);
+        LlvmValueHandle fixedUnsigned = EmitUnsignedFloatToStringWithinI64Range(state, absValue, prefix + "_fixed_unsigned");
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned), resultSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificInitBlock);
+        LlvmApi.BuildStore(builder, absValue, normalizedSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), exponentSlot);
+        LlvmApi.BuildBr(builder, scientificLoopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificLoopCheckBlock);
+        LlvmValueHandle normalizedValue = LlvmApi.BuildLoad2(builder, state.F64, normalizedSlot, prefix + "_normalized_value");
+        LlvmValueHandle shouldScale = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Oge, normalizedValue, LlvmApi.ConstReal(state.F64, 10.0), prefix + "_should_scale");
+        LlvmApi.BuildCondBr(builder, shouldScale, scientificLoopBodyBlock, scientificFinishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificLoopBodyBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildFDiv(builder, normalizedValue, LlvmApi.ConstReal(state.F64, 10.0), prefix + "_normalized_next"), normalizedSlot);
+        LlvmValueHandle exponent = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, prefix + "_exponent_value");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, exponent, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_exponent_next"), exponentSlot);
+        LlvmApi.BuildBr(builder, scientificLoopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificFinishBlock);
+        LlvmValueHandle normalizedFinal = LlvmApi.BuildLoad2(builder, state.F64, normalizedSlot, prefix + "_normalized_final");
+        LlvmValueHandle exponentFinal = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, prefix + "_exponent_final");
+        LlvmValueHandle mantissaText = EmitUnsignedFloatToStringWithinI64Range(state, normalizedFinal, prefix + "_scientific_mantissa");
+        LlvmValueHandle exponentText = EmitNonNegativeIntToString(state, exponentFinal, prefix + "_scientific_exponent");
+        LlvmValueHandle scientificResult = EmitStringConcat(state, mantissaText, EmitHeapStringLiteral(state, "e+"));
+        scientificResult = EmitStringConcat(state, scientificResult, exponentText);
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, scientificResult), resultSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LlvmValueHandle EmitUnsignedFloatToStringWithinI64Range(LlvmCodegenState state, LlvmValueHandle absValue, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle integerPart = LlvmApi.BuildFPToSI(builder, absValue, state.I64, prefix + "_integer");
         LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
         LlvmValueHandle fractional = LlvmApi.BuildFSub(builder, absValue, integerAsFloat, prefix + "_fractional");
@@ -1466,11 +1520,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle integerFinal = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.BuildAdd(builder, integerPart, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_integer_carry"), integerPart, prefix + "_integer_final");
 
         LlvmValueHandle result = EmitSignedIntToString(state, integerFinal, prefix + "_integer_text");
-        LlvmValueHandle negativePrefix = EmitHeapStringLiteral(state, "-");
-        result = EmitStringConcat(
-            state,
-            LlvmApi.BuildSelect(builder, isNegative, negativePrefix, EmitHeapStringLiteral(state, ""), prefix + "_sign_text"),
-            result);
         result = EmitStringConcat(state, result, EmitHeapStringLiteral(state, "."));
         return EmitStringConcat(state, result, EmitFractionalSixDigitsToString(state, scaledFractional, prefix + "_fraction_text"));
     }
