@@ -97,6 +97,17 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void Parse_should_allow_bitwise_or_in_match_case_body_when_parenthesized()
+    {
+        var match = Parse("match x with | 0 -> (x | 1) | _ -> 0").ShouldBeOfType<Expr.Match>();
+        match.Cases.Count.ShouldBe(2);
+
+        var body = match.Cases[0].Body.ShouldBeOfType<Expr.BitwiseOr>();
+        body.Left.ShouldBe(new Expr.Var("x"));
+        body.Right.ShouldBe(new Expr.IntLit(1));
+    }
+
+    [Test]
     public void Parse_should_support_unary_negation_with_higher_precedence_than_multiplication()
     {
         var expr = Parse("-1 * 2").ShouldBeOfType<Expr.Multiply>();
