@@ -1123,6 +1123,11 @@ public sealed partial class Lowering
         return type switch
         {
             TypeRef.TInt => "Int",
+            TypeRef.TUInt { Bits: 8 } => "u8",
+            TypeRef.TUInt { Bits: 16 } => "u16",
+            TypeRef.TUInt { Bits: 32 } => "u32",
+            TypeRef.TUInt { Bits: 64 } => "u64",
+            TypeRef.TUInt u => $"u{u.Bits}",
             TypeRef.TFloat => "Float",
             TypeRef.TStr => "Str",
             TypeRef.TBool => "Bool",

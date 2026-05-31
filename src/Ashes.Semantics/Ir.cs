@@ -10,6 +10,9 @@ public sealed record TypeScheme(IReadOnlyList<TypeVar> Quantified, TypeRef Body)
 public abstract record TypeRef
 {
     public sealed record TInt : TypeRef;
+    // Unsigned integer: Bits ∈ {8, 16, 32, 64}. Values are stored as i64 internally
+    // but wrap at their declared bit width for arithmetic, matching C unsigned semantics.
+    public sealed record TUInt(int Bits) : TypeRef;
     public sealed record TFloat : TypeRef;
     public sealed record TStr : TypeRef;
     public sealed record TBool : TypeRef;

@@ -242,7 +242,26 @@ public sealed partial class Lowering
     {
         int t = NewTemp();
         Emit(new IrInst.LoadConstInt(t, unchecked((long)lit.Value)));
-        return (t, new TypeRef.TInt());
+        return (t, new TypeRef.TUInt(lit.Bits));
+    }
+
+    /// <summary>
+    /// Emits a bitmask AND so that <paramref name="valueTemp"/> wraps to <paramref name="bits"/> bits.
+    /// For u64 (bits == 64) no masking is needed since i64 already wraps in two's complement.
+    /// </summary>
+    private int EmitUIntMask(int valueTemp, int bits)
+    {
+        if (bits == 64)
+        {
+            return valueTemp;
+        }
+
+        long mask = (1L << bits) - 1L;
+        int maskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(maskTemp, mask));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.AndInt(resultTemp, valueTemp, maskTemp));
+        return resultTemp;
     }
 
     private (int, TypeRef) LowerFloat(Expr.FloatLit lit)
@@ -486,19 +505,25 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        // Resolve type variables: unify with the other side's concrete type, defaulting to Int
+        // Resolve type variables: prefer the other side's concrete type, defaulting to Int
         if (leftPruned is TypeRef.TVar)
         {
-            var resolved = rightPruned is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
+            TypeRef resolved = rightPruned switch
+            {
+                TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
+                _ => new TypeRef.TInt()
+            };
             Unify(leftPruned, resolved);
             leftPruned = resolved;
         }
         if (rightPruned is TypeRef.TVar)
         {
-            var resolved = leftPruned switch
+            TypeRef resolved = leftPruned switch
             {
-                TypeRef.TStr => (TypeRef)new TypeRef.TStr(),
+                TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
             Unify(rightPruned, resolved);
@@ -510,6 +535,20 @@ public sealed partial class Lowering
             int target = NewTemp();
             Emit(new IrInst.AddInt(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
+        }
+
+        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var addUintTypes = PrettyPair(leftPruned, rightPruned);
+                ReportDiagnostic(GetSpan(add), $"'+' requires matching unsigned widths, got {addUintTypes.Left} and {addUintTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                return CreateIntErrorFallback();
+            }
+            int raw = NewTemp();
+            Emit(new IrInst.AddInt(raw, leftTemp, rightTemp));
+            int wrapped = EmitUIntMask(raw, luint.Bits);
+            return (wrapped, luint);
         }
 
         if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
@@ -617,9 +656,21 @@ public sealed partial class Lowering
             prunedOperandType = new TypeRef.TInt();
         }
 
+        if (prunedOperandType is TypeRef.TUInt uintType)
+        {
+            // ~x for unsigned: XOR with the width mask so result stays within bit width.
+            long uintMask = uintType.Bits == 64 ? -1L : (1L << uintType.Bits) - 1L;
+            int maskTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(maskTemp, uintMask));
+            int xorTemp = NewTemp();
+            Emit(new IrInst.XorInt(xorTemp, operandTemp, maskTemp));
+            // Result already fits in width, no extra masking needed.
+            return (xorTemp, uintType);
+        }
+
         if (prunedOperandType is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(bitwiseNot), $"'~' requires Int, got {Pretty(prunedOperandType)}.", DiagnosticCodes.TypeMismatch);
+            ReportDiagnostic(GetSpan(bitwiseNot), $"'~' requires Int or unsigned integer, got {Pretty(prunedOperandType)}.", DiagnosticCodes.TypeMismatch);
             return CreateIntErrorFallback();
         }
 
@@ -802,19 +853,25 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        // Resolve type variables: unify with the other side's concrete type, defaulting to Int
+        // Resolve type variables: prefer the other side's concrete type, defaulting to Int
         if (leftPruned is TypeRef.TVar)
         {
-            var resolved = rightPruned is TypeRef.TStr ? (TypeRef)new TypeRef.TStr() : new TypeRef.TInt();
+            TypeRef resolved = rightPruned switch
+            {
+                TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
+                _ => new TypeRef.TInt()
+            };
             Unify(leftPruned, resolved);
             leftPruned = resolved;
         }
         if (rightPruned is TypeRef.TVar)
         {
-            var resolved = leftPruned switch
+            TypeRef resolved = leftPruned switch
             {
-                TypeRef.TStr => (TypeRef)new TypeRef.TStr(),
+                TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
             Unify(rightPruned, resolved);
@@ -823,6 +880,22 @@ public sealed partial class Lowering
 
         if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var uintWidthTypes = PrettyPair(leftPruned, rightPruned);
+                var eqOp = negate ? "!=" : "==";
+                ReportDiagnostic(0, $"'{eqOp}' requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                int boolFallback = NewTemp();
+                Emit(new IrInst.LoadConstBool(boolFallback, false));
+                return (boolFallback, new TypeRef.TBool());
+            }
             int target = NewTemp();
             Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
             return (target, new TypeRef.TBool());
@@ -869,6 +942,20 @@ public sealed partial class Lowering
             return (target, new TypeRef.TInt());
         }
 
+        if (resolvedLeft is TypeRef.TUInt luint && resolvedRight is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var uintWidthTypes = PrettyPair(resolvedLeft, resolvedRight);
+                ReportDiagnostic(GetSpan(expr), $"{op} requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                return CreateIntErrorFallback();
+            }
+            int raw = NewTemp();
+            Emit(intFactory(raw, leftTemp, rightTemp));
+            int wrapped = EmitUIntMask(raw, luint.Bits);
+            return (wrapped, luint);
+        }
+
         if (resolvedLeft is TypeRef.TFloat && resolvedRight is TypeRef.TFloat)
         {
             int target = NewTemp();
@@ -895,14 +982,16 @@ public sealed partial class Lowering
 
         if (left is TypeRef.TVar)
         {
-            Unify(left, new TypeRef.TInt());
-            left = new TypeRef.TInt();
+            TypeRef resolved = right is TypeRef.TUInt u ? (TypeRef)new TypeRef.TUInt(u.Bits) : new TypeRef.TInt();
+            Unify(left, resolved);
+            left = resolved;
         }
 
         if (right is TypeRef.TVar)
         {
-            Unify(right, new TypeRef.TInt());
-            right = new TypeRef.TInt();
+            TypeRef resolved = left is TypeRef.TUInt u ? (TypeRef)new TypeRef.TUInt(u.Bits) : new TypeRef.TInt();
+            Unify(right, resolved);
+            right = resolved;
         }
 
         if (left is TypeRef.TInt && right is TypeRef.TInt)
@@ -910,6 +999,20 @@ public sealed partial class Lowering
             int target = NewTemp();
             Emit(intFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
+        }
+
+        if (left is TypeRef.TUInt luint && right is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var uintWidthTypes = PrettyPair(left, right);
+                ReportDiagnostic(GetSpan(expr), $"{op} requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                return CreateIntErrorFallback();
+            }
+            int raw = NewTemp();
+            Emit(intFactory(raw, leftTemp, rightTemp));
+            int wrapped = EmitUIntMask(raw, luint.Bits);
+            return (wrapped, luint);
         }
 
         var types = PrettyPair(left, right);
@@ -943,6 +1046,24 @@ public sealed partial class Lowering
             return (target, new TypeRef.TBool());
         }
 
+        // Unsigned comparison: since values are stored in i64, use the same signed
+        // comparison instructions. For equal-width unsigned values held in [0, 2^bits-1]
+        // the ordering is preserved.
+        if (resolvedLeft is TypeRef.TUInt luint && resolvedRight is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var uintWidthTypes = PrettyPair(resolvedLeft, resolvedRight);
+                ReportDiagnostic(GetSpan(expr), $"{op} requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                int boolFallback = NewTemp();
+                Emit(new IrInst.LoadConstBool(boolFallback, false));
+                return (boolFallback, new TypeRef.TBool());
+            }
+            int target = NewTemp();
+            Emit(intFactory(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
         if (resolvedLeft is TypeRef.TFloat && resolvedRight is TypeRef.TFloat)
         {
             int target = NewTemp();
@@ -964,14 +1085,24 @@ public sealed partial class Lowering
 
         if (left is TypeRef.TVar)
         {
-            var resolved = right is TypeRef.TFloat ? (TypeRef)new TypeRef.TFloat() : new TypeRef.TInt();
+            TypeRef resolved = right switch
+            {
+                TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
+                _ => new TypeRef.TInt()
+            };
             Unify(left, resolved);
             left = resolved;
         }
 
         if (right is TypeRef.TVar)
         {
-            var resolved = left is TypeRef.TFloat ? (TypeRef)new TypeRef.TFloat() : new TypeRef.TInt();
+            TypeRef resolved = left switch
+            {
+                TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
+                _ => new TypeRef.TInt()
+            };
             Unify(right, resolved);
             right = resolved;
         }
