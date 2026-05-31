@@ -687,7 +687,7 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(ge.Left);
         var (rightTemp, rightType) = LowerExpr(ge.Right);
 
-        return LowerNumericComparisonOp(ge, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpUIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), "'>='");
+        return LowerNumericComparisonOp(ge, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), (target, left, right) => new IrInst.CmpUIntGe(target, left, right), "'>='");
     }
 
     private (int, TypeRef) LowerLessOrEqual(Expr.LessOrEqual le)
@@ -696,7 +696,7 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(le.Left);
         var (rightTemp, rightType) = LowerExpr(le.Right);
 
-        return LowerNumericComparisonOp(le, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLe(target, left, right), (target, left, right) => new IrInst.CmpUIntLe(target, left, right), (target, left, right) => new IrInst.CmpFloatLe(target, left, right), "'<='");
+        return LowerNumericComparisonOp(le, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLe(target, left, right), (target, left, right) => new IrInst.CmpFloatLe(target, left, right), (target, left, right) => new IrInst.CmpUIntLe(target, left, right), "'<='");
     }
 
     private (int, TypeRef) LowerEqual(Expr.Equal eq)
@@ -1035,8 +1035,8 @@ public sealed partial class Lowering
         int rightTemp,
         TypeRef rightType,
         Func<int, int, int, IrInst> intFactory,
-        Func<int, int, int, IrInst>? uintFactory,
         Func<int, int, int, IrInst> floatFactory,
+        Func<int, int, int, IrInst>? uintFactory,
         string op)
     {
         var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
