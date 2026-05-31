@@ -16,7 +16,7 @@ public sealed partial class Lowering
             return (vTemp, t);
         }
 
-        if (t is TypeRef.TInt or TypeRef.TUInt)
+        if (t is TypeRef.TInt or TypeRef.TUInt { Bits: < 64 })
         {
             _usesPrintInt = true;
             Emit(new IrInst.PrintInt(vTemp));
