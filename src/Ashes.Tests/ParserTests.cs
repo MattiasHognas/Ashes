@@ -116,9 +116,26 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void Parse_should_support_unary_bitwise_not_with_higher_precedence_than_multiplication()
+    {
+        var expr = Parse("~1 * 2").ShouldBeOfType<Expr.Multiply>();
+        expr.Left.ShouldBe(new Expr.BitwiseNot(new Expr.IntLit(1)));
+        expr.Right.ShouldBe(new Expr.IntLit(2));
+    }
+
+    [Test]
     public void Parse_should_support_float_literals()
     {
         Parse("3.14").ShouldBe(new Expr.FloatLit(3.14, "3.14"));
+    }
+
+    [Test]
+    public void Parse_should_support_unsigned_integer_literals()
+    {
+        Parse("255u8").ShouldBe(new Expr.UIntLit(255, 8));
+        Parse("65535u16").ShouldBe(new Expr.UIntLit(65535, 16));
+        Parse("4294967295u32").ShouldBe(new Expr.UIntLit(4294967295, 32));
+        Parse("18446744073709551615u64").ShouldBe(new Expr.UIntLit(18446744073709551615, 64));
     }
 
     [Test]

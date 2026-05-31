@@ -3,6 +3,7 @@ namespace Ashes.Frontend;
 public abstract record Expr
 {
     public sealed record IntLit(long Value) : Expr;
+    public sealed record UIntLit(ulong Value, int Bits) : Expr;
     public sealed record FloatLit(double Value, string Text) : Expr
     {
         public FloatLit(double value) : this(value, "")
@@ -24,6 +25,7 @@ public abstract record Expr
     public sealed record BitwiseXor(Expr Left, Expr Right) : Expr;
     public sealed record ShiftLeft(Expr Left, Expr Right) : Expr;
     public sealed record ShiftRight(Expr Left, Expr Right) : Expr;
+    public sealed record BitwiseNot(Expr Operand) : Expr;
     public sealed record GreaterOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record LessOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record Equal(Expr Left, Expr Right) : Expr;

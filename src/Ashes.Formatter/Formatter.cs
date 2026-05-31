@@ -196,7 +196,7 @@ public static class Formatter
     {
         return e switch
         {
-            Expr.IntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
+            Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
             Expr.Add a => IsSingleLine(a.Left, preferPipelines) && IsSingleLine(a.Right, preferPipelines),
             Expr.Subtract sub => IsSingleLine(sub.Left, preferPipelines) && IsSingleLine(sub.Right, preferPipelines),
             Expr.Multiply mul => IsSingleLine(mul.Left, preferPipelines) && IsSingleLine(mul.Right, preferPipelines),
@@ -206,6 +206,7 @@ public static class Formatter
             Expr.BitwiseXor bitXor => IsSingleLine(bitXor.Left, preferPipelines) && IsSingleLine(bitXor.Right, preferPipelines),
             Expr.ShiftLeft shiftLeft => IsSingleLine(shiftLeft.Left, preferPipelines) && IsSingleLine(shiftLeft.Right, preferPipelines),
             Expr.ShiftRight shiftRight => IsSingleLine(shiftRight.Left, preferPipelines) && IsSingleLine(shiftRight.Right, preferPipelines),
+            Expr.BitwiseNot bitwiseNot => IsSingleLine(bitwiseNot.Operand, preferPipelines),
             Expr.GreaterOrEqual ge => IsSingleLine(ge.Left, preferPipelines) && IsSingleLine(ge.Right, preferPipelines),
             Expr.LessOrEqual le => IsSingleLine(le.Left, preferPipelines) && IsSingleLine(le.Right, preferPipelines),
             Expr.Equal eq => IsSingleLine(eq.Left, preferPipelines) && IsSingleLine(eq.Right, preferPipelines),
@@ -653,6 +654,12 @@ public static class Formatter
                 sb.Append(i.Value);
                 return;
 
+            case Expr.UIntLit u:
+                sb.Append(u.Value);
+                sb.Append('u');
+                sb.Append(u.Bits);
+                return;
+
             case Expr.FloatLit f:
                 sb.Append(FormatFloatLiteral(f));
                 return;
@@ -834,6 +841,25 @@ public static class Formatter
             case Expr.ShiftRight shiftRight:
                 WriteLeftAssociativeBinary(sb, shiftRight.Left, ">>", shiftRight.Right, PrecShift, indent, parentPrec, preferPipelines, options);
                 return;
+
+            case Expr.BitwiseNot bitwiseNot:
+                {
+                    var needsParens = parentPrec > PrecUnary;
+                    if (needsParens)
+                    {
+                        sb.Append('(');
+                    }
+
+                    sb.Append('~');
+                    WriteExprInline(sb, bitwiseNot.Operand, indent, PrecUnary, preferPipelines, options);
+
+                    if (needsParens)
+                    {
+                        sb.Append(')');
+                    }
+
+                    return;
+                }
 
             case Expr.GreaterOrEqual ge:
                 {
