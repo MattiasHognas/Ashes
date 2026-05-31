@@ -2003,6 +2003,11 @@ public sealed partial class Lowering
 
         int target = NewTemp();
         Emit(new IrInst.CallExtern(target, externFunction.SymbolName, externFunction.LibraryName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
+        if (externFunction.ReturnType is FfiType.Void)
+        {
+            return LowerUnitValue();
+        }
+
         return (target, FromFfiType(externFunction.ReturnType));
     }
 
@@ -2011,6 +2016,7 @@ public sealed partial class Lowering
         return ffiType switch
         {
             FfiType.Int => new TypeRef.TInt(),
+            FfiType.UInt => new TypeRef.TInt(),
             FfiType.Float => new TypeRef.TFloat(),
             FfiType.Bool => new TypeRef.TBool(),
             FfiType.Str => new TypeRef.TStr(),

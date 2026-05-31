@@ -57,11 +57,14 @@ extern functions directly, and pass `Str` arguments as null-terminated C
 strings. Dynamic imports can be requested for non-built-in symbols via the
 symbol override form (`extern foo(Int) -> Int = "foo@libfoo.so"` on Linux, or
 `extern tick() -> Int = "GetTickCount64@KERNEL32.DLL"` on Windows).
+Extern declarations also support unsigned C integer widths (`u8`, `u16`,
+`u32`, `u64`) and `void` returns, which map to Ashes `Int` call-site values
+and Ashes `Unit` results respectively.
 
 Remaining gaps before this is enough for LLVM self-hosting:
 
-- richer C type coverage (unsigned integers, `void`, pointer-to-buffer,
-  pointer-to-pointer/out parameters);
+- richer C type coverage for pointer-to-buffer and pointer-to-pointer/out
+  parameters;
 - extern functions as first-class values or module exports;
 - safe wrappers and ownership conventions for opaque handles returned by
   LLVM-C APIs.
@@ -291,7 +294,7 @@ remains:
 
 | # | Capability                          | Why Needed                          | Status / Difficulty       |
 |---|-------------------------------------|-------------------------------------|---------------------------|
-| 1 | FFI / C Interop                     | LLVM API, syscalls                  | High (runtime interop exists; no user `extern`) |
+| 1 | FFI / C Interop                     | LLVM API, syscalls                  | Medium–High (user `extern` exists; pointer/out-param support remains) |
 | 2 | Byte type + bitwise ops             | Linker, binary formats              | Medium                    |
 | 3 | Persistent (immutable) maps         | Type inference, scopes              | High                      |
 | 4 | String manipulation                 | Lexer, error messages               | Medium (uncons/parse landed) |

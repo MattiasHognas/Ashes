@@ -407,10 +407,12 @@ public sealed record IrStringLiteral(string Label, string Value);
 public abstract record FfiType
 {
     public sealed record Int : FfiType;
+    public sealed record UInt(int Bits) : FfiType;
     public sealed record Float : FfiType;
     public sealed record Bool : FfiType;
     public sealed record Str : FfiType;
     public sealed record Opaque(string Name) : FfiType;
+    public sealed record Void : FfiType;
 }
 
 public sealed record IrExternFunction(

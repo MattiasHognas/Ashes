@@ -100,8 +100,8 @@ public sealed partial class Lowering
 
         foreach (var function in externDecls.OfType<ExternDecl.Function>())
         {
-            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t)).ToList();
-            var returnType = ResolveExternParsedType(function, function.ReturnType);
+            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t, allowVoid: false)).ToList();
+            var returnType = ResolveExternParsedType(function, function.ReturnType, allowVoid: true);
             if (parameterTypes.Any(t => t is null) || returnType is null)
             {
                 continue;
@@ -121,17 +121,17 @@ public sealed partial class Lowering
             var irFunction = new IrExternFunction(
                 function.Name,
                 symbolName,
-                resolvedParameterTypes.Select(ToFfiType).ToList(),
-                ToFfiType(returnType),
+                resolvedParameterTypes.Select(t => t.FfiType).ToList(),
+                returnType.FfiType,
                 string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
             _externFunctions.Add(irFunction);
 
-            var type = BuildFunctionType(resolvedParameterTypes, returnType);
+            var type = BuildFunctionType(resolvedParameterTypes.Select(t => t.SourceType).ToList(), returnType.SourceType);
             _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
         }
     }
 
-    private TypeRef? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType)
+    private ResolvedExternType? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType, bool allowVoid)
     {
         if (parsedType is not ParsedType.Named named)
         {
@@ -141,18 +141,30 @@ public sealed partial class Lowering
 
         return named.Name switch
         {
-            "Int" => new TypeRef.TInt(),
-            "Float" => new TypeRef.TFloat(),
-            "Bool" => new TypeRef.TBool(),
-            "Str" => new TypeRef.TStr(),
-            _ when _externOpaqueTypes.Contains(named.Name) => new TypeRef.TOpaque(named.Name),
+            "Int" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.Int()),
+            "u8" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(8)),
+            "u16" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(16)),
+            "u32" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(32)),
+            "u64" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(64)),
+            "Float" => new ResolvedExternType(new TypeRef.TFloat(), new FfiType.Float()),
+            "Bool" => new ResolvedExternType(new TypeRef.TBool(), new FfiType.Bool()),
+            "Str" => new ResolvedExternType(new TypeRef.TStr(), new FfiType.Str()),
+            "void" when allowVoid => new ResolvedExternType(_resolvedTypes["Unit"], new FfiType.Void()),
+            "void" => ReportVoidParameterExternType(externDecl),
+            _ when _externOpaqueTypes.Contains(named.Name) => new ResolvedExternType(new TypeRef.TOpaque(named.Name), new FfiType.Opaque(named.Name)),
             _ => ReportUnsupportedExternType(externDecl, named.Name)
         };
     }
 
-    private TypeRef? ReportUnsupportedExternType(ExternDecl externDecl, string name)
+    private ResolvedExternType? ReportUnsupportedExternType(ExternDecl externDecl, string name)
     {
         ReportDiagnostic(GetSpan(externDecl), $"Type '{name}' is not supported in extern declarations.");
+        return null;
+    }
+
+    private ResolvedExternType? ReportVoidParameterExternType(ExternDecl externDecl)
+    {
+        ReportDiagnostic(GetSpan(externDecl), "Type 'void' is only supported as an extern return type.");
         return null;
     }
 
@@ -167,18 +179,7 @@ public sealed partial class Lowering
         return result;
     }
 
-    private static FfiType ToFfiType(TypeRef type)
-    {
-        return type switch
-        {
-            TypeRef.TInt => new FfiType.Int(),
-            TypeRef.TFloat => new FfiType.Float(),
-            TypeRef.TBool => new FfiType.Bool(),
-            TypeRef.TStr => new FfiType.Str(),
-            TypeRef.TOpaque opaque => new FfiType.Opaque(opaque.Name),
-            _ => throw new InvalidOperationException($"Type '{type}' is not supported in extern declarations.")
-        };
-    }
+    private sealed record ResolvedExternType(TypeRef SourceType, FfiType FfiType);
 
     private void RegisterBuiltinSymbols()
     {
