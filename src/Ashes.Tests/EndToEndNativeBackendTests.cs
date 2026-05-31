@@ -59,6 +59,23 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Extern_unsigned_and_void_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = """
+            extern srand(u32) -> void = "srand@libc.so.6"
+            extern strlen(Str) -> u64
+            let _ = srand(1)
+            in Ashes.IO.print(strlen("ashes"))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("5\n");
+    }
+
+    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())
