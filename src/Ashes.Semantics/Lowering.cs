@@ -891,7 +891,7 @@ public sealed partial class Lowering
             {
                 var uintWidthTypes = PrettyPair(leftPruned, rightPruned);
                 var eqOp = negate ? "!=" : "==";
-                ReportDiagnostic(0, $"'{eqOp}' requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+                ReportDiagnostic(CombineSpans(left, right), $"'{eqOp}' requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
                 int boolFallback = NewTemp();
                 Emit(new IrInst.LoadConstBool(boolFallback, false));
                 return (boolFallback, new TypeRef.TBool());
