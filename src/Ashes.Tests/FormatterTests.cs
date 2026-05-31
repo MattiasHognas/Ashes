@@ -576,7 +576,7 @@ public sealed class FormatterTests
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("extern getpid() -> Int = \"getpid\"\n\ngetpid()\n");
+        formatted.ShouldBe("extern getpid() -> Int = \"getpid\"\n\ngetpid(Unit)\n");
     }
 
     [Test]
