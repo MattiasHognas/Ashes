@@ -168,6 +168,30 @@ public sealed class LexerTests
     }
 
     [Test]
+    public void Next_should_not_match_unsigned_suffix_when_followed_by_identifier_character()
+    {
+        var tokens = LexAll("255u81 255u164 123u8abc");
+
+        tokens.Select(t => t.Kind).ShouldBe(
+        [
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.EOF
+        ]);
+
+        tokens[0].Text.ShouldBe("255");
+        tokens[1].Text.ShouldBe("u81");
+        tokens[2].Text.ShouldBe("255");
+        tokens[3].Text.ShouldBe("u164");
+        tokens[4].Text.ShouldBe("123");
+        tokens[5].Text.ShouldBe("u8abc");
+    }
+
+    [Test]
     public void Next_should_tokenize_async_keyword()
     {
         var tokens = LexAll("async");

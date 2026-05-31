@@ -348,6 +348,12 @@ public sealed class Lexer
             }
         }
 
+        int next = _pos + suffix.Length;
+        if (next < _text.Length && (char.IsLetterOrDigit(_text[next]) || _text[next] == '_'))
+        {
+            return false;
+        }
+
         return true;
     }
 
