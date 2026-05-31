@@ -78,6 +78,36 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void Parse_should_support_bitwise_operators_with_expected_precedence()
+    {
+        var expr = Parse("1 | 2 ^ 3 & 4 << 5 + 6 >> 7").ShouldBeOfType<Expr.BitwiseOr>();
+        expr.Left.ShouldBe(new Expr.IntLit(1));
+
+        var xor = expr.Right.ShouldBeOfType<Expr.BitwiseXor>();
+        xor.Left.ShouldBe(new Expr.IntLit(2));
+
+        var and = xor.Right.ShouldBeOfType<Expr.BitwiseAnd>();
+        and.Left.ShouldBe(new Expr.IntLit(3));
+
+        var shiftRight = and.Right.ShouldBeOfType<Expr.ShiftRight>();
+        var shiftLeft = shiftRight.Left.ShouldBeOfType<Expr.ShiftLeft>();
+        shiftLeft.Left.ShouldBe(new Expr.IntLit(4));
+        shiftLeft.Right.ShouldBe(new Expr.Add(new Expr.IntLit(5), new Expr.IntLit(6)));
+        shiftRight.Right.ShouldBe(new Expr.IntLit(7));
+    }
+
+    [Test]
+    public void Parse_should_allow_bitwise_or_in_match_case_body_when_parenthesized()
+    {
+        var match = Parse("match x with | 0 -> (x | 1) | _ -> 0").ShouldBeOfType<Expr.Match>();
+        match.Cases.Count.ShouldBe(2);
+
+        var body = match.Cases[0].Body.ShouldBeOfType<Expr.BitwiseOr>();
+        body.Left.ShouldBe(new Expr.Var("x"));
+        body.Right.ShouldBe(new Expr.IntLit(1));
+    }
+
+    [Test]
     public void Parse_should_support_unary_negation_with_higher_precedence_than_multiplication()
     {
         var expr = Parse("-1 * 2").ShouldBeOfType<Expr.Multiply>();

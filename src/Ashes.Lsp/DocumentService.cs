@@ -795,6 +795,21 @@ public static partial class DocumentService
             case Expr.Divide div:
                 return CollectVisibleBindingsInBinary(div.Left, div.Right, position, scope);
 
+            case Expr.BitwiseAnd bitAnd:
+                return CollectVisibleBindingsInBinary(bitAnd.Left, bitAnd.Right, position, scope);
+
+            case Expr.BitwiseOr bitOr:
+                return CollectVisibleBindingsInBinary(bitOr.Left, bitOr.Right, position, scope);
+
+            case Expr.BitwiseXor bitXor:
+                return CollectVisibleBindingsInBinary(bitXor.Left, bitXor.Right, position, scope);
+
+            case Expr.ShiftLeft shiftLeft:
+                return CollectVisibleBindingsInBinary(shiftLeft.Left, shiftLeft.Right, position, scope);
+
+            case Expr.ShiftRight shiftRight:
+                return CollectVisibleBindingsInBinary(shiftRight.Left, shiftRight.Right, position, scope);
+
             case Expr.GreaterOrEqual ge:
                 return CollectVisibleBindingsInBinary(ge.Left, ge.Right, position, scope);
 
@@ -1255,6 +1270,21 @@ public static partial class DocumentService
 
             case Expr.Divide div:
                 return ResolveDefinitionInBinary(div.Left, div.Right, position, currentFilePath, imports, scope);
+
+            case Expr.BitwiseAnd bitAnd:
+                return ResolveDefinitionInBinary(bitAnd.Left, bitAnd.Right, position, currentFilePath, imports, scope);
+
+            case Expr.BitwiseOr bitOr:
+                return ResolveDefinitionInBinary(bitOr.Left, bitOr.Right, position, currentFilePath, imports, scope);
+
+            case Expr.BitwiseXor bitXor:
+                return ResolveDefinitionInBinary(bitXor.Left, bitXor.Right, position, currentFilePath, imports, scope);
+
+            case Expr.ShiftLeft shiftLeft:
+                return ResolveDefinitionInBinary(shiftLeft.Left, shiftLeft.Right, position, currentFilePath, imports, scope);
+
+            case Expr.ShiftRight shiftRight:
+                return ResolveDefinitionInBinary(shiftRight.Left, shiftRight.Right, position, currentFilePath, imports, scope);
 
             case Expr.GreaterOrEqual ge:
                 return ResolveDefinitionInBinary(ge.Left, ge.Right, position, currentFilePath, imports, scope);

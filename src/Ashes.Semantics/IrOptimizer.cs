@@ -156,6 +156,11 @@ public static class IrOptimizer
             IrInst.SubInt s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.MulInt m => m with { Left = R(m.Left), Right = R(m.Right) },
             IrInst.DivInt d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.AndInt a => a with { Left = R(a.Left), Right = R(a.Right) },
+            IrInst.OrInt o => o with { Left = R(o.Left), Right = R(o.Right) },
+            IrInst.XorInt x => x with { Left = R(x.Left), Right = R(x.Right) },
+            IrInst.ShlInt s => s with { Left = R(s.Left), Right = R(s.Right) },
+            IrInst.ShrInt s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.AddFloat a => a with { Left = R(a.Left), Right = R(a.Right) },
             IrInst.SubFloat s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.MulFloat m => m with { Left = R(m.Left), Right = R(m.Right) },
@@ -335,6 +340,53 @@ public static class IrOptimizer
                         long folded = knownInts[div.Left] / knownInts[div.Right];
                         knownInts[div.Target] = folded;
                         result.Add(new IrInst.LoadConstInt(div.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.AndInt bitAnd when knownInts.ContainsKey(bitAnd.Left) && knownInts.ContainsKey(bitAnd.Right):
+                    {
+                        long folded = knownInts[bitAnd.Left] & knownInts[bitAnd.Right];
+                        knownInts[bitAnd.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(bitAnd.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.OrInt bitOr when knownInts.ContainsKey(bitOr.Left) && knownInts.ContainsKey(bitOr.Right):
+                    {
+                        long folded = knownInts[bitOr.Left] | knownInts[bitOr.Right];
+                        knownInts[bitOr.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(bitOr.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.XorInt bitXor when knownInts.ContainsKey(bitXor.Left) && knownInts.ContainsKey(bitXor.Right):
+                    {
+                        long folded = knownInts[bitXor.Left] ^ knownInts[bitXor.Right];
+                        knownInts[bitXor.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(bitXor.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.ShlInt shl when knownInts.ContainsKey(shl.Left) && knownInts.ContainsKey(shl.Right):
+                    {
+                        long folded = knownInts[shl.Left] << (int)(knownInts[shl.Right] & 63);
+                        knownInts[shl.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(shl.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.ShrInt shr when knownInts.ContainsKey(shr.Left) && knownInts.ContainsKey(shr.Right):
+                    {
+                        // Match the language spec's logical right shift: reinterpret
+                        // the signed Int bits as unsigned so the high bits are zero-filled.
+                        long folded = (long)((ulong)knownInts[shr.Left] >> (int)(knownInts[shr.Right] & 63));
+                        knownInts[shr.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(shr.Target, folded) { Location = inst.Location });
                         changed = true;
                         break;
                     }
@@ -898,6 +950,11 @@ public static class IrOptimizer
             case IrInst.SubInt s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.MulInt m: usedTemps.Add(m.Left); usedTemps.Add(m.Right); break;
             case IrInst.DivInt d: usedTemps.Add(d.Left); usedTemps.Add(d.Right); break;
+            case IrInst.AndInt a: usedTemps.Add(a.Left); usedTemps.Add(a.Right); break;
+            case IrInst.OrInt o: usedTemps.Add(o.Left); usedTemps.Add(o.Right); break;
+            case IrInst.XorInt x: usedTemps.Add(x.Left); usedTemps.Add(x.Right); break;
+            case IrInst.ShlInt s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
+            case IrInst.ShrInt s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.AddFloat a: usedTemps.Add(a.Left); usedTemps.Add(a.Right); break;
             case IrInst.SubFloat s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.MulFloat m: usedTemps.Add(m.Left); usedTemps.Add(m.Right); break;
