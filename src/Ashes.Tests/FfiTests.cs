@@ -106,14 +106,16 @@ public sealed class FfiTests
     {
         var (program, diagnostics) = LowerProgram("""
             extern type NativeHandle
+            extern makeHandle(Int) -> *NativeHandle
             extern identity(*NativeHandle) -> *NativeHandle
-            0
+            identity(makeHandle(42))
             """);
 
         diagnostics.Errors.ShouldBeEmpty();
-        program.ExternFunctions.Count.ShouldBe(1);
-        program.ExternFunctions[0].ParameterTypes.ShouldBe([new FfiType.Ptr(new FfiType.Opaque("NativeHandle"))]);
-        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.Ptr(new FfiType.Opaque("NativeHandle")));
+        program.ExternFunctions.Select(f => f.Name).ShouldBe(["makeHandle", "identity"]);
+        program.ExternFunctions[1].ParameterTypes.ShouldBe([new FfiType.Ptr(new FfiType.Opaque("NativeHandle"))]);
+        program.ExternFunctions[1].ReturnType.ShouldBe(new FfiType.Ptr(new FfiType.Opaque("NativeHandle")));
+        program.EntryFunction.Instructions.OfType<IrInst.CallExtern>().Select(c => c.SymbolName).ShouldBe(["makeHandle", "identity"]);
     }
 
     [Test]
