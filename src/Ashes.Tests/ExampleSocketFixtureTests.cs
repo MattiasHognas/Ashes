@@ -107,19 +107,21 @@ Ashes.IO.print(match Ashes.Async.run(async
                 await using var stream = client.GetStream();
                 var request = await ReadTextAsync(stream, 4096);
                 var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
+
                 if (isSlow)
                 {
                     // Block until /fast has actually sent its response so the client deterministically
                     // observes /fast winning the race regardless of CI scheduling jitter.
                     await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
-                    // Additional gap so the client unambiguously observes /fast as the first-completed
-                    // task before /slow's response arrives (Ashes.Async.race resolves based on the
-                    // first completed task as observed by the runtime).
-                    await Task.Delay(500);
+
+                    // Never send a body for /slow. Hold the connection open until the client process
+                    // exits (which closes the socket) so /fast is unambiguously the first — and only —
+                    // completed task the runtime observes. This removes any reliance on a wall-clock gap.
+                    await WaitForClientCloseAsync(stream);
+                    return;
                 }
 
-                var responseBody = isSlow ? "slow" : "fast";
-                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nfast");
                 try
                 {
                     await stream.WriteAsync(response);
@@ -130,10 +132,7 @@ Ashes.IO.print(match Ashes.Async.run(async
                     // The race loser's connection may have been closed by the client; ignore.
                 }
 
-                if (!isSlow)
-                {
-                    fastResponded.TrySetResult();
-                }
+                fastResponded.TrySetResult();
             },
             expectedStdout: "fast\n");
     }
@@ -403,6 +402,32 @@ Ashes.IO.print(match Ashes.Async.run(async
         }
 
         return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
+    private static async Task WaitForClientCloseAsync(Stream stream)
+    {
+        var buffer = new byte[256];
+        try
+        {
+            using var readCts = new CancellationTokenSource(SocketTestConstants.SocketTimeout);
+            while (true)
+            {
+                var count = await stream.ReadAsync(buffer, readCts.Token);
+                if (count == 0)
+                {
+                    // The client closed its end of the connection (it exited after observing /fast win).
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The client did not close in time; tear down anyway so the server task can complete.
+        }
+        catch (IOException)
+        {
+            // Connection reset/closed by the client; treat as a normal teardown.
+        }
     }
 
     private static async Task<string> ReadTextAsync(Stream stream, int maxBytes)
