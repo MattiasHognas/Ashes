@@ -77,4 +77,26 @@ public sealed record TypeConstructor(string Name, IReadOnlyList<string> Paramete
 
 public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<TypeConstructor> Constructors);
 
-public sealed record Program(IReadOnlyList<TypeDecl> TypeDecls, Expr Body);
+public abstract record ParsedType
+{
+    public sealed record Named(string Name) : ParsedType;
+}
+
+public abstract record ExternDecl
+{
+    public sealed record OpaqueType(string Name) : ExternDecl;
+
+    public sealed record Function(
+        string Name,
+        IReadOnlyList<ParsedType> ParameterTypes,
+        ParsedType ReturnType,
+        string? SymbolName = null) : ExternDecl;
+}
+
+public sealed record Program(IReadOnlyList<TypeDecl> TypeDecls, IReadOnlyList<ExternDecl> ExternDecls, Expr Body)
+{
+    public Program(IReadOnlyList<TypeDecl> TypeDecls, Expr Body)
+        : this(TypeDecls, [], Body)
+    {
+    }
+}

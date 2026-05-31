@@ -25,13 +25,65 @@ public sealed class Parser
     public Program ParseProgram()
     {
         var typeDecls = new List<TypeDecl>();
-        while (_current.Kind == TokenKind.Type)
+        var externDecls = new List<ExternDecl>();
+        while (_current.Kind is TokenKind.Type or TokenKind.Extern)
         {
-            typeDecls.Add(ParseTypeDecl());
+            if (_current.Kind == TokenKind.Type)
+            {
+                typeDecls.Add(ParseTypeDecl());
+            }
+            else
+            {
+                externDecls.Add(ParseExternDecl());
+            }
         }
         var body = ParseExpressionCore();
         EnsureEndOfInput();
-        return new Program(typeDecls, body);
+        return new Program(typeDecls, externDecls, body);
+    }
+
+    private ExternDecl ParseExternDecl()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Extern);
+
+        if (_current.Kind == TokenKind.Type)
+        {
+            Consume(TokenKind.Type);
+            var typeName = Consume(TokenKind.Ident).Text;
+            return RegisterExternDecl(new ExternDecl.OpaqueType(typeName), start, LastConsumedEnd);
+        }
+
+        var name = Consume(TokenKind.Ident).Text;
+        Consume(TokenKind.LParen);
+        var parameterTypes = new List<ParsedType>();
+        if (_current.Kind != TokenKind.RParen)
+        {
+            parameterTypes.Add(ParseTypeName());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                parameterTypes.Add(ParseTypeName());
+            }
+        }
+
+        Consume(TokenKind.RParen);
+        Consume(TokenKind.Arrow);
+        var returnType = ParseTypeName();
+
+        string? symbolName = null;
+        if (_current.Kind == TokenKind.Equals)
+        {
+            Consume(TokenKind.Equals);
+            symbolName = Consume(TokenKind.String).Text;
+        }
+
+        return RegisterExternDecl(new ExternDecl.Function(name, parameterTypes, returnType, symbolName), start, LastConsumedEnd);
+    }
+
+    private ParsedType ParseTypeName()
+    {
+        return new ParsedType.Named(Consume(TokenKind.Ident).Text);
     }
 
     private Expr ParseExpressionCore()
@@ -881,5 +933,11 @@ public sealed class Parser
     {
         AstSpans.Set(typeConstructor, TextSpan.FromBounds(start, end));
         return typeConstructor;
+    }
+
+    private static ExternDecl RegisterExternDecl(ExternDecl externDecl, int start, int end)
+    {
+        AstSpans.Set(externDecl, TextSpan.FromBounds(start, end));
+        return externDecl;
     }
 }

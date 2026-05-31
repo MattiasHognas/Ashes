@@ -107,6 +107,12 @@ public sealed partial class Lowering
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 
+    private static TextSpan GetSpan(ExternDecl externDecl)
+    {
+        var span = AstSpans.GetOrDefault(externDecl);
+        return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
+    }
+
     private (int, TypeRef) ReportArityMismatch(Expr callee, int expectedArgs, int providedArgs)
     {
         var calleeName = TryGetCalleeDisplayName(callee);

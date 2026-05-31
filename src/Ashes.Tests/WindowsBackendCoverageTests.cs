@@ -72,6 +72,21 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_compile_should_support_user_extern_imports()
+    {
+        var bytes = CompileForWindows(LowerProgram("""
+            extern lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
+            Ashes.IO.print(lstrlen("ash" + "es"))
+            """));
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)'M');
+        bytes[1].ShouldBe((byte)'Z');
+        ContainsAscii(bytes, "lstrlenA").ShouldBeTrue();
+        ContainsAscii(bytes, "KERNEL32.DLL").ShouldBeTrue();
+    }
+
+    [Test]
     public void Windows_backend_compile_should_support_debug_info_programs()
     {
         var bytes = new WindowsX64LlvmBackend().Compile(
@@ -202,6 +217,21 @@ public sealed class WindowsBackendCoverageTests
             "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
             ["first", "second"]);
         result.Stdout.ShouldBe("first:second\n");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_run_user_extern_imports()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(LowerProgram("""
+            extern lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
+            Ashes.IO.print(lstrlen("ash" + "es"))
+            """));
+        result.Stdout.ShouldBe("5\n");
     }
 
     [Test]
@@ -770,6 +800,12 @@ public sealed class WindowsBackendCoverageTests
     private static bool CanRunWindowsRuntimePrograms()
     {
         return TestProcessHelper.CanRunWindowsExecutables();
+    }
+
+    private static bool ContainsAscii(byte[] bytes, string text)
+    {
+        byte[] needle = Encoding.ASCII.GetBytes(text);
+        return bytes.AsSpan().IndexOf(needle) >= 0;
     }
 
     private static string CreateTempDirectory()

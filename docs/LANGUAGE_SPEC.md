@@ -32,7 +32,7 @@ Line comments are supported:
 The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `rec`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
-`true`, `false`, `type`, `async`, `await`
+`true`, `false`, `type`, `extern`, `async`, `await`
 
 Programs are composed using nested expressions such as:
 
@@ -434,7 +434,33 @@ Bindings are:
 - scoped to the `in` expression
 - expression-based
 
-## 5.1 Result Binding
+## 5.1 Extern Declarations
+
+Top-level `extern` declarations expose C ABI functions to Ashes code.
+
+Syntax:
+
+extern strlen(Str) -> Int
+extern getpid() -> Int = "getpid"
+extern type LLVMModuleRef
+extern LLVMModuleCreateWithName(Str) -> LLVMModuleRef
+
+Rules:
+
+- `extern` declarations appear before the program body, alongside `type`
+  declarations.
+- Supported extern parameter and return types are `Int`, `Float`, `Bool`,
+  `Str`, and opaque extern types declared with `extern type`.
+- `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
+- Opaque extern types are represented as native pointer-sized words and are
+  intended for handles such as LLVM-C references.
+- The optional string after `=` overrides the C symbol name. A symbol override
+  may use `symbol@library` to request a dynamic import from that shared library
+  or DLL. Windows extern imports require an explicit DLL name.
+- Extern functions must be called directly; they are not first-class function
+  values in this initial FFI surface.
+
+## 5.2 Result Binding
 
 Syntax:
 

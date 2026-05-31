@@ -29,7 +29,11 @@ internal static partial class LlvmImageLinker
     private const int PeSectionHeaderSize = 40;
     private const int PeHeadersStart = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + PeOptionalHeaderSize;
 
-    public static byte[] LinkWindowsExecutable(byte[] objectBytes, string entrySymbolName, LinkedImagePayload? linkedPayload = null)
+    public static byte[] LinkWindowsExecutable(
+        byte[] objectBytes,
+        string entrySymbolName,
+        LinkedImagePayload? linkedPayload = null,
+        IReadOnlyDictionary<string, string>? externLibraries = null)
     {
         var parsed = ParseCoffObject(objectBytes, entrySymbolName);
 
@@ -87,6 +91,14 @@ internal static partial class LlvmImageLinker
         rdataStream.Write(Encoding.ASCII.GetBytes("WS2_32.DLL\0"));
         int crypt32NameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("CRYPT32.DLL\0"));
+        var externImports = BuildWindowsExternImports(externLibraries);
+        var externNameOffsets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var import in externImports)
+        {
+            externNameOffsets[import.LibraryName] = (int)rdataStream.Position;
+            rdataStream.Write(Encoding.ASCII.GetBytes(import.LibraryName));
+            rdataStream.WriteByte(0);
+        }
 
         // Write Hint/Name entries for each import function
         int exitProcessHintOffset = WriteHintName(rdataStream, 0, "ExitProcess");
@@ -124,6 +136,14 @@ internal static partial class LlvmImageLinker
         int certOpenSystemStoreHintOffset = WriteHintName(rdataStream, 0, "CertOpenSystemStoreA");
         int certEnumCertificatesInStoreHintOffset = WriteHintName(rdataStream, 0, "CertEnumCertificatesInStore");
         int certCloseStoreHintOffset = WriteHintName(rdataStream, 0, "CertCloseStore");
+        var externHintOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var import in externImports)
+        {
+            foreach (var symbol in import.SymbolNames)
+            {
+                externHintOffsets[symbol] = WriteHintName(rdataStream, 0, symbol);
+            }
+        }
 
         // Group hint offsets by DLL for IAT/ILT construction
         int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset];
@@ -145,6 +165,15 @@ internal static partial class LlvmImageLinker
         WriteImportAddressTable(rdataStream, ws2Hints, rdataRva);
         int crypt32IatOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, crypt32Hints, rdataRva);
+        var externIatOffsets = new List<(WindowsImportLibrary Import, int Offset)>();
+        foreach (var import in externImports)
+        {
+            int offset = (int)rdataStream.Position;
+            WriteImportAddressTable(rdataStream, import.SymbolNames.Select(symbol => externHintOffsets[symbol]).ToArray(), rdataRva);
+            externIatOffsets.Add((import, offset));
+        }
+
+        int iatEndOffset = (int)rdataStream.Position;
 
         // Write ILT (Import Lookup Table) — identical structure to IAT
         int kernel32IltOffset = (int)rdataStream.Position;
@@ -155,14 +184,30 @@ internal static partial class LlvmImageLinker
         WriteImportAddressTable(rdataStream, ws2Hints, rdataRva);
         int crypt32IltOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, crypt32Hints, rdataRva);
+        var externIltOffsets = new List<(WindowsImportLibrary Import, int Offset)>();
+        foreach (var import in externImports)
+        {
+            int offset = (int)rdataStream.Position;
+            WriteImportAddressTable(rdataStream, import.SymbolNames.Select(symbol => externHintOffsets[symbol]).ToArray(), rdataRva);
+            externIltOffsets.Add((import, offset));
+        }
 
-        // Write Import Directory Table (4 entries + null terminator)
+        // Write Import Directory Table (fixed imports + extern imports + null terminator)
         // Each entry is 20 bytes: ILT RVA, TimeDateStamp, ForwarderChain, Name RVA, IAT RVA
         int importDirOffset = (int)rdataStream.Position;
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)kernel32IltOffset, rdataRva + (uint)kernelNameOffset, rdataRva + (uint)kernel32IatOffset);
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)shell32IltOffset, rdataRva + (uint)shellNameOffset, rdataRva + (uint)shell32IatOffset);
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)ws2IltOffset, rdataRva + (uint)ws2NameOffset, rdataRva + (uint)ws2IatOffset);
         WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)crypt32IltOffset, rdataRva + (uint)crypt32NameOffset, rdataRva + (uint)crypt32IatOffset);
+        for (int i = 0; i < externIatOffsets.Count; i++)
+        {
+            var import = externIatOffsets[i].Import;
+            WriteImportDirectoryEntry(
+                rdataStream,
+                rdataRva + (uint)externIltOffsets[i].Offset,
+                rdataRva + (uint)externNameOffsets[import.LibraryName],
+                rdataRva + (uint)externIatOffsets[i].Offset);
+        }
         // Null terminator entry (20 zero bytes)
         for (int i = 0; i < 20; i++)
         {
@@ -276,6 +321,13 @@ internal static partial class LlvmImageLinker
             ["__imp_CertCloseStore"] = certCloseStoreIatVa,
             ["__chkstk"] = chkstkStubVa,
         };
+        foreach (var (import, offset) in externIatOffsets)
+        {
+            for (int i = 0; i < import.SymbolNames.Length; i++)
+            {
+                externalSymbolVas["__imp_" + import.SymbolNames[i]] = PeImageBase + rdataRva + (ulong)offset + (ulong)i * 8UL;
+            }
+        }
         if (linkedPayload is LinkedImagePayload windowsPayload)
         {
             externalSymbolVas[windowsPayload.StartSymbolName] = payloadStartVa;
@@ -393,7 +445,7 @@ internal static partial class LlvmImageLinker
 
         // Entry 12 (index 12): IAT Directory
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 96, 4), rdataRva + (uint)iatSectionOffset); // IAT RVA
-        int iatTotalSize = crypt32IatOffset + (crypt32Hints.Length + 1) * 8 - iatSectionOffset;
+        int iatTotalSize = iatEndOffset - iatSectionOffset;
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 100, 4), (uint)iatTotalSize); // IAT Size
 
         // Section headers
@@ -448,6 +500,34 @@ internal static partial class LlvmImageLinker
         entry.Clear();
         stream.Write(entry);
     }
+
+    private static WindowsImportLibrary[] BuildWindowsExternImports(IReadOnlyDictionary<string, string>? externLibraries)
+    {
+        if (externLibraries is null || externLibraries.Count == 0)
+        {
+            return [];
+        }
+
+        return externLibraries
+            .Where(static pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .GroupBy(static pair => NormalizeWindowsLibraryName(pair.Value), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => new WindowsImportLibrary(
+                group.Key,
+                group.Select(static pair => pair.Key).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()))
+            .Where(static import => import.SymbolNames.Length > 0)
+            .ToArray();
+    }
+
+    private static string NormalizeWindowsLibraryName(string libraryName)
+    {
+        var normalized = libraryName.Trim();
+        return normalized.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : normalized + ".DLL";
+    }
+
+    private sealed record WindowsImportLibrary(string LibraryName, string[] SymbolNames);
 
     private static void WriteImportDirectoryEntry(MemoryStream stream, uint iltRva, uint nameRva, uint iatRva)
     {
