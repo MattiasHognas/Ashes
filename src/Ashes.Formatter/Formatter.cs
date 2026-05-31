@@ -105,6 +105,7 @@ public static class Formatter
         return type switch
         {
             ParsedType.Named named => named.Name,
+            ParsedType.Pointer pointer => $"*{WriteParsedType(pointer.Pointee)}",
             _ => throw new InvalidOperationException($"Unexpected parsed type: {type}")
         };
     }
