@@ -800,9 +800,17 @@ internal static partial class LlvmCodegen
         LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_slot");
         LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cursor_slot");
         LlvmValueHandle waitResultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_wait_result_slot");
+        // Tracks whether any pending task is immediately runnable (not blocked on a
+        // socket). Such tasks have WaitKind == WaitNone and signal a cooperative
+        // "yield" (e.g. an HTTP receive that just consumed a buffered chunk and wants
+        // to read more). If one exists we must not block in epoll/WSAPoll on the other
+        // tasks' sockets, or the runnable task would be starved until an unrelated
+        // socket happens to become ready.
+        LlvmValueHandle runnableSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_runnable_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
         LlvmApi.BuildStore(builder, taskListPtr, cursorSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), waitResultSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), runnableSlot);
 
         LlvmBasicBlockHandle countCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_check");
         LlvmBasicBlockHandle countBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_body");
@@ -820,6 +828,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle countTask = LoadMemory(state, countCursor, 0, prefix + "_count_task");
         LlvmValueHandle countTail = LoadMemory(state, countCursor, 8, prefix + "_count_tail");
         LlvmValueHandle countWaitKind = LoadMemory(state, countTask, TaskStructLayout.WaitKind, prefix + "_count_wait_kind");
+        LlvmValueHandle countState = LoadMemory(state, countTask, TaskStructLayout.StateIndex, prefix + "_count_state");
         LlvmValueHandle countIsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), prefix + "_count_is_read");
         LlvmValueHandle countIsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), prefix + "_count_is_write");
         LlvmValueHandle countIsTlsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantRead, 0), prefix + "_count_is_tls_read");
@@ -827,6 +836,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle countShould = LlvmApi.BuildOr(builder, countIsRead, countIsWrite, prefix + "_count_should");
         countShould = LlvmApi.BuildOr(builder, countShould, countIsTlsRead, prefix + "_count_should_tls_read");
         countShould = LlvmApi.BuildOr(builder, countShould, countIsTlsWrite, prefix + "_count_should_tls_write");
+        // A task that is not yet completed and is not parked on a socket wait is
+        // immediately runnable; record it so we can skip the blocking wait below.
+        LlvmValueHandle countNotCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, countState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_count_not_completed");
+        LlvmValueHandle countWaitNone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countWaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitNone, 0), prefix + "_count_wait_none");
+        LlvmValueHandle countRunnable = LlvmApi.BuildAnd(builder, countNotCompleted, countWaitNone, prefix + "_count_runnable");
+        LlvmValueHandle priorRunnable = LlvmApi.BuildLoad2(builder, state.I64, runnableSlot, prefix + "_prior_runnable");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildOr(builder, priorRunnable, LlvmApi.BuildZExt(builder, countRunnable, state.I64, prefix + "_count_runnable_i64"), prefix + "_runnable_next"), runnableSlot);
         LlvmApi.BuildCondBr(builder, countShould, countIncrementBlock, countAdvanceBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, countIncrementBlock);
@@ -841,9 +857,17 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, afterCountBlock);
         LlvmValueHandle totalPending = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_total_pending");
         LlvmValueHandle hasPending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, totalPending, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_pending");
+        // Skip the blocking wait when a runnable (WaitNone, not-completed) task exists:
+        // returning immediately lets the caller's scheduler re-step it without waiting
+        // on unrelated sockets. Otherwise an HTTP receive that consumed a buffered chunk
+        // could be starved behind a peer task whose socket never becomes ready.
+        LlvmValueHandle hasRunnable = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildLoad2(builder, state.I64, runnableSlot, prefix + "_runnable_value"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_runnable");
+        // shouldWait = hasPending AND NOT hasRunnable, expressed as hasPending > hasRunnable
+        // over the i1 values (1 > 0 only when hasPending is set and hasRunnable is clear).
+        LlvmValueHandle shouldWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, hasPending, hasRunnable, prefix + "_should_wait");
         LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmApi.BuildCondBr(builder, hasPending, waitBlock, doneBlock);
+        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
         if (IsLinuxFlavor(state.Flavor))
