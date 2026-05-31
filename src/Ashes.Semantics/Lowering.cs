@@ -597,7 +597,7 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(div.Left);
         var (rightTemp, rightType) = LowerExpr(div.Right);
 
-        return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'");
+        return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'", (target, left, right) => new IrInst.DivUInt(target, left, right));
     }
 
     private (int, TypeRef) LowerBitwiseAnd(Expr.BitwiseAnd bitAnd)
@@ -931,7 +931,8 @@ public sealed partial class Lowering
         TypeRef rightType,
         Func<int, int, int, IrInst> intFactory,
         Func<int, int, int, IrInst> floatFactory,
-        string op)
+        string op,
+        Func<int, int, int, IrInst>? uintFactory = null)
     {
         var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
 
@@ -951,7 +952,7 @@ public sealed partial class Lowering
                 return CreateIntErrorFallback();
             }
             int raw = NewTemp();
-            Emit(intFactory(raw, leftTemp, rightTemp));
+            Emit((uintFactory ?? intFactory)(raw, leftTemp, rightTemp));
             int wrapped = EmitUIntMask(raw, luint.Bits);
             return (wrapped, luint);
         }

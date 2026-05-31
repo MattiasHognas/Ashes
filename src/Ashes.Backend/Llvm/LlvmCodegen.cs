@@ -1089,6 +1089,7 @@ internal static partial class LlvmCodegen
             IrInst.MulInt mulInt => StoreTemp(state, mulInt.Target, LlvmApi.BuildMul(builder, LoadTemp(state, mulInt.Left), LoadTemp(state, mulInt.Right), $"mul_{mulInt.Target}")),
             IrInst.MulFloat mulFloat => StoreTemp(state, mulFloat.Target, LlvmApi.BuildFMul(builder, LoadTempAsFloat(state, mulFloat.Left), LoadTempAsFloat(state, mulFloat.Right), $"fmul_{mulFloat.Target}")),
             IrInst.DivInt divInt => StoreTemp(state, divInt.Target, LlvmApi.BuildSDiv(builder, LoadTemp(state, divInt.Left), LoadTemp(state, divInt.Right), $"div_{divInt.Target}")),
+            IrInst.DivUInt divUInt => StoreTemp(state, divUInt.Target, LlvmApi.BuildUDiv(builder, LoadTemp(state, divUInt.Left), LoadTemp(state, divUInt.Right), $"udiv_{divUInt.Target}")),
             IrInst.DivFloat divFloat => StoreTemp(state, divFloat.Target, LlvmApi.BuildFDiv(builder, LoadTempAsFloat(state, divFloat.Left), LoadTempAsFloat(state, divFloat.Right), $"fdiv_{divFloat.Target}")),
             IrInst.AndInt andInt => StoreTemp(state, andInt.Target, LlvmApi.BuildAnd(builder, LoadTemp(state, andInt.Left), LoadTemp(state, andInt.Right), $"and_{andInt.Target}")),
             IrInst.OrInt orInt => StoreTemp(state, orInt.Target, LlvmApi.BuildOr(builder, LoadTemp(state, orInt.Left), LoadTemp(state, orInt.Right), $"or_{orInt.Target}")),

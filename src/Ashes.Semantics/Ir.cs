@@ -55,6 +55,7 @@ public abstract record IrInst
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
     public sealed record MulInt(int Target, int Left, int Right) : IrInst;
     public sealed record DivInt(int Target, int Left, int Right) : IrInst;
+    public sealed record DivUInt(int Target, int Left, int Right) : IrInst;
     public sealed record AndInt(int Target, int Left, int Right) : IrInst;
     public sealed record OrInt(int Target, int Left, int Right) : IrInst;
     public sealed record XorInt(int Target, int Left, int Right) : IrInst;
