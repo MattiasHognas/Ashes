@@ -113,6 +113,14 @@ internal static partial class LlvmCodegen
             args[i] = ConvertFfiArgument(state, LoadTemp(state, argTemps[i]), parameterTypes[i]);
         }
 
+        // A void-returning call cannot be given a name in LLVM; emit it unnamed and
+        // materialise a placeholder integer so the result temp slot stays well-typed.
+        if (returnType is FfiType.Void)
+        {
+            LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, "");
+            return LlvmApi.ConstInt(state.I64, 0, 0);
+        }
+
         return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, "ffi_call");
     }
 
@@ -138,6 +146,7 @@ internal static partial class LlvmCodegen
             FfiType.Bool => state.I64,
             FfiType.Str => state.I8Ptr,
             FfiType.Opaque => state.I64,
+            FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
         };
     }

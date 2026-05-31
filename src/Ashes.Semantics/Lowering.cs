@@ -2003,6 +2003,11 @@ public sealed partial class Lowering
 
         int target = NewTemp();
         Emit(new IrInst.CallExtern(target, externFunction.SymbolName, externFunction.LibraryName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
+        if (externFunction.ReturnType is FfiType.Void)
+        {
+            return LowerUnitValue();
+        }
+
         return (target, FromFfiType(externFunction.ReturnType));
     }
 

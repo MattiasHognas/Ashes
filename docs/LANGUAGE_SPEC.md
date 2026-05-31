@@ -442,6 +442,7 @@ Syntax:
 
 extern strlen(Str) -> Int
 extern getpid() -> Int = "getpid"
+extern srand(Int) -> Void
 extern type LLVMModuleRef
 extern LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 
@@ -449,9 +450,12 @@ Rules:
 
 - `extern` declarations appear before the program body, alongside `type`
   declarations.
-- Supported extern parameter and return types are `Int`, `Float`, `Bool`,
-  `Str`, and opaque extern types declared with `extern type`.
+- Supported extern parameter types are `Int`, `Float`, `Bool`, `Str`, and
+  opaque extern types declared with `extern type`. Return types may also be
+  `Void` for functions that produce no value.
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
+- A `Void`-returning extern call evaluates to `Unit`; `Void` may only appear
+  as a return type, not as a parameter type.
 - Opaque extern types are represented as native pointer-sized words and are
   intended for handles such as LLVM-C references.
 - The optional string after `=` overrides the C symbol name. A symbol override

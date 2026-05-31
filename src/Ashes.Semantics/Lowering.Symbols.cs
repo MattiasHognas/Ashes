@@ -100,14 +100,32 @@ public sealed partial class Lowering
 
         foreach (var function in externDecls.OfType<ExternDecl.Function>())
         {
-            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t)).ToList();
-            var returnType = ResolveExternParsedType(function, function.ReturnType);
-            if (parameterTypes.Any(t => t is null) || returnType is null)
+            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t, isReturnType: false)).ToList();
+            if (parameterTypes.Any(t => t is null))
             {
                 continue;
             }
 
             var resolvedParameterTypes = parameterTypes.Select(t => t!).ToList();
+
+            FfiType ffiReturnType;
+            TypeRef bindingReturnType;
+            if (function.ReturnType is ParsedType.Named { Name: "Void" })
+            {
+                ffiReturnType = new FfiType.Void();
+                bindingReturnType = _resolvedTypes["Unit"];
+            }
+            else
+            {
+                var returnType = ResolveExternParsedType(function, function.ReturnType, isReturnType: true);
+                if (returnType is null)
+                {
+                    continue;
+                }
+
+                ffiReturnType = ToFfiType(returnType);
+                bindingReturnType = returnType;
+            }
 
             var symbolName = function.SymbolName ?? function.Name;
             string? libraryName = null;
@@ -122,20 +140,26 @@ public sealed partial class Lowering
                 function.Name,
                 symbolName,
                 resolvedParameterTypes.Select(ToFfiType).ToList(),
-                ToFfiType(returnType),
+                ffiReturnType,
                 string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
             _externFunctions.Add(irFunction);
 
-            var type = BuildFunctionType(resolvedParameterTypes, returnType);
+            var type = BuildFunctionType(resolvedParameterTypes, bindingReturnType);
             _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
         }
     }
 
-    private TypeRef? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType)
+    private TypeRef? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType, bool isReturnType)
     {
         if (parsedType is not ParsedType.Named named)
         {
             ReportDiagnostic(GetSpan(externDecl), "Unsupported extern type syntax.");
+            return null;
+        }
+
+        if (named.Name == "Void")
+        {
+            ReportDiagnostic(GetSpan(externDecl), "Type 'Void' is only supported as an extern return type.");
             return null;
         }
 
