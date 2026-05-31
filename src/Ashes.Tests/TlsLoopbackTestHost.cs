@@ -154,20 +154,20 @@ internal sealed class TlsLoopbackTestHost : IDisposable
     private static async Task HandleClientAsync(TcpClient client, X509Certificate2 serverCertificate, Func<SslStream, Task> handleClientAsync, bool tolerateClientDisconnect = false)
     {
         using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
-        await stream
-            .AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false)
-            .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
         try
         {
+            await stream
+                .AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false)
+                .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
             await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
             await stream.FlushAsync();
             await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout);
         }
         catch (IOException) when (tolerateClientDisconnect)
         {
-            // The client side may close its end before the server finishes writing or shutting
-            // down (e.g. in race-style scenarios where the loser's connection is abandoned).
-            // Treat such post-handshake socket failures as benign when the caller opts in.
+            // The client side may close its end before or during the server's TLS handshake,
+            // writing, or shutdown (e.g. in race-style scenarios where the loser's connection
+            // is abandoned). Treat such socket failures as benign when the caller opts in.
         }
     }
 
