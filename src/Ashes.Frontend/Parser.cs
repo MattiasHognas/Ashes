@@ -6,7 +6,7 @@ public sealed class Parser
     private readonly Diagnostics _diag;
     private Token _current;
     private Token _previous;
-    private int _suppressBitwiseOr;
+    private int _suppressBitwiseOrDepth;
 
     public Parser(string text, Diagnostics diag)
     {
@@ -212,14 +212,14 @@ public sealed class Parser
 
     private Expr ParseMatchCaseBody()
     {
-        _suppressBitwiseOr++;
+        _suppressBitwiseOrDepth++;
         try
         {
             return ParseExpressionCore();
         }
         finally
         {
-            _suppressBitwiseOr--;
+            _suppressBitwiseOrDepth--;
         }
     }
 
@@ -535,7 +535,7 @@ public sealed class Parser
     {
         var left = ParseBitwiseXor();
 
-        while (_current.Kind == TokenKind.Pipe && _suppressBitwiseOr == 0)
+        while (_current.Kind == TokenKind.Pipe && _suppressBitwiseOrDepth == 0)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             Consume(TokenKind.Pipe);
@@ -792,8 +792,8 @@ public sealed class Parser
     {
         var start = _current.Position;
         Consume(TokenKind.LParen);
-        var suppressedBitwiseOr = _suppressBitwiseOr;
-        _suppressBitwiseOr = 0;
+        var suppressedBitwiseOrDepth = _suppressBitwiseOrDepth;
+        _suppressBitwiseOrDepth = 0;
         var e = ParseExpressionCore();
         if (_current.Kind == TokenKind.Comma)
         {
@@ -804,11 +804,11 @@ public sealed class Parser
                 elements.Add(ParseExpressionCore());
             }
             Consume(TokenKind.RParen);
-            _suppressBitwiseOr = suppressedBitwiseOr;
+            _suppressBitwiseOrDepth = suppressedBitwiseOrDepth;
             return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
         }
         Consume(TokenKind.RParen);
-        _suppressBitwiseOr = suppressedBitwiseOr;
+        _suppressBitwiseOrDepth = suppressedBitwiseOrDepth;
         return e;
     }
 

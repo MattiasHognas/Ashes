@@ -842,9 +842,7 @@ public sealed partial class Lowering
 
         var types = PrettyPair(resolvedLeft, resolvedRight);
         ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int or Float{op}Float, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
-        int fallback = NewTemp();
-        Emit(new IrInst.LoadConstInt(fallback, 0));
-        return (fallback, new TypeRef.TInt());
+        return CreateIntErrorFallback();
     }
 
     private (int, TypeRef) LowerIntBinaryOp(
@@ -880,6 +878,11 @@ public sealed partial class Lowering
 
         var types = PrettyPair(left, right);
         ReportDiagnostic(GetSpan(expr), $"{op} requires Int{op}Int, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
+        return CreateIntErrorFallback();
+    }
+
+    private (int, TypeRef) CreateIntErrorFallback()
+    {
         int fallback = NewTemp();
         Emit(new IrInst.LoadConstInt(fallback, 0));
         return (fallback, new TypeRef.TInt());

@@ -382,6 +382,7 @@ public static class IrOptimizer
 
                 case IrInst.ShrInt shr when knownInts.ContainsKey(shr.Left) && knownInts.ContainsKey(shr.Right):
                     {
+                        // Logical shift right: reinterpret the signed Int bits as unsigned.
                         long folded = (long)((ulong)knownInts[shr.Left] >> (int)(knownInts[shr.Right] & 63));
                         knownInts[shr.Target] = folded;
                         result.Add(new IrInst.LoadConstInt(shr.Target, folded) { Location = inst.Location });
