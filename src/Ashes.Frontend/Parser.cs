@@ -794,22 +794,27 @@ public sealed class Parser
         Consume(TokenKind.LParen);
         var suppressedMatchCasePipeDepth = _matchCasePipeSuppressionDepth;
         _matchCasePipeSuppressionDepth = 0;
-        var e = ParseExpressionCore();
-        if (_current.Kind == TokenKind.Comma)
+        try
         {
-            var elements = new List<Expr> { e };
-            while (_current.Kind == TokenKind.Comma)
+            var e = ParseExpressionCore();
+            if (_current.Kind == TokenKind.Comma)
             {
-                Consume(TokenKind.Comma);
-                elements.Add(ParseExpressionCore());
+                var elements = new List<Expr> { e };
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    elements.Add(ParseExpressionCore());
+                }
+                Consume(TokenKind.RParen);
+                return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
             }
             Consume(TokenKind.RParen);
-            _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
-            return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
+            return e;
         }
-        Consume(TokenKind.RParen);
-        _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
-        return e;
+        finally
+        {
+            _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
+        }
     }
 
     private Expr ParseList()
