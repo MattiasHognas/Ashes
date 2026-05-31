@@ -189,7 +189,7 @@ public static class BuiltinRegistry
     /// </summary>
     public static bool IsCopyType(TypeRef prunedType)
     {
-        return prunedType is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool or TypeRef.TOpaque;
+        return prunedType is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool or TypeRef.TOpaque or TypeRef.TPtr;
     }
 
     /// <summary>

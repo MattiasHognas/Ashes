@@ -450,13 +450,16 @@ Rules:
 - `extern` declarations appear before the program body, alongside `type`
   declarations.
 - Supported extern parameter and return types are `Int`, `u8`, `u16`, `u32`,
-  `u64`, `Float`, `Bool`, `Str`, and opaque extern types declared with
-  `extern type`. Unsigned integer types use Ashes `Int` values at call sites
-  and are converted to the requested C ABI width at the extern boundary.
+  `u64`, `Float`, `Bool`, `Str`, opaque extern types declared with
+  `extern type`, and pointers to supported extern types using `*T`. Unsigned
+  integer types use Ashes `Int` values at call sites and are converted to the
+  requested C ABI width at the extern boundary.
 - `void` is supported for extern return types and produces Ashes `Unit`.
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
 - Opaque extern types are represented as native pointer-sized words and are
   intended for handles such as LLVM-C references.
+- Pointer extern types are represented as native pointers and may be nested for
+  C buffer and out-parameter APIs such as `*u8` and `**LLVMModuleRef`.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows extern imports require an explicit DLL name.

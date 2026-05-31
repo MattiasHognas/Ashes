@@ -80,6 +80,7 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
 public abstract record ParsedType
 {
     public sealed record Named(string Name) : ParsedType;
+    public sealed record Pointer(ParsedType Pointee) : ParsedType;
 }
 
 public abstract record ExternDecl

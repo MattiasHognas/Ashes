@@ -25,6 +25,9 @@ public sealed partial class Lowering
                 FtvType(f.Arg, result);
                 FtvType(f.Ret, result);
                 break;
+            case TypeRef.TPtr p:
+                FtvType(p.Pointee, result);
+                break;
             case TypeRef.TList l:
                 FtvType(l.Element, result);
                 break;
@@ -133,6 +136,7 @@ public sealed partial class Lowering
         {
             TypeRef.TVar v => subst.TryGetValue(v.Id, out var r) ? r : t,
             TypeRef.TFun f => new TypeRef.TFun(ApplyInstSubst(f.Arg, subst), ApplyInstSubst(f.Ret, subst)),
+            TypeRef.TPtr p => new TypeRef.TPtr(ApplyInstSubst(p.Pointee, subst)),
             TypeRef.TList l => new TypeRef.TList(ApplyInstSubst(l.Element, subst)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(e => ApplyInstSubst(e, subst)).ToList()),
             TypeRef.TNamedType n => new TypeRef.TNamedType(n.Symbol, n.TypeArgs.Select(a => ApplyInstSubst(a, subst)).ToList()),
@@ -196,6 +200,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (a is TypeRef.TPtr pa && b is TypeRef.TPtr pb)
+        {
+            Unify(pa.Pointee, pb.Pointee);
+            return;
+        }
+
         if (a is TypeRef.TList la && b is TypeRef.TList lb)
         {
             Unify(la.Element, lb.Element);
@@ -254,6 +264,7 @@ public sealed partial class Lowering
         {
             TypeRef.TVar v => v.Id == id,
             TypeRef.TFun f => Occurs(id, f.Arg) || Occurs(id, f.Ret),
+            TypeRef.TPtr p => Occurs(id, p.Pointee),
             TypeRef.TList l => Occurs(id, l.Element),
             TypeRef.TTuple tuple => tuple.Elements.Any(e => Occurs(id, e)),
             TypeRef.TNamedType n => n.TypeArgs.Any(a => Occurs(id, a)),
@@ -288,6 +299,7 @@ public sealed partial class Lowering
                 $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}",
                 precArrow
             ),
+            TypeRef.TPtr p => ($"*{Pretty(p.Pointee, typeVarNames, parentPrecedence: precAtom)}", precAtom),
             TypeRef.TNamedType n => n.TypeArgs.Count == 0
                 ? (n.Symbol.Name, precAtom)
                 : ($"{n.Symbol.Name}<{string.Join(", ", n.TypeArgs.Select(a => Pretty(a, typeVarNames, parentPrecedence: precAtom)))}>", precAtom),

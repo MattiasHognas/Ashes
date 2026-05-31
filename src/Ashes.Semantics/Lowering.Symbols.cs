@@ -133,6 +133,14 @@ public sealed partial class Lowering
 
     private ResolvedExternType? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType, bool allowVoid)
     {
+        if (parsedType is ParsedType.Pointer pointer)
+        {
+            var pointee = ResolveExternParsedType(externDecl, pointer.Pointee, allowVoid: false);
+            return pointee is null
+                ? null
+                : new ResolvedExternType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
+        }
+
         if (parsedType is not ParsedType.Named named)
         {
             ReportDiagnostic(GetSpan(externDecl), "Unsupported extern type syntax.");
