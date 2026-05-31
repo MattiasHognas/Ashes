@@ -442,7 +442,7 @@ Syntax:
 
 extern strlen(Str) -> Int
 extern getpid() -> Int = "getpid"
-extern srand(Int) -> Void
+extern srand(Int) -> Void = "srand@libc.so.6"
 extern type LLVMModuleRef
 extern LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 
