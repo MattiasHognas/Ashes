@@ -374,6 +374,19 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_format_ints_floats_and_hex()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(0.0 - 12.25) + "|" + Ashes.Text.toHex(48879))""");
+        result.Stdout.ShouldBe("-42|-12.25|0xbeef\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_file_exists_programs()
     {
         if (!OperatingSystem.IsLinux())

@@ -102,6 +102,9 @@ public abstract record IrInst
     public sealed record TextUncons(int Target, int TextTemp) : IrInst;
     public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
     public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;
+    public sealed record TextFromInt(int Target, int ValueTemp) : IrInst;
+    public sealed record TextFromFloat(int Target, int ValueTemp) : IrInst;
+    public sealed record TextToHex(int Target, int ValueTemp) : IrInst;
     public sealed record HttpGet(int Target, int UrlTemp) : IrInst;
     public sealed record HttpPost(int Target, int UrlTemp, int BodyTemp) : IrInst;
     public sealed record NetTcpConnect(int Target, int HostTemp, int PortTemp) : IrInst;

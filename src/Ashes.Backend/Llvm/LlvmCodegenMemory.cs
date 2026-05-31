@@ -1312,6 +1312,281 @@ internal static partial class LlvmCodegen
         return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
     }
 
+    private static LlvmValueHandle EmitSignedIntToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
+        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
+        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_negative");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, prefix + "_is_negative");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildZExt(builder, isNegative, state.I64, prefix + "_negative_i64"), negativeSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildSub(builder, zero, value, prefix + "_magnitude_neg"), value, prefix + "_magnitude"), workSlot);
+
+        var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_zero");
+        var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop_check");
+        var loopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop_body");
+        var maybeSignBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_maybe_sign");
+        var signBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sign");
+        var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
+
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, value, zero, prefix + "_is_zero");
+        LlvmApi.BuildCondBr(builder, isZero, zeroBlock, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        StoreBufferByte(state, buffer, LlvmApi.ConstInt(state.I64, 31, 0), (byte)'0');
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
+        LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_work_value");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, prefix + "_done");
+        LlvmApi.BuildCondBr(builder, done, maybeSignBlock, loopBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
+        LlvmValueHandle digit = LlvmApi.BuildURem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_digit");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_next_work"), workSlot);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_value");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, prefix + "_write_idx"), LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ascii"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), indexSlot);
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, maybeSignBlock);
+        LlvmValueHandle negative = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, prefix + "_negative_value");
+        LlvmValueHandle hasSign = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, negative, zero, prefix + "_has_sign");
+        LlvmApi.BuildCondBr(builder, hasSign, signBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, signBlock);
+        LlvmValueHandle idxBeforeSign = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_before_sign");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforeSign, prefix + "_sign_index"), (byte)'-');
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxBeforeSign, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_sign"), indexSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    private static LlvmValueHandle EmitIntToHexString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
+        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
+        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_negative");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, prefix + "_is_negative");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildZExt(builder, isNegative, state.I64, prefix + "_negative_i64"), negativeSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildSub(builder, zero, value, prefix + "_magnitude_neg"), value, prefix + "_magnitude"), workSlot);
+
+        var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_zero");
+        var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop_check");
+        var loopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop_body");
+        var prefixBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_prefix");
+        var maybeSignBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_maybe_sign");
+        var signBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sign");
+        var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
+
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, value, zero, prefix + "_is_zero");
+        LlvmApi.BuildCondBr(builder, isZero, zeroBlock, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        StoreBufferByte(state, buffer, LlvmApi.ConstInt(state.I64, 31, 0), (byte)'0');
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
+        LlvmApi.BuildBr(builder, prefixBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
+        LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_work_value");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, prefix + "_done");
+        LlvmApi.BuildCondBr(builder, done, prefixBlock, loopBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
+        LlvmValueHandle nibble = LlvmApi.BuildAnd(builder, work, LlvmApi.ConstInt(state.I64, 0xFUL, 0), prefix + "_nibble");
+        LlvmValueHandle isDecimal = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, nibble, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_is_decimal");
+        LlvmValueHandle digitAscii = LlvmApi.BuildSelect(
+            builder,
+            isDecimal,
+            LlvmApi.BuildAdd(builder, nibble, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_decimal_ascii"),
+            LlvmApi.BuildAdd(builder, LlvmApi.BuildSub(builder, nibble, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_hex_alpha_index"), LlvmApi.ConstInt(state.I64, (byte)'a', 0), prefix + "_hex_ascii"),
+            prefix + "_ascii");
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_value");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, prefix + "_write_idx"), digitAscii);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLShr(builder, work, LlvmApi.ConstInt(state.I64, 4, 0), prefix + "_next_work"), workSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), indexSlot);
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, prefixBlock);
+        LlvmValueHandle idxBeforePrefix = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_before_prefix");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforePrefix, prefix + "_x_index"), (byte)'x');
+        LlvmValueHandle idxWithX = LlvmApi.BuildAdd(builder, idxBeforePrefix, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_x");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxWithX, prefix + "_zero_index"), (byte)'0');
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxWithX, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_prefix"), indexSlot);
+        LlvmApi.BuildBr(builder, maybeSignBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, maybeSignBlock);
+        LlvmValueHandle negative = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, prefix + "_negative_value");
+        LlvmValueHandle hasSign = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, negative, zero, prefix + "_has_sign");
+        LlvmApi.BuildCondBr(builder, hasSign, signBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, signBlock);
+        LlvmValueHandle idxBeforeSign = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_before_sign");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforeSign, prefix + "_sign_index"), (byte)'-');
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxBeforeSign, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_sign"), indexSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    private static LlvmValueHandle EmitFloatToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zeroFloat = LlvmApi.ConstReal(state.F64, 0.0);
+        LlvmValueHandle isNegative = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Olt, value, zeroFloat, prefix + "_is_negative");
+        LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildFSub(builder, zeroFloat, value, prefix + "_abs_neg"), value, prefix + "_abs");
+        // 2^63 is not representable in signed i64; using the next representable f64 below 2^63
+        // keeps FPToSI-to-i64 conversions in defined range for all values on the fixed-format path.
+        LlvmValueHandle safeIntegerLimit = LlvmApi.ConstReal(state.F64, 9223372036854773760.0);
+        LlvmValueHandle needsScientific = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Ogt, absValue, safeIntegerLimit, prefix + "_needs_scientific");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle normalizedSlot = LlvmApi.BuildAlloca(builder, state.F64, prefix + "_normalized");
+        LlvmValueHandle exponentSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_exponent");
+        LlvmValueHandle signText = LlvmApi.BuildSelect(builder, isNegative, EmitHeapStringLiteral(state, "-"), EmitHeapStringLiteral(state, ""), prefix + "_sign_text");
+
+        var fixedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fixed");
+        var scientificInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_init");
+        var scientificLoopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_loop_check");
+        var scientificLoopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_loop_body");
+        var scientificFinishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scientific_finish");
+        var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_merge");
+
+        LlvmApi.BuildCondBr(builder, needsScientific, scientificInitBlock, fixedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fixedBlock);
+        LlvmValueHandle fixedUnsigned = EmitUnsignedFloatToStringWithinI64Range(state, absValue, prefix + "_fixed_unsigned");
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned), resultSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificInitBlock);
+        LlvmApi.BuildStore(builder, absValue, normalizedSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), exponentSlot);
+        LlvmApi.BuildBr(builder, scientificLoopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificLoopCheckBlock);
+        LlvmValueHandle normalizedValue = LlvmApi.BuildLoad2(builder, state.F64, normalizedSlot, prefix + "_normalized_value");
+        LlvmValueHandle shouldScale = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Oge, normalizedValue, LlvmApi.ConstReal(state.F64, 10.0), prefix + "_should_scale");
+        LlvmApi.BuildCondBr(builder, shouldScale, scientificLoopBodyBlock, scientificFinishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificLoopBodyBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildFDiv(builder, normalizedValue, LlvmApi.ConstReal(state.F64, 10.0), prefix + "_normalized_next"), normalizedSlot);
+        LlvmValueHandle exponent = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, prefix + "_exponent_value");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, exponent, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_exponent_next"), exponentSlot);
+        LlvmApi.BuildBr(builder, scientificLoopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scientificFinishBlock);
+        LlvmValueHandle normalizedFinal = LlvmApi.BuildLoad2(builder, state.F64, normalizedSlot, prefix + "_normalized_final");
+        LlvmValueHandle exponentFinal = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, prefix + "_exponent_final");
+        LlvmValueHandle mantissaText = EmitUnsignedFloatToStringWithinI64Range(state, normalizedFinal, prefix + "_scientific_mantissa");
+        LlvmValueHandle exponentText = EmitNonNegativeIntToString(state, exponentFinal, prefix + "_scientific_exponent");
+        LlvmValueHandle scientificResult = EmitStringConcat(state, mantissaText, EmitHeapStringLiteral(state, "e+"));
+        scientificResult = EmitStringConcat(state, scientificResult, exponentText);
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, scientificResult), resultSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static LlvmValueHandle EmitUnsignedFloatToStringWithinI64Range(LlvmCodegenState state, LlvmValueHandle absValue, string prefix)
+    {
+        // Caller must ensure absValue <= safeIntegerLimit from EmitFloatToString.
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle integerPart = LlvmApi.BuildFPToSI(builder, absValue, state.I64, prefix + "_integer");
+        LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
+        LlvmValueHandle fractional = LlvmApi.BuildFSub(builder, absValue, integerAsFloat, prefix + "_fractional");
+        LlvmValueHandle scaledFractionalFloat = LlvmApi.BuildFMul(builder, fractional, LlvmApi.ConstReal(state.F64, 1000000.0), prefix + "_scaled_fractional_f64");
+        LlvmValueHandle scaledFractionalRounded = LlvmApi.BuildFAdd(builder, scaledFractionalFloat, LlvmApi.ConstReal(state.F64, 0.5), prefix + "_scaled_fractional_rounded");
+        LlvmValueHandle scaledFractionalRaw = LlvmApi.BuildFPToSI(builder, scaledFractionalRounded, state.I64, prefix + "_scaled_fractional_raw");
+        LlvmValueHandle million = LlvmApi.ConstInt(state.I64, 1000000, 0);
+        LlvmValueHandle hasCarry = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, scaledFractionalRaw, million, prefix + "_has_carry");
+        LlvmValueHandle scaledFractional = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.ConstInt(state.I64, 0, 0), scaledFractionalRaw, prefix + "_scaled_fractional");
+        LlvmValueHandle integerFinal = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.BuildAdd(builder, integerPart, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_integer_carry"), integerPart, prefix + "_integer_final");
+
+        LlvmValueHandle result = EmitSignedIntToString(state, integerFinal, prefix + "_integer_text");
+        result = EmitStringConcat(state, result, EmitHeapStringLiteral(state, "."));
+        return EmitStringConcat(state, result, EmitFractionalSixDigitsToString(state, scaledFractional, prefix + "_fraction_text"));
+    }
+
+    private static LlvmValueHandle EmitFractionalSixDigitsToString(LlvmCodegenState state, LlvmValueHandle scaledValue, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
+        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
+        LlvmValueHandle widthSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_width");
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
+        LlvmApi.BuildStore(builder, scaledValue, workSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 6, 0), widthSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+
+        var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_zero");
+        var trimCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_check");
+        var trimBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_body");
+        var emitCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_emit_check");
+        var emitBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_emit_body");
+        var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
+
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scaledValue, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_is_zero");
+        LlvmApi.BuildCondBr(builder, isZero, zeroBlock, trimCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        StoreBufferByte(state, buffer, LlvmApi.ConstInt(state.I64, 31, 0), (byte)'0');
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, trimCheckBlock);
+        LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_trim_work");
+        LlvmValueHandle width = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_trim_width");
+        LlvmValueHandle canTrim = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_can_trim");
+        LlvmValueHandle trailingZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildURem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trim_rem"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_trailing_zero");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, canTrim, trailingZero, prefix + "_should_trim"), trimBodyBlock, emitCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, trimBodyBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trimmed_work"), workSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_trimmed_width"), widthSlot);
+        LlvmApi.BuildBr(builder, trimCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emitCheckBlock);
+        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_emit_index");
+        LlvmValueHandle emitWidth = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_emit_width");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, emitWidth, prefix + "_emit_done");
+        LlvmApi.BuildCondBr(builder, done, finishBlock, emitBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emitBodyBlock);
+        LlvmValueHandle emitWork = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_emit_work");
+        LlvmValueHandle digit = LlvmApi.BuildURem(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_digit");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), index, prefix + "_write_index"), LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ascii"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_next_work"), workSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_next_index"), indexSlot);
+        LlvmApi.BuildBr(builder, emitCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
     private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

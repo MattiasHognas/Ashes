@@ -37,6 +37,9 @@ These types are always available without imports:
 - `uncons(text)` returning `Maybe((Str, Str))`
 - `parseInt(text)` returning `Result(Str, Int)`
 - `parseFloat(text)` returning `Result(Str, Float)`
+- `fromInt(value)` returning `Str`
+- `fromFloat(value)` returning `Str`
+- `toHex(value)` returning `Str`
  
 ### `Ashes.Http`
 

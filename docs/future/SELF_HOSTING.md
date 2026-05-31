@@ -117,11 +117,11 @@ Approaches compatible with the immutability commitment:
 
 The compiler does extensive string work. **Some of this has already
 landed**: the builtin `Ashes.Text` module ships `uncons` (Unicode-aware
-character-by-character traversal), `parseInt` (`Str → Int`), and
-`parseFloat` (`Str → Float`) — see
+character-by-character traversal), `parseInt` (`Str → Int`), `parseFloat`
+(`Str → Float`), `fromInt`, `fromFloat`, and `toHex` — see
 `docs/future/TEXT_PARSING_PRIMITIVES.md`. `uncons` covers the lexer's
-sequential `_text[_pos]` traversal, and the parse helpers cover literal
-parsing.
+sequential `_text[_pos]` traversal, the parse helpers cover literal
+parsing, and the format helpers cover diagnostic number rendering.
 
 Already landed:
 
@@ -129,13 +129,13 @@ Already landed:
   sequential, not O(1) indexing — see Gap #7).
 - **String-to-number parsing** — `Ashes.Text.parseInt`,
   `Ashes.Text.parseFloat`.
+- **Number-to-string formatting** — `Ashes.Text.fromInt`,
+  `Ashes.Text.fromFloat`, `Ashes.Text.toHex`.
 
 Still missing (an `Ashes.String` module, already listed in
 `FUTURE_FEATURES.md`) would need at minimum: `substring`, `length`,
 `indexOf`, `startsWith`, `contains`, `split`, `trim`, character-predicate
-helpers (`isLetter`, `isDigit`, `isWhiteSpace`), and the
-number-to-string direction (`fromInt`, `fromFloat`; see Gap #14) for
-diagnostics and `print`.
+helpers (`isLetter`, `isDigit`, `isWhiteSpace`).
 
 ### 5. Type Annotations
 
@@ -278,13 +278,10 @@ different payloads. Ashes can express this structurally, but:
 
 ### 14. Numeric Conversions and Formatting
 
-The parse direction has **already landed** via `Ashes.Text`
-(`parseInt` for `Str → Int`, `parseFloat` for `Str → Float`). What
-remains:
-
-- `Int → Str` and `Float → Str` conversions (`fromInt`, `fromFloat`)
-  for generating error messages with line numbers and for `print`.
-- Hex formatting (ELF/PE headers use hex addresses).
+The numeric round-trip has **landed** via `Ashes.Text`: `parseInt` and
+`parseFloat` cover `Str → Int` / `Str → Float`, while `fromInt`,
+`fromFloat`, and `toHex` cover decimal and hexadecimal formatting for
+diagnostics and linker-oriented output.
 
 ------------------------------------------------------------------------
 
@@ -305,7 +302,7 @@ remains:
 | 11 | Binary file I/O                    | Writing executables                 | Low–Medium                |
 | 12 | Real memory management             | Compiling large programs            | Medium (grow-on-demand arena + scope reclamation exist) |
 | 13 | Large ADT ergonomics               | 50+ variant IR type                 | Low                       |
-| 14 | Numeric conversions                | Parsing, diagnostics                | Low (parse landed; format remains) |
+| 14 | Numeric conversions                | Parsing, diagnostics                | Done (parse + decimal/hex format landed) |
 
 ------------------------------------------------------------------------
 
@@ -339,75 +336,74 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 1 — Byte & numeric primitives (foundational, low risk)
 
-1. **Unsigned integer support** — `u8`/`u16`/`u32`/`u64`
+1. [ ] **Unsigned integer support** — `u8`/`u16`/`u32`/`u64`
    representations (or a single `Byte`/`UInt` to start). Prerequisite for
    all binary-format work.
-2. **Byte type (`u8`) + byte literals** — the smallest unit for image
+2. [ ] **Byte type (`u8`) + byte literals** — the smallest unit for image
    construction.
-3. **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
+3. [ ] **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
    ints/bytes. `Int` `&`, `|`, `^`, `<<`, and `>>` have landed; byte/
    unsigned-specific behaviour and `~` remain. Pure and isolated; needed
    for header, relocation, and instruction-operand encoding.
-4. **`Int → Str` / `Float → Str` conversions** (`fromInt`, `fromFloat`)
+4. [x] **`Int → Str` / `Float → Str` conversions** (`fromInt`, `fromFloat`)
    and **hex formatting** — completes the numeric round-trip (the parse
    side already shipped in `Ashes.Text`) and unblocks diagnostics.
 
 ### Phase 2 — Indexed / byte collections
 
-5. **Immutable `Bytes` type with O(1) indexed read + length** — the
+5. [ ] **Immutable `Bytes` type with O(1) indexed read + length** — the
    lexer and object-file parsing need random access that `uncons` cannot
    provide.
-6. **Little-endian integer↔bytes encode/decode** (read/write
+6. [ ] **Little-endian integer↔bytes encode/decode** (read/write
    `u16`/`u32`/`u64` at an offset) — mirrors `BinaryPrimitives`, the
    core linker operation.
-7. **Immutable byte builder + `writeBytes` binary file output** — an
+7. [ ] **Immutable byte builder + `writeBytes` binary file output** — an
    append-style builder that returns new values (no in-place mutation),
    plus raw binary file write. Enough to emit a trivial ELF/PE stub
    end-to-end as a proof.
 
 ### Phase 3 — String library breadth
 
-8. **`Ashes.String` helpers** — `substring`, `length`, `indexOf`,
+8. [ ] **`Ashes.String` helpers** — `substring`, `length`, `indexOf`,
    `startsWith`, `contains`, `split`, `trim`, and character-class
    predicates (`isLetter`, `isDigit`, `isWhiteSpace`). Builds on
    `Ashes.Text`; needed before the lexer/parser are practical to port.
 
 ### Phase 4 — Data structures (immutable)
 
-9. **Immutable `Map(K, V)`** — balanced-tree persistent map. The single
+9. [ ] **Immutable `Map(K, V)`** — balanced-tree persistent map. The single
    highest-leverage item for the type-inference core (substitution table,
    scopes, intern tables, symbol tables).
-10. **Immutable indexed `Array(T)`** (optional, after `Bytes`/`Map`) —
+10. [ ] **Immutable indexed `Array(T)`** (optional, after `Bytes`/`Map`) —
     O(1)/O(log n) indexed sequence for IR instruction arrays if
     linked-list O(n) access proves too slow.
 
 ### Phase 5 — Type system & ergonomics for a large codebase
 
-11. **Records / named product types + record-update syntax** — replace
+11. [ ] **Records / named product types + record-update syntax** — replace
     fragile positional tuple access in `Token`, `DiagnosticEntry`, etc.
-12. **User-written type annotations** — function signatures and ADT
+12. [ ] **User-written type annotations** — function signatures and ADT
     typing across module boundaries.
-13. **Module system enhancements** — cross-module type sharing without
+13. [ ] **Module system enhancements** — cross-module type sharing without
     circular imports; a project-level compilation model.
-14. **Catchable error propagation** — `Result`-threading helpers or
+14. [ ] **Catchable error propagation** — `Result`-threading helpers or
     early-return sugar so the pipeline can abort-and-report without
     `panic`.
 
 ### Phase 6 — The hard foundations (largest; can run as parallel research)
 
-15. **Deferred FFI hardening** — extern functions as first-class values or
+15. [ ] **Deferred FFI hardening** — extern functions as first-class values or
     module exports, plus safe wrappers and ownership conventions for
     opaque LLVM-C handles.
-16. **Memory-management hardening** — validate the chunked arena's
+16. [ ] **Memory-management hardening** — validate the chunked arena's
     steady-state behaviour under a real self-compile; add finer
     ownership-based freeing only if scope-granularity reclamation proves
     insufficient.
-17. **Large-ADT exhaustiveness / performance** — ensure the
+17. [ ] **Large-ADT exhaustiveness / performance** — ensure the
     exhaustiveness checker scales to the 50+ `IrInst` constructors.
 
 ### Suggested first slice
 
-Items **1–4** (unsigned ints, byte type, remaining bitwise ops,
-`Int`/`Float` → `Str` + hex). They are pure, fully testable in isolation
-with `.ash` fixtures, carry no architectural risk, and are hard
-prerequisites for the linker port.
+Items **1–3** remain the next foundational byte/numeric slice (unsigned
+ints, byte type, remaining bitwise ops). Item **4** (`Int`/`Float` → `Str`
++ hex) has landed.
