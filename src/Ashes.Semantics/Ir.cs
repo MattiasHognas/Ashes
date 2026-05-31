@@ -411,7 +411,6 @@ public abstract record FfiType
     public sealed record Bool : FfiType;
     public sealed record Str : FfiType;
     public sealed record Opaque(string Name) : FfiType;
-    public sealed record Void : FfiType;
 }
 
 public sealed record IrExternFunction(

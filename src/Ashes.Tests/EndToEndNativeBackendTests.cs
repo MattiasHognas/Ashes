@@ -59,22 +59,6 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
-    public async Task Extern_void_return_program_runs_and_continues()
-    {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
-        // srand returns void; the program must keep running after the void extern call.
-        var src = """
-            extern srand(Int) -> Void = "srand@libc.so.6"
-            let _ = srand(42) in Ashes.IO.print(7)
-            """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("7\n");
-    }
-
-    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())

@@ -7,39 +7,6 @@ namespace Ashes.Tests;
 public sealed class FfiTests
 {
     [Test]
-    public void Extern_void_return_lowers_to_external_call_and_unit_value()
-    {
-        var (program, diagnostics) = LowerProgram("""
-            extern type LLVMModuleRef
-            extern makeModule(Int) -> LLVMModuleRef
-            extern disposeModule(LLVMModuleRef) -> Void
-            disposeModule(makeModule(1))
-            """);
-
-        diagnostics.Errors.ShouldBeEmpty();
-        var dispose = program.ExternFunctions.Single(f => f.Name == "disposeModule");
-        dispose.ReturnType.ShouldBe(new FfiType.Void());
-
-        var voidCall = program.EntryFunction.Instructions
-            .OfType<IrInst.CallExtern>()
-            .Single(c => c.SymbolName == "disposeModule");
-        voidCall.ReturnType.ShouldBe(new FfiType.Void());
-    }
-
-    [Test]
-    public void Extern_void_parameter_is_rejected()
-    {
-        var (program, diagnostics) = LowerProgram("""
-            extern oops(Void) -> Int
-            0
-            """);
-
-        program.ExternFunctions.ShouldBeEmpty();
-        diagnostics.Errors.ShouldContain(error =>
-            error.Contains("Type 'Void' is only supported as an extern return type.", StringComparison.Ordinal));
-    }
-
-    [Test]
     public void Extern_function_call_lowers_to_external_call_with_null_terminated_string_argument()
     {
         var (program, diagnostics) = LowerProgram("""

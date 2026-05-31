@@ -60,9 +60,8 @@ symbol override form (`extern foo(Int) -> Int = "foo@libfoo.so"` on Linux, or
 
 Remaining gaps before this is enough for LLVM self-hosting:
 
-- richer C type coverage — `Void` return types now land (for functions such
-  as `LLVMDisposeModule` that produce no value); still missing are unsigned
-  integers, pointer-to-buffer, and pointer-to-pointer/out parameters;
+- richer C type coverage (unsigned integers, `void`, pointer-to-buffer,
+  pointer-to-pointer/out parameters);
 - extern functions as first-class values or module exports;
 - safe wrappers and ownership conventions for opaque handles returned by
   LLVM-C APIs.
