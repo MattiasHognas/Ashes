@@ -1458,9 +1458,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
         LlvmValueHandle fractional = LlvmApi.BuildFSub(builder, absValue, integerAsFloat, prefix + "_fractional");
         LlvmValueHandle scaledFractionalFloat = LlvmApi.BuildFMul(builder, fractional, LlvmApi.ConstReal(state.F64, 1000000.0), prefix + "_scaled_fractional_f64");
-        LlvmValueHandle scaledFractional = LlvmApi.BuildFPToSI(builder, scaledFractionalFloat, state.I64, prefix + "_scaled_fractional");
+        LlvmValueHandle scaledFractionalRounded = LlvmApi.BuildFAdd(builder, scaledFractionalFloat, LlvmApi.ConstReal(state.F64, 0.5), prefix + "_scaled_fractional_rounded");
+        LlvmValueHandle scaledFractionalRaw = LlvmApi.BuildFPToSI(builder, scaledFractionalRounded, state.I64, prefix + "_scaled_fractional_raw");
+        LlvmValueHandle million = LlvmApi.ConstInt(state.I64, 1000000, 0);
+        LlvmValueHandle hasCarry = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, scaledFractionalRaw, million, prefix + "_has_carry");
+        LlvmValueHandle scaledFractional = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.ConstInt(state.I64, 0, 0), scaledFractionalRaw, prefix + "_scaled_fractional");
+        LlvmValueHandle integerFinal = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.BuildAdd(builder, integerPart, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_integer_carry"), integerPart, prefix + "_integer_final");
 
-        LlvmValueHandle result = EmitSignedIntToString(state, integerPart, prefix + "_integer_text");
+        LlvmValueHandle result = EmitSignedIntToString(state, integerFinal, prefix + "_integer_text");
         LlvmValueHandle negativePrefix = EmitHeapStringLiteral(state, "-");
         result = EmitStringConcat(
             state,
