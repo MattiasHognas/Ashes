@@ -486,19 +486,19 @@ public sealed class EndToEndNativeBackendTests
     [Test]
     public async Task Bitwise_program_runs_and_prints_expected_output()
     {
-            if (!OperatingSystem.IsLinux())
-            {
-                return;
-            }
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
 
-            var src = """
-                let calc = fun (x) ->
-                    let flags = (x | 2) ^ 1
-                    in let shifted = (flags & 6) << 2
-                    in shifted >> 1
-                in Ashes.IO.print(calc(5))
-                """;
-            (await CompileRunCaptureProgramAsync(src)).ShouldBe("12\n");
+        var src = """
+            let calc = fun (x) ->
+                let flags = (x | 2) ^ 1
+                in let shifted = (flags & 6) << 2
+                in shifted >> 1
+            in Ashes.IO.print(calc(5))
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("12\n");
     }
 
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
