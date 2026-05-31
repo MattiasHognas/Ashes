@@ -1091,6 +1091,26 @@ public static class ProjectSupport
                     Visit(div.Left);
                     Visit(div.Right);
                     break;
+                case Expr.BitwiseAnd bitAnd:
+                    Visit(bitAnd.Left);
+                    Visit(bitAnd.Right);
+                    break;
+                case Expr.BitwiseOr bitOr:
+                    Visit(bitOr.Left);
+                    Visit(bitOr.Right);
+                    break;
+                case Expr.BitwiseXor bitXor:
+                    Visit(bitXor.Left);
+                    Visit(bitXor.Right);
+                    break;
+                case Expr.ShiftLeft shiftLeft:
+                    Visit(shiftLeft.Left);
+                    Visit(shiftLeft.Right);
+                    break;
+                case Expr.ShiftRight shiftRight:
+                    Visit(shiftRight.Left);
+                    Visit(shiftRight.Right);
+                    break;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left);
                     Visit(ge.Right);

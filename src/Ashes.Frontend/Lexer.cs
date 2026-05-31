@@ -133,6 +133,20 @@ public sealed class Lexer
             return true;
         }
 
+        if (TryMatch('<', '<'))
+        {
+            _pos += 2;
+            token = new Token(TokenKind.LessLess, "<<", 0, start, 2);
+            return true;
+        }
+
+        if (TryMatch('>', '>'))
+        {
+            _pos += 2;
+            token = new Token(TokenKind.GreaterGreater, ">>", 0, start, 2);
+            return true;
+        }
+
         if (TryMatch(':', ':'))
         {
             _pos += 2;
@@ -159,6 +173,8 @@ public sealed class Lexer
             '-' => new Token(TokenKind.Minus, "-", 0, start, 1),
             '*' => new Token(TokenKind.Star, "*", 0, start, 1),
             '/' => new Token(TokenKind.Slash, "/", 0, start, 1),
+            '&' => new Token(TokenKind.Ampersand, "&", 0, start, 1),
+            '^' => new Token(TokenKind.Caret, "^", 0, start, 1),
             '=' => new Token(TokenKind.Equals, "=", 0, start, 1),
             ',' => new Token(TokenKind.Comma, ",", 0, start, 1),
             '|' => new Token(TokenKind.Pipe, "|", 0, start, 1),

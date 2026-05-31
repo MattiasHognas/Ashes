@@ -19,6 +19,11 @@ public abstract record Expr
     public sealed record Subtract(Expr Left, Expr Right) : Expr;
     public sealed record Multiply(Expr Left, Expr Right) : Expr;
     public sealed record Divide(Expr Left, Expr Right) : Expr;
+    public sealed record BitwiseAnd(Expr Left, Expr Right) : Expr;
+    public sealed record BitwiseOr(Expr Left, Expr Right) : Expr;
+    public sealed record BitwiseXor(Expr Left, Expr Right) : Expr;
+    public sealed record ShiftLeft(Expr Left, Expr Right) : Expr;
+    public sealed record ShiftRight(Expr Left, Expr Right) : Expr;
     public sealed record GreaterOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record LessOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record Equal(Expr Left, Expr Right) : Expr;
