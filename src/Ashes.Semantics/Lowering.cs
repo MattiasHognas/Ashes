@@ -619,7 +619,7 @@ public sealed partial class Lowering
 
         if (prunedOperandType is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(bitwiseNot), $"'~' requires Int, got {PrettyType(prunedOperandType)}.", DiagnosticCodes.TypeMismatch);
+            ReportDiagnostic(GetSpan(bitwiseNot), $"'~' requires Int, got {Pretty(prunedOperandType)}.", DiagnosticCodes.TypeMismatch);
             return CreateIntErrorFallback();
         }
 

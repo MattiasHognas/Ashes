@@ -337,14 +337,18 @@ keeping with the immutability commitment (Ground Rule #5).
 ### Phase 1 — Byte & numeric primitives (foundational, low risk)
 
 1. [ ] **Unsigned integer support** — `u8`/`u16`/`u32`/`u64`
-   representations (or a single `Byte`/`UInt` to start). Prerequisite for
-   all binary-format work.
+   representations (or a single `Byte`/`UInt` to start). Unsigned literal
+   suffixes now parse (`255u8`, `65535u16`, `4294967295u32`,
+   `18446744073709551615u64`), but dedicated unsigned value types are still
+   pending.
 2. [ ] **Byte type (`u8`) + byte literals** — the smallest unit for image
-   construction.
+   construction. Byte literals via the `u8` suffix now parse, but a distinct
+   `Byte` runtime/type-system primitive is still pending.
 3. [ ] **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
    ints/bytes. `Int` `&`, `|`, `^`, `<<`, and `>>` have landed; byte/
-   unsigned-specific behaviour and `~` remain. Pure and isolated; needed
-   for header, relocation, and instruction-operand encoding.
+   unsigned-specific behaviour remains. Unary `~` now also lowers for `Int`.
+   Pure and isolated; needed for header, relocation, and instruction-operand
+   encoding.
 4. [x] **`Int → Str` / `Float → Str` conversions** (`fromInt`, `fromFloat`)
    and **hex formatting** — completes the numeric round-trip (the parse
    side already shipped in `Ashes.Text`) and unblocks diagnostics.
