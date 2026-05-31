@@ -102,6 +102,37 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void Extern_pointer_types_lower_to_pointer_ffi_types()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern type NativeHandle
+            extern makeHandle(Int) -> *NativeHandle
+            extern identity(*NativeHandle) -> *NativeHandle
+            identity(makeHandle(42))
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternFunctions.Select(f => f.Name).ShouldBe(["makeHandle", "identity"]);
+        program.ExternFunctions[1].ParameterTypes.ShouldBe([new FfiType.Ptr(new FfiType.Opaque("NativeHandle"))]);
+        program.ExternFunctions[1].ReturnType.ShouldBe(new FfiType.Ptr(new FfiType.Opaque("NativeHandle")));
+        program.EntryFunction.Instructions.OfType<IrInst.CallExtern>().Select(c => c.SymbolName).ShouldBe(["makeHandle", "identity"]);
+    }
+
+    [Test]
+    public void Extern_nested_pointer_types_support_buffer_out_parameters()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern fill(**u8) -> Bool
+            0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternFunctions.Count.ShouldBe(1);
+        program.ExternFunctions[0].ParameterTypes.ShouldBe([new FfiType.Ptr(new FfiType.Ptr(new FfiType.UInt(8)))]);
+        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.Bool());
+    }
+
+    [Test]
     public void Void_is_rejected_as_an_extern_parameter_type()
     {
         var (program, diagnostics) = LowerProgram("""

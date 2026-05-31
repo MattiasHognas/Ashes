@@ -270,6 +270,18 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_nested_extern_pointer_types()
+    {
+        var program = ParseProgram("extern fill(**u8) -> *Handle\n0");
+
+        var fill = program.ExternDecls[0].ShouldBeOfType<ExternDecl.Function>();
+        fill.Name.ShouldBe("fill");
+        fill.ParameterTypes.ShouldBe([new ParsedType.Pointer(new ParsedType.Pointer(new ParsedType.Named("u8")))]);
+        fill.ReturnType.ShouldBe(new ParsedType.Pointer(new ParsedType.Named("Handle")));
+        fill.SymbolName.ShouldBeNull();
+    }
+
+    [Test]
     public void ParseProgram_should_parse_multiline_type_declaration()
     {
         var program = ParseProgram("type Maybe =\n  | None\n  | Some(T)\nprint(1)");

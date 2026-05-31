@@ -1106,6 +1106,7 @@ public sealed partial class Lowering
         {
             TypeRef.TTypeParam tp when typeParameterMap.TryGetValue(tp.Symbol.Name, out var replacement) => replacement,
             TypeRef.TList list => new TypeRef.TList(SubstituteTypeParameters(list.Element, typeParameterMap)),
+            TypeRef.TPtr pointer => new TypeRef.TPtr(SubstituteTypeParameters(pointer.Pointee, typeParameterMap)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(element => SubstituteTypeParameters(element, typeParameterMap)).ToList()),
             TypeRef.TFun fun => new TypeRef.TFun(
                 SubstituteTypeParameters(fun.Arg, typeParameterMap),

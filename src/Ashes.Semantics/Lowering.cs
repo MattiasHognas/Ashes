@@ -2021,6 +2021,7 @@ public sealed partial class Lowering
             FfiType.Bool => new TypeRef.TBool(),
             FfiType.Str => new TypeRef.TStr(),
             FfiType.Opaque opaque => new TypeRef.TOpaque(opaque.Name),
+            FfiType.Ptr ptr => new TypeRef.TPtr(FromFfiType(ptr.Pointee)),
             _ => throw new InvalidOperationException($"Unknown FFI type '{ffiType.GetType().Name}'.")
         };
     }
