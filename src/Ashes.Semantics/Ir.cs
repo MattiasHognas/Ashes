@@ -67,6 +67,8 @@ public abstract record IrInst
     public sealed record DivFloat(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntGe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntLe(int Target, int Left, int Right) : IrInst;
+    public sealed record CmpUIntGe(int Target, int Left, int Right) : IrInst;
+    public sealed record CmpUIntLe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntNe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpFloatGe(int Target, int Left, int Right) : IrInst;
