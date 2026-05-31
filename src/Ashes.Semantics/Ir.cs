@@ -21,6 +21,7 @@ public abstract record TypeRef
     public sealed record TNamedType(TypeSymbol Symbol, IReadOnlyList<TypeRef> TypeArgs) : TypeRef;
     public sealed record TTypeParam(TypeParameterSymbol Symbol) : TypeRef;
     public sealed record TOpaque(string Name) : TypeRef;
+    public sealed record TPtr(TypeRef Pointee) : TypeRef;
 }
 
 public readonly record struct SourceLocation(string FilePath, int Line, int Column);
@@ -412,6 +413,7 @@ public abstract record FfiType
     public sealed record Bool : FfiType;
     public sealed record Str : FfiType;
     public sealed record Opaque(string Name) : FfiType;
+    public sealed record Ptr(FfiType Pointee) : FfiType;
     public sealed record Void : FfiType;
 }
 

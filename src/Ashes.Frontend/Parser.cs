@@ -59,17 +59,17 @@ public sealed class Parser
         var parameterTypes = new List<ParsedType>();
         if (_current.Kind != TokenKind.RParen)
         {
-            parameterTypes.Add(ParseTypeName());
+            parameterTypes.Add(ParseFfiType());
             while (_current.Kind == TokenKind.Comma)
             {
                 Consume(TokenKind.Comma);
-                parameterTypes.Add(ParseTypeName());
+                parameterTypes.Add(ParseFfiType());
             }
         }
 
         Consume(TokenKind.RParen);
         Consume(TokenKind.Arrow);
-        var returnType = ParseTypeName();
+        var returnType = ParseFfiType();
 
         string? symbolName = null;
         if (_current.Kind == TokenKind.Equals)
@@ -79,6 +79,17 @@ public sealed class Parser
         }
 
         return RegisterExternDecl(new ExternDecl.Function(name, parameterTypes, returnType, symbolName), start, LastConsumedEnd);
+    }
+
+    private ParsedType ParseFfiType()
+    {
+        if (_current.Kind == TokenKind.Star)
+        {
+            Consume(TokenKind.Star);
+            return new ParsedType.Pointer(ParseFfiType());
+        }
+
+        return ParseTypeName();
     }
 
     private ParsedType ParseTypeName()

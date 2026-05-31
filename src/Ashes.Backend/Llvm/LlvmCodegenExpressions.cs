@@ -147,9 +147,9 @@ internal static partial class LlvmCodegen
             FfiType.UInt { Bits: 32 } => state.I32,
             FfiType.UInt { Bits: 64 } => state.I64,
             FfiType.Float => state.F64,
-            FfiType.Bool => state.I64,
+            FfiType.Bool => state.I8,
             FfiType.Str => state.I8Ptr,
-            FfiType.Opaque => state.I64,
+            FfiType.Opaque { } or FfiType.Ptr { } => state.I8Ptr,
             FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
             FfiType.UInt uintType => throw new InvalidOperationException($"Unsupported unsigned FFI width '{uintType.Bits}'."),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
@@ -161,8 +161,10 @@ internal static partial class LlvmCodegen
         return type switch
         {
             FfiType.Float => LlvmApi.BuildBitCast(state.Target.Builder, value, state.F64, "ffi_arg_float"),
+            FfiType.Bool => LlvmApi.BuildTrunc(state.Target.Builder, value, state.I8, "ffi_arg_bool"),
             FfiType.UInt { Bits: 8 or 16 or 32 } => LlvmApi.BuildTrunc(state.Target.Builder, value, GetLlvmFfiType(state, type), "ffi_arg_uint"),
             FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),
+            FfiType.Opaque { } or FfiType.Ptr { } => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_ptr"),
             _ => value
         };
     }

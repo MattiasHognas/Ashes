@@ -592,4 +592,17 @@ public sealed class FormatterTests
         var secondPass = FormatFixtureSource(formatted);
         secondPass.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
     }
+
+    [Test]
+    public void Format_should_round_trip_nested_extern_pointer_types()
+    {
+        const string source = "extern type Handle\nextern fill(**u8) -> *Handle\n0\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("extern type Handle\nextern fill(**u8) -> *Handle\n\n0\n");
+
+        var secondPass = FormatFixtureSource(formatted);
+        secondPass.ShouldBe("extern type Handle\nextern fill(**u8) -> *Handle\n\n0\n");
+    }
 }
