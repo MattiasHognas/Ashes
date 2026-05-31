@@ -23,6 +23,9 @@ public static class BuiltinRegistry
         TextUncons,
         TextParseInt,
         TextParseFloat,
+        TextFromInt,
+        TextFromFloat,
+        TextToHex,
         HttpGet,
         HttpPost,
         NetTcpConnect,
@@ -113,7 +116,10 @@ public static class BuiltinRegistry
                 {
                     ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
                     ["parseInt"] = new("parseInt", BuiltinValueKind.TextParseInt, IsCallable: true, Arity: 1),
-                    ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1)
+                    ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
+                    ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
+                    ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",

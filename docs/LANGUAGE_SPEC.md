@@ -55,6 +55,9 @@ Canonical built-ins available today include:
 - `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))`
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)`
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)`
+- `Ashes.Text.fromInt(value)` returning `Str`
+- `Ashes.Text.fromFloat(value)` returning `Str`
+- `Ashes.Text.toHex(value)` returning `Str`
 - `Ashes.Http.get(url)` returning `Task(Str, Str)`
 - `Ashes.Http.post(url, body)` returning `Task(Str, Str)`
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`
@@ -1161,6 +1164,9 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))` - split one Unicode scalar from the front of a string.
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)` - parse a decimal integer with optional leading `-`.
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)` - parse a decimal float with optional fraction and exponent.
+- `Ashes.Text.fromInt(value)` returning `Str` - format an integer as decimal text.
+- `Ashes.Text.fromFloat(value)` returning `Str` - format a float as decimal text.
+- `Ashes.Text.toHex(value)` returning `Str` - format an integer as lowercase hexadecimal text with a `0x` prefix.
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)` - async TCP connect.
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)` - async TCP send.
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TCP receive.
@@ -1227,6 +1233,13 @@ return `Error(message)`.
 decimal integer part with an optional fractional part and optional exponent
 using `e` or `E`. Malformed input and out-of-range values return
 `Error(message)`.
+
+`Ashes.Text.fromInt` has type `Int -> Str` and formats decimal integers,
+including negative values. `Ashes.Text.fromFloat` has type `Float -> Str` and
+formats finite values as decimal text with up to six fractional digits, trimming
+trailing zeroes while preserving at least one digit after the decimal point.
+`Ashes.Text.toHex` has type `Int -> Str` and formats lowercase hexadecimal with
+a `0x` prefix; negative values are formatted with a leading `-`.
 
 `Ashes.IO.readLine` removes a trailing `\n` from the returned line and also
 normalizes Windows `\r\n` input so the returned string never includes the trailing

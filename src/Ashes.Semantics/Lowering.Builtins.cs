@@ -294,6 +294,90 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TFloat()));
     }
 
+    private (int, TypeRef) LowerTextFromInt(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var loweredType = Prune(valueType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TInt());
+            loweredType = new TypeRef.TInt();
+        }
+
+        if (loweredType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.fromInt() expects Int but got {Pretty(loweredType)}.");
+            return (valueTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextFromInt(target, valueTemp));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerTextFromFloat(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var loweredType = Prune(valueType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TFloat());
+            loweredType = new TypeRef.TFloat();
+        }
+
+        if (loweredType is not TypeRef.TFloat)
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.fromFloat() expects Float but got {Pretty(loweredType)}.");
+            return (valueTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextFromFloat(target, valueTemp));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerTextToHex(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var loweredType = Prune(valueType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TInt());
+            loweredType = new TypeRef.TInt();
+        }
+
+        if (loweredType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.toHex() expects Int but got {Pretty(loweredType)}.");
+            return (valueTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextToHex(target, valueTemp));
+        return (target, new TypeRef.TStr());
+    }
+
     private TypeRef.TNamedType CreateStringResultType(TypeRef successType)
     {
         if (!_typeSymbols.TryGetValue("Result", out var resultSymbol) || resultSymbol.TypeParameters.Count != 2)
@@ -1122,6 +1206,30 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.TextParseFloat,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TFloat())))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextFromIntBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextFromInt,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextFromFloatBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextFromFloat,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TStr()))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextToHexBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextToHex,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))
         );
     }
 

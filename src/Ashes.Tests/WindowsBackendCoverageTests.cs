@@ -527,7 +527,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(-12.25) + "|" + Ashes.Text.toHex(48879))""");
+            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(0.0 - 12.25) + "|" + Ashes.Text.toHex(48879))""");
         result.Stdout.ShouldBe("-42|-12.25|0xbeef\n");
     }
 
