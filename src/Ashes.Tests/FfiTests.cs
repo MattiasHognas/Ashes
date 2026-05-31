@@ -61,6 +61,59 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void Extern_unsigned_integer_types_lower_to_unsigned_ffi_types_and_ashes_ints()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern pack(u8, u16, u32, u64) -> u32
+            pack(1, 2, 3, 4)
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternFunctions.Count.ShouldBe(1);
+        program.ExternFunctions[0].ParameterTypes.ShouldBe([
+            new FfiType.UInt(8),
+            new FfiType.UInt(16),
+            new FfiType.UInt(32),
+            new FfiType.UInt(64)
+        ]);
+        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.UInt(32));
+
+        var externalCall = program.EntryFunction.Instructions.OfType<IrInst.CallExtern>().Single();
+        externalCall.ParameterTypes.ShouldBe(program.ExternFunctions[0].ParameterTypes);
+        externalCall.ReturnType.ShouldBe(new FfiType.UInt(32));
+    }
+
+    [Test]
+    public void Extern_void_return_type_lowers_to_void_call_and_unit_result()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern log(Str, u32) -> void
+            log("answer", 42)
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternFunctions.Count.ShouldBe(1);
+        program.ExternFunctions[0].ParameterTypes.ShouldBe([new FfiType.Str(), new FfiType.UInt(32)]);
+        program.ExternFunctions[0].ReturnType.ShouldBe(new FfiType.Void());
+
+        var externalCall = program.EntryFunction.Instructions.OfType<IrInst.CallExtern>().Single();
+        externalCall.ReturnType.ShouldBe(new FfiType.Void());
+        program.EntryFunction.Instructions.OfType<IrInst.ToCString>().Single().Target.ShouldBe(externalCall.ArgTemps[0]);
+    }
+
+    [Test]
+    public void Void_is_rejected_as_an_extern_parameter_type()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            extern bad(void) -> Int
+            0
+            """);
+
+        program.ExternFunctions.ShouldBeEmpty();
+        diagnostics.Errors.ShouldContain(error => error.Contains("Type 'void' is only supported as an extern return type.", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Extern_functions_report_diagnostics_for_non_ffi_types()
     {
         var (program, diagnostics) = LowerProgram("""

@@ -113,7 +113,15 @@ internal static partial class LlvmCodegen
             args[i] = ConvertFfiArgument(state, LoadTemp(state, argTemps[i]), parameterTypes[i]);
         }
 
-        return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, "ffi_call");
+        LlvmValueHandle result = LlvmApi.BuildCall2(
+            state.Target.Builder,
+            functionType,
+            function,
+            args,
+            returnType is FfiType.Void ? string.Empty : "ffi_call");
+        return returnType is FfiType.Void
+            ? LlvmApi.ConstInt(state.I64, 0, 0)
+            : result;
     }
 
     private static LlvmValueHandle GetOrAddWindowsExternImport(LlvmCodegenState state, string symbolName)
@@ -134,10 +142,16 @@ internal static partial class LlvmCodegen
         return type switch
         {
             FfiType.Int => state.I64,
+            FfiType.UInt { Bits: 8 } => state.I8,
+            FfiType.UInt { Bits: 16 } => LlvmApi.Int16TypeInContext(state.Target.Context),
+            FfiType.UInt { Bits: 32 } => state.I32,
+            FfiType.UInt { Bits: 64 } => state.I64,
             FfiType.Float => state.F64,
             FfiType.Bool => state.I64,
             FfiType.Str => state.I8Ptr,
             FfiType.Opaque => state.I64,
+            FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
+            FfiType.UInt uintType => throw new InvalidOperationException($"Unsupported unsigned FFI width '{uintType.Bits}'."),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
         };
     }
@@ -147,6 +161,7 @@ internal static partial class LlvmCodegen
         return type switch
         {
             FfiType.Float => LlvmApi.BuildBitCast(state.Target.Builder, value, state.F64, "ffi_arg_float"),
+            FfiType.UInt { Bits: 8 or 16 or 32 } => LlvmApi.BuildTrunc(state.Target.Builder, value, GetLlvmFfiType(state, type), "ffi_arg_uint"),
             FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),
             _ => value
         };
