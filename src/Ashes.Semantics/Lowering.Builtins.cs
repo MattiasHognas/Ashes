@@ -311,7 +311,7 @@ public sealed partial class Lowering
             loweredType = new TypeRef.TInt();
         }
 
-        if (loweredType is not TypeRef.TInt and not TypeRef.TUInt)
+        if (loweredType is not TypeRef.TInt && loweredType is not TypeRef.TUInt { Bits: <= 32 })
         {
             ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.fromInt() expects Int but got {Pretty(loweredType)}.");
             return (valueTemp, loweredType);
