@@ -189,6 +189,7 @@ public sealed partial class Lowering
         (int Temp, TypeRef Type) lowered = e switch
         {
             Expr.IntLit lit => LowerInt(lit),
+            Expr.UIntLit lit => LowerUInt(lit),
             Expr.FloatLit lit => LowerFloat(lit),
             Expr.StrLit str => LowerStr(str),
             Expr.BoolLit b => LowerBool(b),
@@ -203,6 +204,7 @@ public sealed partial class Lowering
             Expr.BitwiseXor bitXor => LowerBitwiseXor(bitXor),
             Expr.ShiftLeft shiftLeft => LowerShiftLeft(shiftLeft),
             Expr.ShiftRight shiftRight => LowerShiftRight(shiftRight),
+            Expr.BitwiseNot bitwiseNot => LowerBitwiseNot(bitwiseNot),
             Expr.GreaterOrEqual ge => LowerGreaterOrEqual(ge),
             Expr.LessOrEqual le => LowerLessOrEqual(le),
             Expr.Equal eq => LowerEqual(eq),
@@ -233,6 +235,13 @@ public sealed partial class Lowering
     {
         int t = NewTemp();
         Emit(new IrInst.LoadConstInt(t, lit.Value));
+        return (t, new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerUInt(Expr.UIntLit lit)
+    {
+        int t = NewTemp();
+        Emit(new IrInst.LoadConstInt(t, unchecked((long)lit.Value)));
         return (t, new TypeRef.TInt());
     }
 
@@ -595,6 +604,30 @@ public sealed partial class Lowering
         var (rightTemp, rightType) = LowerExpr(shiftRight.Right);
 
         return LowerIntBinaryOp(shiftRight, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.ShrInt(target, left, right), "'>>'");
+    }
+
+    private (int, TypeRef) LowerBitwiseNot(Expr.BitwiseNot bitwiseNot)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bitwiseNot);
+        var (operandTemp, operandType) = LowerExpr(bitwiseNot.Operand);
+        var prunedOperandType = Prune(operandType);
+        if (prunedOperandType is TypeRef.TVar)
+        {
+            Unify(prunedOperandType, new TypeRef.TInt());
+            prunedOperandType = new TypeRef.TInt();
+        }
+
+        if (prunedOperandType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(bitwiseNot), $"'~' requires Int, got {PrettyType(prunedOperandType)}.", DiagnosticCodes.TypeMismatch);
+            return CreateIntErrorFallback();
+        }
+
+        int allOnes = NewTemp();
+        Emit(new IrInst.LoadConstInt(allOnes, -1));
+        int target = NewTemp();
+        Emit(new IrInst.XorInt(target, operandTemp, allOnes));
+        return (target, new TypeRef.TInt());
     }
 
     private (int, TypeRef) LowerGreaterOrEqual(Expr.GreaterOrEqual ge)
@@ -2558,6 +2591,7 @@ public sealed partial class Lowering
             switch (ex)
             {
                 case Expr.IntLit:
+                case Expr.UIntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
                 case Expr.BoolLit:
@@ -2614,6 +2648,9 @@ public sealed partial class Lowering
                 case Expr.ShiftRight shiftRight:
                     Visit(shiftRight.Left, bnd);
                     Visit(shiftRight.Right, bnd);
+                    return;
+                case Expr.BitwiseNot bitwiseNot:
+                    Visit(bitwiseNot.Operand, bnd);
                     return;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left, bnd);
@@ -2804,6 +2841,9 @@ public sealed partial class Lowering
                 CollectQualifiedVarsVisit(shiftRight.Left, result);
                 CollectQualifiedVarsVisit(shiftRight.Right, result);
                 break;
+            case Expr.BitwiseNot bitwiseNot:
+                CollectQualifiedVarsVisit(bitwiseNot.Operand, result);
+                break;
             case Expr.GreaterOrEqual ge:
                 CollectQualifiedVarsVisit(ge.Left, result);
                 CollectQualifiedVarsVisit(ge.Right, result);
@@ -2912,6 +2952,7 @@ public sealed partial class Lowering
         switch (expr)
         {
             case Expr.IntLit:
+            case Expr.UIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -2948,6 +2989,8 @@ public sealed partial class Lowering
             case Expr.ShiftRight shiftRight:
                 return UsesNameOnlyAsDirectCallee(shiftRight.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(shiftRight.Right, targetName, shadowed);
+            case Expr.BitwiseNot bitwiseNot:
+                return UsesNameOnlyAsDirectCallee(bitwiseNot.Operand, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return UsesNameOnlyAsDirectCallee(ge.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(ge.Right, targetName, shadowed);
@@ -3029,6 +3072,7 @@ public sealed partial class Lowering
         switch (expr)
         {
             case Expr.IntLit:
+            case Expr.UIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -3056,6 +3100,8 @@ public sealed partial class Lowering
                 return ExprReferencesName(shiftLeft.Left, targetName, shadowed) || ExprReferencesName(shiftLeft.Right, targetName, shadowed);
             case Expr.ShiftRight shiftRight:
                 return ExprReferencesName(shiftRight.Left, targetName, shadowed) || ExprReferencesName(shiftRight.Right, targetName, shadowed);
+            case Expr.BitwiseNot bitwiseNot:
+                return ExprReferencesName(bitwiseNot.Operand, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return ExprReferencesName(ge.Left, targetName, shadowed) || ExprReferencesName(ge.Right, targetName, shadowed);
             case Expr.LessOrEqual le:

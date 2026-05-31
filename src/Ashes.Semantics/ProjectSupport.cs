@@ -1071,6 +1071,7 @@ public static class ProjectSupport
                     qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
                     break;
                 case Expr.IntLit:
+                case Expr.UIntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
                 case Expr.BoolLit:
@@ -1110,6 +1111,9 @@ public static class ProjectSupport
                 case Expr.ShiftRight shiftRight:
                     Visit(shiftRight.Left);
                     Visit(shiftRight.Right);
+                    break;
+                case Expr.BitwiseNot bitwiseNot:
+                    Visit(bitwiseNot.Operand);
                     break;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left);

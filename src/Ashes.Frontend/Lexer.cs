@@ -173,6 +173,7 @@ public sealed class Lexer
             '-' => new Token(TokenKind.Minus, "-", 0, start, 1),
             '*' => new Token(TokenKind.Star, "*", 0, start, 1),
             '/' => new Token(TokenKind.Slash, "/", 0, start, 1),
+            '~' => new Token(TokenKind.Tilde, "~", 0, start, 1),
             '&' => new Token(TokenKind.Ampersand, "&", 0, start, 1),
             '^' => new Token(TokenKind.Caret, "^", 0, start, 1),
             '=' => new Token(TokenKind.Equals, "=", 0, start, 1),
@@ -270,13 +271,96 @@ public sealed class Lexer
             return new Token(TokenKind.Float, floatText, 0, floatValue, start, _pos - start);
         }
 
+        int digitsEnd = _pos;
+        int unsignedBits = TryReadUnsignedSuffix();
         var text = _text[start.._pos];
-        if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+        var numberText = _text[start..digitsEnd];
+        if (unsignedBits > 0)
         {
-            _diag.Error(start, _pos, $"Invalid integer literal: {text}.", DiagnosticCodes.ParseError);
+            if (!ulong.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out var unsignedValue))
+            {
+                _diag.Error(start, _pos, $"Invalid unsigned integer literal: {text}.", DiagnosticCodes.ParseError);
+                unsignedValue = 0;
+            }
+            else if (unsignedValue > GetUnsignedMax(unsignedBits))
+            {
+                _diag.Error(start, _pos, $"Unsigned integer literal out of range for u{unsignedBits}: {text}.", DiagnosticCodes.ParseError);
+                unsignedValue = 0;
+            }
+
+            return new Token(TokenKind.Int, text, unchecked((long)unsignedValue), start, _pos - start);
+        }
+
+        if (!long.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+        {
+            _diag.Error(start, _pos, $"Invalid integer literal: {numberText}.", DiagnosticCodes.ParseError);
         }
 
         return new Token(TokenKind.Int, text, value, start, _pos - start);
+    }
+
+    private int TryReadUnsignedSuffix()
+    {
+        if (_pos + 1 >= _text.Length || _text[_pos] != 'u')
+        {
+            return 0;
+        }
+
+        if (TryMatchSuffix("u8"))
+        {
+            _pos += 2;
+            return 8;
+        }
+
+        if (TryMatchSuffix("u16"))
+        {
+            _pos += 3;
+            return 16;
+        }
+
+        if (TryMatchSuffix("u32"))
+        {
+            _pos += 3;
+            return 32;
+        }
+
+        if (TryMatchSuffix("u64"))
+        {
+            _pos += 3;
+            return 64;
+        }
+
+        return 0;
+    }
+
+    private bool TryMatchSuffix(string suffix)
+    {
+        if (_pos + suffix.Length > _text.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < suffix.Length; i++)
+        {
+            if (_text[_pos + i] != suffix[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static ulong GetUnsignedMax(int bits)
+    {
+        return bits switch
+        {
+            8 => byte.MaxValue,
+            16 => ushort.MaxValue,
+            32 => uint.MaxValue,
+            64 => ulong.MaxValue,
+            _ => 0
+        };
     }
 
     private Token ReadIdentifierOrKeyword(int start)

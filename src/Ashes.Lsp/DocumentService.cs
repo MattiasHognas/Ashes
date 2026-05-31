@@ -776,6 +776,7 @@ public static partial class DocumentService
         switch (expr)
         {
             case Expr.IntLit:
+            case Expr.UIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -809,6 +810,9 @@ public static partial class DocumentService
 
             case Expr.ShiftRight shiftRight:
                 return CollectVisibleBindingsInBinary(shiftRight.Left, shiftRight.Right, position, scope);
+
+            case Expr.BitwiseNot bitwiseNot:
+                return CollectVisibleBindingsInExpr(bitwiseNot.Operand, position, scope);
 
             case Expr.GreaterOrEqual ge:
                 return CollectVisibleBindingsInBinary(ge.Left, ge.Right, position, scope);
@@ -1236,6 +1240,7 @@ public static partial class DocumentService
         switch (expr)
         {
             case Expr.IntLit:
+            case Expr.UIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -1285,6 +1290,9 @@ public static partial class DocumentService
 
             case Expr.ShiftRight shiftRight:
                 return ResolveDefinitionInBinary(shiftRight.Left, shiftRight.Right, position, currentFilePath, imports, scope);
+
+            case Expr.BitwiseNot bitwiseNot:
+                return ResolveDefinitionInExpr(bitwiseNot.Operand, position, currentFilePath, imports, scope);
 
             case Expr.GreaterOrEqual ge:
                 return ResolveDefinitionInBinary(ge.Left, ge.Right, position, currentFilePath, imports, scope);
