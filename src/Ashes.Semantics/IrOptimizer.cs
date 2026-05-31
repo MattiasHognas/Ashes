@@ -205,6 +205,9 @@ public static class IrOptimizer
             IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.TextFromInt t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.TextFromFloat t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.TextToHex t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.HttpGet h => h with { UrlTemp = R(h.UrlTemp) },
             IrInst.HttpPost h => h with { UrlTemp = R(h.UrlTemp), BodyTemp = R(h.BodyTemp) },
             IrInst.NetTcpConnect n => n with { HostTemp = R(n.HostTemp), PortTemp = R(n.PortTemp) },
@@ -993,6 +996,9 @@ public static class IrOptimizer
             case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.TextFromInt t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.TextFromFloat t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.TextToHex t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.HttpGet h: usedTemps.Add(h.UrlTemp); break;
             case IrInst.HttpPost h: usedTemps.Add(h.UrlTemp); usedTemps.Add(h.BodyTemp); break;
             case IrInst.NetTcpConnect n: usedTemps.Add(n.HostTemp); usedTemps.Add(n.PortTemp); break;

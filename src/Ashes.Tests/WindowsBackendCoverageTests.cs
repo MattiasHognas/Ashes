@@ -519,6 +519,19 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_format_ints_floats_and_hex()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(
+            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(0.0 - 12.25) + "|" + Ashes.Text.toHex(48879))""");
+        result.Stdout.ShouldBe("-42|-12.25|0xbeef\n");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_run_file_exists_programs()
     {
         if (!CanRunWindowsRuntimePrograms())

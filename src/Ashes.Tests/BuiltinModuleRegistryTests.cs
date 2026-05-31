@@ -74,6 +74,9 @@ public sealed class BuiltinModuleRegistryTests
         module.Members.ContainsKey("uncons").ShouldBeTrue();
         module.Members.ContainsKey("parseInt").ShouldBeTrue();
         module.Members.ContainsKey("parseFloat").ShouldBeTrue();
+        module.Members.ContainsKey("fromInt").ShouldBeTrue();
+        module.Members.ContainsKey("fromFloat").ShouldBeTrue();
+        module.Members.ContainsKey("toHex").ShouldBeTrue();
     }
 
     [Test]
@@ -94,7 +97,7 @@ public sealed class BuiltinModuleRegistryTests
                 | Some((head, tail)) ->
                     match Ashes.Text.parseInt("123") with
                         | Error(message) -> Ashes.IO.print(message)
-                        | Ok(value) -> Ashes.IO.print(value)
+                        | Ok(value) -> Ashes.IO.print(Ashes.Text.fromInt(value) + ":" + Ashes.Text.toHex(value) + ":" + Ashes.Text.fromFloat(1.5))
             """,
             diag).ParseProgram();
         var lowering = new Lowering(diag);

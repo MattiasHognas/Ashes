@@ -220,6 +220,14 @@ All file operations return `Result` ADTs: `Ok(value)` on success,
 
 These instructions return the existing `Maybe` and `Result` ADTs.
 
+### Text Formatting
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `TextFromInt` | `Target`, `ValueTemp` | Format integer → `Str` |
+| `TextFromFloat` | `Target`, `ValueTemp` | Format finite float → `Str` |
+| `TextToHex` | `Target`, `ValueTemp` | Format integer as hexadecimal → `Str` |
+
 ### HTTP
 
 | Instruction | Fields | Description |
