@@ -6,7 +6,7 @@ public sealed class Parser
     private readonly Diagnostics _diag;
     private Token _current;
     private Token _previous;
-    private int _suppressBitwiseOrDepth;
+    private int _matchCasePipeSuppressionDepth;
 
     public Parser(string text, Diagnostics diag)
     {
@@ -212,14 +212,14 @@ public sealed class Parser
 
     private Expr ParseMatchCaseBody()
     {
-        _suppressBitwiseOrDepth++;
+        _matchCasePipeSuppressionDepth++;
         try
         {
             return ParseExpressionCore();
         }
         finally
         {
-            _suppressBitwiseOrDepth--;
+            _matchCasePipeSuppressionDepth--;
         }
     }
 
@@ -535,7 +535,7 @@ public sealed class Parser
     {
         var left = ParseBitwiseXor();
 
-        while (_current.Kind == TokenKind.Pipe && _suppressBitwiseOrDepth == 0)
+        while (_current.Kind == TokenKind.Pipe && _matchCasePipeSuppressionDepth == 0)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             Consume(TokenKind.Pipe);
@@ -792,8 +792,8 @@ public sealed class Parser
     {
         var start = _current.Position;
         Consume(TokenKind.LParen);
-        var suppressedBitwiseOrDepth = _suppressBitwiseOrDepth;
-        _suppressBitwiseOrDepth = 0;
+        var suppressedMatchCasePipeDepth = _matchCasePipeSuppressionDepth;
+        _matchCasePipeSuppressionDepth = 0;
         var e = ParseExpressionCore();
         if (_current.Kind == TokenKind.Comma)
         {
@@ -804,11 +804,11 @@ public sealed class Parser
                 elements.Add(ParseExpressionCore());
             }
             Consume(TokenKind.RParen);
-            _suppressBitwiseOrDepth = suppressedBitwiseOrDepth;
+            _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
             return RegisterExpr(new Expr.TupleLit(elements), start, LastConsumedEnd);
         }
         Consume(TokenKind.RParen);
-        _suppressBitwiseOrDepth = suppressedBitwiseOrDepth;
+        _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
         return e;
     }
 
