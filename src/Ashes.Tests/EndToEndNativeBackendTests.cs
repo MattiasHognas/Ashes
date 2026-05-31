@@ -76,6 +76,22 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Bitwise_not_and_unsigned_literal_program_runs_and_prints_expected_output()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var src = """
+            let a = ~0
+            in let b = 255u8
+            in Ashes.IO.print(a + b)
+            """;
+        (await CompileRunCaptureProgramAsync(src)).ShouldBe("254\n");
+    }
+
+    [Test]
     public async Task Write_program_runs_without_trailing_newline()
     {
         if (!OperatingSystem.IsLinux())

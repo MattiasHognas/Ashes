@@ -664,6 +664,14 @@ public sealed class Parser
             return RegisterExpr(new Expr.Subtract(zero, right), start, AstSpans.GetOrDefault(right).End);
         }
 
+        if (_current.Kind == TokenKind.Tilde)
+        {
+            var start = _current.Position;
+            Consume(TokenKind.Tilde);
+            var operand = ParseUnary();
+            return RegisterExpr(new Expr.BitwiseNot(operand), start, AstSpans.GetOrDefault(operand).End);
+        }
+
         if (_current.Kind == TokenKind.Await)
         {
             var start = _current.Position;
@@ -747,7 +755,44 @@ public sealed class Parser
     private Expr ParseInt()
     {
         var t = Consume(TokenKind.Int);
+        if (TryParseUnsignedLiteral(t.Text, out var value, out var bits))
+        {
+            return RegisterExpr(new Expr.UIntLit(value, bits), t.Position, t.End);
+        }
+
         return RegisterExpr(new Expr.IntLit(t.IntValue), t.Position, t.End);
+    }
+
+    private static bool TryParseUnsignedLiteral(string text, out ulong value, out int bits)
+    {
+        bits = 0;
+        value = 0;
+
+        if (text.EndsWith("u8", StringComparison.Ordinal))
+        {
+            bits = 8;
+            return ulong.TryParse(text[..^2], out value);
+        }
+
+        if (text.EndsWith("u16", StringComparison.Ordinal))
+        {
+            bits = 16;
+            return ulong.TryParse(text[..^3], out value);
+        }
+
+        if (text.EndsWith("u32", StringComparison.Ordinal))
+        {
+            bits = 32;
+            return ulong.TryParse(text[..^3], out value);
+        }
+
+        if (text.EndsWith("u64", StringComparison.Ordinal))
+        {
+            bits = 64;
+            return ulong.TryParse(text[..^3], out value);
+        }
+
+        return false;
     }
 
     private Expr ParseFloat()

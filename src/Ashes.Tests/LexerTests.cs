@@ -8,7 +8,7 @@ public sealed class LexerTests
     [Test]
     public void Next_should_tokenize_keywords_operators_and_literals()
     {
-        var tokens = LexAll("let let? let! rec in print if then else match with fun true false type async await foo >= <= == != -> :: |> |?> |!> + - * / = , | ( ) [ ] 123 1.5");
+        var tokens = LexAll("let let? let! rec in print if then else match with fun true false type async await foo >= <= == != -> :: |> |?> |!> + - * / ~ = , | ( ) [ ] 123 1.5");
 
         tokens.Select(t => t.Kind).ShouldBe(
         [
@@ -43,6 +43,7 @@ public sealed class LexerTests
             TokenKind.Minus,
             TokenKind.Star,
             TokenKind.Slash,
+            TokenKind.Tilde,
             TokenKind.Equals,
             TokenKind.Comma,
             TokenKind.Pipe,
@@ -128,6 +129,66 @@ public sealed class LexerTests
             TokenKind.Int,
             TokenKind.EOF
         ]);
+    }
+
+    [Test]
+    public void Next_should_tokenize_unsigned_integer_suffix_literals()
+    {
+        var tokens = LexAll("255u8 65535u16 4294967295u32 18446744073709551615u64");
+
+        tokens[0].Kind.ShouldBe(TokenKind.Int);
+        tokens[0].Text.ShouldBe("255u8");
+        tokens[0].IntValue.ShouldBe(255);
+
+        tokens[1].Kind.ShouldBe(TokenKind.Int);
+        tokens[1].Text.ShouldBe("65535u16");
+        tokens[1].IntValue.ShouldBe(65535);
+
+        tokens[2].Kind.ShouldBe(TokenKind.Int);
+        tokens[2].Text.ShouldBe("4294967295u32");
+        tokens[2].IntValue.ShouldBe(4294967295);
+
+        tokens[3].Kind.ShouldBe(TokenKind.Int);
+        tokens[3].Text.ShouldBe("18446744073709551615u64");
+        tokens[3].IntValue.ShouldBe(-1);
+
+        tokens[4].Kind.ShouldBe(TokenKind.EOF);
+    }
+
+    [Test]
+    public void Next_should_report_out_of_range_unsigned_integer_literal()
+    {
+        var diag = new Diagnostics();
+        var lexer = new Lexer("256u8", diag);
+
+        var token = lexer.Next();
+
+        token.Kind.ShouldBe(TokenKind.Int);
+        diag.Errors.ShouldContain(x => x.Contains("Unsigned integer literal out of range for u8: 256u8.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Next_should_not_match_unsigned_suffix_when_followed_by_identifier_character()
+    {
+        var tokens = LexAll("255u81 255u164 123u8abc");
+
+        tokens.Select(t => t.Kind).ShouldBe(
+        [
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.Int,
+            TokenKind.Ident,
+            TokenKind.EOF
+        ]);
+
+        tokens[0].Text.ShouldBe("255");
+        tokens[1].Text.ShouldBe("u81");
+        tokens[2].Text.ShouldBe("255");
+        tokens[3].Text.ShouldBe("u164");
+        tokens[4].Text.ShouldBe("123");
+        tokens[5].Text.ShouldBe("u8abc");
     }
 
     [Test]
