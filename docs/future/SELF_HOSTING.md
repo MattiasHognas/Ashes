@@ -356,16 +356,17 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 2 — Indexed / byte collections
 
-5. [ ] **Immutable `Bytes` type with O(1) indexed read + length** — the
+5. [x] **Immutable `Bytes` type with O(1) indexed read + length** — the
    lexer and object-file parsing need random access that `uncons` cannot
-   provide.
-6. [ ] **Little-endian integer↔bytes encode/decode** (read/write
+   provide. Landed: `Ashes.Bytes.empty`, `singleton`, `length`, `get`,
+   `append`, `appendByte`, `fromList`.
+6. [x] **Little-endian integer↔bytes encode/decode** (read/write
    `u16`/`u32`/`u64` at an offset) — mirrors `BinaryPrimitives`, the
-   core linker operation.
-7. [ ] **Immutable byte builder + `writeBytes` binary file output** — an
+   core linker operation. Landed: `Ashes.Bytes.u16Le`, `u32Le`, `u64Le`,
+   `getU16Le`, `getU32Le`, `getU64Le`.
+7. [x] **Immutable byte builder + `writeBytes` binary file output** — an
    append-style builder that returns new values (no in-place mutation),
-   plus raw binary file write. Enough to emit a trivial ELF/PE stub
-   end-to-end as a proof.
+   plus raw binary file write. Landed: `Ashes.File.writeBytes`.
 
 ### Phase 3 — String library breadth
 

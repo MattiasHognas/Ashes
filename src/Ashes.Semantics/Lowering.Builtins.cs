@@ -542,6 +542,13 @@ public sealed partial class Lowering
     private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
     {
         IntrinsicKind.FileWriteText => 2,
+        IntrinsicKind.FileWriteBytes => 2,
+        IntrinsicKind.BytesGet => 2,
+        IntrinsicKind.BytesAppend => 2,
+        IntrinsicKind.BytesAppendByte => 2,
+        IntrinsicKind.BytesGetU16Le => 2,
+        IntrinsicKind.BytesGetU32Le => 2,
+        IntrinsicKind.BytesGetU64Le => 2,
         IntrinsicKind.HttpPost => 2,
         IntrinsicKind.NetTcpConnect => 2,
         IntrinsicKind.NetTcpSend => 2,
@@ -1451,6 +1458,562 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.AsyncRace,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
+        );
+    }
+
+    // --- Ashes.Bytes lowering methods ---
+
+    private (int, TypeRef) LowerBytesEmpty(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var prunedArgType = Prune(argType);
+        if (prunedArgType is TypeRef.TNever)
+        {
+            return (argTemp, prunedArgType);
+        }
+
+        Unify(prunedArgType, _resolvedTypes["Unit"]);
+        var target = NewTemp();
+        Emit(new IrInst.BytesEmpty(target));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesSingleton(Expr byteArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(byteArg);
+        var (byteTemp, byteType) = LowerExpr(byteArg);
+        var prunedByteType = Prune(byteType);
+        if (prunedByteType is TypeRef.TNever)
+        {
+            return (byteTemp, prunedByteType);
+        }
+
+        if (prunedByteType is TypeRef.TVar)
+        {
+            Unify(prunedByteType, new TypeRef.TUInt(8));
+            prunedByteType = new TypeRef.TUInt(8);
+        }
+
+        if (prunedByteType is not TypeRef.TUInt { Bits: 8 })
+        {
+            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Bytes.singleton() expects u8 but got {Pretty(prunedByteType)}.");
+            return (byteTemp, prunedByteType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesSingleton(target, byteTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesLength(Expr bytesArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.length() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, prunedBytesType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesLength(target, bytesTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerBytesGet(Expr bytesArg, Expr indexArg)
+    {
+        using var bytesDiagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.get() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, prunedBytesType);
+        }
+
+        using var indexDiagnosticSpan = PushDiagnosticSpan(indexArg);
+        var (indexTemp, indexType) = LowerExpr(indexArg);
+        var prunedIndexType = Prune(indexType);
+        if (prunedIndexType is TypeRef.TNever)
+        {
+            return (indexTemp, prunedIndexType);
+        }
+
+        if (prunedIndexType is TypeRef.TVar)
+        {
+            Unify(prunedIndexType, new TypeRef.TInt());
+            prunedIndexType = new TypeRef.TInt();
+        }
+
+        if (prunedIndexType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(indexArg), $"Ashes.Bytes.get() expects Int for index but got {Pretty(prunedIndexType)}.");
+            return (indexTemp, prunedIndexType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesGet(target, bytesTemp, indexTemp));
+        return (target, new TypeRef.TUInt(8));
+    }
+
+    private (int, TypeRef) LowerBytesAppend(Expr leftArg, Expr rightArg)
+    {
+        using var leftDiagnosticSpan = PushDiagnosticSpan(leftArg);
+        var (leftTemp, leftType) = LowerExpr(leftArg);
+        var prunedLeftType = Prune(leftType);
+        if (prunedLeftType is TypeRef.TNever)
+        {
+            return (leftTemp, prunedLeftType);
+        }
+
+        if (prunedLeftType is TypeRef.TVar)
+        {
+            Unify(prunedLeftType, new TypeRef.TBytes());
+            prunedLeftType = new TypeRef.TBytes();
+        }
+
+        if (prunedLeftType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(leftArg), $"Ashes.Bytes.append() expects Bytes for first argument but got {Pretty(prunedLeftType)}.");
+            return (leftTemp, prunedLeftType);
+        }
+
+        using var rightDiagnosticSpan = PushDiagnosticSpan(rightArg);
+        var (rightTemp, rightType) = LowerExpr(rightArg);
+        var prunedRightType = Prune(rightType);
+        if (prunedRightType is TypeRef.TNever)
+        {
+            return (rightTemp, prunedRightType);
+        }
+
+        if (prunedRightType is TypeRef.TVar)
+        {
+            Unify(prunedRightType, new TypeRef.TBytes());
+            prunedRightType = new TypeRef.TBytes();
+        }
+
+        if (prunedRightType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(rightArg), $"Ashes.Bytes.append() expects Bytes for second argument but got {Pretty(prunedRightType)}.");
+            return (rightTemp, prunedRightType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesAppend(target, leftTemp, rightTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesAppendByte(Expr bytesArg, Expr byteArg)
+    {
+        using var bytesDiagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.appendByte() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, prunedBytesType);
+        }
+
+        using var byteDiagnosticSpan = PushDiagnosticSpan(byteArg);
+        var (byteTemp, byteType) = LowerExpr(byteArg);
+        var prunedByteType = Prune(byteType);
+        if (prunedByteType is TypeRef.TNever)
+        {
+            return (byteTemp, prunedByteType);
+        }
+
+        if (prunedByteType is TypeRef.TVar)
+        {
+            Unify(prunedByteType, new TypeRef.TUInt(8));
+            prunedByteType = new TypeRef.TUInt(8);
+        }
+
+        if (prunedByteType is not TypeRef.TUInt { Bits: 8 })
+        {
+            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Bytes.appendByte() expects u8 for byte argument but got {Pretty(prunedByteType)}.");
+            return (byteTemp, prunedByteType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesAppendByte(target, bytesTemp, byteTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesFromList(Expr listArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(listArg);
+        var (listTemp, listType) = LowerExpr(listArg);
+        var prunedListType = Prune(listType);
+        if (prunedListType is TypeRef.TNever)
+        {
+            return (listTemp, prunedListType);
+        }
+
+        if (prunedListType is TypeRef.TVar)
+        {
+            Unify(prunedListType, new TypeRef.TList(new TypeRef.TUInt(8)));
+            prunedListType = new TypeRef.TList(new TypeRef.TUInt(8));
+        }
+
+        if (prunedListType is not TypeRef.TList listT)
+        {
+            ReportDiagnostic(GetSpan(listArg), $"Ashes.Bytes.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
+            return (listTemp, prunedListType);
+        }
+
+        var prunedElem = Prune(listT.Element);
+        if (prunedElem is TypeRef.TVar)
+        {
+            Unify(prunedElem, new TypeRef.TUInt(8));
+        }
+        else if (prunedElem is not TypeRef.TUInt { Bits: 8 })
+        {
+            ReportDiagnostic(GetSpan(listArg), $"Ashes.Bytes.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
+            return (listTemp, prunedListType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesFromList(target, listTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesU16Le(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var prunedValueType = Prune(valueType);
+        if (prunedValueType is TypeRef.TNever)
+        {
+            return (valueTemp, prunedValueType);
+        }
+
+        if (prunedValueType is TypeRef.TVar)
+        {
+            Unify(prunedValueType, new TypeRef.TUInt(16));
+            prunedValueType = new TypeRef.TUInt(16);
+        }
+
+        if (prunedValueType is not TypeRef.TUInt { Bits: 16 })
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u16Le() expects u16 but got {Pretty(prunedValueType)}.");
+            return (valueTemp, prunedValueType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesU16Le(target, valueTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesU32Le(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var prunedValueType = Prune(valueType);
+        if (prunedValueType is TypeRef.TNever)
+        {
+            return (valueTemp, prunedValueType);
+        }
+
+        if (prunedValueType is TypeRef.TVar)
+        {
+            Unify(prunedValueType, new TypeRef.TUInt(32));
+            prunedValueType = new TypeRef.TUInt(32);
+        }
+
+        if (prunedValueType is not TypeRef.TUInt { Bits: 32 })
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u32Le() expects u32 but got {Pretty(prunedValueType)}.");
+            return (valueTemp, prunedValueType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesU32Le(target, valueTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesU64Le(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var prunedValueType = Prune(valueType);
+        if (prunedValueType is TypeRef.TNever)
+        {
+            return (valueTemp, prunedValueType);
+        }
+
+        if (prunedValueType is TypeRef.TVar)
+        {
+            Unify(prunedValueType, new TypeRef.TUInt(64));
+            prunedValueType = new TypeRef.TUInt(64);
+        }
+
+        if (prunedValueType is not TypeRef.TUInt { Bits: 64 })
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u64Le() expects u64 but got {Pretty(prunedValueType)}.");
+            return (valueTemp, prunedValueType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesU64Le(target, valueTemp));
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesGetU16Le(Expr bytesArg, Expr offsetArg)
+        => LowerBytesGetUIntLe(bytesArg, offsetArg, 16, "getU16Le",
+            (target, bytesTemp, offsetTemp) => new IrInst.BytesGetU16Le(target, bytesTemp, offsetTemp),
+            new TypeRef.TUInt(16));
+
+    private (int, TypeRef) LowerBytesGetU32Le(Expr bytesArg, Expr offsetArg)
+        => LowerBytesGetUIntLe(bytesArg, offsetArg, 32, "getU32Le",
+            (target, bytesTemp, offsetTemp) => new IrInst.BytesGetU32Le(target, bytesTemp, offsetTemp),
+            new TypeRef.TUInt(32));
+
+    private (int, TypeRef) LowerBytesGetU64Le(Expr bytesArg, Expr offsetArg)
+        => LowerBytesGetUIntLe(bytesArg, offsetArg, 64, "getU64Le",
+            (target, bytesTemp, offsetTemp) => new IrInst.BytesGetU64Le(target, bytesTemp, offsetTemp),
+            new TypeRef.TUInt(64));
+
+    private (int, TypeRef) LowerBytesGetUIntLe(Expr bytesArg, Expr offsetArg, int bits, string name,
+        Func<int, int, int, IrInst> makeInst, TypeRef resultType)
+    {
+        using var bytesDiagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.{name}() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, prunedBytesType);
+        }
+
+        using var offsetDiagnosticSpan = PushDiagnosticSpan(offsetArg);
+        var (offsetTemp, offsetType) = LowerExpr(offsetArg);
+        var prunedOffsetType = Prune(offsetType);
+        if (prunedOffsetType is TypeRef.TNever)
+        {
+            return (offsetTemp, prunedOffsetType);
+        }
+
+        if (prunedOffsetType is TypeRef.TVar)
+        {
+            Unify(prunedOffsetType, new TypeRef.TInt());
+            prunedOffsetType = new TypeRef.TInt();
+        }
+
+        if (prunedOffsetType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(offsetArg), $"Ashes.Bytes.{name}() expects Int for offset but got {Pretty(prunedOffsetType)}.");
+            return (offsetTemp, prunedOffsetType);
+        }
+
+        var target = NewTemp();
+        Emit(makeInst(target, bytesTemp, offsetTemp));
+        return (target, resultType);
+    }
+
+    private (int, TypeRef) LowerFileWriteBytes(Expr pathArg, Expr bytesArg)
+    {
+        using var pathDiagnosticSpan = PushDiagnosticSpan(pathArg);
+        var (pathTemp, pathType) = LowerExpr(pathArg);
+        var prunedPathType = Prune(pathType);
+        if (prunedPathType is TypeRef.TNever)
+        {
+            return (pathTemp, prunedPathType);
+        }
+
+        if (prunedPathType is TypeRef.TVar)
+        {
+            Unify(prunedPathType, new TypeRef.TStr());
+            prunedPathType = new TypeRef.TStr();
+        }
+
+        if (prunedPathType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.writeBytes() expects Str for path but got {Pretty(prunedPathType)}.");
+            return (pathTemp, prunedPathType);
+        }
+
+        using var bytesDiagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.File.writeBytes() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, prunedBytesType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileWriteBytes(target, pathTemp, bytesTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
+    }
+
+    // --- Ashes.Bytes binding factories ---
+
+    private Binding.Intrinsic CreateBytesEmptyBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesEmpty,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesSingletonBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesSingleton,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TUInt(8), new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesLengthBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesLength,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TInt()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesGetBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesGet,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(8))))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesAppendBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesAppend,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TBytes())))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesAppendByteBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesAppendByte,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TUInt(8), new TypeRef.TBytes())))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesFromListBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesFromList,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TList(new TypeRef.TUInt(8)), new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesU16LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesU16Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TUInt(16), new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesU32LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesU32Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TUInt(32), new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesU64LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesU64Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TUInt(64), new TypeRef.TBytes()))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesGetU16LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesGetU16Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(16))))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesGetU32LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesGetU32Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(32))))
+        );
+    }
+
+    private Binding.Intrinsic CreateBytesGetU64LeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesGetU64Le,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(64))))
+        );
+    }
+
+    private Binding.Intrinsic CreateFileWriteBytesBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileWriteBytes,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TBytes(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
     }
 }

@@ -6708,4 +6708,273 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
     }
+
+    // ── Bytes ────────────────────────────────────────────────────────────────
+    // TBytes has the same heap layout as TStr: [length:i64, data:u8[length]].
+    // All helpers that work on TStr (LoadStringLength, GetStringBytesPointer,
+    // EmitStringConcat, EmitAllocDynamic, EmitAlloc, etc.) are reused directly.
+
+    private static LlvmValueHandle EmitBytesEmpty(LlvmCodegenState state)
+    {
+        // Allocate 8 bytes (length word only, no data), store length = 0.
+        LlvmValueHandle bytesRef = EmitAlloc(state, 8);
+        StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "bytes_empty_len");
+        return bytesRef;
+    }
+
+    private static LlvmValueHandle EmitBytesSingleton(LlvmCodegenState state, LlvmValueHandle byteVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Allocate 16 bytes: 8 for length + 8 aligned for 1 data byte.
+        LlvmValueHandle bytesRef = EmitAlloc(state, 16);
+        StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_singleton_len");
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_singleton_data");
+        // byteVal is an i64 (Ashes uniform representation); truncate to i8 for storage.
+        LlvmValueHandle truncated = LlvmApi.BuildTrunc(builder, byteVal, state.I8, "bytes_singleton_byte");
+        LlvmApi.BuildStore(builder, truncated, dataPtr);
+        return bytesRef;
+    }
+
+    private static LlvmValueHandle EmitBytesLength(LlvmCodegenState state, LlvmValueHandle bytesRef)
+    {
+        return LoadStringLength(state, bytesRef, "bytes_length");
+    }
+
+    private static LlvmValueHandle EmitBytesGet(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle indexVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, bytesRef, "bytes_get_len");
+        LlvmValueHandle oob = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, indexVal, len, "bytes_get_oob");
+
+        var panicBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_get_panic");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_get_ok");
+        LlvmApi.BuildCondBr(builder, oob, panicBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, panicBlock);
+        EmitPanic(state, EmitStackStringObject(state, "Bytes.get: index out of bounds"));
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_get_data");
+        LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [indexVal], "bytes_get_elem_ptr");
+        LlvmValueHandle byteVal = LlvmApi.BuildLoad2(builder, state.I8, elemPtr, "bytes_get_byte");
+        return LlvmApi.BuildZExt(builder, byteVal, state.I64, "bytes_get_result");
+    }
+
+    private static LlvmValueHandle EmitBytesAppend(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef)
+    {
+        // Identical to EmitStringConcat — same heap layout.
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "bytes_app_left_len");
+        LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "bytes_app_right_len");
+        LlvmValueHandle totalLen = LlvmApi.BuildAdd(builder, leftLen, rightLen, "bytes_app_total_len");
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_app_total_bytes");
+        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        StoreMemory(state, destRef, 0, totalLen, "bytes_app_len");
+        LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_app_dest");
+        LlvmValueHandle leftData = GetStringBytesPointer(state, leftRef, "bytes_app_left");
+        LlvmValueHandle rightData = GetStringBytesPointer(state, rightRef, "bytes_app_right");
+        EmitCopyBytes(state, destData, leftData, leftLen, "bytes_app_copy_left");
+        LlvmValueHandle rightDest = LlvmApi.BuildGEP2(builder, state.I8, destData, [leftLen], "bytes_app_right_dest");
+        EmitCopyBytes(state, rightDest, rightData, rightLen, "bytes_app_copy_right");
+        return destRef;
+    }
+
+    private static LlvmValueHandle EmitBytesAppendByte(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle byteVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle oldLen = LoadStringLength(state, bytesRef, "bytes_appb_old_len");
+        LlvmValueHandle newLen = LlvmApi.BuildAdd(builder, oldLen, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_appb_new_len");
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, newLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_appb_total_bytes");
+        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        StoreMemory(state, destRef, 0, newLen, "bytes_appb_len");
+        LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_appb_dest");
+        LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_appb_src");
+        EmitCopyBytes(state, destData, srcData, oldLen, "bytes_appb_copy");
+        LlvmValueHandle newBytePtr = LlvmApi.BuildGEP2(builder, state.I8, destData, [oldLen], "bytes_appb_new_ptr");
+        LlvmValueHandle truncated = LlvmApi.BuildTrunc(builder, byteVal, state.I8, "bytes_appb_byte");
+        LlvmApi.BuildStore(builder, truncated, newBytePtr);
+        return destRef;
+    }
+
+    private static LlvmValueHandle EmitBytesFromList(LlvmCodegenState state, LlvmValueHandle listRef)
+    {
+        // Two-pass: count cells, allocate, fill.
+        // List cons layout: [head:i64 @ offset 0, tail:i64 @ offset 8]; nil = 0.
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_count");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_cur");
+        LlvmApi.BuildStore(builder, listRef, curSlot);
+
+        var countLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_count_loop");
+        var countBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_count_body");
+        var allocBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_alloc");
+        var fillLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_fill_loop");
+        var fillBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_fill_body");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bfl_done");
+
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_result");
+
+        // Pass 1: count.
+        LlvmApi.BuildBr(builder, countLoopBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, countLoopBlock);
+        LlvmValueHandle curCount = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "bfl_cur_count");
+        LlvmValueHandle countDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curCount, LlvmApi.ConstInt(state.I64, 0, 0), "bfl_count_done");
+        LlvmApi.BuildCondBr(builder, countDone, allocBlock, countBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countBodyBlock);
+        LlvmValueHandle cnt = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "bfl_cnt_val");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cnt, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_cnt_next"), countSlot);
+        LlvmValueHandle tailCount = LoadMemory(state, curCount, 8, "bfl_tail_count");
+        LlvmApi.BuildStore(builder, tailCount, curSlot);
+        LlvmApi.BuildBr(builder, countLoopBlock);
+
+        // Allocate result.
+        LlvmApi.PositionBuilderAtEnd(builder, allocBlock);
+        LlvmValueHandle length = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "bfl_length");
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "bfl_total_bytes");
+        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        StoreMemory(state, destRef, 0, length, "bfl_dest_len");
+        LlvmApi.BuildStore(builder, destRef, resultSlot);
+        // Reset cursor for fill pass.
+        LlvmApi.BuildStore(builder, listRef, curSlot);
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_index");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+        LlvmApi.BuildBr(builder, fillLoopBlock);
+
+        // Pass 2: fill.
+        LlvmApi.PositionBuilderAtEnd(builder, fillLoopBlock);
+        LlvmValueHandle curFill = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "bfl_cur_fill");
+        LlvmValueHandle fillDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curFill, LlvmApi.ConstInt(state.I64, 0, 0), "bfl_fill_done");
+        LlvmApi.BuildCondBr(builder, fillDone, doneBlock, fillBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fillBodyBlock);
+        LlvmValueHandle headVal = LoadMemory(state, curFill, 0, "bfl_head");
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "bfl_idx");
+        LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bfl_dest_data");
+        LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, destData, [idx], "bfl_elem_ptr");
+        LlvmValueHandle truncByte = LlvmApi.BuildTrunc(builder, headVal, state.I8, "bfl_byte");
+        LlvmApi.BuildStore(builder, truncByte, elemPtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_idx_next"), indexSlot);
+        LlvmValueHandle tailFill = LoadMemory(state, curFill, 8, "bfl_tail_fill");
+        LlvmApi.BuildStore(builder, tailFill, curSlot);
+        LlvmApi.BuildBr(builder, fillLoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bfl_result_val");
+    }
+
+    private static LlvmValueHandle EmitBytesU16Le(LlvmCodegenState state, LlvmValueHandle value)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Allocate 8 (length) + 8 aligned for 2 bytes.
+        LlvmValueHandle bytesRef = EmitAlloc(state, 16);
+        StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 2, 0), "bytes_u16_len");
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_u16_data");
+        // Store two LE bytes.
+        LlvmValueHandle b0 = LlvmApi.BuildTrunc(builder, value, state.I8, "bytes_u16_b0");
+        LlvmValueHandle b1 = LlvmApi.BuildTrunc(builder, LlvmApi.BuildLShr(builder, value, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_u16_shr8"), state.I8, "bytes_u16_b1");
+        LlvmValueHandle ptr0 = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [LlvmApi.ConstInt(state.I64, 0, 0)], "bytes_u16_ptr0");
+        LlvmValueHandle ptr1 = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [LlvmApi.ConstInt(state.I64, 1, 0)], "bytes_u16_ptr1");
+        LlvmApi.BuildStore(builder, b0, ptr0);
+        LlvmApi.BuildStore(builder, b1, ptr1);
+        return bytesRef;
+    }
+
+    private static LlvmValueHandle EmitBytesU32Le(LlvmCodegenState state, LlvmValueHandle value)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle bytesRef = EmitAlloc(state, 16);
+        StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 4, 0), "bytes_u32_len");
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_u32_data");
+        for (int i = 0; i < 4; i++)
+        {
+            LlvmValueHandle shifted = i == 0 ? value : LlvmApi.BuildLShr(builder, value, LlvmApi.ConstInt(state.I64, (ulong)(i * 8), 0), $"bytes_u32_shr{i}");
+            LlvmValueHandle byteVal = LlvmApi.BuildTrunc(builder, shifted, state.I8, $"bytes_u32_b{i}");
+            LlvmValueHandle ptr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [LlvmApi.ConstInt(state.I64, (ulong)i, 0)], $"bytes_u32_ptr{i}");
+            LlvmApi.BuildStore(builder, byteVal, ptr);
+        }
+        return bytesRef;
+    }
+
+    private static LlvmValueHandle EmitBytesU64Le(LlvmCodegenState state, LlvmValueHandle value)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle bytesRef = EmitAlloc(state, 16);
+        StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_u64_len");
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_u64_data");
+        for (int i = 0; i < 8; i++)
+        {
+            LlvmValueHandle shifted = i == 0 ? value : LlvmApi.BuildLShr(builder, value, LlvmApi.ConstInt(state.I64, (ulong)(i * 8), 0), $"bytes_u64_shr{i}");
+            LlvmValueHandle byteVal = LlvmApi.BuildTrunc(builder, shifted, state.I8, $"bytes_u64_b{i}");
+            LlvmValueHandle ptr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [LlvmApi.ConstInt(state.I64, (ulong)i, 0)], $"bytes_u64_ptr{i}");
+            LlvmApi.BuildStore(builder, byteVal, ptr);
+        }
+        return bytesRef;
+    }
+
+    private static LlvmValueHandle EmitBytesGetU16Le(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return EmitBytesReadLeUnsigned(state, bytesRef, offsetVal, 2, "bytes_getu16");
+    }
+
+    private static LlvmValueHandle EmitBytesGetU32Le(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal)
+    {
+        return EmitBytesReadLeUnsigned(state, bytesRef, offsetVal, 4, "bytes_getu32");
+    }
+
+    private static LlvmValueHandle EmitBytesGetU64Le(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal)
+    {
+        return EmitBytesReadLeUnsigned(state, bytesRef, offsetVal, 8, "bytes_getu64");
+    }
+
+    private static LlvmValueHandle EmitBytesReadLeUnsigned(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal, int byteCount, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, bytesRef, prefix + "_len");
+        // Bounds check: offset + byteCount <= len
+        LlvmValueHandle end = LlvmApi.BuildAdd(builder, offsetVal, LlvmApi.ConstInt(state.I64, (ulong)byteCount, 0), prefix + "_end");
+        LlvmValueHandle oob = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, end, len, prefix + "_oob");
+
+        var panicBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_panic");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_ok");
+        LlvmApi.BuildCondBr(builder, oob, panicBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, panicBlock);
+        EmitPanic(state, EmitStackStringObject(state, $"Bytes.get: offset out of bounds"));
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, prefix + "_data");
+        LlvmValueHandle result = LlvmApi.ConstInt(state.I64, 0, 0);
+        for (int i = 0; i < byteCount; i++)
+        {
+            LlvmValueHandle idx = LlvmApi.BuildAdd(builder, offsetVal, LlvmApi.ConstInt(state.I64, (ulong)i, 0), prefix + $"_idx{i}");
+            LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [idx], prefix + $"_eptr{i}");
+            LlvmValueHandle byteVal = LlvmApi.BuildLoad2(builder, state.I8, elemPtr, prefix + $"_byte{i}");
+            LlvmValueHandle extended = LlvmApi.BuildZExt(builder, byteVal, state.I64, prefix + $"_ext{i}");
+            if (i == 0)
+            {
+                result = extended;
+            }
+            else
+            {
+                LlvmValueHandle shifted = LlvmApi.BuildShl(builder, extended, LlvmApi.ConstInt(state.I64, (ulong)(i * 8), 0), prefix + $"_shl{i}");
+                result = LlvmApi.BuildOr(builder, result, shifted, prefix + $"_or{i}");
+            }
+        }
+        return result;
+    }
+
+    private static LlvmValueHandle EmitFileWriteBytes(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle bytesRef)
+    {
+        // Extract raw data pointer and byte count from the Bytes struct.
+        // Layout: [length:i64 @ offset 0, data:u8[] starting at bytesRef+8].
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle byteCount = LoadStringLength(state, bytesRef, "fwb_len");
+        LlvmValueHandle dataAddress = LlvmApi.BuildAdd(builder, bytesRef, LlvmApi.ConstInt(state.I64, 8, 0), "fwb_data_addr");
+        return IsLinuxFlavor(state.Flavor)
+            ? EmitLinuxFileWriteBytes(state, pathRef, dataAddress, byteCount)
+            : EmitWindowsFileWriteBytes(state, pathRef, dataAddress, byteCount);
+    }
 }

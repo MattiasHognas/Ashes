@@ -314,7 +314,8 @@ internal static partial class LlvmCodegen
         bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
-                || ProgramUsesInstruction<IrInst.FileExists>(program));
+                || ProgramUsesInstruction<IrInst.FileExists>(program)
+                || ProgramUsesInstruction<IrInst.FileWriteBytes>(program));
         bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
             || ProgramUsesInstruction<IrInst.HttpPost>(program)
             || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
@@ -1026,6 +1027,20 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSendAbiCall(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
             IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceiveAbiCall(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state)),
+            IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(state, LoadTemp(state, bytesSingleton.ByteTemp))),
+            IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
+            IrInst.BytesGet bytesGet => StoreTemp(state, bytesGet.Target, EmitBytesGet(state, LoadTemp(state, bytesGet.BytesTemp), LoadTemp(state, bytesGet.IndexTemp))),
+            IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
+            IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
+            IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
+            IrInst.BytesU16Le bytesU16Le => StoreTemp(state, bytesU16Le.Target, EmitBytesU16Le(state, LoadTemp(state, bytesU16Le.ValueTemp))),
+            IrInst.BytesU32Le bytesU32Le => StoreTemp(state, bytesU32Le.Target, EmitBytesU32Le(state, LoadTemp(state, bytesU32Le.ValueTemp))),
+            IrInst.BytesU64Le bytesU64Le => StoreTemp(state, bytesU64Le.Target, EmitBytesU64Le(state, LoadTemp(state, bytesU64Le.ValueTemp))),
+            IrInst.BytesGetU16Le bytesGetU16Le => StoreTemp(state, bytesGetU16Le.Target, EmitBytesGetU16Le(state, LoadTemp(state, bytesGetU16Le.BytesTemp), LoadTemp(state, bytesGetU16Le.OffsetTemp))),
+            IrInst.BytesGetU32Le bytesGetU32Le => StoreTemp(state, bytesGetU32Le.Target, EmitBytesGetU32Le(state, LoadTemp(state, bytesGetU32Le.BytesTemp), LoadTemp(state, bytesGetU32Le.OffsetTemp))),
+            IrInst.BytesGetU64Le bytesGetU64Le => StoreTemp(state, bytesGetU64Le.Target, EmitBytesGetU64Le(state, LoadTemp(state, bytesGetU64Le.BytesTemp), LoadTemp(state, bytesGetU64Le.OffsetTemp))),
+            IrInst.FileWriteBytes fileWriteBytes => StoreTemp(state, fileWriteBytes.Target, EmitFileWriteBytes(state, LoadTemp(state, fileWriteBytes.PathTemp), LoadTemp(state, fileWriteBytes.BytesTemp))),
             IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.

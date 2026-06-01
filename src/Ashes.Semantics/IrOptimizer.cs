@@ -215,6 +215,20 @@ public static class IrOptimizer
             IrInst.NetTcpSend n => n with { SocketTemp = R(n.SocketTemp), TextTemp = R(n.TextTemp) },
             IrInst.NetTcpReceive n => n with { SocketTemp = R(n.SocketTemp), MaxBytesTemp = R(n.MaxBytesTemp) },
             IrInst.NetTcpClose n => n with { SocketTemp = R(n.SocketTemp) },
+            IrInst.BytesEmpty b => b,
+            IrInst.BytesSingleton b => b with { ByteTemp = R(b.ByteTemp) },
+            IrInst.BytesLength b => b with { BytesTemp = R(b.BytesTemp) },
+            IrInst.BytesGet b => b with { BytesTemp = R(b.BytesTemp), IndexTemp = R(b.IndexTemp) },
+            IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
+            IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
+            IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
+            IrInst.BytesU16Le b => b with { ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesU32Le b => b with { ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesU64Le b => b with { ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesGetU16Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp) },
+            IrInst.BytesGetU32Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp) },
+            IrInst.BytesGetU64Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp) },
+            IrInst.FileWriteBytes f => f with { PathTemp = R(f.PathTemp), BytesTemp = R(f.BytesTemp) },
 
             // Ownership.
             // NOTE: Keep these source-temp users in sync with CollectUsedTemps().
@@ -1034,6 +1048,20 @@ public static class IrOptimizer
             case IrInst.NetTcpSend n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.TextTemp); break;
             case IrInst.NetTcpReceive n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.MaxBytesTemp); break;
             case IrInst.NetTcpClose n: usedTemps.Add(n.SocketTemp); break;
+            case IrInst.BytesEmpty: break;
+            case IrInst.BytesSingleton b: usedTemps.Add(b.ByteTemp); break;
+            case IrInst.BytesLength b: usedTemps.Add(b.BytesTemp); break;
+            case IrInst.BytesGet b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.IndexTemp); break;
+            case IrInst.BytesAppend b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
+            case IrInst.BytesAppendByte b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.ByteTemp); break;
+            case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;
+            case IrInst.BytesU16Le b: usedTemps.Add(b.ValueTemp); break;
+            case IrInst.BytesU32Le b: usedTemps.Add(b.ValueTemp); break;
+            case IrInst.BytesU64Le b: usedTemps.Add(b.ValueTemp); break;
+            case IrInst.BytesGetU16Le b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.OffsetTemp); break;
+            case IrInst.BytesGetU32Le b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.OffsetTemp); break;
+            case IrInst.BytesGetU64Le b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.OffsetTemp); break;
+            case IrInst.FileWriteBytes f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.BytesTemp); break;
             case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
             case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
