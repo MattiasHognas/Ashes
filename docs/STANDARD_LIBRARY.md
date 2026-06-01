@@ -30,7 +30,26 @@ These types are always available without imports:
 
 - `readText(path)` returning `Result(Str, Str)`
 - `writeText(path, text)` returning `Result(Str, Unit)`
+- `writeBytes(path, bytes)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
+
+### `Ashes.Bytes`
+
+An immutable byte sequence with O(1) indexed access and O(1) length.
+
+- `empty()` returning `Bytes` — empty byte sequence
+- `singleton(byte)` returning `Bytes` — one-byte sequence
+- `length(bytes)` returning `Int`
+- `get(bytes, index)` returning `u8` — panics if index out of bounds
+- `append(left, right)` returning `Bytes` — concatenate two sequences
+- `appendByte(bytes, byte)` returning `Bytes` — append one byte
+- `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
+- `u16Le(value)` returning `Bytes` — encode `u16` little-endian (2 bytes)
+- `u32Le(value)` returning `Bytes` — encode `u32` little-endian (4 bytes)
+- `u64Le(value)` returning `Bytes` — encode `u64` little-endian (8 bytes)
+- `getU16Le(bytes, offset)` returning `u16` — decode little-endian `u16` at offset
+- `getU32Le(bytes, offset)` returning `u32` — decode little-endian `u32` at offset
+- `getU64Le(bytes, offset)` returning `u64` — decode little-endian `u64` at offset
 
 ### `Ashes.Text`
 

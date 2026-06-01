@@ -76,7 +76,21 @@ public sealed partial class Lowering
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
-        AsyncRace
+        AsyncRace,
+        BytesEmpty,
+        BytesSingleton,
+        BytesLength,
+        BytesGet,
+        BytesAppend,
+        BytesAppendByte,
+        BytesFromList,
+        BytesU16Le,
+        BytesU32Le,
+        BytesU64Le,
+        BytesGetU16Le,
+        BytesGetU32Le,
+        BytesGetU64Le,
+        FileWriteBytes
     }
 
     private enum PreludeValueKind

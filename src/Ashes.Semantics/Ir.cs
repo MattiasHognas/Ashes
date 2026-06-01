@@ -15,6 +15,8 @@ public abstract record TypeRef
     public sealed record TUInt(int Bits) : TypeRef;
     public sealed record TFloat : TypeRef;
     public sealed record TStr : TypeRef;
+    // Immutable byte buffer: layout is identical to TStr → {length:i64, data:u8[length]}.
+    public sealed record TBytes : TypeRef;
     public sealed record TBool : TypeRef;
     public sealed record TNever : TypeRef;
     public sealed record TList(TypeRef Element) : TypeRef;
@@ -117,6 +119,22 @@ public abstract record IrInst
     public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
     public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
+
+    // Ashes.Bytes operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
+    public sealed record BytesEmpty(int Target) : IrInst;
+    public sealed record BytesSingleton(int Target, int ByteTemp) : IrInst;
+    public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
+    public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
+    public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
+    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
+    public sealed record BytesFromList(int Target, int ListTemp) : IrInst;
+    public sealed record BytesU16Le(int Target, int ValueTemp) : IrInst;
+    public sealed record BytesU32Le(int Target, int ValueTemp) : IrInst;
+    public sealed record BytesU64Le(int Target, int ValueTemp) : IrInst;
+    public sealed record BytesGetU16Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
+    public sealed record BytesGetU32Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
+    public sealed record BytesGetU64Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
+    public sealed record FileWriteBytes(int Target, int PathTemp, int BytesTemp) : IrInst;
 
     /// <summary>
     /// Drop instruction for deterministic cleanup of owned values.

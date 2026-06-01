@@ -40,7 +40,21 @@ public static class BuiltinRegistry
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
-        AsyncRace
+        AsyncRace,
+        BytesEmpty,
+        BytesSingleton,
+        BytesLength,
+        BytesGet,
+        BytesAppend,
+        BytesAppendByte,
+        BytesFromList,
+        BytesU16Le,
+        BytesU32Le,
+        BytesU64Le,
+        BytesGetU16Le,
+        BytesGetU32Le,
+        BytesGetU64Le,
+        FileWriteBytes
     }
 
     public sealed record BuiltinModuleMember(
@@ -107,6 +121,7 @@ public static class BuiltinRegistry
                 {
                     ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
+                    ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Text"] = new(
@@ -120,6 +135,25 @@ public static class BuiltinRegistry
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
                     ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
                     ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Bytes"] = new(
+                "Ashes.Bytes",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["empty"] = new("empty", BuiltinValueKind.BytesEmpty, IsCallable: true, Arity: 1),
+                    ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1),
+                    ["length"] = new("length", BuiltinValueKind.BytesLength, IsCallable: true, Arity: 1),
+                    ["get"] = new("get", BuiltinValueKind.BytesGet, IsCallable: true, Arity: 2),
+                    ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2),
+                    ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2),
+                    ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1),
+                    ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1),
+                    ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1),
+                    ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1),
+                    ["getU16Le"] = new("getU16Le", BuiltinValueKind.BytesGetU16Le, IsCallable: true, Arity: 2),
+                    ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
+                    ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",
@@ -206,6 +240,7 @@ public static class BuiltinRegistry
     public static bool IsOwnedType(TypeRef prunedType)
     {
         return prunedType is TypeRef.TStr
+            or TypeRef.TBytes
             or TypeRef.TList
             or TypeRef.TTuple
             or TypeRef.TFun
