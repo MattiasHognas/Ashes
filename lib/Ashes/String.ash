@@ -29,7 +29,7 @@ in
                 fun (text) -> 
                     fun (start) -> 
                         fun (count) -> 
-                            if start < 0
+                            if start <= -1
                             then ""
                             else 
                                 if count <= 0
@@ -83,7 +83,7 @@ in
                                                         fun (acc) -> 
                                                             let foundAt = indexOf(remaining)(separator)
                                                             in 
-                                                                if foundAt < 0
+                                                                if foundAt <= -1
                                                                 then Ashes.List.reverse(remaining :: acc)
                                                                 else 
                                                                     let head = substring(remaining)(0)(foundAt)

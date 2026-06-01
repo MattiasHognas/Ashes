@@ -19,7 +19,19 @@ in
                             in 
                                 let noContains = Ashes.String.contains(text)("zip") == false
                                 in 
-                                    let hasSplit = Ashes.String.split("a,b,,c")(",") == ["a", "b", "", "c"]
+                                    let hasSplit = 
+                                        match Ashes.String.split("a,b,,c")(",") with
+                                            | p0 :: p1 :: p2 :: p3 :: [] -> 
+                                                if p0 == "a"
+                                                then 
+                                                    if p1 == "b"
+                                                    then 
+                                                        if p2 == ""
+                                                        then p3 == "c"
+                                                        else false
+                                                    else false
+                                                else false
+                                            | _ -> false
                                     in 
                                         let hasTrim = Ashes.String.trim(" \n\tvalue\r ") == "value"
                                         in 
