@@ -84,7 +84,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            let a = ~0
+            let a = ~0u8
             in let b = 255u8
             in Ashes.IO.print(a + b)
             """;

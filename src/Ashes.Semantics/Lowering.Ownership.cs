@@ -246,7 +246,7 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         var pruned = Prune(type);
-        return pruned is TypeRef.TInt or TypeRef.TFloat or TypeRef.TBool;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool;
     }
 
     /// <summary>

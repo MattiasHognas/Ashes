@@ -288,6 +288,11 @@ public sealed partial class Lowering
         var (rendered, precedence) = t switch
         {
             TypeRef.TInt => ("Int", precAtom),
+            TypeRef.TUInt { Bits: 8 } => ("u8", precAtom),
+            TypeRef.TUInt { Bits: 16 } => ("u16", precAtom),
+            TypeRef.TUInt { Bits: 32 } => ("u32", precAtom),
+            TypeRef.TUInt { Bits: 64 } => ("u64", precAtom),
+            TypeRef.TUInt u => ($"u{u.Bits}", precAtom),
             TypeRef.TFloat => ("Float", precAtom),
             TypeRef.TStr => ("Str", precAtom),
             TypeRef.TBool => ("Bool", precAtom),

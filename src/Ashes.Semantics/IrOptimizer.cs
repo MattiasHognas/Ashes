@@ -156,6 +156,7 @@ public static class IrOptimizer
             IrInst.SubInt s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.MulInt m => m with { Left = R(m.Left), Right = R(m.Right) },
             IrInst.DivInt d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.DivUInt d => d with { Left = R(d.Left), Right = R(d.Right) },
             IrInst.AndInt a => a with { Left = R(a.Left), Right = R(a.Right) },
             IrInst.OrInt o => o with { Left = R(o.Left), Right = R(o.Right) },
             IrInst.XorInt x => x with { Left = R(x.Left), Right = R(x.Right) },
@@ -343,6 +344,16 @@ public static class IrOptimizer
                         long folded = knownInts[div.Left] / knownInts[div.Right];
                         knownInts[div.Target] = folded;
                         result.Add(new IrInst.LoadConstInt(div.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.DivUInt divU when knownInts.ContainsKey(divU.Left) && knownInts.ContainsKey(divU.Right)
+                                             && knownInts[divU.Right] != 0:
+                    {
+                        long folded = (long)((ulong)knownInts[divU.Left] / (ulong)knownInts[divU.Right]);
+                        knownInts[divU.Target] = folded;
+                        result.Add(new IrInst.LoadConstInt(divU.Target, folded) { Location = inst.Location });
                         changed = true;
                         break;
                     }
@@ -665,6 +676,23 @@ public static class IrOptimizer
                         break;
                     }
 
+                case IrInst.DivUInt divU:
+                    {
+                        bool rightOne = knownInts.TryGetValue(divU.Right, out long rvu) && rvu == 1;
+                        if (rightOne)
+                        {
+                            // x / 1 → x
+                            result.Add(new IrInst.Borrow(divU.Target, divU.Left) { Location = inst.Location });
+                            changed = true;
+                        }
+                        else
+                        {
+                            result.Add(inst);
+                        }
+
+                        break;
+                    }
+
                 // Labels: preserve state across single-predecessor labels.
                 case IrInst.Label lbl:
                     {
@@ -953,6 +981,7 @@ public static class IrOptimizer
             case IrInst.SubInt s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.MulInt m: usedTemps.Add(m.Left); usedTemps.Add(m.Right); break;
             case IrInst.DivInt d: usedTemps.Add(d.Left); usedTemps.Add(d.Right); break;
+            case IrInst.DivUInt d: usedTemps.Add(d.Left); usedTemps.Add(d.Right); break;
             case IrInst.AndInt a: usedTemps.Add(a.Left); usedTemps.Add(a.Right); break;
             case IrInst.OrInt o: usedTemps.Add(o.Left); usedTemps.Add(o.Right); break;
             case IrInst.XorInt x: usedTemps.Add(x.Left); usedTemps.Add(x.Right); break;

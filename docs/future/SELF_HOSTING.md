@@ -336,17 +336,18 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 1 — Byte & numeric primitives (foundational, low risk)
 
-1. [ ] **Unsigned integer support** — `u8`/`u16`/`u32`/`u64`
-   representations (or a single `Byte`/`UInt` to start). Unsigned literal
-   suffixes now parse (`255u8`, `65535u16`, `4294967295u32`,
-   `18446744073709551615u64`), but dedicated unsigned value types are still
-   pending.
-2. [ ] **Byte type (`u8`) + byte literals** — the smallest unit for image
-   construction. Byte literals via the `u8` suffix now parse, but a distinct
-   `Byte` runtime/type-system primitive is still pending.
-3. [ ] **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
-   ints/bytes. `Int` `&`, `|`, `^`, `<<`, and `>>` have landed; byte/
-   unsigned-specific behaviour remains. Unary `~` now also lowers for `Int`.
+1. [x] **Unsigned integer support** — `u8`/`u16`/`u32`/`u64` types are
+   now first-class. Unsigned literal suffixes parse (`255u8`, `65535u16`,
+   `4294967295u32`, `18446744073709551615u64`) and lower to a dedicated
+   `TypeRef.TUInt(Bits)` type. Arithmetic wraps at the declared bit width
+   (e.g. `255u8 + 1u8 = 0u8`).
+2. [x] **Byte type (`u8`) + byte literals** — `u8` is a distinct runtime
+   type in the type system (`TypeRef.TUInt(8)`). Byte literals via the
+   `u8` suffix parse and lower correctly. `print`, `Ashes.Text.fromInt`,
+   and `Ashes.Text.toHex` all accept `u8`/`u16`/`u32`/`u64` values.
+3. [x] **Bitwise operators** — `&`, `|`, `^`, `<<`, `>>`, `~` over
+   `Int` and all unsigned types (`u8`/`u16`/`u32`/`u64`). Wrapping
+   semantics applied after each bitwise and arithmetic operation.
    Pure and isolated; needed for header, relocation, and instruction-operand
    encoding.
 4. [x] **`Int → Str` / `Float → Str` conversions** (`fromInt`, `fromFloat`)

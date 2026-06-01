@@ -16,7 +16,7 @@ public sealed partial class Lowering
             return (vTemp, t);
         }
 
-        if (t is TypeRef.TInt)
+        if (t is TypeRef.TInt or TypeRef.TUInt { Bits: < 64 })
         {
             _usesPrintInt = true;
             Emit(new IrInst.PrintInt(vTemp));
@@ -311,7 +311,7 @@ public sealed partial class Lowering
             loweredType = new TypeRef.TInt();
         }
 
-        if (loweredType is not TypeRef.TInt)
+        if (loweredType is not TypeRef.TInt && loweredType is not TypeRef.TUInt { Bits: <= 32 })
         {
             ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.fromInt() expects Int but got {Pretty(loweredType)}.");
             return (valueTemp, loweredType);
@@ -367,7 +367,7 @@ public sealed partial class Lowering
             loweredType = new TypeRef.TInt();
         }
 
-        if (loweredType is not TypeRef.TInt)
+        if (loweredType is not TypeRef.TInt and not TypeRef.TUInt)
         {
             ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.toHex() expects Int but got {Pretty(loweredType)}.");
             return (valueTemp, loweredType);
