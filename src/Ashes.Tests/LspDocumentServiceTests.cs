@@ -364,6 +364,7 @@ public sealed class LspDocumentServiceTests
         completions.ShouldContain("Http");
         completions.ShouldContain("Net");
         completions.ShouldContain("List");
+        completions.ShouldContain("String");
     }
 
     [Test]
@@ -389,6 +390,18 @@ public sealed class LspDocumentServiceTests
         completions.ShouldContain("length");
         completions.ShouldContain("map");
         completions.ShouldContain("filter");
+    }
+
+    [Test]
+    public void GetCompletions_should_return_imported_string_module_members()
+    {
+        const string source = "import Ashes.String\nString.";
+
+        var completions = DocumentService.GetCompletions(source, source.Length);
+
+        completions.ShouldContain("substring");
+        completions.ShouldContain("split");
+        completions.ShouldContain("trim");
     }
 
     [Test]

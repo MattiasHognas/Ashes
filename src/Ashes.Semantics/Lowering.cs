@@ -1619,7 +1619,7 @@ public sealed partial class Lowering
         var free = FreeVars(lam.Body, bound);
 
         // Remove vars that are not in scope (should not happen if earlier checks)
-        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme).Distinct().ToList();
+        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct().ToList();
 
         // At lambda creation site: allocate env if needed
         int envPtrTemp;
@@ -2421,7 +2421,7 @@ public sealed partial class Lowering
         // --- Capture computation (same as lambda lifting) ---
         var bound = new HashSet<string>(StringComparer.Ordinal);
         var free = FreeVars(asyncExpr.Body, bound);
-        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.Self or Binding.Scheme)
+        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme)
                            .Distinct().ToList();
 
         // Module-aliased qualified vars (e.g., list.map where list → Ashes.List)

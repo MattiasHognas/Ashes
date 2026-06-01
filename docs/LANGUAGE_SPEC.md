@@ -79,6 +79,7 @@ Shipped standard-library modules under the reserved `Ashes` namespace also inclu
 - `Ashes.List`
 - `Ashes.Maybe`
 - `Ashes.Result`
+- `Ashes.String`
 - `Ashes.Test`
 
 Built-in runtime types available without import include:
@@ -1303,6 +1304,7 @@ Current shipped modules include:
 - `Ashes.List` — helper functions for the built-in list type.
 - `Ashes.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
 - `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
+- `Ashes.String` — pure string helpers built on `Ashes.Text`.
 - `Ashes.Test` — assertion helpers for tests and small programs.
 
 Stable helper surfaces:
@@ -1340,6 +1342,19 @@ Stable helper surfaces:
 - `Ashes.Result.isOk : Result(E, a) -> Bool`
 - `Ashes.Result.isError : Result(E, a) -> Bool`
 - `Ashes.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
+
+### `Ashes.String`
+
+- `Ashes.String.substring : Str -> Int -> Int -> Str`
+- `Ashes.String.length : Str -> Int`
+- `Ashes.String.indexOf : Str -> Str -> Int`
+- `Ashes.String.startsWith : Str -> Str -> Bool`
+- `Ashes.String.contains : Str -> Str -> Bool`
+- `Ashes.String.split : Str -> Str -> List<Str>`
+- `Ashes.String.trim : Str -> Str`
+- `Ashes.String.isLetter : Str -> Bool`
+- `Ashes.String.isDigit : Str -> Bool`
+- `Ashes.String.isWhiteSpace : Str -> Bool`
 
 `Ashes.Test` currently exports:
 
