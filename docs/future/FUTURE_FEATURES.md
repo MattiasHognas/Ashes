@@ -14,7 +14,7 @@ Planned features and future work for the Ashes language and ecosystem.
 | Selective Imports | Planned | `import Ashes.IO (print)` |
 | Effects / IO Types | Planned | Effect system or IO types |
 | Inline Modules | Planned | Inline module declarations |
-| Ashes.String | Planned | Standard library string utilities |
+| Ashes.String | Landed | Standard library string utilities (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`, `isLetter`, `isDigit`, `isWhiteSpace`) |
 | Ashes.Bytes | Planned | Standard library byte utilities |
 | Ashes.Net.Http | Planned | Standard library HTTP module |
 | Ashes.Math | Planned | Standard library math utilities |

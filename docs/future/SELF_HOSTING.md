@@ -132,9 +132,8 @@ Already landed:
 - **Number-to-string formatting** — `Ashes.Text.fromInt`,
   `Ashes.Text.fromFloat`, `Ashes.Text.toHex`.
 
-Still missing (an `Ashes.String` module, already listed in
-`FUTURE_FEATURES.md`) would need at minimum: `substring`, `length`,
-`indexOf`, `startsWith`, `contains`, `split`, `trim`, character-predicate
+The `Ashes.String` module has now landed with `substring`, `length`,
+`indexOf`, `startsWith`, `contains`, `split`, `trim`, and character-predicate
 helpers (`isLetter`, `isDigit`, `isWhiteSpace`).
 
 ### 5. Type Annotations
@@ -370,10 +369,10 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 3 — String library breadth
 
-8. [ ] **`Ashes.String` helpers** — `substring`, `length`, `indexOf`,
-   `startsWith`, `contains`, `split`, `trim`, and character-class
+8. [x] **`Ashes.String` helpers** — landed with `substring`, `length`,
+   `indexOf`, `startsWith`, `contains`, `split`, `trim`, and character-class
    predicates (`isLetter`, `isDigit`, `isWhiteSpace`). Builds on
-   `Ashes.Text`; needed before the lexer/parser are practical to port.
+   `Ashes.Text`.
 
 ### Phase 4 — Data structures (immutable)
 

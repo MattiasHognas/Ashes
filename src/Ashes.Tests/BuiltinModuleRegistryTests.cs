@@ -87,6 +87,21 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_string_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.String", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.String");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.String.ash");
+    }
+
+    [Test]
+    public void Ashes_string_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.String").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.String");
+    }
+
+    [Test]
     public void Ashes_text_builtins_typecheck_through_maybe_and_result_flow()
     {
         var diag = new Diagnostics();
