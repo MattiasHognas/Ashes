@@ -6915,7 +6915,6 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitBytesGetU16Le(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal)
     {
-        LlvmBuilderHandle builder = state.Target.Builder;
         return EmitBytesReadLeUnsigned(state, bytesRef, offsetVal, 2, "bytes_getu16");
     }
 
