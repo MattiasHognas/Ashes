@@ -6942,7 +6942,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, oob, panicBlock, okBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, panicBlock);
-        EmitPanic(state, EmitStackStringObject(state, $"Bytes.get: offset out of bounds"));
+        EmitPanic(state, EmitStackStringObject(state, $"Bytes.getU{byteCount * 8}Le: offset out of bounds"));
 
         LlvmApi.PositionBuilderAtEnd(builder, okBlock);
         LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, prefix + "_data");
