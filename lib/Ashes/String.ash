@@ -96,219 +96,84 @@ in
                             in 
                                 let isDigit = 
                                     fun (text) -> 
-                                        match Ashes.Text.uncons(text) with
-                                            | None -> false
-                                            | Some((head, tail)) -> 
-                                                if tail == ""
-                                                then 
-                                                    if head == "0"
-                                                    then true
-                                                    else 
-                                                        if head == "1"
-                                                        then true
-                                                        else 
-                                                            if head == "2"
-                                                            then true
-                                                            else 
-                                                                if head == "3"
-                                                                then true
-                                                                else 
-                                                                    if head == "4"
-                                                                    then true
-                                                                    else 
-                                                                        if head == "5"
-                                                                        then true
-                                                                        else 
-                                                                            if head == "6"
-                                                                            then true
-                                                                            else 
-                                                                                if head == "7"
-                                                                                then true
-                                                                                else 
-                                                                                    if head == "8"
-                                                                                    then true
-                                                                                    else head == "9"
-                                                else false
+                                        match text with
+                                            | "0" -> true
+                                            | "1" -> true
+                                            | "2" -> true
+                                            | "3" -> true
+                                            | "4" -> true
+                                            | "5" -> true
+                                            | "6" -> true
+                                            | "7" -> true
+                                            | "8" -> true
+                                            | "9" -> true
+                                            | _ -> false
                                 in 
                                     let isLetter = 
                                         fun (text) -> 
-                                            match Ashes.Text.uncons(text) with
-                                                | None -> false
-                                                | Some((head, tail)) -> 
-                                                    if tail == ""
-                                                    then 
-                                                        if head == "a"
-                                                        then true
-                                                        else 
-                                                            if head == "b"
-                                                            then true
-                                                            else 
-                                                                if head == "c"
-                                                                then true
-                                                                else 
-                                                                    if head == "d"
-                                                                    then true
-                                                                    else 
-                                                                        if head == "e"
-                                                                        then true
-                                                                        else 
-                                                                            if head == "f"
-                                                                            then true
-                                                                            else 
-                                                                                if head == "g"
-                                                                                then true
-                                                                                else 
-                                                                                    if head == "h"
-                                                                                    then true
-                                                                                    else 
-                                                                                        if head == "i"
-                                                                                        then true
-                                                                                        else 
-                                                                                            if head == "j"
-                                                                                            then true
-                                                                                            else 
-                                                                                                if head == "k"
-                                                                                                then true
-                                                                                                else 
-                                                                                                    if head == "l"
-                                                                                                    then true
-                                                                                                    else 
-                                                                                                        if head == "m"
-                                                                                                        then true
-                                                                                                        else 
-                                                                                                            if head == "n"
-                                                                                                            then true
-                                                                                                            else 
-                                                                                                                if head == "o"
-                                                                                                                then true
-                                                                                                                else 
-                                                                                                                    if head == "p"
-                                                                                                                    then true
-                                                                                                                    else 
-                                                                                                                        if head == "q"
-                                                                                                                        then true
-                                                                                                                        else 
-                                                                                                                            if head == "r"
-                                                                                                                            then true
-                                                                                                                            else 
-                                                                                                                                if head == "s"
-                                                                                                                                then true
-                                                                                                                                else 
-                                                                                                                                    if head == "t"
-                                                                                                                                    then true
-                                                                                                                                    else 
-                                                                                                                                        if head == "u"
-                                                                                                                                        then true
-                                                                                                                                        else 
-                                                                                                                                            if head == "v"
-                                                                                                                                            then true
-                                                                                                                                            else 
-                                                                                                                                                if head == "w"
-                                                                                                                                                then true
-                                                                                                                                                else 
-                                                                                                                                                    if head == "x"
-                                                                                                                                                    then true
-                                                                                                                                                    else 
-                                                                                                                                                        if head == "y"
-                                                                                                                                                        then true
-                                                                                                                                                        else 
-                                                                                                                                                            if head == "z"
-                                                                                                                                                            then true
-                                                                                                                                                            else 
-                                                                                                                                                                if head == "A"
-                                                                                                                                                                then true
-                                                                                                                                                                else 
-                                                                                                                                                                    if head == "B"
-                                                                                                                                                                    then true
-                                                                                                                                                                    else 
-                                                                                                                                                                        if head == "C"
-                                                                                                                                                                        then true
-                                                                                                                                                                        else 
-                                                                                                                                                                            if head == "D"
-                                                                                                                                                                            then true
-                                                                                                                                                                            else 
-                                                                                                                                                                                if head == "E"
-                                                                                                                                                                                then true
-                                                                                                                                                                                else 
-                                                                                                                                                                                    if head == "F"
-                                                                                                                                                                                    then true
-                                                                                                                                                                                    else 
-                                                                                                                                                                                        if head == "G"
-                                                                                                                                                                                        then true
-                                                                                                                                                                                        else 
-                                                                                                                                                                                            if head == "H"
-                                                                                                                                                                                            then true
-                                                                                                                                                                                            else 
-                                                                                                                                                                                                if head == "I"
-                                                                                                                                                                                                then true
-                                                                                                                                                                                                else 
-                                                                                                                                                                                                    if head == "J"
-                                                                                                                                                                                                    then true
-                                                                                                                                                                                                    else 
-                                                                                                                                                                                                        if head == "K"
-                                                                                                                                                                                                        then true
-                                                                                                                                                                                                        else 
-                                                                                                                                                                                                            if head == "L"
-                                                                                                                                                                                                            then true
-                                                                                                                                                                                                            else 
-                                                                                                                                                                                                                if head == "M"
-                                                                                                                                                                                                                then true
-                                                                                                                                                                                                                else 
-                                                                                                                                                                                                                    if head == "N"
-                                                                                                                                                                                                                    then true
-                                                                                                                                                                                                                    else 
-                                                                                                                                                                                                                        if head == "O"
-                                                                                                                                                                                                                        then true
-                                                                                                                                                                                                                        else 
-                                                                                                                                                                                                                            if head == "P"
-                                                                                                                                                                                                                            then true
-                                                                                                                                                                                                                            else 
-                                                                                                                                                                                                                                if head == "Q"
-                                                                                                                                                                                                                                then true
-                                                                                                                                                                                                                                else 
-                                                                                                                                                                                                                                    if head == "R"
-                                                                                                                                                                                                                                    then true
-                                                                                                                                                                                                                                    else 
-                                                                                                                                                                                                                                        if head == "S"
-                                                                                                                                                                                                                                        then true
-                                                                                                                                                                                                                                        else 
-                                                                                                                                                                                                                                            if head == "T"
-                                                                                                                                                                                                                                            then true
-                                                                                                                                                                                                                                            else 
-                                                                                                                                                                                                                                                if head == "U"
-                                                                                                                                                                                                                                                then true
-                                                                                                                                                                                                                                                else 
-                                                                                                                                                                                                                                                    if head == "V"
-                                                                                                                                                                                                                                                    then true
-                                                                                                                                                                                                                                                    else 
-                                                                                                                                                                                                                                                        if head == "W"
-                                                                                                                                                                                                                                                        then true
-                                                                                                                                                                                                                                                        else 
-                                                                                                                                                                                                                                                            if head == "X"
-                                                                                                                                                                                                                                                            then true
-                                                                                                                                                                                                                                                            else 
-                                                                                                                                                                                                                                                                if head == "Y"
-                                                                                                                                                                                                                                                                then true
-                                                                                                                                                                                                                                                                else head == "Z"
-                                                    else false
+                                            match text with
+                                                | "a" -> true
+                                                | "b" -> true
+                                                | "c" -> true
+                                                | "d" -> true
+                                                | "e" -> true
+                                                | "f" -> true
+                                                | "g" -> true
+                                                | "h" -> true
+                                                | "i" -> true
+                                                | "j" -> true
+                                                | "k" -> true
+                                                | "l" -> true
+                                                | "m" -> true
+                                                | "n" -> true
+                                                | "o" -> true
+                                                | "p" -> true
+                                                | "q" -> true
+                                                | "r" -> true
+                                                | "s" -> true
+                                                | "t" -> true
+                                                | "u" -> true
+                                                | "v" -> true
+                                                | "w" -> true
+                                                | "x" -> true
+                                                | "y" -> true
+                                                | "z" -> true
+                                                | "A" -> true
+                                                | "B" -> true
+                                                | "C" -> true
+                                                | "D" -> true
+                                                | "E" -> true
+                                                | "F" -> true
+                                                | "G" -> true
+                                                | "H" -> true
+                                                | "I" -> true
+                                                | "J" -> true
+                                                | "K" -> true
+                                                | "L" -> true
+                                                | "M" -> true
+                                                | "N" -> true
+                                                | "O" -> true
+                                                | "P" -> true
+                                                | "Q" -> true
+                                                | "R" -> true
+                                                | "S" -> true
+                                                | "T" -> true
+                                                | "U" -> true
+                                                | "V" -> true
+                                                | "W" -> true
+                                                | "X" -> true
+                                                | "Y" -> true
+                                                | "Z" -> true
+                                                | _ -> false
                                     in 
                                         let isWhiteSpace = 
                                             fun (text) -> 
-                                                match Ashes.Text.uncons(text) with
-                                                    | None -> false
-                                                    | Some((head, tail)) -> 
-                                                        if tail == ""
-                                                        then 
-                                                            if head == " "
-                                                            then true
-                                                            else 
-                                                                if head == "\t"
-                                                                then true
-                                                                else 
-                                                                    if head == "\n"
-                                                                    then true
-                                                                    else head == "\r"
-                                                        else false
+                                                match text with
+                                                    | " " -> true
+                                                    | "\t" -> true
+                                                    | "\n" -> true
+                                                    | "\r" -> true
+                                                    | _ -> false
                                         in 
                                             let rec trimStart = 
                                                 fun (text) -> 
