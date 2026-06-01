@@ -10,6 +10,9 @@ public sealed record TypeScheme(IReadOnlyList<TypeVar> Quantified, TypeRef Body)
 public abstract record TypeRef
 {
     public sealed record TInt : TypeRef;
+    // Unsigned integer: Bits ∈ {8, 16, 32, 64}. Values are stored as i64 internally
+    // but wrap at their declared bit width for arithmetic, matching C unsigned semantics.
+    public sealed record TUInt(int Bits) : TypeRef;
     public sealed record TFloat : TypeRef;
     public sealed record TStr : TypeRef;
     public sealed record TBool : TypeRef;
@@ -52,6 +55,7 @@ public abstract record IrInst
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
     public sealed record MulInt(int Target, int Left, int Right) : IrInst;
     public sealed record DivInt(int Target, int Left, int Right) : IrInst;
+    public sealed record DivUInt(int Target, int Left, int Right) : IrInst;
     public sealed record AndInt(int Target, int Left, int Right) : IrInst;
     public sealed record OrInt(int Target, int Left, int Right) : IrInst;
     public sealed record XorInt(int Target, int Left, int Right) : IrInst;
@@ -63,6 +67,8 @@ public abstract record IrInst
     public sealed record DivFloat(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntGe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntLe(int Target, int Left, int Right) : IrInst;
+    public sealed record CmpUIntGe(int Target, int Left, int Right) : IrInst;
+    public sealed record CmpUIntLe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpIntNe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpFloatGe(int Target, int Left, int Right) : IrInst;
