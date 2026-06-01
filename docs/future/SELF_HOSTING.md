@@ -164,6 +164,12 @@ Ashes would need either:
 - A built-in `Map(K, V)` type (immutable, balanced-tree based).
 - Or enough low-level primitives (hashing, arrays) to implement one.
 
+Current status: a shipped `Ashes.Map` module now provides a persistent AVL-tree
+map value type with immutable `set`/`insert`, `get`, `contains`, `size`,
+`foldLeft`, `toList`, and `fromList`. Because Ashes does not yet have
+typeclasses or a built-in ordering interface, callers currently provide a total
+ordering function `(K -> K -> Int)` to lookup/update operations.
+
 ### 7. Arrays / Indexed Collections
 
 Lists are immutable linked lists with O(n) access. The compiler needs
@@ -293,7 +299,7 @@ diagnostics and linker-oriented output.
 | 3 | Persistent (immutable) maps         | Type inference, scopes              | High                      |
 | 4 | String manipulation                 | Lexer, error messages               | Medium (uncons/parse landed) |
 | 5 | Type annotations                    | Codebase maintainability            | Medium                    |
-| 6 | Map / dictionary type               | Pervasive in compiler               | Medium–High               |
+| 6 | Map / dictionary type               | Pervasive in compiler               | Landed (`Ashes.Map` AVL map) |
 | 7 | Arrays / indexed access             | Lexer, linker, codegen              | Medium                    |
 | 8 | Records / named fields              | Readability at scale                | Medium                    |
 | 9 | Module system enhancements          | Cross-module types                  | Medium                    |
@@ -376,9 +382,10 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 4 — Data structures (immutable)
 
-9. [ ] **Immutable `Map(K, V)`** — balanced-tree persistent map. The single
-   highest-leverage item for the type-inference core (substitution table,
-   scopes, intern tables, symbol tables).
+9. [x] **Immutable `Map(K, V)`** — landed as the shipped `Ashes.Map` module:
+   a balanced-tree persistent map with immutable insert/update/lookup helpers.
+   The current surface uses caller-supplied comparison functions
+   `(K -> K -> Int)` until the language grows a built-in ordering abstraction.
 10. [ ] **Immutable indexed `Array(T)`** (optional, after `Bytes`/`Map`) —
     O(1)/O(log n) indexed sequence for IR instruction arrays if
     linked-list O(n) access proves too slow.

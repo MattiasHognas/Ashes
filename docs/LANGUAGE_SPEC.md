@@ -1302,6 +1302,7 @@ never mutates its arguments.
 Current shipped modules include:
 
 - `Ashes.List` — helper functions for the built-in list type.
+- `Ashes.Map` — persistent immutable map helpers and the shipped `MapTree(K, V)` value type.
 - `Ashes.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
 - `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
 - `Ashes.String` — pure string helpers built on `Ashes.Text`.
@@ -1321,6 +1322,22 @@ Stable helper surfaces:
 - `Ashes.List.fold : (a -> b -> b) -> b -> List<a> -> b`
 - `Ashes.List.isEmpty : List<a> -> Bool`
 - `Ashes.List.reverse : List<a> -> List<a>`
+
+### `Ashes.Map`
+
+- `Ashes.Map.empty : MapTree(k, v)`
+- `Ashes.Map.isEmpty : MapTree(k, v) -> Bool`
+- `Ashes.Map.get : (k -> k -> Int) -> k -> MapTree(k, v) -> Maybe(v)`
+- `Ashes.Map.contains : (k -> k -> Int) -> k -> MapTree(k, v) -> Bool`
+- `Ashes.Map.set : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Map.insert : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Map.size : MapTree(k, v) -> Int`
+- `Ashes.Map.foldLeft : (s -> k -> v -> s) -> s -> MapTree(k, v) -> s`
+- `Ashes.Map.toList : MapTree(k, v) -> List<(k, v)>`
+- `Ashes.Map.fromList : (k -> k -> Int) -> List<(k, v)> -> MapTree(k, v)`
+
+`Ashes.Map` is a persistent AVL tree. Callers provide a total ordering
+function because the language does not yet have a built-in ordering abstraction.
 
 ### `Ashes.Maybe`
 
