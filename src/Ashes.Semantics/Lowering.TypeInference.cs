@@ -295,6 +295,7 @@ public sealed partial class Lowering
             TypeRef.TUInt u => ($"u{u.Bits}", precAtom),
             TypeRef.TFloat => ("Float", precAtom),
             TypeRef.TStr => ("Str", precAtom),
+            TypeRef.TBytes => ("Bytes", precAtom),
             TypeRef.TBool => ("Bool", precAtom),
             TypeRef.TNever => ("Never", precAtom),
             TypeRef.TList l => ($"List<{Pretty(l.Element, typeVarNames, parentPrecedence: precAtom)}>", precAtom),

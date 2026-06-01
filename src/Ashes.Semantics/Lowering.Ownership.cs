@@ -31,6 +31,7 @@ public sealed partial class Lowering
         return prunedType switch
         {
             TypeRef.TStr => "String",
+            TypeRef.TBytes => "Bytes",
             TypeRef.TList => "List",
             TypeRef.TTuple => "Tuple",
             TypeRef.TFun => "Function",
@@ -273,6 +274,10 @@ public sealed partial class Lowering
         {
             case TypeRef.TStr:
                 staticSizeBytes = -1; // dynamic: 8 (length word) + string.length
+                return CopyOutKind.Shallow;
+
+            case TypeRef.TBytes:
+                staticSizeBytes = -1; // dynamic: 8 (length word) + bytes.length
                 return CopyOutKind.Shallow;
 
             case TypeRef.TList list when IsCopyOutSafeElement(list.Element):

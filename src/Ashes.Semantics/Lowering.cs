@@ -473,6 +473,20 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerQualifiedBuiltinFunctionReference(name, CreateBytesEmptyBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSingletonBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesLength => LowerQualifiedBuiltinFunctionReference(name, CreateBytesLengthBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesGet => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendByteBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerQualifiedBuiltinFunctionReference(name, CreateBytesFromListBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU16LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU32LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU64LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU16LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU32LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU64LeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -2051,6 +2065,20 @@ public sealed partial class Lowering
                 IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                 IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
                 IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+                IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
+                IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
+                IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+                IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+                IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
+                IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
+                IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
+                IntrinsicKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -2118,6 +2146,20 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
                     _ => StdMemberNotFound(resolvedModule, qv.Name)
                 };
             }
