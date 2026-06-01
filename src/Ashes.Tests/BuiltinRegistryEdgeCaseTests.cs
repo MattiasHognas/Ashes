@@ -201,6 +201,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes.Net.Tcp");
         names.ShouldContain("Ashes.Net.Tls");
         names.ShouldContain("Ashes.Result");
+        names.ShouldContain("Ashes.String");
         names.ShouldContain("Ashes.List");
         names.ShouldContain("Ashes.Maybe");
         names.ShouldContain("Ashes.Test");
@@ -232,6 +233,14 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.TryGetModule("Ashes.List", out var module).ShouldBeTrue();
 
         module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.List.ash");
+    }
+
+    [Test]
+    public void Ashes_String_module_should_have_resource_name()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.String", out var module).ShouldBeTrue();
+
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.String.ash");
     }
 
     [Test]

@@ -137,6 +137,19 @@ namespace. They are not overridable by project-local modules.
 - `isError`
 - `mapError`
 
+### `Ashes.String`
+
+- `substring`
+- `length`
+- `indexOf`
+- `startsWith`
+- `contains`
+- `split`
+- `trim`
+- `isLetter`
+- `isDigit`
+- `isWhiteSpace`
+
 ### `Ashes.Test`
 
 - `assertEqual(expected, actual)`
