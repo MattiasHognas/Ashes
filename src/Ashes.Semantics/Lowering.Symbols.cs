@@ -47,7 +47,16 @@ public sealed partial class Lowering
                 continue; // Cannot register a usable type symbol without constructors
             }
 
+            var typeParameterSymbols = declaredOrInferredTypeParameters
+                .Select(tp => new TypeParameterSymbol(tp.Name))
+                .ToList();
             var ctorSymbols = new List<ConstructorSymbol>();
+            var typeSymbol = new TypeSymbol(
+                Name: decl.Name,
+                TypeParameters: typeParameterSymbols,
+                Constructors: ctorSymbols,
+                DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
+            );
             var seenCtors = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var ctor in decl.Constructors)
@@ -63,7 +72,7 @@ public sealed partial class Lowering
                     ParentType: decl.Name,
                     Arity: ctor.Parameters.Count,
                     ParameterTypes: ctor.Parameters
-                        .Select(parameterName => ResolveUserConstructorParameterType(parameterName, declaredOrInferredTypeParameters))
+                        .Select(parameterName => ResolveUserConstructorParameterType(parameterName, declaredOrInferredTypeParameters, typeSymbol))
                         .ToList(),
                     DeclaringSyntax: ctor
                 );
@@ -73,12 +82,6 @@ public sealed partial class Lowering
                 _constructorSymbols[ctor.Name] = ctorSymbol;
             }
 
-            var typeSymbol = new TypeSymbol(
-                Name: decl.Name,
-                TypeParameters: declaredOrInferredTypeParameters.Select(tp => new TypeParameterSymbol(tp.Name)).ToList(),
-                Constructors: ctorSymbols,
-                DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
-            );
             _typeSymbols[decl.Name] = typeSymbol;
 
             var typeParams = typeSymbol.TypeParameters
@@ -237,12 +240,48 @@ public sealed partial class Lowering
         }
     }
 
-    private static TypeRef ResolveUserConstructorParameterType(string parameterName, IReadOnlyList<TypeParameter> declaredOrInferredTypeParameters)
+    private static TypeRef ResolveUserConstructorParameterType(
+        string parameterName,
+        IReadOnlyList<TypeParameter> declaredOrInferredTypeParameters,
+        TypeSymbol declaringTypeSymbol)
     {
         var matchingParameter = declaredOrInferredTypeParameters.FirstOrDefault(tp => string.Equals(tp.Name, parameterName, StringComparison.Ordinal));
         if (matchingParameter is not null)
         {
-            return new TypeRef.TTypeParam(new TypeParameterSymbol(matchingParameter.Name));
+            return new TypeRef.TTypeParam(
+                declaringTypeSymbol.TypeParameters.First(tp => string.Equals(tp.Name, matchingParameter.Name, StringComparison.Ordinal)));
+        }
+
+        if (string.Equals(parameterName, declaringTypeSymbol.Name, StringComparison.Ordinal))
+        {
+            return new TypeRef.TNamedType(
+                declaringTypeSymbol,
+                declaringTypeSymbol.TypeParameters.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
+        }
+
+        if (string.Equals(parameterName, "Int", StringComparison.Ordinal))
+        {
+            return new TypeRef.TInt();
+        }
+
+        if (string.Equals(parameterName, "Bool", StringComparison.Ordinal))
+        {
+            return new TypeRef.TBool();
+        }
+
+        if (string.Equals(parameterName, "Str", StringComparison.Ordinal))
+        {
+            return new TypeRef.TStr();
+        }
+
+        if (string.Equals(parameterName, "Bytes", StringComparison.Ordinal))
+        {
+            return new TypeRef.TBytes();
+        }
+
+        if (string.Equals(parameterName, "Float", StringComparison.Ordinal))
+        {
+            return new TypeRef.TFloat();
         }
 
         return new TypeRef.TTypeParam(new TypeParameterSymbol(parameterName));

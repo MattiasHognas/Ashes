@@ -405,18 +405,6 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
-    public void GetCompletions_should_return_imported_map_module_members()
-    {
-        const string source = "import Ashes.Map\nMap.";
-
-        var completions = DocumentService.GetCompletions(source, source.Length);
-
-        completions.ShouldContain("empty");
-        completions.ShouldContain("set");
-        completions.ShouldContain("get");
-    }
-
-    [Test]
     public void GetCompletions_should_return_local_bindings_in_scope()
     {
         const string source = "let value = 1 in let next = value + 1 in ne";

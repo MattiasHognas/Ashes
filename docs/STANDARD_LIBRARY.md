@@ -122,12 +122,12 @@ namespace. They are not overridable by project-local modules.
 - `isEmpty`
 - `get(compare)(key)(map)` returning `Maybe(V)`
 - `contains(compare)(key)(map)` returning `Bool`
-- `set(compare)(key)(value)(map)` returning `Map(K, V)`
-- `insert(compare)(key)(value)(map)` returning `Map(K, V)`
+- `set(compare)(key)(value)(map)` returning a new map value
+- `insert(compare)(key)(value)(map)` returning a new map value
 - `size(map)` returning `Int`
 - `foldLeft(folder)(state)(map)` returning the folded state in key order
 - `toList(map)` returning `List((K, V))` in key order
-- `fromList(compare)(entries)` returning `Map(K, V)`
+- `fromList(compare)(entries)` returning a new map value
 
 `Ashes.Map` is implemented as a persistent AVL tree. Because Ashes does not yet
 have a built-in ordering abstraction, callers supply a total ordering function

@@ -165,7 +165,7 @@ Ashes would need either:
 - Or enough low-level primitives (hashing, arrays) to implement one.
 
 Current status: a shipped `Ashes.Map` module now provides a persistent AVL-tree
-`Map(K, V)` with immutable `set`/`insert`, `get`, `contains`, `size`,
+map value type with immutable `set`/`insert`, `get`, `contains`, `size`,
 `foldLeft`, `toList`, and `fromList`. Because Ashes does not yet have
 typeclasses or a built-in ordering interface, callers currently provide a total
 ordering function `(K -> K -> Int)` to lookup/update operations.
