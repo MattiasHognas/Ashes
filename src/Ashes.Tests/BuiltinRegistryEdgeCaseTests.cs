@@ -203,6 +203,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes.Result");
         names.ShouldContain("Ashes.String");
         names.ShouldContain("Ashes.List");
+        names.ShouldContain("Ashes.Map");
         names.ShouldContain("Ashes.Maybe");
         names.ShouldContain("Ashes.Test");
     }
@@ -249,6 +250,14 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.TryGetModule("Ashes.Maybe", out var module).ShouldBeTrue();
 
         module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Maybe.ash");
+    }
+
+    [Test]
+    public void Ashes_Map_module_should_have_resource_name()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Map", out var module).ShouldBeTrue();
+
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Map.ash");
     }
 
     [Test]

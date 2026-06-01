@@ -102,6 +102,21 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_map_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Map", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Map");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Map.ash");
+    }
+
+    [Test]
+    public void Ashes_map_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.Map").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Map");
+    }
+
+    [Test]
     public void Ashes_text_builtins_typecheck_through_maybe_and_result_flow()
     {
         var diag = new Diagnostics();

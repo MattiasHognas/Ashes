@@ -15,6 +15,8 @@
   <ItemGroup>
     <EmbeddedResource Include="..\..\lib\Ashes\List.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.List.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Map.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Map.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Maybe.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Maybe.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Result.ash"
