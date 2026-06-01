@@ -106,6 +106,18 @@ The reserved `Ashes` namespace is a module root, not a direct alias surface for
 Integer literals are non-negative decimal values.
 Negative integers are written with unary negation, for example `-1`.
 
+Ashes also provides unsigned integer primitive types: `u8`, `u16`, `u32`,
+and `u64`.
+
+Unsigned literals use an explicit suffix:
+
+255u8
+65535u16
+4294967295u32
+18446744073709551615u64
+
+Unsigned arithmetic and bitwise operations wrap at the declared bit width.
+
 ## 2.1.1 Floats
 
 Ashes has a built-in primitive type:
@@ -253,10 +265,15 @@ Rules:
 - Float multiplication: `3.0 * 4.0` evaluates to `12.0`.
 - Float division: `5.0 / 2.0` evaluates to `2.5`.
 
+Unsigned arithmetic operators (`+`, `-`, `*`, `/`) support `u8`, `u16`,
+`u32`, and `u64` when both operands have the same unsigned type.
+
 Mixed numeric operators are not allowed:
 
 - `Int op Float` is a type error.
 - `Float op Int` is a type error.
+- `Int op uN` and `uN op Int` are type errors.
+- `uN op uM` with different widths is a type error.
 
 Unary negation is supported for integers:
 
@@ -271,13 +288,17 @@ Comparison operators evaluate to `Bool`.
 |----------|---------------------|------------------------------------|
 | `>=`     | `Int >= Int`        | Greater than or equal              |
 | `>=`     | `Float >= Float`    | Greater than or equal              |
+| `>=`     | `uN >= uN`          | Greater than or equal (unsigned)   |
 | `<=`     | `Int <= Int`        | Less than or equal                 |
 | `<=`     | `Float <= Float`    | Less than or equal                 |
+| `<=`     | `uN <= uN`          | Less than or equal (unsigned)      |
 | `==`     | `Int == Int`        | Equal (integers)                   |
 | `==`     | `Float == Float`    | Equal (floats)                     |
+| `==`     | `uN == uN`          | Equal (unsigned integers)          |
 | `==`     | `Str == Str`        | Equal (strings, byte-for-byte)     |
 | `!=`     | `Int != Int`        | Not equal (integers)               |
 | `!=`     | `Float != Float`    | Not equal (floats)                 |
+| `!=`     | `uN != uN`          | Not equal (unsigned integers)      |
 | `!=`     | `Str != Str`        | Not equal (strings, byte-for-byte) |
 
 Examples:
@@ -293,15 +314,18 @@ Both operands of `==` and `!=` must have the same type. Mixing `Int` and `Str` i
 
 ## 3.3 Bitwise
 
-Bitwise operators operate on `Int` values and return `Int`.
+Bitwise operators operate on integer values (`Int`, `u8`, `u16`, `u32`,
+`u64`) and return the same type as the left operand.
 
 | Operator | Types        | Description           |
 |----------|--------------|-----------------------|
-| `&`      | `Int & Int`  | Bitwise AND           |
-| `\|`     | `Int \| Int` | Bitwise OR            |
-| `^`      | `Int ^ Int`  | Bitwise XOR           |
-| `<<`     | `Int << Int` | Shift left            |
-| `>>`     | `Int >> Int` | Logical shift right   |
+| `&`      | `T & T`      | Bitwise AND           |
+| `\|`     | `T \| T`     | Bitwise OR            |
+| `^`      | `T ^ T`      | Bitwise XOR           |
+| `<<`     | `T << T`     | Shift left            |
+| `>>`     | `T >> T`     | Logical shift right   |
+
+Where `T` is `Int` or one unsigned integer type (`u8`, `u16`, `u32`, `u64`).
 
 Shift counts are masked to the low 6 bits for the 64-bit `Int`
 representation.
@@ -473,9 +497,9 @@ Rules:
   declarations.
 - Supported extern parameter and return types are `Int`, `u8`, `u16`, `u32`,
   `u64`, `Float`, `Bool`, `Str`, opaque extern types declared with
-  `extern type`, and pointers to supported extern types using `*T`. Unsigned
-  integer types use Ashes `Int` values at call sites and are converted to the
-  requested C ABI width at the extern boundary.
+  `extern type`, and pointers to supported extern types using `*T`.
+  Unsigned extern parameters and returns use Ashes unsigned values at call
+  sites and are converted to the requested C ABI width at the extern boundary.
 - `void` is supported for extern return types and produces Ashes `Unit`.
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
 - Opaque extern types are represented as native pointer-sized words and are
