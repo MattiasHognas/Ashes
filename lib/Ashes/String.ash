@@ -1,28 +1,34 @@
-let rec length = 
-    fun (text) -> 
-        match Ashes.Text.uncons(text) with
-            | None -> 0
-            | Some((_head, tail)) -> 1 + length(tail)
-in 
-    let rec drop = 
+let length = 
+    let rec go = 
         fun (text) -> 
-            fun (count) -> 
-                if count <= 0
-                then text
-                else 
-                    match Ashes.Text.uncons(text) with
-                        | None -> ""
-                        | Some((_head, tail)) -> drop(tail)(count - 1)
-    in 
-        let rec take = 
+            match Ashes.Text.uncons(text) with
+                | None -> 0
+                | Some((_head, tail)) -> 1 + go(tail)
+    in go
+in 
+    let drop = 
+        let rec go = 
             fun (text) -> 
                 fun (count) -> 
                     if count <= 0
-                    then ""
+                    then text
                     else 
                         match Ashes.Text.uncons(text) with
                             | None -> ""
-                            | Some((head, tail)) -> head + take(tail)(count - 1)
+                            | Some((_head, tail)) -> go(tail)(count - 1)
+        in go
+    in 
+        let take = 
+            let rec go = 
+                fun (text) -> 
+                    fun (count) -> 
+                        if count <= 0
+                        then ""
+                        else 
+                            match Ashes.Text.uncons(text) with
+                                | None -> ""
+                                | Some((head, tail)) -> head + go(tail)(count - 1)
+            in go
         in 
             let substring = 
                 fun (text) -> 
@@ -35,18 +41,20 @@ in
                                 then ""
                                 else take(drop(text)(start))(count)
             in 
-                let rec startsWith = 
-                    fun (text) -> 
-                        fun (prefix) -> 
-                            match Ashes.Text.uncons(prefix) with
-                                | None -> true
-                                | Some((prefixHead, prefixTail)) -> 
-                                    match Ashes.Text.uncons(text) with
-                                        | None -> false
-                                        | Some((textHead, textTail)) -> 
-                                            if textHead == prefixHead
-                                            then startsWith(textTail)(prefixTail)
-                                            else false
+                let startsWith = 
+                    let rec go = 
+                        fun (text) -> 
+                            fun (prefix) -> 
+                                match Ashes.Text.uncons(prefix) with
+                                    | None -> true
+                                    | Some((prefixHead, prefixTail)) -> 
+                                        match Ashes.Text.uncons(text) with
+                                            | None -> false
+                                            | Some((textHead, textTail)) -> 
+                                                if textHead == prefixHead
+                                                then go(textTail)(prefixTail)
+                                                else false
+                    in go
                 in 
                     let indexOf = 
                         fun (text) -> 
@@ -175,35 +183,41 @@ in
                                                     | "\r" -> true
                                                     | _ -> false
                                         in 
-                                            let rec trimStart = 
-                                                fun (text) -> 
-                                                    match Ashes.Text.uncons(text) with
-                                                        | None -> ""
-                                                        | Some((head, tail)) -> 
-                                                            if isWhiteSpace(head)
-                                                            then trimStart(tail)
-                                                            else text
-                                            in 
-                                                let rec lastAndInit = 
+                                            let trimStart = 
+                                                let rec go = 
                                                     fun (text) -> 
                                                         match Ashes.Text.uncons(text) with
-                                                            | None -> None
+                                                            | None -> ""
                                                             | Some((head, tail)) -> 
-                                                                match Ashes.Text.uncons(tail) with
-                                                                    | None -> Some(("", head))
-                                                                    | Some((_tailHead, _tailRest)) -> 
-                                                                        match lastAndInit(tail) with
-                                                                            | None -> None
-                                                                            | Some((init, last)) -> Some((head + init, last))
-                                                in 
-                                                    let rec trimEnd = 
+                                                                if isWhiteSpace(head)
+                                                                then go(tail)
+                                                                else text
+                                                in go
+                                            in 
+                                                let lastAndInit = 
+                                                    let rec go = 
                                                         fun (text) -> 
-                                                            match lastAndInit(text) with
-                                                                | None -> ""
-                                                                | Some((init, last)) -> 
-                                                                    if isWhiteSpace(last)
-                                                                    then trimEnd(init)
-                                                                    else text
+                                                            match Ashes.Text.uncons(text) with
+                                                                | None -> None
+                                                                | Some((head, tail)) -> 
+                                                                    match Ashes.Text.uncons(tail) with
+                                                                        | None -> Some(("", head))
+                                                                        | Some((_tailHead, _tailRest)) -> 
+                                                                            match go(tail) with
+                                                                                | None -> None
+                                                                                | Some((init, last)) -> Some((head + init, last))
+                                                    in go
+                                                in 
+                                                    let trimEnd = 
+                                                        let rec go = 
+                                                            fun (text) -> 
+                                                                match lastAndInit(text) with
+                                                                    | None -> ""
+                                                                    | Some((init, last)) -> 
+                                                                        if isWhiteSpace(last)
+                                                                        then go(init)
+                                                                        else text
+                                                        in go
                                                     in 
                                                         let trim = 
                                                             fun (text) -> trimEnd(trimStart(text))
