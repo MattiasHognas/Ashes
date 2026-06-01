@@ -1,4 +1,3 @@
-import Ashes.List
 let rec length = 
     fun (text) -> 
         match Ashes.Text.uncons(text) with
@@ -80,21 +79,20 @@ in
                                             in 
                                                 let rec go = 
                                                     fun (remaining) -> 
-                                                        fun (acc) -> 
-                                                            let foundAt = indexOf(remaining)(separator)
-                                                            in 
-                                                                if foundAt <= -1
-                                                                then Ashes.List.reverse(remaining :: acc)
-                                                                else 
-                                                                    let head = substring(remaining)(0)(foundAt)
+                                                        let foundAt = indexOf(remaining)(separator)
+                                                        in 
+                                                            if foundAt <= -1
+                                                            then [remaining]
+                                                            else 
+                                                                let piece = substring(remaining)(0)(foundAt)
+                                                                in 
+                                                                    let restStart = foundAt + separatorLength
                                                                     in 
-                                                                        let restStart = foundAt + separatorLength
+                                                                        let restLen = length(remaining) - restStart
                                                                         in 
-                                                                            let restLength = length(remaining) - restStart
-                                                                            in 
-                                                                                let tail = substring(remaining)(restStart)(restLength)
-                                                                                in go(tail)(head :: acc)
-                                                in go(text)([])
+                                                                            let rest = substring(remaining)(restStart)(restLen)
+                                                                            in piece :: go(rest)
+                                                in go(text)
                             in 
                                 let isDigit = 
                                     fun (text) -> 

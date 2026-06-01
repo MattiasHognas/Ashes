@@ -13,11 +13,17 @@ in
                 in 
                     let hasPrefix = Ashes.String.startsWith(text)("com")
                     in 
-                        let noPrefix = Ashes.String.startsWith(text)("omp") == false
+                        let noPrefix = 
+                            if Ashes.String.startsWith(text)("omp")
+                            then false
+                            else true
                         in 
                             let hasContains = Ashes.String.contains(text)("pil")
                             in 
-                                let noContains = Ashes.String.contains(text)("zip") == false
+                                let noContains = 
+                                    if Ashes.String.contains(text)("zip")
+                                    then false
+                                    else true
                                 in 
                                     let hasSplit = 
                                         match Ashes.String.split("a,b,,c")(",") with
