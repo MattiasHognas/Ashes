@@ -1700,6 +1700,7 @@ public sealed partial class Lowering
         if (prunedElem is TypeRef.TVar)
         {
             Unify(prunedElem, new TypeRef.TUInt(8));
+            prunedElem = new TypeRef.TUInt(8);
         }
         else if (prunedElem is not TypeRef.TUInt { Bits: 8 })
         {
