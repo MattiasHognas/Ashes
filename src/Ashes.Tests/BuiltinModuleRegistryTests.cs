@@ -117,6 +117,21 @@ public sealed class BuiltinModuleRegistryTests
     }
 
     [Test]
+    public void Ashes_array_module_is_registered()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Array", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Array");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Array.ash");
+    }
+
+    [Test]
+    public void Ashes_array_is_known_standard_library_module()
+    {
+        ProjectSupport.IsStdModule("Ashes.Array").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Array");
+    }
+
+    [Test]
     public void Ashes_text_builtins_typecheck_through_maybe_and_result_flow()
     {
         var diag = new Diagnostics();
