@@ -436,36 +436,47 @@ public sealed partial class Lowering
             return ReturnNeverWithDummyTemp();
         }
 
-        // Record field access fallback: `rec.fieldName` where `rec` is a local of a record type.
+        // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.
+        // Let-bindings create Binding.Scheme; lambda params create Binding.Local.
+        int? recFieldSlot = null;
+        TypeRef? recFieldType = null;
         if (binding is Binding.Local recLocal)
         {
-            var localType = Prune(recLocal.Type);
-            if (localType is TypeRef.TNamedType namedRecType
-                && namedRecType.Symbol.Constructors.Count == 1
-                && namedRecType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
-            {
-                var ctor = namedRecType.Symbol.Constructors[0];
-                var fieldNames = ctor.DeclaringSyntax.FieldNames;
-                int fieldIdx = -1;
-                for (int fi = 0; fi < fieldNames.Count; fi++)
-                {
-                    if (string.Equals(fieldNames[fi], qv.Name, StringComparison.Ordinal))
-                    {
-                        fieldIdx = fi;
-                        break;
-                    }
-                }
+            recFieldSlot = recLocal.Slot;
+            recFieldType = Prune(recLocal.Type);
+        }
+        else if (binding is Binding.Scheme recScheme)
+        {
+            recFieldSlot = recScheme.Slot;
+            recFieldType = Prune(Instantiate(recScheme.S));
+        }
 
-                if (fieldIdx >= 0)
+        if (recFieldSlot.HasValue
+            && recFieldType is TypeRef.TNamedType namedRecType
+            && namedRecType.Symbol.Constructors.Count == 1
+            && namedRecType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
+        {
+            var ctor = namedRecType.Symbol.Constructors[0];
+            var fieldNames = ctor.DeclaringSyntax.FieldNames;
+            int fieldIdx = -1;
+            for (int fi = 0; fi < fieldNames.Count; fi++)
+            {
+                if (string.Equals(fieldNames[fi], qv.Name, StringComparison.Ordinal))
                 {
-                    int baseTemp = NewTemp();
-                    Emit(new IrInst.LoadLocal(baseTemp, recLocal.Slot));
-                    int fieldTemp = NewTemp();
-                    Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
-                    var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecType);
-                    RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
-                    return (fieldTemp, fieldType);
+                    fieldIdx = fi;
+                    break;
                 }
+            }
+
+            if (fieldIdx >= 0)
+            {
+                int baseTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(baseTemp, recFieldSlot.Value));
+                int fieldTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
+                var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecType);
+                RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
+                return (fieldTemp, fieldType);
             }
         }
 
@@ -3284,6 +3295,11 @@ public sealed partial class Lowering
                 return UsesNameOnlyAsDirectCallee(asyncExpr.Body, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
+            case Expr.RecordLit rl:
+                return rl.Fields.All(f => UsesNameOnlyAsDirectCallee(f.Value, targetName, shadowed));
+            case Expr.RecordUpdate ru:
+                return UsesNameOnlyAsDirectCallee(ru.Target, targetName, shadowed)
+                    && ru.Updates.All(u => UsesNameOnlyAsDirectCallee(u.Value, targetName, shadowed));
             default:
                 throw new NotSupportedException(expr.GetType().Name);
         }
@@ -3383,6 +3399,11 @@ public sealed partial class Lowering
                 return ExprReferencesName(asyncExpr.Body, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return ExprReferencesName(awaitExpr.Task, targetName, shadowed);
+            case Expr.RecordLit rl:
+                return rl.Fields.Any(f => ExprReferencesName(f.Value, targetName, shadowed));
+            case Expr.RecordUpdate ru:
+                return ExprReferencesName(ru.Target, targetName, shadowed)
+                    || ru.Updates.Any(u => ExprReferencesName(u.Value, targetName, shadowed));
             default:
                 throw new NotSupportedException(expr.GetType().Name);
         }
