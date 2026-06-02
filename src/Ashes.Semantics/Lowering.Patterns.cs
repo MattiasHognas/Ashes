@@ -120,7 +120,7 @@ public sealed partial class Lowering
                 }
                 else
                 {
-                    _diag.Error(matchPos, $"Non-exhaustive match expression. Missing constructor(s): {string.Join(", ", missingAdtConstructors.Select(name => $"'{name}'"))}.");
+                    _diag.Error(matchPos, FormatMissingConstructorsDiagnostic(missingAdtConstructors));
                 }
 
                 reportedNonExhaustive = true;
@@ -487,6 +487,32 @@ public sealed partial class Lowering
             default:
                 yield break;
         }
+    }
+
+    /// <summary>
+    /// Formats a non-exhaustive-match diagnostic listing missing constructor names.
+    /// When the list is long (more than <see cref="MissingConstructorDisplayLimit"/> entries),
+    /// only the first few names are shown followed by an "… and N more" suffix so the
+    /// message stays readable for large ADTs such as the 50+ variant IrInst type.
+    /// </summary>
+    private static string FormatMissingConstructorsDiagnostic(IReadOnlyList<string> missing)
+    {
+        const int DisplayLimit = 5;
+        const int TruncateShowCount = 3;
+
+        IEnumerable<string> shown = missing.Count <= DisplayLimit
+            ? missing
+            : missing.Take(TruncateShowCount);
+
+        var listed = string.Join(", ", shown.Select(name => $"'{name}'"));
+
+        if (missing.Count > DisplayLimit)
+        {
+            int remainder = missing.Count - TruncateShowCount;
+            listed += $", ... and {remainder} more";
+        }
+
+        return $"Non-exhaustive match expression. Missing constructor(s): {listed}.";
     }
 
     private bool IsDefinitelyExhaustive(IEnumerable<MatchCase> cases)

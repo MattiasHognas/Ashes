@@ -294,7 +294,7 @@ diagnostics and linker-oriented output.
 
 | # | Capability                          | Why Needed                          | Status / Difficulty       |
 |---|-------------------------------------|-------------------------------------|---------------------------|
-| 1 | FFI / C Interop                     | LLVM API, syscalls                  | Medium (core user `extern` exists; wrappers/exports deferred) |
+| 1 | FFI / C Interop                     | LLVM API, syscalls                  | Medium (core user `extern` exists; first-class extern values landed; exports deferred) |
 | 2 | Byte type + bitwise ops             | Linker, binary formats              | Medium (Int bitwise ops landed) |
 | 3 | Persistent (immutable) maps         | Type inference, scopes              | High                      |
 | 4 | String manipulation                 | Lexer, error messages               | Medium (uncons/parse landed) |
@@ -305,7 +305,7 @@ diagnostics and linker-oriented output.
 | 9 | Module system enhancements          | Cross-module types                  | Medium                    |
 | 10 | Error propagation                  | Compiler error handling             | Low–Medium                |
 | 11 | Binary file I/O                    | Writing executables                 | Low–Medium                |
-| 12 | Real memory management             | Compiling large programs            | Medium (grow-on-demand arena + scope reclamation exist) |
+| 12 | Real memory management             | Compiling large programs            | Medium (grow-on-demand arena + scope reclamation exist; 250k-element stress test validates chunk growth) |
 | 13 | Large ADT ergonomics               | 50+ variant IR type                 | Low                       |
 | 14 | Numeric conversions                | Parsing, diagnostics                | Done (parse + decimal/hex format landed) |
 
@@ -405,14 +405,14 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 6 — The hard foundations (largest; can run as parallel research)
 
-15. [ ] **Deferred FFI hardening** — extern functions as first-class values or
+15. [x] **Deferred FFI hardening** — extern functions as first-class values or
     module exports, plus safe wrappers and ownership conventions for
     opaque LLVM-C handles.
-16. [ ] **Memory-management hardening** — validate the chunked arena's
+16. [x] **Memory-management hardening** — validate the chunked arena's
     steady-state behaviour under a real self-compile; add finer
     ownership-based freeing only if scope-granularity reclamation proves
     insufficient.
-17. [ ] **Large-ADT exhaustiveness / performance** — ensure the
+17. [x] **Large-ADT exhaustiveness / performance** — ensure the
     exhaustiveness checker scales to the 50+ `IrInst` constructors.
 
 ### Suggested first slice
