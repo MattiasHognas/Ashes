@@ -116,6 +116,19 @@ namespace. They are not overridable by project-local modules.
 - `reverse`
 - `tail`
 
+### `Ashes.Array`
+
+Immutable indexed array backed by a persistent balanced tree.
+
+- `empty` — empty immutable array
+- `isEmpty(array)` returning `Bool`
+- `length(array)` returning `Int`
+- `get(index)(array)` returning `Maybe(T)` — `None` for out-of-bounds indices
+- `set(index)(value)(array)` returning a new array (out-of-bounds indices leave the array unchanged)
+- `append(value)(array)` returning a new array with value appended at the end
+- `toList(array)` returning `List(T)` in index order
+- `fromList(list)` returning a new array preserving input order
+
 ### `Ashes.Map`
 
 - `empty` — empty immutable map
