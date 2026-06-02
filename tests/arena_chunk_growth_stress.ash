@@ -6,10 +6,9 @@ let rec build n acc =
     if n <= 0
     then acc
     else build(n - 1)(1 :: acc)
-
+in
 let rec len xs acc =
     match xs with
     | [] -> acc
     | _ :: rest -> len(rest)(acc + 1)
-
 in Ashes.IO.print(len(build(250000)([]))(0))

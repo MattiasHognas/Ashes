@@ -11,7 +11,7 @@ type BigInst =
     | Inst40 | Inst41 | Inst42 | Inst43 | Inst44
     | Inst45 | Inst46 | Inst47 | Inst48 | Inst49
 
-let instToInt = fn i ->
+let instToInt = fun (i) ->
     match i with
     | Inst00 -> 0  | Inst01 -> 1  | Inst02 -> 2  | Inst03 -> 3  | Inst04 -> 4
     | Inst05 -> 5  | Inst06 -> 6  | Inst07 -> 7  | Inst08 -> 8  | Inst09 -> 9

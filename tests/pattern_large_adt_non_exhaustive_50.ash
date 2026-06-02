@@ -1,4 +1,4 @@
-// expect-compile-error: Non-exhaustive match expression. Missing constructor(s): 'Inst01', 'Inst02', 'Inst03', ... and 46 more.
+// expect-compile-error: Non-exhaustive match expression. Missing constructor(s): 'Inst01', 'Inst02', 'Inst03', ... and 45 more.
 type BigInst =
     | Inst00 | Inst01 | Inst02 | Inst03 | Inst04
     | Inst05 | Inst06 | Inst07 | Inst08 | Inst09
@@ -11,7 +11,7 @@ type BigInst =
     | Inst40 | Inst41 | Inst42 | Inst43 | Inst44
     | Inst45 | Inst46 | Inst47 | Inst48 | Inst49
 
-let instToInt = fn i ->
+let instToInt = fun (i) ->
     match i with
     | Inst00 -> 0
     | Inst04 -> 4
