@@ -37,12 +37,16 @@ public abstract record Expr
     {
         /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c> instead of <c>let f = fun (x) -> fun (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
+        /// <summary>Optional user-supplied type annotation: <c>let f : Int -> Int = ...</c>.</summary>
+        public TypeExpr? TypeAnnotation { get; init; }
     }
     public sealed record LetResult(string Name, Expr Value, Expr Body) : Expr;
     public sealed record LetRec(string Name, Expr Value, Expr Body) : Expr
     {
         /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let rec f x y = ...</c> instead of <c>let rec f = fun (x) -> fun (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
+        /// <summary>Optional user-supplied type annotation: <c>let rec f : Int -> Int = ...</c>.</summary>
+        public TypeExpr? TypeAnnotation { get; init; }
     }
 
     public sealed record If(Expr Cond, Expr Then, Expr Else) : Expr;
@@ -61,6 +65,11 @@ public abstract record Expr
     public sealed record Async(Expr Body) : Expr;
     public sealed record Await(Expr Task) : Expr;
 
+    /// <summary>Record literal: <c>TypeName { field1 = e1, field2 = e2 }</c>.</summary>
+    public sealed record RecordLit(string TypeName, IReadOnlyList<(string Name, Expr Value)> Fields) : Expr;
+
+    /// <summary>Record update: <c>{ expr with field1 = e1, field2 = e2 }</c>.</summary>
+    public sealed record RecordUpdate(Expr Target, IReadOnlyList<(string Name, Expr Value)> Updates) : Expr;
 }
 
 public readonly record struct MatchCase(Pattern Pattern, Expr Body, Expr? Guard = null);
@@ -80,14 +89,37 @@ public abstract record Pattern
 
 public sealed record TypeParameter(string Name);
 
-public sealed record TypeConstructor(string Name, IReadOnlyList<string> Parameters);
+public sealed record TypeConstructor(string Name, IReadOnlyList<string> Parameters)
+{
+    /// <summary>For record types: the named field identifiers corresponding to each parameter position. Empty for regular ADT constructors.</summary>
+    public IReadOnlyList<string> FieldNames { get; init; } = [];
+}
 
-public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<TypeConstructor> Constructors);
+public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<TypeConstructor> Constructors)
+{
+    /// <summary>True when this was declared with record syntax: <c>type T = { field: Type, ... }</c>.</summary>
+    public bool IsRecord { get; init; }
+}
 
 public abstract record ParsedType
 {
     public sealed record Named(string Name) : ParsedType;
     public sealed record Pointer(ParsedType Pointee) : ParsedType;
+}
+
+/// <summary>A type expression written by the user in an annotation, e.g. <c>Int -> Str</c>.</summary>
+public abstract record TypeExpr
+{
+    /// <summary>A simple named type or type parameter: <c>Int</c>, <c>Str</c>, <c>T</c>.</summary>
+    public sealed record Named(string Name) : TypeExpr;
+    /// <summary>A parameterised type application: <c>List(Int)</c>, <c>Result(Str, Int)</c>.</summary>
+    public sealed record Applied(string Name, IReadOnlyList<TypeExpr> Args) : TypeExpr;
+    /// <summary>A function type: <c>Int -> Str</c>.</summary>
+    public sealed record Arrow(TypeExpr From, TypeExpr To) : TypeExpr;
+    /// <summary>A tuple type: <c>(Int, Str)</c>.</summary>
+    public sealed record TupleType(IReadOnlyList<TypeExpr> Elements) : TypeExpr;
+    /// <summary>Unit written as an empty tuple: <c>()</c>.</summary>
+    public sealed record UnitType : TypeExpr;
 }
 
 public abstract record ExternDecl
