@@ -228,8 +228,7 @@ public sealed class Parser
             {
                 if (_current.Kind == TokenKind.LParen) depth++;
                 else if (_current.Kind == TokenKind.RParen) depth--;
-                if (depth > 0) Advance();
-                else Advance();
+                Advance();
             }
         }
 

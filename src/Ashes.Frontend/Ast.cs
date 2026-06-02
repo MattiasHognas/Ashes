@@ -37,7 +37,7 @@ public abstract record Expr
     {
         /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c> instead of <c>let f = fun (x) -> fun (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
-        /// <summary>Optional user-supplied type annotation: <c>let f : Int -> Int = ...</c>.</summary>
+        /// <summary>Optional user-supplied type annotation, e.g. <c>let x : Int = 42</c> or <c>let f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
     }
     public sealed record LetResult(string Name, Expr Value, Expr Body) : Expr;
