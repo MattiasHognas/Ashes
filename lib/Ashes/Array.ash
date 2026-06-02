@@ -2,20 +2,17 @@ type ArrayTree(T) =
     | TreeEmpty
     | TreeNode(Int, ArrayTree, Int, T, ArrayTree)
 
-type Array(T) =
-    | Array(Int, ArrayTree)
-
-let empty = Array(0)(TreeEmpty)
+let empty = (0, TreeEmpty)
 in 
     let isEmpty = 
         fun (array) -> 
             match array with
-                | Array(length, _root) -> length == 0
+                | (arrayLength, _root) -> arrayLength == 0
     in 
         let length = 
             fun (array) -> 
                 match array with
-                    | Array(length, _root) -> length
+                    | (arrayLength, _root) -> arrayLength
         in 
             let height = 
                 fun (tree) -> 
@@ -122,11 +119,11 @@ in
                                                     fun (index) -> 
                                                         fun (array) -> 
                                                             match array with
-                                                                | Array(length, root) -> 
+                                                                | (arrayLength, root) -> 
                                                                     if index <= -1
                                                                     then None
                                                                     else 
-                                                                        if index >= length
+                                                                        if index >= arrayLength
                                                                         then None
                                                                         else getNode(index)(root)
                                                 in 
@@ -135,19 +132,19 @@ in
                                                             fun (value) -> 
                                                                 fun (array) -> 
                                                                     match array with
-                                                                        | Array(length, root) -> 
+                                                                        | (arrayLength, root) -> 
                                                                             if index <= -1
                                                                             then array
                                                                             else 
-                                                                                if index >= length
+                                                                                if index >= arrayLength
                                                                                 then array
-                                                                                else Array(length)(setNode(index)(value)(root))
+                                                                                else (arrayLength, setNode(index)(value)(root))
                                                     in 
                                                         let append = 
                                                             fun (value) -> 
                                                                 fun (array) -> 
                                                                     match array with
-                                                                        | Array(length, root) -> Array(length + 1)(insertNode(length)(value)(root))
+                                                                        | (arrayLength, root) -> (arrayLength + 1, insertNode(arrayLength)(value)(root))
                                                         in 
                                                             let toList = 
                                                                 fun (array) -> 
@@ -163,14 +160,14 @@ in
                                                                                             in go(left)(withNode)
                                                                     in 
                                                                         match array with
-                                                                            | Array(_length, root) -> go(root)([])
+                                                                            | (_arrayLength, root) -> go(root)([])
                                                             in 
                                                                 let fromList = 
                                                                     fun (values) -> 
                                                                         let rec go = 
-                                                                            fun (rest) -> 
+                                                                            fun (remaining) -> 
                                                                                 fun (array) -> 
-                                                                                    match rest with
+                                                                                    match remaining with
                                                                                         | [] -> array
                                                                                         | head :: tail -> go(tail)(append(head)(array))
                                                                         in go(values)(empty)
