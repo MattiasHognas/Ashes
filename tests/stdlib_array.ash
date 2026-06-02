@@ -32,7 +32,7 @@ in
                                                                 if last == 40
                                                                 then 
                                                                     match Ashes.Array.toList(appended) with
-                                                                        | a :: b :: c :: d :: [] ->
+                                                                        | a :: b :: c :: d :: [] -> 
                                                                             if a == 10
                                                                             then 
                                                                                 if b == 25
