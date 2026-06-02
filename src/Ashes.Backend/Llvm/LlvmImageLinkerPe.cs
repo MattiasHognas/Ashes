@@ -10,6 +10,9 @@ internal static partial class LlvmImageLinker
     private const uint PeSectionAlignment = 0x00001000;
     private const uint PeFileAlignment = 0x00000200;
     private const uint BssDataAlignment = 16;
+    private const uint PeDefaultStackReserveBytes = 0x00800000; // 8 MiB default; grows on demand up to reserve.
+    private const uint PeStackCommitBytes = 0x00001000;         // 4 KiB committed initially (Windows default page).
+    private const string PeStackReserveEnvVar = "ASHES_WIN_STACK_RESERVE_BYTES";
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 35;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
@@ -405,6 +408,8 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 16, 2), PeOptionalHeaderSize); // SizeOfOptionalHeader
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 18, 2), 0x0022); // Characteristics: EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
 
+        uint stackReserveBytes = ResolvePeStackReserveBytes();
+
         // Optional header (PE32+)
         int optOff = coffOff + PeCoffHeaderSize;
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff, 2), 0x020B);       // Magic: PE32+
@@ -430,8 +435,8 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 64, 4), 0);  // CheckSum
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 68, 2), 3);  // Subsystem: CONSOLE
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 70, 2), 0x8100); // DllCharacteristics: NX_COMPAT | TERMINAL_SERVER_AWARE
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 72, 8), 0x100000);  // SizeOfStackReserve
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 80, 8), 0x1000);    // SizeOfStackCommit
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 72, 8), stackReserveBytes); // SizeOfStackReserve
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 80, 8), PeStackCommitBytes); // SizeOfStackCommit
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 88, 8), 0x100000);  // SizeOfHeapReserve
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 96, 8), 0x1000);    // SizeOfHeapCommit
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 104, 4), 0);        // LoaderFlags
@@ -485,6 +490,17 @@ internal static partial class LlvmImageLinker
         Array.Copy(rdataBytes, 0, output, (int)rdataFileOffset, rdataBytes.Length);
 
         return output;
+    }
+
+    private static uint ResolvePeStackReserveBytes()
+    {
+        string? raw = Environment.GetEnvironmentVariable(PeStackReserveEnvVar);
+        if (uint.TryParse(raw, out uint parsed) && parsed >= PeStackCommitBytes)
+        {
+            return AlignUp(parsed, PeSectionAlignment);
+        }
+
+        return PeDefaultStackReserveBytes;
     }
 
     private static void WriteImportAddressTable(MemoryStream stream, int[] hintNameOffsets, uint rdataRva)
