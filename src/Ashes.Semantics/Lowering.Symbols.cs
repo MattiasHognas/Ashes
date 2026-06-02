@@ -138,7 +138,7 @@ public sealed partial class Lowering
             }
         }
 
-        var resultType = InstantiateAdtType(ctor);
+        var resultType = namedType;
         int tag = GetConstructorTag(ctor);
 
         // Load all field values, then store update values, allocate new cell
