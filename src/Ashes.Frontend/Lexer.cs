@@ -184,6 +184,9 @@ public sealed class Lexer
             '[' => new Token(TokenKind.LBracket, "[", 0, start, 1),
             ']' => new Token(TokenKind.RBracket, "]", 0, start, 1),
             '.' => new Token(TokenKind.Dot, ".", 0, start, 1),
+            ':' => new Token(TokenKind.Colon, ":", 0, start, 1),
+            '{' => new Token(TokenKind.LBrace, "{", 0, start, 1),
+            '}' => new Token(TokenKind.RBrace, "}", 0, start, 1),
             _ => default
         };
 

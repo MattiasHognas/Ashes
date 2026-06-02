@@ -463,6 +463,41 @@ Rules:
 - Constructors may have zero or more payload parameters in parentheses.
 - Type declarations appear before the expression body of the program.
 
+## 4.1 Record Types
+
+Record types are single-constructor ADTs with named fields.
+
+Syntax:
+
+type TypeName = { field1: Type1, field2: Type2 }
+
+Example:
+
+type Point = { x: Int, y: Int }
+
+Record literals create a value of the record type using named field syntax:
+
+let p = Point { x = 1, y = 2 }
+
+Field access uses the dot notation (same as module member access):
+
+let px = p.x
+
+Record update creates a new record with one or more fields replaced:
+
+let p2 = { p with x = 5 }
+
+The base expression is evaluated once; unchanged fields are copied from it.
+
+Rules:
+
+- Record type declarations use `{ field: Type, ... }` instead of constructor alternatives.
+- The single constructor has the same name as the type and cannot be written separately.
+- All fields must be provided in a record literal; field order in the literal does not matter.
+- Field access (`rec.field`) works on local bindings of record types.
+- Record update (`{ base with field = value }`) produces a fresh value; the original is unchanged.
+- Records may be used in pattern matching like any ADT: `| Point(x, y) -> ...`
+
 # 5. Let Bindings
 
 Syntax:
@@ -545,6 +580,34 @@ Rules:
 - The propagated error type `E` is preserved unchanged.
 - The bound name is only in scope inside `body`.
 - In this milestone, the binder target must be an identifier.
+
+## 5.3 Type Annotations
+
+Let bindings may carry an optional type annotation between the name and `=`.
+
+Syntax:
+
+let name : TypeExpr = value
+in body
+
+Example:
+
+let x : Int = 42
+in Ashes.IO.print(x)
+
+The annotation is checked against the inferred type of `value`. A mismatch is a
+compile error. Annotations do not alter inference; they serve as documentation and
+early error-reporting.
+
+Type expression syntax:
+
+- Primitive names: `Int`, `Float`, `Str`, `Bool`, `Unit`
+- Named user types: `Color`, `Point`
+- Generic applications: `List(Int)`, `Maybe(Str)`, `Result(Str, Int)`
+- Function types: `Int -> Bool`
+- Tuple types: `(Int, Str)`
+
+Type annotations are also accepted on `let rec` bindings.
 
 ---
 

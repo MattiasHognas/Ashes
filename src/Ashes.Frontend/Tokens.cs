@@ -53,6 +53,9 @@ public enum TokenKind
     RBracket,
     Arrow, // ->
     Dot, // .
+    Colon, // :
+    LBrace, // {
+    RBrace, // }
     Async,
     Await,
     LetBang,

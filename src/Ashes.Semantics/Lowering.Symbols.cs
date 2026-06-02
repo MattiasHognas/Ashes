@@ -5,6 +5,171 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    /// <summary>
+    /// Resolves a user-written <see cref="TypeExpr"/> to its internal <see cref="TypeRef"/>.
+    /// Unknown types produce a diagnostic and return <see cref="TypeRef.TNever"/>.
+    /// </summary>
+    private TypeRef ResolveTypeExpr(TypeExpr typeExpr)
+    {
+        return typeExpr switch
+        {
+            TypeExpr.UnitType => _resolvedTypes["Unit"],
+            TypeExpr.Named { Name: "Int" } => new TypeRef.TInt(),
+            TypeExpr.Named { Name: "Bool" } => new TypeRef.TBool(),
+            TypeExpr.Named { Name: "Str" } => new TypeRef.TStr(),
+            TypeExpr.Named { Name: "Float" } => new TypeRef.TFloat(),
+            TypeExpr.Named n => ResolveTypeName(n.Name),
+            TypeExpr.Applied a => ResolveTypeName(a.Name, a.Args.Select(ResolveTypeExpr).ToList()),
+            TypeExpr.Arrow arr => new TypeRef.TFun(ResolveTypeExpr(arr.From), ResolveTypeExpr(arr.To)),
+            TypeExpr.TupleType t when t.Elements.Count == 0 => _resolvedTypes["Unit"],
+            TypeExpr.TupleType t => new TypeRef.TTuple(t.Elements.Select(ResolveTypeExpr).ToList()),
+            _ => throw new NotSupportedException($"Unknown TypeExpr: {typeExpr.GetType().Name}")
+        };
+    }
+
+    /// <summary>
+    /// Lowers a record literal expression:
+    /// <c>TypeName { field1 = e1, field2 = e2 }</c>.
+    /// Field values are reordered to match the declared field order.
+    /// </summary>
+    private (int, TypeRef) LowerRecordLit(Expr.RecordLit recLit)
+    {
+        if (!_constructorSymbols.TryGetValue(recLit.TypeName, out var ctor))
+        {
+            if (!_typeSymbols.TryGetValue(recLit.TypeName, out var typeSym))
+            {
+                ReportDiagnostic(GetSpan(recLit), $"Unknown record type '{recLit.TypeName}'.");
+                return ReturnNeverWithDummyTemp();
+            }
+
+            // Type exists but no matching constructor — not a record type
+            ReportDiagnostic(GetSpan(recLit), $"Type '{recLit.TypeName}' is not a record type.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var fieldNames = ctor.DeclaringSyntax.FieldNames;
+        if (fieldNames.Count == 0)
+        {
+            ReportDiagnostic(GetSpan(recLit), $"Type '{recLit.TypeName}' is not a record type.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        if (recLit.Fields.Count == 0 && ctor.Arity > 0)
+        {
+            ReportDiagnostic(GetSpan(recLit), $"Record literal for '{recLit.TypeName}' must provide all {ctor.Arity} field(s).");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Validate that all provided fields exist, and that all required fields are present
+        var providedByName = new Dictionary<string, Expr>(StringComparer.Ordinal);
+        foreach (var (name, value) in recLit.Fields)
+        {
+            if (!fieldNames.Contains(name, StringComparer.Ordinal))
+            {
+                ReportDiagnostic(GetSpan(recLit), $"Record type '{recLit.TypeName}' has no field '{name}'.");
+            }
+            else if (providedByName.ContainsKey(name))
+            {
+                ReportDiagnostic(GetSpan(recLit), $"Field '{name}' is provided more than once in record literal for '{recLit.TypeName}'.");
+            }
+            else
+            {
+                providedByName[name] = value;
+            }
+        }
+
+        foreach (var fn in fieldNames)
+        {
+            if (!providedByName.ContainsKey(fn))
+            {
+                ReportDiagnostic(GetSpan(recLit), $"Missing field '{fn}' in record literal for '{recLit.TypeName}'.");
+                return ReturnNeverWithDummyTemp();
+            }
+        }
+
+        // Build positional args in declared field order
+        var orderedArgs = fieldNames.Select(fn => providedByName[fn]).ToList();
+        return LowerConstructorApplication(ctor, orderedArgs);
+    }
+
+    /// <summary>
+    /// Lowers a record update expression:
+    /// <c>{ target with field1 = e1, field2 = e2 }</c>.
+    /// Produces a fresh ADT with unchanged fields copied and specified fields replaced.
+    /// </summary>
+    private (int, TypeRef) LowerRecordUpdate(Expr.RecordUpdate recUpdate)
+    {
+        var (targetTemp, targetType) = LowerExpr(recUpdate.Target);
+        var prunedTarget = Prune(targetType);
+
+        if (prunedTarget is not TypeRef.TNamedType namedType)
+        {
+            ReportDiagnostic(GetSpan(recUpdate), $"Record update requires a record type, got {Pretty(prunedTarget)}.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var typeSymbol = namedType.Symbol;
+        if (typeSymbol.Constructors.Count != 1 || typeSymbol.Constructors[0].DeclaringSyntax.FieldNames.Count == 0)
+        {
+            ReportDiagnostic(GetSpan(recUpdate), $"Type '{typeSymbol.Name}' is not a record type and cannot be updated with '{{ with }}'.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var ctor = typeSymbol.Constructors[0];
+        var fieldNames = ctor.DeclaringSyntax.FieldNames;
+
+        // Validate update fields
+        var updateByName = new Dictionary<string, Expr>(StringComparer.Ordinal);
+        foreach (var (name, value) in recUpdate.Updates)
+        {
+            if (!fieldNames.Contains(name, StringComparer.Ordinal))
+            {
+                ReportDiagnostic(GetSpan(recUpdate), $"Record type '{typeSymbol.Name}' has no field '{name}'.");
+                return ReturnNeverWithDummyTemp();
+            }
+
+            if (updateByName.ContainsKey(name))
+            {
+                ReportDiagnostic(GetSpan(recUpdate), $"Field '{name}' is updated more than once in record update for '{typeSymbol.Name}'.");
+            }
+            else
+            {
+                updateByName[name] = value;
+            }
+        }
+
+        var resultType = namedType;
+        int tag = GetConstructorTag(ctor);
+
+        // Load all field values, then store update values, allocate new cell
+        var fieldTemps = new int[fieldNames.Count];
+        for (int i = 0; i < fieldNames.Count; i++)
+        {
+            if (updateByName.TryGetValue(fieldNames[i], out var updateExpr))
+            {
+                var (updateTemp, updateType) = LowerExpr(updateExpr);
+                var paramType = InstantiateConstructorParameterType(ctor, i, resultType);
+                Unify(paramType, updateType);
+                fieldTemps[i] = updateTemp;
+            }
+            else
+            {
+                int loadedTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(loadedTemp, targetTemp, i));
+                fieldTemps[i] = loadedTemp;
+            }
+        }
+
+        int ptrTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        for (int i = 0; i < fieldTemps.Length; i++)
+        {
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemps[i]));
+        }
+
+        return (ptrTemp, resultType);
+    }
+
     private void RegisterTypeDeclarations(IReadOnlyList<TypeDecl> typeDecls)
     {
         foreach (var decl in typeDecls)
