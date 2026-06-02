@@ -218,10 +218,11 @@ public sealed class Parser
     private string ParseTypeExprAtomName()
     {
         var typeName = Consume(TokenKind.Ident).Text;
-        // Parameterised types in field positions are not yet representable as plain strings;
-        // read past the parameter list to avoid parse errors, but collapse to the outer name.
+        // Parameterised types in field positions are not yet representable as plain strings.
+        // Consume the argument list to keep parsing, but report an error instead of silently dropping it.
         if (_current.Kind == TokenKind.LParen)
         {
+            _diag.Error(CurrentErrorSpan(), $"Parameterized type arguments are not supported in record field declarations yet (found '{typeName}(...)').");
             Consume(TokenKind.LParen);
             var depth = 1;
             while (depth > 0 && _current.Kind != TokenKind.EOF)
@@ -229,6 +230,11 @@ public sealed class Parser
                 if (_current.Kind == TokenKind.LParen) depth++;
                 else if (_current.Kind == TokenKind.RParen) depth--;
                 Advance();
+            }
+
+            if (depth > 0)
+            {
+                _diag.Error(CurrentErrorSpan(), "Unterminated type argument list in record field declaration.");
             }
         }
 
