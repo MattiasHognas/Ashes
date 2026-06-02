@@ -386,9 +386,10 @@ keeping with the immutability commitment (Ground Rule #5).
    a balanced-tree persistent map with immutable insert/update/lookup helpers.
    The current surface uses caller-supplied comparison functions
    `(K -> K -> Int)` until the language grows a built-in ordering abstraction.
-10. [ ] **Immutable indexed `Array(T)`** (optional, after `Bytes`/`Map`) —
-    O(1)/O(log n) indexed sequence for IR instruction arrays if
-    linked-list O(n) access proves too slow.
+10. [x] **Immutable indexed `Array(T)`** (optional, after `Bytes`/`Map`) —
+    landed as the shipped `Ashes.Array` module: a persistent balanced-tree
+    indexed sequence with immutable `empty`, `isEmpty`, `length`, `get`,
+    `set`, `append`, `toList`, and `fromList` helpers.
 
 ### Phase 5 — Type system & ergonomics for a large codebase
 

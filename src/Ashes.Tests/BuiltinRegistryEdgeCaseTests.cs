@@ -123,6 +123,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.IsBuiltinModule("Ashes.Http").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tcp").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tls").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Array").ShouldBeTrue();
     }
 
     [Test]
@@ -203,6 +204,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes.Result");
         names.ShouldContain("Ashes.String");
         names.ShouldContain("Ashes.List");
+        names.ShouldContain("Ashes.Array");
         names.ShouldContain("Ashes.Map");
         names.ShouldContain("Ashes.Maybe");
         names.ShouldContain("Ashes.Test");
@@ -258,6 +260,14 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.TryGetModule("Ashes.Map", out var module).ShouldBeTrue();
 
         module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Map.ash");
+    }
+
+    [Test]
+    public void Ashes_Array_module_should_have_resource_name()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Array", out var module).ShouldBeTrue();
+
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Array.ash");
     }
 
     [Test]
