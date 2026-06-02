@@ -10,6 +10,8 @@ internal static partial class LlvmImageLinker
     private const uint PeSectionAlignment = 0x00001000;
     private const uint PeFileAlignment = 0x00000200;
     private const uint BssDataAlignment = 16;
+    private const ulong PeStackReserveBytes = 0x00800000; // 8 MiB: aligns better with Linux recursion headroom.
+    private const ulong PeStackCommitBytes = 0x00001000;  // 4 KiB committed initially (Windows default page).
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 35;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
@@ -430,8 +432,8 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 64, 4), 0);  // CheckSum
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 68, 2), 3);  // Subsystem: CONSOLE
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 70, 2), 0x8100); // DllCharacteristics: NX_COMPAT | TERMINAL_SERVER_AWARE
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 72, 8), 0x100000);  // SizeOfStackReserve
-        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 80, 8), 0x1000);    // SizeOfStackCommit
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 72, 8), PeStackReserveBytes); // SizeOfStackReserve
+        BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 80, 8), PeStackCommitBytes);  // SizeOfStackCommit
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 88, 8), 0x100000);  // SizeOfHeapReserve
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 96, 8), 0x1000);    // SizeOfHeapCommit
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 104, 4), 0);        // LoaderFlags
