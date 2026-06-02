@@ -349,7 +349,7 @@ public sealed partial class Lowering
                 break;
 
             case Binding.ExternFunction externFunction:
-                result = EmitExternFunctionThunk(externFunction.Function, externFunction.Type);
+                result = EmitExternFunctionThunk(externFunction.Function, externFunction.Type, GetSpan(v));
                 break;
 
             case Binding.PreludeValue value:
@@ -2384,13 +2384,13 @@ public sealed partial class Lowering
     /// For a 0-parameter extern a meaningful compile error is emitted because a nullary function
     /// cannot be represented as a closure that takes an argument.
     /// </summary>
-    private (int, TypeRef) EmitExternFunctionThunk(IrExternFunction externFunc, TypeRef closureType)
+    private (int, TypeRef) EmitExternFunctionThunk(IrExternFunction externFunc, TypeRef closureType, TextSpan referenceSpan)
     {
         int n = externFunc.ParameterTypes.Count;
         if (n == 0)
         {
             int errTemp = NewTemp();
-            _diag.Error(0, $"Extern function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
+            ReportDiagnostic(referenceSpan, $"Extern function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
             Emit(new IrInst.LoadConstInt(errTemp, 0));
             return (errTemp, closureType);
         }
