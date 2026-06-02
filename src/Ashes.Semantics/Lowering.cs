@@ -349,9 +349,7 @@ public sealed partial class Lowering
                 break;
 
             case Binding.ExternFunction externFunction:
-                ReportDiagnostic(GetSpan(v), $"Extern function '{v.Name}' must be called directly.");
-                Emit(new IrInst.LoadConstInt(temp, 0));
-                result = (temp, externFunction.Type);
+                result = EmitExternFunctionThunk(externFunction.Function, externFunction.Type, GetSpan(v));
                 break;
 
             case Binding.PreludeValue value:
@@ -2375,6 +2373,171 @@ public sealed partial class Lowering
         }
 
         return (target, FromFfiType(externFunction.ReturnType));
+    }
+
+    /// <summary>
+    /// Synthesizes wrapper <see cref="IrFunction"/>s so that an extern function can be used as
+    /// a first-class closure value. For an extern with N parameters, N curried wrapper functions
+    /// are generated: the outermost accumulates one argument per call and the innermost ultimately
+    /// issues the <see cref="IrInst.CallExtern"/> instruction with all collected arguments.
+    ///
+    /// For a 0-parameter extern a meaningful compile error is emitted because a nullary function
+    /// cannot be represented as a closure that takes an argument.
+    /// </summary>
+    private (int, TypeRef) EmitExternFunctionThunk(IrExternFunction externFunc, TypeRef closureType, TextSpan referenceSpan)
+    {
+        int n = externFunc.ParameterTypes.Count;
+        if (n == 0)
+        {
+            int errTemp = NewTemp();
+            ReportDiagnostic(referenceSpan, $"Extern function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
+            Emit(new IrInst.LoadConstInt(errTemp, 0));
+            return (errTemp, closureType);
+        }
+
+        _usesClosures = true;
+
+        // Assign a stable id to this thunk family so labels never collide.
+        int lambdaId = _nextLambdaId++;
+        var layerLabels = new string[n];
+        for (int i = 0; i < n; i++)
+        {
+            layerLabels[i] = $"extern_{externFunc.Name}_thunk_{i}_{lambdaId}";
+        }
+
+        // Save outer compilation state so we can build sub-functions in isolation.
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
+        var savedScopes = _scopes.ToArray();
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+
+        // Build from innermost layer (n-1) outward to layer 0 so each layer can reference the
+        // label of the next-inner layer.
+        for (int layer = n - 1; layer >= 0; layer--)
+        {
+            _inst.Clear();
+            _nextTempSlot = 0;
+            _nextLocalSlot = 0;
+            _localNames.Clear();
+            _localTypes.Clear();
+            _scopes.Clear();
+            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+
+            int envSlot = NewLocal(); // slot 0 — must stay 0 (backend convention)
+            int argSlot = NewLocal(); // slot 1
+            Debug.Assert(envSlot == 0, "envSlot must be 0");
+
+            if (layer == n - 1)
+            {
+                // Innermost: load all previously captured args from env then call the extern.
+                var callArgTemps = new List<int>(n);
+
+                for (int j = 0; j < layer; j++)
+                {
+                    int envArgTemp = NewTemp();
+                    Emit(new IrInst.LoadEnv(envArgTemp, j));
+                    if (externFunc.ParameterTypes[j] is FfiType.Str)
+                    {
+                        int cStrTemp = NewTemp();
+                        Emit(new IrInst.ToCString(cStrTemp, envArgTemp));
+                        callArgTemps.Add(cStrTemp);
+                    }
+                    else
+                    {
+                        callArgTemps.Add(envArgTemp);
+                    }
+                }
+
+                int finalArgTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(finalArgTemp, argSlot));
+                if (externFunc.ParameterTypes[layer] is FfiType.Str)
+                {
+                    int cStrFinalTemp = NewTemp();
+                    Emit(new IrInst.ToCString(cStrFinalTemp, finalArgTemp));
+                    callArgTemps.Add(cStrFinalTemp);
+                }
+                else
+                {
+                    callArgTemps.Add(finalArgTemp);
+                }
+
+                int callResultTemp = NewTemp();
+                Emit(new IrInst.CallExtern(callResultTemp, externFunc.SymbolName, externFunc.LibraryName, callArgTemps, externFunc.ParameterTypes, externFunc.ReturnType));
+
+                int retTemp;
+                if (externFunc.ReturnType is FfiType.Void)
+                {
+                    retTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(retTemp, 0)); // Unit is represented as 0
+                }
+                else
+                {
+                    retTemp = callResultTemp;
+                }
+
+                Emit(new IrInst.Return(retTemp));
+            }
+            else
+            {
+                // Outer layer: pack current arg together with args captured from the outer env,
+                // then return a closure pointing at the next inner layer.
+                int capturedCount = layer; // env slots used by previous layers
+                int newEnvSize = (capturedCount + 1) * 8;
+
+                int newEnvTemp = NewTemp();
+                Emit(new IrInst.Alloc(newEnvTemp, newEnvSize));
+
+                for (int j = 0; j < capturedCount; j++)
+                {
+                    int loadedCapture = NewTemp();
+                    Emit(new IrInst.LoadEnv(loadedCapture, j));
+                    Emit(new IrInst.StoreMemOffset(newEnvTemp, j * 8, loadedCapture));
+                }
+
+                int newArgTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(newArgTemp, argSlot));
+                Emit(new IrInst.StoreMemOffset(newEnvTemp, capturedCount * 8, newArgTemp));
+
+                int closureTemp = NewTemp();
+                Emit(new IrInst.MakeClosure(closureTemp, layerLabels[layer + 1], newEnvTemp, newEnvSize));
+                Emit(new IrInst.Return(closureTemp));
+            }
+
+            var func = new IrFunction(
+                Label: layerLabels[layer],
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true,
+                LocalNames: new Dictionary<int, string>(_localNames),
+                LocalTypes: SnapshotLocalTypes()
+            );
+            _funcs.Add(func);
+        }
+
+        // Restore outer compilation state.
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
+        _localNames.Clear();
+        _localTypes.Clear();
+        foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
+        _scopes.Clear();
+        foreach (var s in savedScopes.Reverse())
+        {
+            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
+        }
+
+        // Produce a closure pointing at the outermost thunk layer, with a null env.
+        int nullEnvTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(nullEnvTemp, 0));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(resultTemp, layerLabels[0], nullEnvTemp, 0));
+        return (resultTemp, closureType);
     }
 
     private static TypeRef FromFfiType(FfiType ffiType)
