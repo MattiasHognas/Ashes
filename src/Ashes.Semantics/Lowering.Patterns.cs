@@ -491,9 +491,9 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Formats a non-exhaustive-match diagnostic listing missing constructor names.
-    /// When the list is long (more than <see cref="MissingConstructorDisplayLimit"/> entries),
-    /// only the first few names are shown followed by an "… and N more" suffix so the
-    /// message stays readable for large ADTs such as the 50+ variant IrInst type.
+    /// When the list is long (more than 5 entries), only the first few names are shown
+    /// followed by a "... and N more" suffix so the message stays readable for large ADTs
+    /// such as the 50+ variant IrInst type.
     /// </summary>
     private static string FormatMissingConstructorsDiagnostic(IReadOnlyList<string> missing)
     {
