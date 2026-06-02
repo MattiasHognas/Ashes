@@ -16,7 +16,7 @@ public sealed partial class Lowering
             TypeExpr.UnitType => _resolvedTypes["Unit"],
             TypeExpr.Named { Name: "Int" } => new TypeRef.TInt(),
             TypeExpr.Named { Name: "Bool" } => new TypeRef.TBool(),
-            TypeExpr.Named { Name: "Text" } => new TypeRef.TStr(),
+            TypeExpr.Named { Name: "Str" } => new TypeRef.TStr(),
             TypeExpr.Named { Name: "Float" } => new TypeRef.TFloat(),
             TypeExpr.Named n => ResolveTypeName(n.Name),
             TypeExpr.Applied a => ResolveTypeName(a.Name, a.Args.Select(ResolveTypeExpr).ToList()),
