@@ -30,7 +30,22 @@ in
                                                             if second == 25
                                                             then 
                                                                 if last == 40
-                                                                then Ashes.IO.print("ok")
+                                                                then 
+                                                                    match Ashes.Array.toList(appended) with
+                                                                        | a :: b :: c :: d :: [] ->
+                                                                            if a == 10
+                                                                            then 
+                                                                                if b == 25
+                                                                                then 
+                                                                                    if c == 30
+                                                                                    then 
+                                                                                        if d == 40
+                                                                                        then Ashes.IO.print("ok")
+                                                                                        else Ashes.IO.print("fail")
+                                                                                    else Ashes.IO.print("fail")
+                                                                                else Ashes.IO.print("fail")
+                                                                            else Ashes.IO.print("fail")
+                                                                        | _ -> Ashes.IO.print("fail")
                                                                 else Ashes.IO.print("fail")
                                                             else Ashes.IO.print("fail")
                                                         else Ashes.IO.print("fail")
