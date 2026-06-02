@@ -87,6 +87,26 @@ public static class Formatter
             sb.Append(string.Join(", ", decl.TypeParameters.Select(p => p.Name)));
             sb.Append(')');
         }
+
+        if (decl.IsRecord && decl.Constructors.Count == 1)
+        {
+            // Record syntax: type T = { field1: Type1, field2: Type2 }
+            var ctor = decl.Constructors[0];
+            sb.Append(" = { ");
+            for (int i = 0; i < ctor.FieldNames.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(", ");
+                }
+                sb.Append(ctor.FieldNames[i]);
+                sb.Append(": ");
+                sb.Append(ctor.Parameters[i]);
+            }
+            sb.Append(" }\n\n");
+            return;
+        }
+
         sb.Append(" =\n");
         foreach (var ctor in decl.Constructors)
         {
@@ -112,6 +132,43 @@ public static class Formatter
             ParsedType.Pointer pointer => $"*{WriteParsedType(pointer.Pointee)}",
             _ => throw new InvalidOperationException($"Unexpected parsed type: {type}")
         };
+    }
+
+    private static void WriteTypeExpr(StringBuilder sb, TypeExpr typeExpr)
+    {
+        switch (typeExpr)
+        {
+            case TypeExpr.UnitType:
+                sb.Append("()");
+                return;
+            case TypeExpr.Named n:
+                sb.Append(n.Name);
+                return;
+            case TypeExpr.Applied a:
+                sb.Append(a.Name);
+                sb.Append('(');
+                for (int i = 0; i < a.Args.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    WriteTypeExpr(sb, a.Args[i]);
+                }
+                sb.Append(')');
+                return;
+            case TypeExpr.Arrow arr:
+                WriteTypeExpr(sb, arr.From);
+                sb.Append(" -> ");
+                WriteTypeExpr(sb, arr.To);
+                return;
+            case TypeExpr.TupleType t:
+                sb.Append('(');
+                for (int i = 0; i < t.Elements.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    WriteTypeExpr(sb, t.Elements[i]);
+                }
+                sb.Append(')');
+                return;
+        }
     }
 
     private static void WriteExternDecl(StringBuilder sb, ExternDecl decl)
@@ -218,6 +275,8 @@ public static class Formatter
             Expr.Cons cons => IsSingleLine(cons.Head, preferPipelines) && IsSingleLine(cons.Tail, preferPipelines),
             Expr.Call c => (!preferPipelines || !TryCollectPipeline(c, out _, out _)) && IsSingleLine(c.Func, preferPipelines) && IsSingleLine(c.Arg, preferPipelines),
             Expr.Await awaitExpr => IsSingleLine(awaitExpr.Task, preferPipelines),
+            Expr.RecordLit rl => rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
+            Expr.RecordUpdate ru => IsSingleLine(ru.Target, preferPipelines) && ru.Updates.All(f => IsSingleLine(f.Value, preferPipelines)),
             _ => false
         };
     }
@@ -273,6 +332,13 @@ public static class Formatter
 
         sb.Append("let ");
         sb.Append(l.Name);
+
+        // Type annotation: let x : Type = ...
+        if (l.TypeAnnotation is { } letTypeAnnotation)
+        {
+            sb.Append(" : ");
+            WriteTypeExpr(sb, letTypeAnnotation);
+        }
 
         // ML-style sugar: let f x y = <value>
         var value = l.Value;
@@ -338,6 +404,13 @@ public static class Formatter
 
         sb.Append("let rec ");
         sb.Append(l.Name);
+
+        // Type annotation: let rec x : Type = ...
+        if (l.TypeAnnotation is { } letRecTypeAnnotation)
+        {
+            sb.Append(" : ");
+            WriteTypeExpr(sb, letRecTypeAnnotation);
+        }
 
         // ML-style sugar: let rec f x y = <value>
         var value = l.Value;
@@ -1044,6 +1117,43 @@ public static class Formatter
                 {
                     sb.Append("await ");
                     WriteExprInline(sb, awaitExpr.Task, indent, PrecCall, preferPipelines, options);
+                    return;
+                }
+
+            case Expr.RecordLit rl:
+                {
+                    sb.Append(rl.TypeName);
+                    sb.Append(" { ");
+                    for (int i = 0; i < rl.Fields.Count; i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append(", ");
+                        }
+                        sb.Append(rl.Fields[i].Name);
+                        sb.Append(" = ");
+                        WriteExprInline(sb, rl.Fields[i].Value, indent, 0, preferPipelines, options);
+                    }
+                    sb.Append(" }");
+                    return;
+                }
+
+            case Expr.RecordUpdate ru:
+                {
+                    sb.Append("{ ");
+                    WriteExprInline(sb, ru.Target, indent, 0, preferPipelines, options);
+                    sb.Append(" with ");
+                    for (int i = 0; i < ru.Updates.Count; i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append(", ");
+                        }
+                        sb.Append(ru.Updates[i].Name);
+                        sb.Append(" = ");
+                        WriteExprInline(sb, ru.Updates[i].Value, indent, 0, preferPipelines, options);
+                    }
+                    sb.Append(" }");
                     return;
                 }
 

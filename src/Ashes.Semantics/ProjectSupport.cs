@@ -1196,6 +1196,15 @@ public static class ProjectSupport
                 case Expr.Await awaitExpr:
                     Visit(awaitExpr.Task);
                     break;
+                case Expr.RecordLit rl:
+                    foreach (var field in rl.Fields)
+                        Visit(field.Value);
+                    break;
+                case Expr.RecordUpdate ru:
+                    Visit(ru.Target);
+                    foreach (var update in ru.Updates)
+                        Visit(update.Value);
+                    break;
                 default:
                     throw new NotSupportedException(expr.GetType().Name);
             }

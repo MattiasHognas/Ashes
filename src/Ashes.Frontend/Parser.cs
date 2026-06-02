@@ -126,6 +126,12 @@ public sealed class Parser
         }
         Consume(TokenKind.Equals);
 
+        // Record syntax: type Point = { x: Int, y: Int }
+        if (_current.Kind == TokenKind.LBrace)
+        {
+            return ParseRecordTypeDecl(name, typeParameters, start);
+        }
+
         var constructors = new List<TypeConstructor>();
         while (_current.Kind == TokenKind.Pipe)
         {
@@ -156,6 +162,149 @@ public sealed class Parser
         }
 
         return RegisterTypeDecl(new TypeDecl(name, typeParameters, constructors), start, LastConsumedEnd);
+    }
+
+    /// <summary>
+    /// Parses a record type declaration: <c>{ fieldName: TypeExpr, ... }</c>.
+    /// Desugars to a single-constructor ADT with the same name as the type.
+    /// </summary>
+    private TypeDecl ParseRecordTypeDecl(string name, List<TypeParameter> typeParameters, int start)
+    {
+        Consume(TokenKind.LBrace);
+        var fieldNames = new List<string>();
+        var fieldTypeNames = new List<string>();
+
+        if (_current.Kind != TokenKind.RBrace)
+        {
+            var fieldName = Consume(TokenKind.Ident).Text;
+            Consume(TokenKind.Colon);
+            var fieldType = ParseTypeExprAtomName();
+            fieldNames.Add(fieldName);
+            fieldTypeNames.Add(fieldType);
+
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                fieldName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Colon);
+                fieldType = ParseTypeExprAtomName();
+                fieldNames.Add(fieldName);
+                fieldTypeNames.Add(fieldType);
+            }
+        }
+
+        Consume(TokenKind.RBrace);
+
+        if (fieldNames.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Record type '{name}' must have at least one field.");
+        }
+
+        var ctorStart = start;
+        var ctor = RegisterTypeConstructor(
+            new TypeConstructor(name, fieldTypeNames) { FieldNames = fieldNames },
+            ctorStart, LastConsumedEnd);
+
+        return RegisterTypeDecl(
+            new TypeDecl(name, typeParameters, [ctor]) { IsRecord = true },
+            start, LastConsumedEnd);
+    }
+
+    /// <summary>
+    /// Parses a simple type name used inside record field declarations.
+    /// Supports parameterised types like <c>List(Int)</c> and <c>Maybe(T)</c>.
+    /// Returns the type name as a string token (for compatibility with existing <see cref="TypeConstructor.Parameters"/>).
+    /// </summary>
+    private string ParseTypeExprAtomName()
+    {
+        var typeName = Consume(TokenKind.Ident).Text;
+        // Parameterised types in field positions are not yet representable as plain strings.
+        // Consume the argument list to keep parsing, but report an error instead of silently dropping it.
+        if (_current.Kind == TokenKind.LParen)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Parameterized type arguments are not supported in record field declarations yet (found '{typeName}(...)').");
+            Consume(TokenKind.LParen);
+            var depth = 1;
+            while (depth > 0 && _current.Kind != TokenKind.EOF)
+            {
+                if (_current.Kind == TokenKind.LParen) depth++;
+                else if (_current.Kind == TokenKind.RParen) depth--;
+                Advance();
+            }
+
+            if (depth > 0)
+            {
+                _diag.Error(CurrentErrorSpan(), "Unterminated type argument list in record field declaration.");
+            }
+        }
+
+        return typeName;
+    }
+
+    /// <summary>
+    /// Parses a full type expression: <c>Int</c>, <c>Int -> Str</c>, <c>List(Int)</c>,
+    /// <c>(Int, Str)</c>, <c>()</c> (Unit).
+    /// </summary>
+    private TypeExpr ParseTypeExpr()
+    {
+        var atom = ParseTypeExprPrimary();
+        if (_current.Kind == TokenKind.Arrow)
+        {
+            Consume(TokenKind.Arrow);
+            var returnType = ParseTypeExpr();
+            return new TypeExpr.Arrow(atom, returnType);
+        }
+
+        return atom;
+    }
+
+    private TypeExpr ParseTypeExprPrimary()
+    {
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind == TokenKind.RParen)
+            {
+                Consume(TokenKind.RParen);
+                return new TypeExpr.UnitType();
+            }
+
+            var first = ParseTypeExpr();
+            if (_current.Kind == TokenKind.Comma)
+            {
+                var elements = new List<TypeExpr> { first };
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    elements.Add(ParseTypeExpr());
+                }
+                Consume(TokenKind.RParen);
+                return new TypeExpr.TupleType(elements);
+            }
+
+            Consume(TokenKind.RParen);
+            return first;
+        }
+
+        var name = Consume(TokenKind.Ident).Text;
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            var args = new List<TypeExpr>();
+            if (_current.Kind != TokenKind.RParen)
+            {
+                args.Add(ParseTypeExpr());
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    args.Add(ParseTypeExpr());
+                }
+            }
+            Consume(TokenKind.RParen);
+            return new TypeExpr.Applied(name, args);
+        }
+
+        return new TypeExpr.Named(name);
     }
 
     private Expr ParseMatch()
@@ -273,14 +422,26 @@ public sealed class Parser
             var nameToken = Consume(TokenKind.Ident);
             var name = nameToken.Text;
 
+            // Optional type annotation: let name : TypeExpr = value
+            TypeExpr? typeAnnotation = null;
+            if (_current.Kind == TokenKind.Colon)
+            {
+                Consume(TokenKind.Colon);
+                typeAnnotation = ParseTypeExpr();
+            }
+
             // ML-style function sugar: let f x y = body => let f = fun (x) -> fun (y) -> body
+            // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = fun x -> ...`)
             var sugarParams = new List<string>();
             var sugarParamTokens = new List<Token>();
-            while (_current.Kind == TokenKind.Ident)
+            if (typeAnnotation is null)
             {
-                var paramToken = Consume(TokenKind.Ident);
-                sugarParams.Add(paramToken.Text);
-                sugarParamTokens.Add(paramToken);
+                while (_current.Kind == TokenKind.Ident)
+                {
+                    var paramToken = Consume(TokenKind.Ident);
+                    sugarParams.Add(paramToken.Text);
+                    sugarParamTokens.Add(paramToken);
+                }
             }
 
             Consume(TokenKind.Equals);
@@ -298,12 +459,12 @@ public sealed class Parser
             var body = ParseExpressionCore();
             if (isRec)
             {
-                var letRec = RegisterExpr(new Expr.LetRec(name, value, body) { SugarParams = sugarParams }, start, LastConsumedEnd);
+                var letRec = RegisterExpr(new Expr.LetRec(name, value, body) { SugarParams = sugarParams, TypeAnnotation = typeAnnotation }, start, LastConsumedEnd);
                 AstSpans.SetLetRecName(letRec, nameToken.Span);
                 return letRec;
             }
 
-            var letExpr = RegisterExpr(new Expr.Let(name, value, body) { SugarParams = sugarParams }, start, LastConsumedEnd);
+            var letExpr = RegisterExpr(new Expr.Let(name, value, body) { SugarParams = sugarParams, TypeAnnotation = typeAnnotation }, start, LastConsumedEnd);
             AstSpans.SetLetName(letExpr, nameToken.Span);
             return letExpr;
         }
@@ -748,6 +909,7 @@ public sealed class Parser
             TokenKind.Ident => ParseVar(),
             TokenKind.LParen => ParseParen(),
             TokenKind.LBracket => ParseList(),
+            TokenKind.LBrace => ParseRecordUpdate(),
             _ => BadPrimary(),
         };
     }
@@ -830,7 +992,75 @@ public sealed class Parser
             var module = string.Join('.', parts.Take(parts.Count - 1));
             return RegisterExpr(new Expr.QualifiedVar(module, name), t.Position, LastConsumedEnd);
         }
+
+        // Record literal: TypeName { field = expr, ... }
+        // Only trigger when the identifier starts with an uppercase letter (type name convention).
+        if (_current.Kind == TokenKind.LBrace && t.Text.Length > 0 && char.IsUpper(t.Text[0]))
+        {
+            return ParseRecordLit(t);
+        }
+
         return RegisterExpr(new Expr.Var(t.Text), t.Position, t.End);
+    }
+
+    /// <summary>
+    /// Parses a record literal: <c>TypeName { field1 = e1, field2 = e2 }</c>.
+    /// The identifier token for the type name has already been consumed.
+    /// </summary>
+    private Expr ParseRecordLit(Token typeNameToken)
+    {
+        var start = typeNameToken.Position;
+        Consume(TokenKind.LBrace);
+
+        var fields = new List<(string Name, Expr Value)>();
+        if (_current.Kind != TokenKind.RBrace)
+        {
+            var fieldName = Consume(TokenKind.Ident).Text;
+            Consume(TokenKind.Equals);
+            var fieldValue = ParseExpressionCore();
+            fields.Add((fieldName, fieldValue));
+
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                fieldName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Equals);
+                fieldValue = ParseExpressionCore();
+                fields.Add((fieldName, fieldValue));
+            }
+        }
+
+        Consume(TokenKind.RBrace);
+        return RegisterExpr(new Expr.RecordLit(typeNameToken.Text, fields), start, LastConsumedEnd);
+    }
+
+    /// <summary>
+    /// Parses a record update expression: <c>{ expr with field1 = e1, field2 = e2 }</c>.
+    /// </summary>
+    private Expr ParseRecordUpdate()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.LBrace);
+        var target = ParseExpressionCore();
+        Consume(TokenKind.With);
+
+        var updates = new List<(string Name, Expr Value)>();
+        var fieldName = Consume(TokenKind.Ident).Text;
+        Consume(TokenKind.Equals);
+        var fieldValue = ParseExpressionCore();
+        updates.Add((fieldName, fieldValue));
+
+        while (_current.Kind == TokenKind.Comma)
+        {
+            Consume(TokenKind.Comma);
+            fieldName = Consume(TokenKind.Ident).Text;
+            Consume(TokenKind.Equals);
+            fieldValue = ParseExpressionCore();
+            updates.Add((fieldName, fieldValue));
+        }
+
+        Consume(TokenKind.RBrace);
+        return RegisterExpr(new Expr.RecordUpdate(target, updates), start, LastConsumedEnd);
     }
 
     private Expr ParseParen()

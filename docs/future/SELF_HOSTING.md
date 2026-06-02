@@ -393,13 +393,13 @@ keeping with the immutability commitment (Ground Rule #5).
 
 ### Phase 5 — Type system & ergonomics for a large codebase
 
-11. [ ] **Records / named product types + record-update syntax** — replace
+11. [x] **Records / named product types + record-update syntax** — replace
     fragile positional tuple access in `Token`, `DiagnosticEntry`, etc.
-12. [ ] **User-written type annotations** — function signatures and ADT
+12. [x] **User-written type annotations** — function signatures and ADT
     typing across module boundaries.
-13. [ ] **Module system enhancements** — cross-module type sharing without
+13. [x] **Module system enhancements** — cross-module type sharing without
     circular imports; a project-level compilation model.
-14. [ ] **Catchable error propagation** — `Result`-threading helpers or
+14. [x] **Catchable error propagation** — `Result`-threading helpers or
     early-return sugar so the pipeline can abort-and-report without
     `panic`.
 
