@@ -49,15 +49,6 @@ public sealed partial class Lowering
 
     private TcoContext? _tcoCtx;
 
-    // Async context tracking — true when lowering inside an async block body
-    private bool _insideAsync;
-    // The error type variable for the current async block; unified from each await's E.
-    // Uses save/restore pattern to support nested async blocks.
-    private TypeRef? _currentAsyncErrorType;
-
-
-
-
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
 
@@ -2618,14 +2609,8 @@ public sealed partial class Lowering
         // Lift the async body into a separate coroutine function,
         // then create a task struct pointing to the coroutine.
 
-        var savedInsideAsync = _insideAsync;
-        var savedAsyncErrorType = _currentAsyncErrorType;
-        _insideAsync = true;
-
-        // The error type variable for this async block — unified from awaits.
-        // Each await inside this block unifies its Task(E, A)'s E with this variable.
+        // Error type parameter for Task(E, A).
         var errorTypeVar = NewTypeVar();
-        _currentAsyncErrorType = errorTypeVar;
 
         // --- Capture computation (same as lambda lifting) ---
         var bound = new HashSet<string>(StringComparer.Ordinal);
@@ -2779,8 +2764,6 @@ public sealed partial class Lowering
             _arenaWatermarks.Push(w);
         }
         _tcoCtx = savedTcoCtx;
-        _insideAsync = savedInsideAsync;
-        _currentAsyncErrorType = savedAsyncErrorType;
 
         // --- Build Task(E, A) type ---
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -2806,9 +2789,9 @@ public sealed partial class Lowering
     {
         var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
 
-        // Verify the operand is a Task(E, A)
+        // Verify the operand is a Task(E, A), then run it to a Result(E, A).
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-            || !TryGetStandardResultParts(out _, out var okConstructor, out _))
+            || !TryGetStandardResultParts(out var resultSymbol, _, _))
         {
             ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task or Result type not registered.");
             return ReturnNeverWithDummyTemp();
@@ -2819,76 +2802,10 @@ public sealed partial class Lowering
         var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedType);
 
-        if (_insideAsync)
-        {
-            // Unify the awaited task's error type with the enclosing async block's error type.
-            // This ensures all awaits within the same async block share a consistent error type.
-            if (_currentAsyncErrorType is not null)
-            {
-                Unify(errorType, _currentAsyncErrorType);
-            }
-
-            // AwaitTask yields the underlying Result(E, A).
-            int resultTemp = NewTemp();
-            Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
-
-            int tagTemp = NewTemp();
-            int expectedOkTagTemp = NewTemp();
-            int isOkTemp = NewTemp();
-            Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
-            Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-            Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-
-            string errorLabel = NewLabel("await_error");
-            string endLabel = NewLabel("await_ok");
-            int payloadSlot = NewLocal();
-
-            Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
-            int payloadTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
-            Emit(new IrInst.StoreLocal(payloadSlot, payloadTemp));
-            Emit(new IrInst.Jump(endLabel));
-
-            Emit(new IrInst.Label(errorLabel));
-            Emit(new IrInst.Return(resultTemp));
-
-            Emit(new IrInst.Label(endLabel));
-            int finalTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(finalTemp, payloadSlot));
-            return (finalTemp, Prune(successType));
-        }
-
-        // Outside async blocks, await runs the task synchronously and panics on Error.
-        Unify(errorType, new TypeRef.TStr());
-        int syncResultTemp = NewTemp();
-        Emit(new IrInst.RunTask(syncResultTemp, taskTemp));
-
-        int syncTagTemp = NewTemp();
-        int syncExpectedOkTagTemp = NewTemp();
-        int syncIsOkTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(syncTagTemp, syncResultTemp));
-        Emit(new IrInst.LoadConstInt(syncExpectedOkTagTemp, GetConstructorTag(okConstructor)));
-        Emit(new IrInst.CmpIntEq(syncIsOkTemp, syncTagTemp, syncExpectedOkTagTemp));
-
-        string syncErrorLabel = NewLabel("await_sync_error");
-        string syncEndLabel = NewLabel("await_sync_ok");
-        int syncPayloadSlot = NewLocal();
-
-        Emit(new IrInst.JumpIfFalse(syncIsOkTemp, syncErrorLabel));
-        int syncPayloadTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(syncPayloadTemp, syncResultTemp, 0));
-        Emit(new IrInst.StoreLocal(syncPayloadSlot, syncPayloadTemp));
-        Emit(new IrInst.Jump(syncEndLabel));
-
-        Emit(new IrInst.Label(syncErrorLabel));
-        int syncErrorPayload = NewTemp();
-        Emit(new IrInst.GetAdtField(syncErrorPayload, syncResultTemp, 0));
-        Emit(new IrInst.PanicStr(syncErrorPayload));
-
-        Emit(new IrInst.Label(syncEndLabel));
-        int syncFinalTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(syncFinalTemp, syncPayloadSlot));
-        return (syncFinalTemp, Prune(successType));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.RunTask(resultTemp, taskTemp));
+        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
+        return (resultTemp, resultType);
     }
 
 

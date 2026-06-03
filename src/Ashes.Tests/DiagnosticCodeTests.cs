@@ -63,9 +63,9 @@ public sealed class DiagnosticCodeTests
     }
 
     [Test]
-    public void Await_inside_async_should_not_emit_ash010()
+    public void Await_on_task_should_not_emit_ash010()
     {
-        var diag = LowerExpression("async await (async 42)");
+        var diag = LowerExpression("await Ashes.Async.task(42)");
 
         diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
     }

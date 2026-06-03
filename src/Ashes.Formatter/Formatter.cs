@@ -309,10 +309,6 @@ public static class Formatter
                 WriteMatch(sb, match, indent, parentPrec, preferPipelines, options);
                 return;
 
-            case Expr.Async asyncExpr:
-                WriteAsync(sb, asyncExpr, indent, parentPrec, preferPipelines, options);
-                return;
-
             default:
                 WriteExprInline(sb, e, indent, parentPrec, preferPipelines, options);
                 return;
@@ -505,24 +501,6 @@ public static class Formatter
             WriteIndent(sb, indent + options.IndentSize, options);
             WriteExpr(sb, l.Body, indent + options.IndentSize, 0, preferPipelines, options);
         }
-
-        if (needsParens)
-        {
-            sb.Append(')');
-        }
-    }
-
-    private static void WriteAsync(StringBuilder sb, Expr.Async asyncExpr, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
-    {
-        var needsParens = parentPrec > PrecLetIfLambda;
-        if (needsParens)
-        {
-            sb.Append('(');
-        }
-
-        sb.Append("async\n");
-        WriteIndent(sb, indent + options.IndentSize, options);
-        WriteExpr(sb, asyncExpr.Body, indent + options.IndentSize, 0, preferPipelines, options);
 
         if (needsParens)
         {
@@ -1077,7 +1055,7 @@ public static class Formatter
                     var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If
                         or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
                         or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-                        or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Async or Expr.Await;
+                        or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await;
                     if (funcNeedsParens)
                     {
                         sb.Append('(');

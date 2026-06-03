@@ -309,11 +309,6 @@ public sealed class Parser
 
     private Expr ParseMatch()
     {
-        if (_current.Kind == TokenKind.Async)
-        {
-            return ParseAsync();
-        }
-
         if (_current.Kind != TokenKind.Match)
         {
             return ParseIf();
@@ -370,14 +365,6 @@ public sealed class Parser
         {
             _matchCasePipeSuppressionDepth--;
         }
-    }
-
-    private Expr ParseAsync()
-    {
-        var start = _current.Position;
-        Consume(TokenKind.Async);
-        var body = ParseExpressionCore();
-        return RegisterExpr(new Expr.Async(body), start, LastConsumedEnd);
     }
 
     private Expr ParseIf()
