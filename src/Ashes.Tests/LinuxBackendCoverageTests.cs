@@ -132,7 +132,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_network_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("http://127.0.0.1:8080/")) with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertLinuxLlvmCompiles(LowerExpression("""match await Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
@@ -419,7 +419,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async let sock = await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) in let _ = await Ashes.Net.Tcp.close(sock) in "ok") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> msg | Ok(sock) -> match await Ashes.Net.Tcp.close(sock) with | Ok(_) -> "ok" | Error(msg) -> msg)""",
             async _ => await Task.Delay(100));
         result.Stdout.ShouldBe("ok\n");
     }
@@ -433,7 +433,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async let sock = await Ashes.Net.Tcp.connect("localhost")(__PORT__) in let _ = await Ashes.Net.Tcp.close(sock) in "ok") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Tcp.connect("localhost")(__PORT__) with | Error(msg) -> msg | Ok(sock) -> match await Ashes.Net.Tcp.close(sock) with | Ok(_) -> "ok" | Error(msg) -> msg)""",
             async _ => await Task.Delay(100));
         result.Stdout.ShouldBe("ok\n");
     }
@@ -447,7 +447,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """match Ashes.Async.run(async let sock = await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) in await Ashes.Net.Tcp.send(sock)("hello")) with | Ok(n) -> Ashes.IO.print(n) | Error(msg) -> Ashes.IO.print(msg)""",
+            """match await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> Ashes.IO.print(msg) | Ok(sock) -> match await Ashes.Net.Tcp.send(sock)("hello") with | Ok(n) -> Ashes.IO.print(n) | Error(msg) -> Ashes.IO.print(msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();
@@ -465,7 +465,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async let sock = await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) in await Ashes.Net.Tcp.receive(sock)(64)) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Tcp.connect("__HOST__")(__PORT__) with | Error(msg) -> msg | Ok(sock) -> match await Ashes.Net.Tcp.receive(sock)(64) with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();
@@ -485,7 +485,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("http://__HOST__:__PORT__/hello")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("http://__HOST__:__PORT__/hello") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();
@@ -508,7 +508,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.post("http://__HOST__:__PORT__/echo")("hello")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.post("http://__HOST__:__PORT__/echo")("hello") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();
@@ -532,7 +532,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
@@ -556,7 +556,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -579,7 +579,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -603,7 +603,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
@@ -631,7 +631,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
@@ -656,7 +656,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("http://__HOST__:__PORT__/missing")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("http://__HOST__:__PORT__/missing") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();

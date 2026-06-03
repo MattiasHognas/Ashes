@@ -61,11 +61,9 @@ public sealed class ResourceLifecycleTests
     {
         var ir = LowerProgram(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in "ok") with
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                 | Error(_) -> "fail"
-                | Ok(text) -> text)
+                | Ok(sock) -> "ok")
             """);
 
         // The Ok(sock) branch should contain a Drop instruction for the socket
@@ -78,13 +76,11 @@ public sealed class ResourceLifecycleTests
     {
         var ir = LowerProgram(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
-                    let _ = await Ashes.Net.Tcp.close(sock)
-                    in "ok") with
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                 | Error(_) -> "fail"
-                | Ok(text) -> text)
+                | Ok(sock) ->
+                    let _ = await Ashes.Net.Tcp.close(sock)
+                    in "ok")
             """);
 
         // After explicit close, no additional Drop should be emitted
@@ -98,13 +94,11 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
-                    let _ = await Ashes.Net.Tcp.close(sock)
-                    in "ok") with
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                 | Error(_) -> "fail"
-                | Ok(text) -> text)
+                | Ok(sock) ->
+                    let _ = await Ashes.Net.Tcp.close(sock)
+                    in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -120,15 +114,13 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let _ = await Ashes.Net.Tcp.close(sock)
                     in
                         let _ = await Ashes.Net.Tcp.send(sock)("hello")
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -146,15 +138,13 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let _ = await Ashes.Net.Tcp.close(sock)
                     in
                         let _ = await Ashes.Net.Tcp.receive(sock)(64)
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -172,15 +162,13 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let _ = await Ashes.Net.Tcp.close(sock)
                     in
                         let _ = await Ashes.Net.Tcp.close(sock)
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -241,11 +229,9 @@ public sealed class ResourceLifecycleTests
     {
         var ir = LowerProgram(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in if true then "a" else "b") with
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                 | Error(_) -> "error"
-                | Ok(text) -> text)
+                | Ok(sock) -> if true then "a" else "b")
             """);
 
         // The socket should be dropped at the end of the Ok branch
@@ -275,16 +261,14 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let alias = sock in
                     let _ = await Ashes.Net.Tcp.close(sock)
                     in
                         let _ = await Ashes.Net.Tcp.send(alias)("hello")
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -300,16 +284,14 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let alias = sock in
                     let _ = await Ashes.Net.Tcp.close(sock)
                     in
                         let _ = await Ashes.Net.Tcp.close(alias)
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);
@@ -325,16 +307,14 @@ public sealed class ResourceLifecycleTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
                     let alias = sock in
                     let _ = await Ashes.Net.Tcp.close(alias)
                     in
                         let _ = await Ashes.Net.Tcp.send(sock)("hello")
-                        in "ok") with
-                | Error(_) -> "fail"
-                | Ok(text) -> text)
+                        in "ok")
             """,
             diag).ParseProgram();
         new Lowering(diag).Lower(program);

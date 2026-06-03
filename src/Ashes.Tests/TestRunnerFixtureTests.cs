@@ -132,7 +132,7 @@ public sealed class TestRunnerFixtureTests
             Directory.CreateDirectory(root);
             File.WriteAllText(
                 filePath,
-                "// expect: never\nAshes.IO.print(match Ashes.Async.run(async\n    await Ashes.Async.sleep(60000)) with\n    | Ok(_) -> \"never\"\n    | Error(_) -> \"never\")\n");
+                "// expect: never\nAshes.IO.print(match await Ashes.Async.sleep(60000) with\n    | Ok(_) -> \"never\"\n    | Error(_) -> \"never\")\n");
 
             Runner.TestProcessTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -212,8 +212,7 @@ public sealed class TestRunnerFixtureTests
                 // tls-expect: GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n
                 // tls-send: HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https
                 // expect: hello from https
-                Ashes.IO.print(match Ashes.Async.run(async
-                    await Ashes.Http.get("https://localhost:__TCP_PORT__/")) with
+                Ashes.IO.print(match await Ashes.Http.get("https://localhost:__TCP_PORT__/") with
                     | Ok(text) -> text
                     | Error(err) -> err)
                 """);
