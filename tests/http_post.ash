@@ -4,5 +4,6 @@
 // expect: posted
 Ashes.IO.print(match Ashes.Async.run(async
     await Ashes.Http.post("http://127.0.0.1:__TCP_PORT__/echo")("hello")) with
-    | Ok(text) -> text
+    | Ok(Ok(text)) -> text
+    | Ok(Error(err)) -> err
     | Error(err) -> err)

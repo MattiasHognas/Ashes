@@ -1,12 +1,12 @@
 // expect: 3
 Ashes.IO.print(match Ashes.Async.run(async
-    let a = 
-        await (async
-            1)
-    in 
-        let b = 
-            await (async
-                2)
-        in a + b) with
+    match await (async
+        1) with
+        | Error(_) -> 0
+        | Ok(a) ->
+            match await (async
+                2) with
+                | Error(_) -> 0
+                | Ok(b) -> a + b) with
     | Ok(n) -> n
     | Error(_) -> 0)

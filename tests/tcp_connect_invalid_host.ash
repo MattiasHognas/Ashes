@@ -1,6 +1,7 @@
 // expect: error
 Ashes.IO.print(match Ashes.Async.run(async
-    let _ = await Ashes.Net.Tcp.connect("not-a-host")(80)
-    in "fail") with
+    match await Ashes.Net.Tcp.connect("not-a-host")(80) with
+        | Ok(_) -> "fail"
+        | Error(_) -> "error") with
     | Ok(text) -> text
     | Error(_) -> "error")

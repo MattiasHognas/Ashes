@@ -8,5 +8,6 @@ let task =
         in response
 in 
     Ashes.IO.print(match Ashes.Async.run(task) with
-        | Ok(text) -> text
+        | Ok(Ok(text)) -> text
+        | Ok(Error(err)) -> err
         | Error(err) -> err)

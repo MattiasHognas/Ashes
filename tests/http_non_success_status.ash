@@ -4,5 +4,6 @@
 // expect: HTTP 404
 Ashes.IO.print(match Ashes.Async.run(async
     await Ashes.Http.get("http://127.0.0.1:__TCP_PORT__/missing")) with
-    | Ok(text) -> text
+    | Ok(Ok(text)) -> text
+    | Ok(Error(err)) -> err
     | Error(err) -> err)

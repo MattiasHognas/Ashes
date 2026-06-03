@@ -5,5 +5,6 @@
 // parks forever in WaitSocketWrite. Tracked separately; see examples/https_get.ash.
 Ashes.IO.print(match Ashes.Async.run(async
     await Ashes.Http.get("https://localhost:1/")) with
-    | Ok(text) -> text
+    | Ok(Ok(text)) -> text
+    | Ok(Error(err)) -> err
     | Error(err) -> err)

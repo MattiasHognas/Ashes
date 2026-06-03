@@ -1,7 +1,6 @@
 // expect: 2
 import Ashes.IO as io
 import Ashes.List as list
-import Ashes.Result as result
 import Ashes.Async as task
 type Shape =
     | Circle(Float)
@@ -17,15 +16,10 @@ in
         let t = 
             async
                 let count = 
-                    await task.fromResult(shapes
+                    shapes
                     |> list.map(area)
-                    |> list.map(fun (a) -> 
-                        if a >= 10.0
-                        then Ok(a)
-                        else Error("too small"))
-                    |> list.filter(result.isOk)
+                    |> list.filter(fun (a) -> a >= 10.0)
                     |> list.length
-                    |> Ok)
                 in count
         in 
             match task.run(t) with
