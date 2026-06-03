@@ -1,0 +1,1142 @@
+[38;5;8madt_constructor_multi_arg_run.ash[0m [38;5;2mPASS[0m [38;5;8m725ms[0m
+[38;5;8madt_constructor_nullary_run.ash[0m [38;5;2mPASS[0m [38;5;8m521ms[0m
+[38;5;8madt_constructor_values_run.ash[0m [38;5;2mPASS[0m [38;5;8m510ms[0m
+[38;5;8madt_ctor_wrong_arity_fails.ash[0m [38;5;2mPASS[0m [38;5;8m3ms[0m
+[38;5;8madt_match_maybe_unwrap.ash[0m [38;5;2mPASS[0m [38;5;8m547ms[0m
+[38;5;8madt_match_result.ash[0m [38;5;2mPASS[0m [38;5;8m522ms[0m
+[38;5;8madt_maybe_unwrapOr.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8madt_nested_match.ash[0m [38;5;2mPASS[0m [38;5;8m521ms[0m
+[38;5;8madt_pair_match.ash[0m [38;5;2mPASS[0m [38;5;8m499ms[0m
+[38;5;8madt_result_andThen_style.ash[0m [38;5;2mPASS[0m [38;5;8m523ms[0m
+[38;5;8mapplication_calling_non_function_fails.ash[0m [38;5;2mPASS[0m [38;5;8m1ms[0m
+[38;5;8mapplication_oversaturated_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mapplication_partial_ok.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mapplication_partial_wrong_remaining_arity_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8marena_chunk_growth_stress.ash[0m [38;5;2mPASS[0m [38;5;8m542ms[0m
+[38;5;8margs_prelude_empty.ash[0m [38;5;2mPASS[0m [38;5;8m526ms[0m
+[38;5;8marith.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8masync_all_basic.ash[0m [38;5;9mFAIL[0m [38;5;8m3ms[0m
+[38;5;8masync_all_destructure.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_all_empty.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_all_live_local.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_all_nested_from_result.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_all_three.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_all_with_sleep.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_await_nested.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_await_outside_async.ash[0m [38;5;2mPASS[0m [38;5;8m533ms[0m
+[38;5;8masync_basic.ash[0m [38;5;2mPASS[0m [38;5;8m532ms[0m
+[38;5;8masync_capture_across_await.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_from_result.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_let_bang.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_multi_await.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_nested_tasks.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_race_basic.ash[0m [38;5;2mPASS[0m [38;5;8m544ms[0m
+[38;5;8masync_recursive.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_return_await.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_sleep.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_sleep_sequential.ash[0m [38;5;2mPASS[0m [38;5;8m590ms[0m
+[38;5;8masync_sleep_with_computation.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8masync_state_machine_locals.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mbitwise.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mbool_if.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mbytes_append.ash[0m [38;5;2mPASS[0m [38;5;8m557ms[0m
+[38;5;8mbytes_append_byte.ash[0m [38;5;2mPASS[0m [38;5;8m536ms[0m
+[38;5;8mbytes_decode_le.ash[0m [38;5;2mPASS[0m [38;5;8m549ms[0m
+[38;5;8mbytes_empty.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mbytes_encode_le.ash[0m [38;5;2mPASS[0m [38;5;8m604ms[0m
+[38;5;8mbytes_from_list.ash[0m [38;5;2mPASS[0m [38;5;8m535ms[0m
+[38;5;8mbytes_singleton.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mbytes_write_file.ash[0m [38;5;2mPASS[0m [38;5;8m549ms[0m
+[38;5;8mcmp_equals.ash[0m [38;5;2mPASS[0m [38;5;8m13ms[0m
+[38;5;8mcmp_not_equals.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mcmp_str_equals.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mcmp_str_not_equals.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mconstructor_wrong_arity.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mcons_assoc.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mctor_arity2_extract.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mctor_arity3_extract_order.ash[0m [38;5;2mPASS[0m [38;5;8m502ms[0m
+[38;5;8mdiag_arity_mismatch_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_ctor_wrong_arity_pattern.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mdiag_match_branch_type_mismatch_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_module_unknown_qualified_name_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_not_a_function_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_success_smoke.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_type_mismatch_in_call_arg_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_type_mismatch_in_if_branches_fails.ash[0m [38;5;8mSKIP[0m
+[38;5;8mdiag_unknown_ctor_expr.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8merror_branch_typechecks.ash[0m [38;5;2mPASS[0m [38;5;8m504ms[0m
+[38;5;8merror_terminates.ash[0m [38;5;2mPASS[0m [38;5;8m8ms[0m
+[38;5;8mfloat_add_mul.ash[0m [38;5;2mPASS[0m [38;5;8m14ms[0m
+[38;5;8mfloat_backend_arith.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mfloat_backend_call_roundtrip.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mfloat_backend_cmp_false.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mfloat_backend_cmp_true.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mfloat_backend_div.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mfloat_backend_recursion.ash[0m [38;5;2mPASS[0m [38;5;8m15ms[0m
+[38;5;8mfloat_compare.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mfloat_div.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mfloat_literal_negative_print_rejected.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mfloat_literal_print_rejected.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mfloat_mixed_operands_is_error.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mfs_exists_missing.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mfs_exists_present.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mfs_read_text.ash[0m [38;5;2mPASS[0m [38;5;8m516ms[0m
+[38;5;8mfs_read_text_invalid_utf8.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mfs_read_text_missing.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mfs_write_text_invalid_path.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mfs_write_text_then_read.ash[0m [38;5;2mPASS[0m [38;5;8m522ms[0m
+[38;5;8mhttp_get.ash[0m [38;5;9mFAIL[0m [38;5;8m2ms[0m
+[38;5;8mhttp_get_outside_async.ash[0m [38;5;2mPASS[0m [38;5;8m588ms[0m
+[38;5;8mhttp_https_get.ash[0m [38;5;9mFAIL[0m [38;5;8m347ms[0m
+[38;5;8mhttp_https_hostname_mismatch.ash[0m [38;5;9mFAIL[0m [38;5;8m407ms[0m
+[38;5;8mhttp_https_not_supported.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mhttp_https_trust_failure.ash[0m [38;5;9mFAIL[0m [38;5;8m361ms[0m
+[38;5;8mhttp_informational_status.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mhttp_non_success_status.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mhttp_post.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mif_recursive_cons_preserves_list.ash[0m [38;5;2mPASS[0m [38;5;8m529ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m545ms[0m
+[38;5;8mMath.ash[0m [38;5;8mSKIP[0m
+[38;5;8mBar.ash[0m [38;5;8mSKIP[0m
+[38;5;8mFoo_Bar.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mB.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mAddOne.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m510ms[0m
+[38;5;8mMeaning.ash[0m [38;5;8mSKIP[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mB.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m516ms[0m
+[38;5;8mMath.ash[0m [38;5;8mSKIP[0m
+[38;5;8mAshes.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mimport_alias_std.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8minfix_arithmetic.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mio_read_line_echo.ash[0m [38;5;2mPASS[0m [38;5;8m525ms[0m
+[38;5;8mio_read_line_empty_line.ash[0m [38;5;2mPASS[0m [38;5;8m521ms[0m
+[38;5;8mio_read_line_eof_none.ash[0m [38;5;2mPASS[0m [38;5;8m502ms[0m
+[38;5;8mio_read_line_two_lines.ash[0m [38;5;2mPASS[0m [38;5;8m539ms[0m
+[38;5;8mio_write.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mio_write_line.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mio_write_then_write_line.ash[0m [38;5;2mPASS[0m [38;5;8m501ms[0m
+[38;5;8mlast_or_int.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mlast_or_string.ash[0m [38;5;2mPASS[0m [38;5;8m514ms[0m
+[38;5;8mlet_rec_sugar.ash[0m [38;5;2mPASS[0m [38;5;8m15ms[0m
+[38;5;8mlet_sugar_one_param.ash[0m [38;5;2mPASS[0m [38;5;8m507ms[0m
+[38;5;8mlet_sugar_partial_application.ash[0m [38;5;2mPASS[0m [38;5;8m504ms[0m
+[38;5;8mlet_sugar_two_params.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mlist_sum.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mlsp_adt_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mmatch_ctor_patterns_maybe.ash[0m [38;5;2mPASS[0m [38;5;8m516ms[0m
+[38;5;8mmatch_ctor_pattern_wrong_arity.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mmatch_mixed_adts_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mmaybe_string_constructors_typecheck.ash[0m [38;5;2mPASS[0m [38;5;8m495ms[0m
+[38;5;8mpartial_application_basic.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mpartial_application_multiarg.ash[0m [38;5;2mPASS[0m [38;5;8m510ms[0m
+[38;5;8mpartial_application_oversaturated_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_exhaustive_color.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mpattern_guard_adt.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mpattern_guard_basic.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mpattern_guard_fallthrough.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mpattern_guard_multiple.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mpattern_large_adt_dispatch.ash[0m [38;5;2mPASS[0m [38;5;8m513ms[0m
+[38;5;8mpattern_large_adt_exhaustive_50.ash[0m [38;5;2mPASS[0m [38;5;8m534ms[0m
+[38;5;8mpattern_large_adt_non_exhaustive_50.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_list_exhaustive.ash[0m [38;5;2mPASS[0m [38;5;8m502ms[0m
+[38;5;8mpattern_list_missing_cons_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_list_missing_empty_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_missing_cases_diagnostic.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_nested_exhaustive_maybe_list.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mpattern_nested_missing_some_empty_list.ash[0m [38;5;2mPASS[0m [38;5;8m1ms[0m
+[38;5;8mpattern_non_exhaustive_color.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpattern_no_redundant_arms.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mpattern_redundant_ctor_arm_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpipe_basic.ash[0m [38;5;2mPASS[0m [38;5;8m505ms[0m
+[38;5;8mpipe_chain.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mpolymorphism_adt_maybe_result_multiuse.ash[0m [38;5;2mPASS[0m [38;5;8m523ms[0m
+[38;5;8mpolymorphism_future_id.ash[0m [38;5;2mPASS[0m [38;5;8m510ms[0m
+[38;5;8mpolymorphism_generalize_id.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mpolymorphism_id_multiuse.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mpolymorphism_list_match_multiuse.ash[0m [38;5;2mPASS[0m [38;5;8m526ms[0m
+[38;5;8mpolymorphism_list_to_maybe_multiuse.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mpolymorphism_occurs_check_rejects_self_apply.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpolymorphism_rec_monomorphic_ok.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mpolymorphism_rec_poly_rejected.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mpoly_compose.ash[0m [38;5;2mPASS[0m [38;5;8m534ms[0m
+[38;5;8mpoly_const.ash[0m [38;5;2mPASS[0m [38;5;8m520ms[0m
+[38;5;8mpoly_flip.ash[0m [38;5;2mPASS[0m [38;5;8m530ms[0m
+[38;5;8mpoly_id_multi_type.ash[0m [38;5;2mPASS[0m [38;5;8m518ms[0m
+[38;5;8mprelude_schemes_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m500ms[0m
+[38;5;8mFoo.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mB.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mB.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m610ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m606ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m609ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m603ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m615ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m613ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m547ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m545ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m539ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m542ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m557ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m545ms[0m
+[38;5;8mX.ash[0m [38;5;8mSKIP[0m
+[38;5;8mX.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mambiguous_leaf_qualifier_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mfull_qualified_still_works.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mX.ash[0m [38;5;8mSKIP[0m
+[38;5;8mY.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mfull_qualified.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mleaf_qualified.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8munqualified_collision_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mB.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mA.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m563ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m554ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m551ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m556ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m555ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m559ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m591ms[0m
+[38;5;8mList.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m590ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m600ms[0m
+[38;5;8mMeasure.ash[0m [38;5;8mSKIP[0m
+[38;5;8mAshes.ash[0m [38;5;8mSKIP[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mMain.ash[0m [38;5;2mPASS[0m [38;5;8m524ms[0m
+[38;5;8mreadme_showcase.ash[0m [38;5;9mFAIL[0m [38;5;8m2ms[0m
+[38;5;8mrecord_basic.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mrecord_field_in_func.ash[0m [38;5;2mPASS[0m [38;5;8m507ms[0m
+[38;5;8mrecord_update.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mresult_let_bind_basic_error.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mresult_let_bind_basic_success.ash[0m [38;5;2mPASS[0m [38;5;8m514ms[0m
+[38;5;8mresult_let_bind_pipeline_mix.ash[0m [38;5;2mPASS[0m [38;5;8m518ms[0m
+[38;5;8mresult_let_bind_sequential.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mresult_let_bind_shadowing.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mresult_let_bind_typed_error.ash[0m [38;5;2mPASS[0m [38;5;8m504ms[0m
+[38;5;8mresult_pipe_error_propagation.ash[0m [38;5;2mPASS[0m [38;5;8m520ms[0m
+[38;5;8mresult_pipe_fallible_function.ash[0m [38;5;2mPASS[0m [38;5;8m520ms[0m
+[38;5;8mresult_pipe_map_error.ash[0m [38;5;2mPASS[0m [38;5;8m516ms[0m
+[38;5;8mresult_pipe_map_error_ok_passthrough.ash[0m [38;5;2mPASS[0m [38;5;8m518ms[0m
+[38;5;8mresult_pipe_mixed_success_and_error.ash[0m [38;5;2mPASS[0m [38;5;8m521ms[0m
+[38;5;8mresult_pipe_mixed_success_path.ash[0m [38;5;2mPASS[0m [38;5;8m525ms[0m
+[38;5;8mresult_pipe_pure_function.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mresult_pipe_realistic_shape.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mresult_stdlib_import.ash[0m [38;5;2mPASS[0m [38;5;8m558ms[0m
+[38;5;8mresult_typed_error_nested_match.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mstdlib_array.ash[0m [38;5;2mPASS[0m [38;5;8m735ms[0m
+[38;5;8mstdlib_list.ash[0m [38;5;2mPASS[0m [38;5;8m678ms[0m
+[38;5;8mstdlib_map.ash[0m [38;5;2mPASS[0m [38;5;8m755ms[0m
+[38;5;8mstdlib_maybe.ash[0m [38;5;2mPASS[0m [38;5;8m565ms[0m
+[38;5;8mstdlib_result.ash[0m [38;5;2mPASS[0m [38;5;8m571ms[0m
+[38;5;8mstdlib_string.ash[0m [38;5;2mPASS[0m [38;5;8m865ms[0m
+[38;5;8mstd_args_empty.ash[0m [38;5;2mPASS[0m [38;5;8m15ms[0m
+[38;5;8mstd_fs_qualified_names_resolve.ash[0m [38;5;2mPASS[0m [38;5;8m510ms[0m
+[38;5;8mstd_implicit_open.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_import_ashes_io.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mstd_io_read_line_match_typechecks.ash[0m [38;5;2mPASS[0m [38;5;8m18ms[0m
+[38;5;8mstd_io_unknown_member_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_io_unqualified_write_line_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_io_write_line_ok.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mstd_no_prelude_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_panic.ash[0m [38;5;2mPASS[0m [38;5;8m8ms[0m
+[38;5;8mstd_print.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mstd_qualified_no_import.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mstd_qualified_print.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mstd_root_args_removed_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_root_module_reserved.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_root_panic_removed_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_root_print_removed_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mstd_shadowing_and_qualified_access.ash[0m [38;5;2mPASS[0m [38;5;8m505ms[0m
+[38;5;8mstrings.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mtailpos_if_tailcall_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mtailpos_non_tailcall_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mtco_list_length_large.ash[0m [38;5;2mPASS[0m [38;5;8m529ms[0m
+[38;5;8mtco_multi_param.ash[0m [38;5;2mPASS[0m [38;5;8m19ms[0m
+[38;5;8mtco_self_recursion_large.ash[0m [38;5;2mPASS[0m [38;5;8m19ms[0m
+[38;5;8mtco_single_param.ash[0m [38;5;2mPASS[0m [38;5;8m15ms[0m
+[38;5;8mtcp_close.ash[0m [38;5;9mFAIL[0m [38;5;8m1ms[0m
+[38;5;8mtcp_connect_invalid_host.ash[0m [38;5;9mFAIL[0m [38;5;8m548ms[0m
+[38;5;8mtcp_connect_localhost.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_connect_outside_async.ash[0m [38;5;2mPASS[0m [38;5;8m551ms[0m
+[38;5;8mtcp_connect_success.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_receive.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_receive_bounded.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_receive_invalid_max_bytes.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_send.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtcp_send_after_close.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtest_assert_equal.ash[0m [38;5;2mPASS[0m [38;5;8m529ms[0m
+[38;5;8mtext_format_float_large.ash[0m [38;5;2mPASS[0m [38;5;8m696ms[0m
+[38;5;8mtext_format_numbers.ash[0m [38;5;2mPASS[0m [38;5;8m33ms[0m
+[38;5;8mtext_json_parser_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m992ms[0m
+[38;5;8mtext_parse_float_exponent.ash[0m [38;5;2mPASS[0m [38;5;8m517ms[0m
+[38;5;8mtext_parse_float_invalid.ash[0m [38;5;2mPASS[0m [38;5;8m517ms[0m
+[38;5;8mtext_parse_float_negative.ash[0m [38;5;2mPASS[0m [38;5;8m517ms[0m
+[38;5;8mtext_parse_float_ok.ash[0m [38;5;2mPASS[0m [38;5;8m518ms[0m
+[38;5;8mtext_parse_float_range.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mtext_parse_int_invalid.ash[0m [38;5;2mPASS[0m [38;5;8m516ms[0m
+[38;5;8mtext_parse_int_negative.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mtext_parse_int_ok.ash[0m [38;5;2mPASS[0m [38;5;8m519ms[0m
+[38;5;8mtext_parse_int_overflow.ash[0m [38;5;2mPASS[0m [38;5;8m513ms[0m
+[38;5;8mtext_uncons_ascii.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mtext_uncons_empty.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mtext_uncons_unicode.ash[0m [38;5;2mPASS[0m [38;5;8m512ms[0m
+[38;5;8mtls_connect_outside_async.ash[0m [38;5;2mPASS[0m [38;5;8m922ms[0m
+[38;5;8mtls_hostname_mismatch.ash[0m [38;5;9mFAIL[0m [38;5;8m1.43s[0m
+[38;5;8mtls_send_after_close.ash[0m [38;5;9mFAIL[0m [38;5;8m0ms[0m
+[38;5;8mtls_send_receive.ash[0m [38;5;9mFAIL[0m [38;5;8m499ms[0m
+[38;5;8mtls_trust_failure.ash[0m [38;5;9mFAIL[0m [38;5;8m1.18s[0m
+[38;5;8mtuple_literal_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mtuple_match.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mtuple_match_nested.ash[0m [38;5;2mPASS[0m [38;5;8m503ms[0m
+[38;5;8mtuple_match_sum.ash[0m [38;5;2mPASS[0m [38;5;8m508ms[0m
+[38;5;8mtuple_nested_arity_mismatch_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mtuple_parse_smoke.ash[0m [38;5;2mPASS[0m [38;5;8m507ms[0m
+[38;5;8mtuple_pattern_arity_mismatch_fails.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mtuple_pattern_arity_ok.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mtype_annotation_basic.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mtype_named_type.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8mtype_parse_maybe.ash[0m [38;5;2mPASS[0m [38;5;8m12ms[0m
+[38;5;8mtype_symbol_registration.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8mtype_validation_duplicate_ctor.ash[0m [38;5;2mPASS[0m [38;5;8m0ms[0m
+[38;5;8mtype_validation_ok.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8muint_arithmetic.ash[0m [38;5;2mPASS[0m [38;5;8m32ms[0m
+[38;5;8muint_bitwise.ash[0m [38;5;2mPASS[0m [38;5;8m23ms[0m
+[38;5;8muint_comparison.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8muint_wrapping.ash[0m [38;5;2mPASS[0m [38;5;8m23ms[0m
+[38;5;8munary_negation.ash[0m [38;5;2mPASS[0m [38;5;8m11ms[0m
+[38;5;8mws_app_mixed_styles.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mws_app_multi_arg.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mws_app_paren_expr_arg.ash[0m [38;5;2mPASS[0m [38;5;8m506ms[0m
+[38;5;8mws_app_precedence.ash[0m [38;5;2mPASS[0m [38;5;8m511ms[0m
+[38;5;8mws_app_qualified.ash[0m [38;5;2mPASS[0m [38;5;8m10ms[0m
+[38;5;8mws_app_recursive.ash[0m [38;5;2mPASS[0m [38;5;8m18ms[0m
+[38;5;8mws_app_single_arg.ash[0m [38;5;2mPASS[0m [38;5;8m509ms[0m
+[38;5;8mws_app_std_print.ash[0m [38;5;2mPASS[0m [38;5;8m9ms[0m
+[38;5;8m╭─────────────────────────────────────────────────────┬──────────────────────┬───────╮[0m
+[38;5;8m│[0m [38;5;8mTest[0m                                                [38;5;8m│[0m [38;5;8mResult[0m               [38;5;8m│[0m [38;5;8mTime[0m  [38;5;8m│[0m
+[38;5;8m├─────────────────────────────────────────────────────┼──────────────────────┼───────┤[0m
+[38;5;8m│[0m adt_constructor_multi_arg_run.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m725ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_constructor_nullary_run.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m521ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_constructor_values_run.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m510ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_ctor_wrong_arity_fails.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m3ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m adt_match_maybe_unwrap.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m547ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_match_result.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m522ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_maybe_unwrapOr.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_nested_match.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m521ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_pair_match.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m499ms[0m [38;5;8m│[0m
+[38;5;8m│[0m adt_result_andThen_style.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m523ms[0m [38;5;8m│[0m
+[38;5;8m│[0m application_calling_non_function_fails.ash          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m1ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m application_oversaturated_fails.ash                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m application_partial_ok.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m application_partial_wrong_remaining_arity_fails.ash [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m arena_chunk_growth_stress.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m542ms[0m [38;5;8m│[0m
+[38;5;8m│[0m args_prelude_empty.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m526ms[0m [38;5;8m│[0m
+[38;5;8m│[0m arith.ash                                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m async_all_basic.ash                                 [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m3ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_destructure.ash                           [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_empty.ash                                 [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_live_local.ash                            [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_nested_from_result.ash                    [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_three.ash                                 [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_all_with_sleep.ash                            [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_await_nested.ash                              [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_await_outside_async.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m533ms[0m [38;5;8m│[0m
+[38;5;8m│[0m async_basic.ash                                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m532ms[0m [38;5;8m│[0m
+[38;5;8m│[0m async_capture_across_await.ash                      [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_from_result.ash                               [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_let_bang.ash                                  [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_multi_await.ash                               [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_nested_tasks.ash                              [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_race_basic.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m544ms[0m [38;5;8m│[0m
+[38;5;8m│[0m async_recursive.ash                                 [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_return_await.ash                              [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_sleep.ash                                     [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_sleep_sequential.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m590ms[0m [38;5;8m│[0m
+[38;5;8m│[0m async_sleep_with_computation.ash                    [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m async_state_machine_locals.ash                      [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m bitwise.ash                                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bool_if.ash                                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m bytes_append.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m557ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_append_byte.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m536ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_decode_le.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m549ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_empty.ash                                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_encode_le.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m604ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_from_list.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m535ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_singleton.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m bytes_write_file.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m549ms[0m [38;5;8m│[0m
+[38;5;8m│[0m cmp_equals.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m13ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m cmp_not_equals.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m cmp_str_equals.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m cmp_str_not_equals.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m constructor_wrong_arity.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m cons_assoc.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ctor_arity2_extract.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ctor_arity3_extract_order.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m502ms[0m [38;5;8m│[0m
+[38;5;8m│[0m diag_arity_mismatch_fails.ash                       [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_ctor_wrong_arity_pattern.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m diag_match_branch_type_mismatch_fails.ash           [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_module_unknown_qualified_name_fails.ash        [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_not_a_function_fails.ash                       [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_success_smoke.ash                              [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_type_mismatch_in_call_arg_fails.ash            [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_type_mismatch_in_if_branches_fails.ash         [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m diag_unknown_ctor_expr.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m error_branch_typechecks.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m504ms[0m [38;5;8m│[0m
+[38;5;8m│[0m error_terminates.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m8ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m float_add_mul.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m14ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_backend_arith.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_backend_call_roundtrip.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m float_backend_cmp_false.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_backend_cmp_true.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_backend_div.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_backend_recursion.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m15ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_compare.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_div.ash                                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m float_literal_negative_print_rejected.ash           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m float_literal_print_rejected.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m float_mixed_operands_is_error.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m fs_exists_missing.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_exists_present.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_read_text.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m516ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_read_text_invalid_utf8.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_read_text_missing.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_write_text_invalid_path.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m fs_write_text_then_read.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m522ms[0m [38;5;8m│[0m
+[38;5;8m│[0m http_get.ash                                        [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m2ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m http_get_outside_async.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m588ms[0m [38;5;8m│[0m
+[38;5;8m│[0m http_https_get.ash                                  [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m347ms[0m [38;5;8m│[0m
+[38;5;8m│[0m http_https_hostname_mismatch.ash                    [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m407ms[0m [38;5;8m│[0m
+[38;5;8m│[0m http_https_not_supported.ash                        [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m http_https_trust_failure.ash                        [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m361ms[0m [38;5;8m│[0m
+[38;5;8m│[0m http_informational_status.ash                       [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m http_non_success_status.ash                         [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m http_post.ash                                       [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m if_recursive_cons_preserves_list.ash                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m529ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m545ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Math.ash                                            [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Bar.ash                                             [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Foo_Bar.ash                                         [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m B.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m AddOne.ash                                          [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m510ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Meaning.ash                                         [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m B.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m516ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Math.ash                                            [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Ashes.ash                                           [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m import_alias_std.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m infix_arithmetic.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m io_read_line_echo.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m525ms[0m [38;5;8m│[0m
+[38;5;8m│[0m io_read_line_empty_line.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m521ms[0m [38;5;8m│[0m
+[38;5;8m│[0m io_read_line_eof_none.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m502ms[0m [38;5;8m│[0m
+[38;5;8m│[0m io_read_line_two_lines.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m539ms[0m [38;5;8m│[0m
+[38;5;8m│[0m io_write.ash                                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m io_write_line.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m io_write_then_write_line.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m501ms[0m [38;5;8m│[0m
+[38;5;8m│[0m last_or_int.ash                                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m last_or_string.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m514ms[0m [38;5;8m│[0m
+[38;5;8m│[0m let_rec_sugar.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m15ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m let_sugar_one_param.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m507ms[0m [38;5;8m│[0m
+[38;5;8m│[0m let_sugar_partial_application.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m504ms[0m [38;5;8m│[0m
+[38;5;8m│[0m let_sugar_two_params.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m list_sum.ash                                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m lsp_adt_smoke.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m match_ctor_patterns_maybe.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m516ms[0m [38;5;8m│[0m
+[38;5;8m│[0m match_ctor_pattern_wrong_arity.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m match_mixed_adts_fails.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m maybe_string_constructors_typecheck.ash             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m495ms[0m [38;5;8m│[0m
+[38;5;8m│[0m partial_application_basic.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m partial_application_multiarg.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m510ms[0m [38;5;8m│[0m
+[38;5;8m│[0m partial_application_oversaturated_fails.ash         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_exhaustive_color.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_guard_adt.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_guard_basic.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m pattern_guard_fallthrough.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m pattern_guard_multiple.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_large_adt_dispatch.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m513ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_large_adt_exhaustive_50.ash                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m534ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_large_adt_non_exhaustive_50.ash             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_list_exhaustive.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m502ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_list_missing_cons_fails.ash                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_list_missing_empty_fails.ash                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_missing_cases_diagnostic.ash                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_nested_exhaustive_maybe_list.ash            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_nested_missing_some_empty_list.ash          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m1ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_non_exhaustive_color.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pattern_no_redundant_arms.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pattern_redundant_ctor_arm_fails.ash                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m pipe_basic.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m505ms[0m [38;5;8m│[0m
+[38;5;8m│[0m pipe_chain.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_adt_maybe_result_multiuse.ash          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m523ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_future_id.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m510ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_generalize_id.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_id_multiuse.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_list_match_multiuse.ash                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m526ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_list_to_maybe_multiuse.ash             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_occurs_check_rejects_self_apply.ash    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_rec_monomorphic_ok.ash                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m polymorphism_rec_poly_rejected.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m poly_compose.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m534ms[0m [38;5;8m│[0m
+[38;5;8m│[0m poly_const.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m520ms[0m [38;5;8m│[0m
+[38;5;8m│[0m poly_flip.ash                                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m530ms[0m [38;5;8m│[0m
+[38;5;8m│[0m poly_id_multi_type.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m518ms[0m [38;5;8m│[0m
+[38;5;8m│[0m prelude_schemes_smoke.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m500ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Foo.ash                                             [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m B.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m B.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m610ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m606ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m609ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m603ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m615ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m613ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m547ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m545ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m539ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m542ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m557ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m545ms[0m [38;5;8m│[0m
+[38;5;8m│[0m X.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m X.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m ambiguous_leaf_qualifier_fails.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m full_qualified_still_works.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m X.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Y.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m full_qualified.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m leaf_qualified.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m unqualified_collision_fails.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m B.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m A.ash                                               [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m563ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m554ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m551ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m556ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m555ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m559ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m591ms[0m [38;5;8m│[0m
+[38;5;8m│[0m List.ash                                            [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m590ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m600ms[0m [38;5;8m│[0m
+[38;5;8m│[0m Measure.ash                                         [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Ashes.ash                                           [38;5;8m│[0m [38;5;8mSKIP (no // expect:)[0m [38;5;8m│[0m [38;5;8m—[0m     [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m Main.ash                                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m524ms[0m [38;5;8m│[0m
+[38;5;8m│[0m readme_showcase.ash                                 [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m2ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m record_basic.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m record_field_in_func.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m507ms[0m [38;5;8m│[0m
+[38;5;8m│[0m record_update.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_basic_error.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_basic_success.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m514ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_pipeline_mix.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m518ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_sequential.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_shadowing.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_let_bind_typed_error.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m504ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_error_propagation.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m520ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_fallible_function.ash                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m520ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_map_error.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m516ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_map_error_ok_passthrough.ash            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m518ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_mixed_success_and_error.ash             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m521ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_mixed_success_path.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m525ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_pure_function.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_pipe_realistic_shape.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_stdlib_import.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m558ms[0m [38;5;8m│[0m
+[38;5;8m│[0m result_typed_error_nested_match.ash                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_array.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m735ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_list.ash                                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m678ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_map.ash                                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m755ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_maybe.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m565ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_result.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m571ms[0m [38;5;8m│[0m
+[38;5;8m│[0m stdlib_string.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m865ms[0m [38;5;8m│[0m
+[38;5;8m│[0m std_args_empty.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m15ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_fs_qualified_names_resolve.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m510ms[0m [38;5;8m│[0m
+[38;5;8m│[0m std_implicit_open.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_import_ashes_io.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_io_read_line_match_typechecks.ash               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m18ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_io_unknown_member_fails.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_io_unqualified_write_line_fails.ash             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_io_write_line_ok.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_no_prelude_fails.ash                            [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_panic.ash                                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m8ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_print.ash                                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_qualified_no_import.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_qualified_print.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m std_root_args_removed_fails.ash                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_root_module_reserved.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_root_panic_removed_fails.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_root_print_removed_fails.ash                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m std_shadowing_and_qualified_access.ash              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m505ms[0m [38;5;8m│[0m
+[38;5;8m│[0m strings.ash                                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tailpos_if_tailcall_smoke.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tailpos_non_tailcall_smoke.ash                      [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tco_list_length_large.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m529ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tco_multi_param.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m19ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tco_self_recursion_large.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m19ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tco_single_param.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m15ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m tcp_close.ash                                       [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m1ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_connect_invalid_host.ash                        [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m548ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tcp_connect_localhost.ash                           [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_connect_outside_async.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m551ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tcp_connect_success.ash                             [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_receive.ash                                     [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_receive_bounded.ash                             [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_receive_invalid_max_bytes.ash                   [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_send.ash                                        [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tcp_send_after_close.ash                            [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m test_assert_equal.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m529ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_format_float_large.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m696ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_format_numbers.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m33ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m text_json_parser_smoke.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m992ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_float_exponent.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m517ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_float_invalid.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m517ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_float_negative.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m517ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_float_ok.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m518ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_float_range.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_int_invalid.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m516ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_int_negative.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_int_ok.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m519ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_parse_int_overflow.ash                         [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m513ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_uncons_ascii.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_uncons_empty.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m text_uncons_unicode.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m512ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tls_connect_outside_async.ash                       [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m922ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tls_hostname_mismatch.ash                           [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m1.43s[0m [38;5;8m│[0m
+[38;5;8m│[0m tls_send_after_close.ash                            [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tls_send_receive.ash                                [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m499ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tls_trust_failure.ash                               [38;5;8m│[0m [38;5;9mFAIL[0m                 [38;5;8m│[0m [38;5;8m1.18s[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_literal_smoke.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_match.ash                                     [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_match_nested.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m503ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_match_sum.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m508ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_nested_arity_mismatch_fails.ash               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tuple_parse_smoke.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m507ms[0m [38;5;8m│[0m
+[38;5;8m│[0m tuple_pattern_arity_mismatch_fails.ash              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m tuple_pattern_arity_ok.ash                          [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m type_annotation_basic.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m type_named_type.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m type_parse_maybe.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m12ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m type_symbol_registration.ash                        [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m type_validation_duplicate_ctor.ash                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m0ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m type_validation_ok.ash                              [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m uint_arithmetic.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m32ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m uint_bitwise.ash                                    [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m23ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m uint_comparison.ash                                 [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m│[0m uint_wrapping.ash                                   [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m23ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m unary_negation.ash                                  [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m11ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m ws_app_mixed_styles.ash                             [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ws_app_multi_arg.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ws_app_paren_expr_arg.ash                           [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m506ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ws_app_precedence.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m511ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ws_app_qualified.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m10ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m ws_app_recursive.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m18ms[0m  [38;5;8m│[0m
+[38;5;8m│[0m ws_app_single_arg.ash                               [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m509ms[0m [38;5;8m│[0m
+[38;5;8m│[0m ws_app_std_print.ash                                [38;5;8m│[0m [38;5;2mPASS[0m                 [38;5;8m│[0m [38;5;8m9ms[0m   [38;5;8m│[0m
+[38;5;8m╰─────────────────────────────────────────────────────┴──────────────────────┴───────╯[0m
+
+[38;5;2m259 passed[0m, [38;5;9m40 failed[0m, [38;5;8m33 skipped[0m in [1m1.51min[0m
+
+[38;5;9m── async_all_basic.ash ─────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+10
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_basic.ash ASH002 Type mismatch: Result<Str, List<Int>> vs List<a>.
+
+[38;5;9m── async_all_destructure.ash ───────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+3
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_destructure.ash ASH002 Type mismatch: Result<Str, List<Int>> vs 
+List<a>.
+
+[38;5;9m── async_all_empty.ash ─────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+1
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_empty.ash ASH002 Type mismatch: Result<a, List<b>> vs List<c>.
+
+[38;5;9m── async_all_live_local.ash ────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+42
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_live_local.ash ASH002 Type mismatch: Result<Str, List<Int>> vs 
+List<a>.
+
+[38;5;9m── async_all_nested_from_result.ash ────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+6
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_nested_from_result.ash ASH002 Type mismatch: Result<Str, List<Int>> 
+vs List<a>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_nested_from_result.ash ASH002 Type mismatch: Result<Str, List<Int>> 
+vs List<a>.
+
+[38;5;9m── async_all_three.ash ─────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+6
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_three.ash ASH002 Type mismatch: Result<Str, List<Int>> vs List<a>.
+
+[38;5;9m── async_all_with_sleep.ash ────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+30
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_all_with_sleep.ash ASH002 Type mismatch: Result<Str, List<Int>> vs 
+List<a>.
+
+[38;5;9m── async_await_nested.ash ──────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+10
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_await_nested.ash ASH004 Type mismatch: Result<Str, Int> vs Int. Context: 
+in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_await_nested.ash print() does not support type Result<Str, Int> yet.
+
+[38;5;9m── async_capture_across_await.ash ──────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+15
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_capture_across_await.ash ASH002 '+' requires Int+Int, Float+Float, or 
+Str+Str, got Int and Result<Str, Int>.
+
+[38;5;9m── async_from_result.ash ───────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+99
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_from_result.ash ASH004 Type mismatch: Result<a, Int> vs Int. Context: in 
+match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_from_result.ash print() does not support type Result<a, Int> yet.
+
+[38;5;9m── async_let_bang.ash ──────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+3
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_let_bang.ash ASH002 '+' requires Int+Int, Float+Float, or Str+Str, got 
+Result<Str, Int> and Result<Str, Int>.
+
+[38;5;9m── async_multi_await.ash ───────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+60
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_multi_await.ash ASH002 '+' requires Int+Int, Float+Float, or Str+Str, got
+Result<Str, Int> and Result<Str, Int>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_multi_await.ash ASH002 '+' requires Int+Int, Float+Float, or Str+Str, got
+Int and Result<Str, Int>.
+
+[38;5;9m── async_nested_tasks.ash ──────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+7
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_nested_tasks.ash ASH004 Type mismatch: Result<Str, Int> vs Int. Context: 
+in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_nested_tasks.ash print() does not support type Result<Str, Int> yet.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_nested_tasks.ash ASH002 '+' requires Int+Int, Float+Float, or Str+Str, 
+got Result<Str, Int> and Int.
+
+[38;5;9m── async_recursive.ash ─────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+3
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_recursive.ash ASH001 Undefined variable 'async'.
+
+[38;5;9m── async_return_await.ash ──────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+42
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_return_await.ash ASH004 Type mismatch: Result<Str, Int> vs Int. Context: 
+in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_return_await.ash print() does not support type Result<Str, Int> yet.
+
+[38;5;9m── async_sleep.ash ─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+0
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_sleep.ash ASH004 Type mismatch: Result<Str, Int> vs Int. Context: in 
+match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_sleep.ash print() does not support type Result<Str, Int> yet.
+
+[38;5;9m── async_sleep_with_computation.ash ────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+15
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_sleep_with_computation.ash ASH002 '+' requires Int+Int, Float+Float, or 
+Str+Str, got Result<Str, Int> and Result<Str, Int>.
+
+[38;5;9m── async_state_machine_locals.ash ──────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+111
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/async_state_machine_locals.ash ASH002 '+' requires Int+Int, Float+Float, or 
+Str+Str, got Result<Str, Int> and Result<Str, Int>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/async_state_machine_locals.ash ASH002 '+' requires Int+Int, Float+Float, or 
+Str+Str, got Int and Result<Str, Int>.
+
+[38;5;9m── http_get.ash ────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+hello from http
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_get.ash ASH004 Type mismatch: Result<Str, Str> vs Str. Context: in match 
+arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_get.ash print() does not support type Result<Str, Str> yet.
+
+[38;5;9m── http_https_get.ash ──────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+hello from https
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_get.ash ASH004 Type mismatch: Result<Str, Str> vs Str. Context: in 
+match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_get.ash print() does not support type Result<Str, Str> yet.
+
+[38;5;9m── http_https_hostname_mismatch.ash ────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+Ashes TLS handshake failed: invalid peer certificate: NotValidForName
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_hostname_mismatch.ash ASH004 Type mismatch: Result<Str, Str> vs Str.
+Context: in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_hostname_mismatch.ash print() does not support type Result<Str, Str>
+yet.
+
+[38;5;9m── http_https_not_supported.ash ────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+Ashes.Net.Tcp.connect() failed
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_not_supported.ash ASH004 Type mismatch: Result<Str, Str> vs Str. 
+Context: in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_not_supported.ash print() does not support type Result<Str, Str> 
+yet.
+
+[38;5;9m── http_https_trust_failure.ash ────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_trust_failure.ash ASH004 Type mismatch: Result<Str, Str> vs Str. 
+Context: in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_https_trust_failure.ash print() does not support type Result<Str, Str> 
+yet.
+
+[38;5;9m── http_informational_status.ash ───────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+HTTP 101
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_informational_status.ash ASH004 Type mismatch: Result<Str, Str> vs Str. 
+Context: in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_informational_status.ash print() does not support type Result<Str, Str> 
+yet.
+
+[38;5;9m── http_non_success_status.ash ─────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+HTTP 404
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_non_success_status.ash ASH004 Type mismatch: Result<Str, Str> vs Str. 
+Context: in match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_non_success_status.ash print() does not support type Result<Str, Str> yet.
+
+[38;5;9m── http_post.ash ───────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+posted
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/http_post.ash ASH004 Type mismatch: Result<Str, Str> vs Str. Context: in match 
+arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/http_post.ash print() does not support type Result<Str, Str> yet.
+
+[38;5;9m── readme_showcase.ash ─────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+2
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/readme_showcase.ash ASH004 Type mismatch: Result<a, Int> vs Unit. Context: in 
+match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/readme_showcase.ash ASH004 Type mismatch: Result<a, Int> vs Unit. Context: in 
+match arm 3.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/readme_showcase.ash ASH002 '>=' requires Int'>='Int or Float'>='Float, got 
+Result<a, Int> and Int.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/readme_showcase.ash print() does not support type Result<a, Int> yet.
+
+[38;5;9m── tcp_close.ash ───────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ok
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_close.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_close.ash Ashes.Net.Tcp.close() expects Socket. Got Result<Str, Socket>.
+
+[38;5;9m── tcp_connect_invalid_host.ash ────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 0
+[38;5;8mExpected:[0m
+error
+[38;5;8mActual:[0m
+fail
+
+[38;5;9m── tcp_connect_localhost.ash ───────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ok
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_connect_localhost.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_connect_localhost.ash Ashes.Net.Tcp.close() expects Socket. Got Result<Str,
+Socket>.
+
+[38;5;9m── tcp_connect_success.ash ─────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ok
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_connect_success.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_connect_success.ash Ashes.Net.Tcp.close() expects Socket. Got Result<Str, 
+Socket>.
+
+[38;5;9m── tcp_receive.ash ─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+hello
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive.ash ASH004 Type mismatch: Result<a, b> vs Str. Context: in match 
+arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive.ash print() does not support type Result<a, b> yet.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive.ash Ashes.Net.Tcp.receive() expects Socket. Got Result<Str, 
+Socket>.
+
+[38;5;9m── tcp_receive_bounded.ash ─────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+abc
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_bounded.ash ASH004 Type mismatch: Result<a, b> vs Str. Context: in 
+match arm 2.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_bounded.ash print() does not support type Result<a, b> yet.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_bounded.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_bounded.ash Ashes.Net.Tcp.receive() expects Socket. Got Result<Str,
+Socket>.
+
+[38;5;9m── tcp_receive_invalid_max_bytes.ash ───────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+error
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_invalid_max_bytes.ash ASH002 Type mismatch: Result<Str, Socket> vs 
+Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_receive_invalid_max_bytes.ash Ashes.Net.Tcp.receive() expects Socket. Got 
+Result<Str, Socket>.
+
+[38;5;9m── tcp_send.ash ────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ok
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send.ash Ashes.Net.Tcp.send() expects Socket. Got Result<Str, Socket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send.ash ASH002 '==' requires Int==Int, Float==Float, or Str==Str, got 
+Result<a, b> and Int.
+
+[38;5;9m── tcp_send_after_close.ash ────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 1
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ASH006
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send_after_close.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send_after_close.ash ASH002 Type mismatch: Result<Str, Socket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send_after_close.ash Ashes.Net.Tcp.close() expects Socket. Got Result<Str, 
+Socket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tcp_send_after_close.ash Ashes.Net.Tcp.send() expects Socket. Got Result<Str, 
+Socket>.
+
+[38;5;9m── tls_hostname_mismatch.ash ───────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 0
+[38;5;8mExpected:[0m
+Ashes TLS handshake failed: invalid peer certificate: NotValidForName
+[38;5;8mActual:[0m
+fail
+
+[38;5;9m── tls_send_after_close.ash ────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 1
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ASH006
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_after_close.ash ASH002 Type mismatch: Result<Str, TlsSocket> vs 
+Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_after_close.ash ASH002 Type mismatch: Result<Str, TlsSocket> vs 
+Task<a, b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_after_close.ash Ashes.Net.Tls.close() expects TlsSocket. Got 
+Result<Str, TlsSocket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_after_close.ash Ashes.Net.Tls.send() expects TlsSocket. Got 
+Result<Str, TlsSocket>.
+
+[38;5;9m── tls_send_receive.ash ────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 1
+[38;5;8mExpected:[0m
+ok
+[38;5;8mActual:[0m
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash ASH002 Type mismatch: Result<Str, TlsSocket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash ASH002 Type mismatch: Result<Str, TlsSocket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash ASH002 Type mismatch: Result<Str, TlsSocket> vs Task<a, 
+b>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash Ashes.Net.Tls.send() expects TlsSocket. Got Result<Str, 
+TlsSocket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash Ashes.Net.Tls.receive() expects TlsSocket. Got Result<Str,
+TlsSocket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash Ashes.Net.Tls.close() expects TlsSocket. Got Result<Str, 
+TlsSocket>.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash ASH002 '==' requires Int==Int, Float==Float, or Str==Str, 
+got Result<a, b> and Int.
+
+/tmp/workspace/MattiasHognas/Ashes/tests/tls_send_receive.ash ASH002 '==' requires Int==Int, Float==Float, or Str==Str, 
+got Result<a, b> and Str.
+
+[38;5;9m── tls_trust_failure.ash ───────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;8mExpected exit:[0m 0
+[38;5;8mActual exit:[0m 0
+[38;5;8mExpected:[0m
+Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer
+[38;5;8mActual:[0m
+fail
+
