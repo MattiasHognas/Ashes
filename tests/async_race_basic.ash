@@ -1,8 +1,6 @@
 // expect: 42
-let task = 
-    async
-        await Ashes.Async.race([Ashes.Async.task(42), Ashes.Async.task(99)])
+let task = Ashes.Async.race([Ashes.Async.task(42), Ashes.Async.task(99)])
 in 
-    Ashes.IO.print(match Ashes.Async.run(task) with
-        | Ok(n) -> n
-        | Error(_) -> 0)
+    match await task with
+        | Ok(n) -> Ashes.IO.print(n)
+        | Error(msg) -> Ashes.IO.print(msg)
