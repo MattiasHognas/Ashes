@@ -17,9 +17,9 @@ Current codes:
 | `ASH005` | List element type mismatch |
 | `ASH006` | Use-after-drop (using a resource after it has been closed) |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
-| `ASH010` | Reserved (legacy: `await` used outside an `async` block) |
-| `ASH011` | Conflicting error types inside an `async` block |
-| `ASH012` | Reserved (legacy: async-only networking API used outside an `async` block) |
+| `ASH010` | Reserved |
+| `ASH011` | Reserved |
+| `ASH012` | Reserved |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.

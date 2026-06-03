@@ -1905,7 +1905,7 @@ of the first task to complete:
 
 ## 19.8 Diagnostics
 
-- `ASH011` — reserved (legacy async error-type conflict diagnostic).
+- `ASH011` — reserved.
 
 ---
 
