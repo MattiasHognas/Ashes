@@ -1025,7 +1025,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Ashes.Async.task(value) — creates a pre-completed successful task.
-    /// Equivalent to Ashes.Async.fromResult(Ok(value)).
+    /// Equivalent to Ashes.Async.fromResult(Ok(value)) when E = Str.
     /// </summary>
     private (int, TypeRef) LowerAsyncTask(Expr valueArg)
     {
@@ -1412,30 +1412,30 @@ public sealed partial class Lowering
         );
     }
 
-        // Ashes.Async.task : A -> Task(Str, A)
-        private Binding.Intrinsic CreateAsyncTaskBinding()
+    // Ashes.Async.task : A -> Task(Str, A)
+    private Binding.Intrinsic CreateAsyncTaskBinding()
     {
-            if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
-            {
-                throw new InvalidOperationException("Built-in Task type is not registered.");
-            }
-
-            var a = new TypeRef.TVar(_nextTypeVar++);
-            var taskType = new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), a]);
-            return new Binding.Intrinsic(
-                IntrinsicKind.AsyncTask,
-                new TypeScheme([new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(a, taskType))
-            );
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
         }
 
-        // Ashes.Async.fromResult : Result(E, A) -> Task(E, A)
-        private Binding.Intrinsic CreateAsyncFromResultBinding()
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncTask,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(a, taskType))
+        );
+    }
+
+    // Ashes.Async.fromResult : Result(E, A) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncFromResultBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
         {
-            if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-                || !_typeSymbols.TryGetValue("Result", out var resultSymbol))
-            {
-                throw new InvalidOperationException("Built-in Task or Result type is not registered.");
-            }
+            throw new InvalidOperationException("Built-in Task or Result type is not registered.");
+        }
 
         var e = new TypeRef.TVar(_nextTypeVar++);
         var a = new TypeRef.TVar(_nextTypeVar++);

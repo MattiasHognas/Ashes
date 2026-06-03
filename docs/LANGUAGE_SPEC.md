@@ -1807,7 +1807,8 @@ computation that may fail with error type `E` or succeed with value type `A`.
 - `await <expr>` where `<expr> : Task(E, A)` produces `A`.
 - `await` may appear both inside and outside `async` blocks.
 - Inside `async`, awaiting a task propagates `Error(e)` out of the enclosing `async` block.
-- Outside `async`, awaiting a task runs it synchronously and panics on `Error(e)` (which must be `Str`).
+- Outside `async`, awaiting a task runs it synchronously and panics on `Error(e)`.
+  This is compile-time constrained to `Task(Str, A)`; awaiting `Task(E, A)` with non-`Str` `E` fails type checking.
 - `Ashes.Async.run(task)` returns the task's final `Result(E, A)`.
 
 ## 19.4 Async Let (let!)
