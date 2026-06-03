@@ -1025,7 +1025,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Ashes.Async.task(value) — creates a pre-completed successful task.
-    /// Equivalent to Ashes.Async.fromResult(Ok(value)) when E = Str.
+    /// Convenience form of creating a successful task with error type Str.
     /// </summary>
     private (int, TypeRef) LowerAsyncTask(Expr valueArg)
     {

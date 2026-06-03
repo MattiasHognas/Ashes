@@ -113,6 +113,7 @@ public sealed partial class Lowering
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        rootScope["async"] = CreateAsyncTaskBinding();
         if (_hasAshesIO)
         {
             AddStdIOBindings(rootScope);
@@ -2609,7 +2610,7 @@ public sealed partial class Lowering
         // Lift the async body into a separate coroutine function,
         // then create a task struct pointing to the coroutine.
 
-        // Error type parameter for Task(E, A).
+        // Error type parameter used for the coroutine Task(E, A) return type.
         var errorTypeVar = NewTypeVar();
 
         // --- Capture computation (same as lambda lifting) ---
@@ -2791,7 +2792,7 @@ public sealed partial class Lowering
 
         // Verify the operand is a Task(E, A), then run it to a Result(E, A).
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-            || !TryGetStandardResultParts(out var resultSymbol, _, _))
+            || !TryGetStandardResultParts(out var resultSymbol, out _, out _))
         {
             ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task or Result type not registered.");
             return ReturnNeverWithDummyTemp();
