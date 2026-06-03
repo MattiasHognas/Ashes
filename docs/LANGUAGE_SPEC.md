@@ -69,6 +69,7 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)`
 - `Ashes.Async.run(task)` returning `Result(E, A)`
+- `Ashes.Async.task(value)` returning `Task(Str, A)`
 - `Ashes.Async.fromResult(result)` returning `Task(E, A)`
 - `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
 - `Ashes.Async.all(tasks)` returning `Task(E, List(A))`
@@ -1795,7 +1796,7 @@ computation that may fail with error type `E` or succeed with value type `A`.
 
 ## 19.3 Await Expressions
 
-`await <expr>` unwraps a `Task(E, A)` inside an `async` block:
+`await <expr>` unwraps a `Task(E, A)`:
 
     async
         let a = await taskA
@@ -1804,9 +1805,9 @@ computation that may fail with error type `E` or succeed with value type `A`.
             in a + b
 
 - `await <expr>` where `<expr> : Task(E, A)` produces `A`.
-- `await` may only appear inside an `async` block. Using `await` outside
-  `async` is a compile-time error (`ASH010`).
-- Awaiting a task propagates `Error(e)` out of the enclosing `async` block.
+- `await` may appear both inside and outside `async` blocks.
+- Inside `async`, awaiting a task propagates `Error(e)` out of the enclosing `async` block.
+- Outside `async`, awaiting a task runs it synchronously and panics on `Error(e)` (which must be `Str`).
 - `Ashes.Async.run(task)` returns the task's final `Result(E, A)`.
 
 ## 19.4 Async Let (let!)
@@ -1853,6 +1854,7 @@ Desugars to:
 
 - `Ashes.Async.fromResult(result)` — wraps a `Result(E, A)` into a
   `Task(E, A)` that completes immediately.
+- `Ashes.Async.task(value)` — wraps a value into an already successful `Task(Str, A)`.
 - `Ashes.Async.run(task)` — runs a task to completion and returns
   `Result(E, A)`.
 
@@ -1861,6 +1863,7 @@ Desugars to:
 | Function | Type |
 |----------|------|
 | `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
+| `Ashes.Async.task(value)` | `A -> Task(Str, A)` |
 | `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
 | `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
 | `Ashes.Async.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
@@ -1924,7 +1927,6 @@ of the first task to complete:
 
 ## 19.8 Diagnostics
 
-- `ASH010` — `await` used outside an `async` block.
 - `ASH011` — `async` block has incompatible error types across await points.
 
 ---

@@ -1,2 +1,2 @@
-// expect-compile-error: ASH010
-await 42
+// expect: 42
+Ashes.IO.print(await Ashes.Async.task(42))

@@ -55,11 +55,11 @@ public sealed class DiagnosticCodeTests
     }
 
     [Test]
-    public void Await_outside_async_should_emit_ash010()
+    public void Await_outside_async_should_not_emit_ash010()
     {
-        var diag = LowerExpression("await 42");
+        var diag = LowerExpression("await Ashes.Async.task(42)");
 
-        diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
+        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
     }
 
     [Test]
@@ -71,15 +71,15 @@ public sealed class DiagnosticCodeTests
     }
 
     [Test]
-    public void Async_only_networking_api_should_emit_ash012_outside_async()
+    public void Async_only_networking_api_should_not_emit_ash012_outside_async()
     {
         var diag = LowerExpression("Ashes.Http.get(\"http://example.com\")");
 
-        diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
+        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
 
         var httpsDiag = LowerExpression("Ashes.Http.get(\"https://example.com\")");
 
-        httpsDiag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
+        httpsDiag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
     }
 
     private static Diagnostics LowerExpression(string source)

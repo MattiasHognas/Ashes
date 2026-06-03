@@ -73,6 +73,7 @@ public sealed partial class Lowering
         NetTlsClose,
         Panic,
         AsyncRun,
+        AsyncTask,
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
