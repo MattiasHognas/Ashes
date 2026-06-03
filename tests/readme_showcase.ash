@@ -14,13 +14,12 @@ in
     let shapes = [Circle(5.0), Rect(3.0)(4.0), Circle(1.0)]
     in 
         let t = 
-            async
-                let count = 
-                    shapes
-                    |> list.map(area)
-                    |> list.filter(fun (a) -> a >= 10.0)
-                    |> list.length
-                in count
+            async(let count = 
+                shapes
+                |> list.map(area)
+                |> list.filter(fun (a) -> a >= 10.0)
+                |> list.length
+            in count)
         in 
             match task.run(t) with
                 | Ok(n) when n >= 1 -> io.print(n)
