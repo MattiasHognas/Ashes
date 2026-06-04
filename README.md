@@ -22,7 +22,7 @@ in
             async(
                 shapes
                 |> list.map area
-                |> list.filter a >= 10.0
+                |> list.filter(fun(a) -> a >= 10.0)
                 |> list.length
             )
         in 
