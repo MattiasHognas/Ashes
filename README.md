@@ -12,24 +12,23 @@ type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area s = 
-    match s with
+let area = fun (shape) ->
+    match shape with
         | Circle(r) -> 3.14159 * r * r
         | Rect(w, h) -> w * h
 in 
     let shapes = [Circle(5.0), Rect(3.0)(4.0), Circle(1.0)]
     in 
-        let t = 
-            async(let count = 
+        let work = 
+            async(
                 shapes
                 |> list.map(area)
                 |> list.filter(fun (a) -> a >= 10.0)
                 |> list.length
-            in count)
+            )
         in 
-            match task.run(t) with
-                | Ok(n) when n >= 1 -> io.print(n)
-                | Ok(_) -> io.print(0)
+            match task.run(work) with
+                | Ok(count) -> io.print(count)
                 | Error(_) -> io.print(0)
 ```
 
@@ -136,10 +135,15 @@ import Ashes.IO as io
 import Ashes.Async as task
 import Ashes.IO as io
 
-let work = async
-    match await task.fromResult(Ok(42)) with
-        | Ok(n) -> n
-        | Error(_) -> 0
+let work = 
+    async(
+        match await task.all([async 21, async 21]) with
+            | Ok(values) -> 
+                match values with
+                    | a :: b :: [] -> a + b
+                    | _ -> 0
+            | Error(_) -> 0
+    )
 in
     match task.run(work) with
         | Ok(n) -> io.print(n)
