@@ -6,37 +6,29 @@ native executables without runtime dependencies.
 ```ash
 import Ashes.IO as io
 import Ashes.List as list
-import Ashes.Result as result
 import Ashes.Async as task
 
 type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area s = 
-    match s with
+let area = fun (shape) ->
+    match shape with
         | Circle(r) -> 3.14159 * r * r
         | Rect(w, h) -> w * h
 in 
     let shapes = [Circle(5.0), Rect(3.0)(4.0), Circle(1.0)]
     in 
-        let t = 
-            async
-                let count = 
-                    await task.fromResult(shapes
-                    |> list.map(area)
-                    |> list.map(fun (a) -> 
-                        if a >= 10.0
-                        then Ok(a)
-                        else Error("too small"))
-                    |> list.filter(result.isOk)
-                    |> list.length
-                    |> Ok)
-                in count
+        let work = 
+            async(
+                shapes
+                |> list.map(area)
+                |> list.filter(fun (a) -> a >= 10.0)
+                |> list.length
+            )
         in 
-            match task.run(t) with
-                | Ok(n) when n >= 1 -> io.print(n)
-                | Ok(_) -> io.print(0)
+            match await work with
+                | Ok(count) -> io.print(count)
                 | Error(_) -> io.print(0)
 ```
 
@@ -127,10 +119,11 @@ in io.print(sum([1, 2, 3, 4, 5])(0))
 
 ```ash
 import Ashes.Result as result
+import Ashes.Text as text
 import Ashes.IO as io
 
 "42"
-|> parseOr
+|> text.parseInt
 |> result.map(fun (n) -> n + 1)
 |> result.default(0)
 |> io.print
@@ -142,12 +135,17 @@ import Ashes.IO as io
 import Ashes.Async as task
 import Ashes.IO as io
 
-let work = async
-    let! a = task.fromResult(21)
-    in
-        let! b = task.fromResult(21)
-        in a + b
-in task.run(work) |> io.print
+let work = 
+    async(match await task.all([async 21, async 21]) with
+        | Error(_) -> 0
+        | Ok(values) -> 
+            match values with
+                | a :: b :: [] -> a + b
+                | _ -> 0)
+in
+    io.print(match await work with
+        | Ok(n) -> n
+        | Error(_) -> 0)
 ```
 
 ### Polymorphism
