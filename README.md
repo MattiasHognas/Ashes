@@ -21,8 +21,8 @@ in
         let work = 
             async(
                 shapes
-                |> list.map(area)
-                |> list.filter(fun (a) -> a >= 10.0)
+                |> list.map area
+                |> list.filter a >= 10.0
                 |> list.length
             )
         in 
