@@ -166,13 +166,13 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_network_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("http://127.0.0.1:8080/")) with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_https_network_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.Async.run(async await Ashes.Http.get("https://localhost/")) with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
@@ -363,7 +363,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 // Drain the client's request before responding. If the server closes the
@@ -388,7 +388,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -411,7 +411,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -435,7 +435,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
@@ -463,7 +463,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);

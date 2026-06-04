@@ -37,6 +37,7 @@ public static class BuiltinRegistry
         NetTlsReceive,
         NetTlsClose,
         AsyncRun,
+        AsyncTask,
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
@@ -201,6 +202,7 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["run"] = new("run", BuiltinValueKind.AsyncRun, IsCallable: true, Arity: 1),
+                    ["task"] = new("task", BuiltinValueKind.AsyncTask, IsCallable: true, Arity: 1),
                     ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
                     ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
                     ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),

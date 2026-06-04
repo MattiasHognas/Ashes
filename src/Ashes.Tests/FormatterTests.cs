@@ -543,35 +543,26 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_write_async_with_body_indented()
-    {
-        var formatted = Ashes.Formatter.Formatter.Format(
-            new Expr.Async(new Expr.IntLit(42)));
-
-        formatted.ShouldBe("async\n    42\n");
-    }
-
-    [Test]
     public void Format_should_write_await_as_prefix()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
-            new Expr.Async(new Expr.Await(new Expr.Var("task"))));
+            new Expr.Await(new Expr.Var("task")));
 
-        formatted.ShouldBe("async\n    await task\n");
+        formatted.ShouldBe("await task\n");
     }
 
     [Test]
-    public void Format_should_round_trip_async_await_expression()
+    public void Format_should_round_trip_await_expression()
     {
-        const string source = "async await f(x)\n";
+        const string source = "await f(x)\n";
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("async\n    await f(x)\n");
+        formatted.ShouldBe("await f(x)\n");
 
         // Idempotent: second pass produces the same output
         var secondPass = FormatFixtureSource(formatted);
-        secondPass.ShouldBe("async\n    await f(x)\n");
+        secondPass.ShouldBe("await f(x)\n");
     }
 
     [Test]

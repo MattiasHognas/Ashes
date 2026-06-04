@@ -49,15 +49,6 @@ public sealed partial class Lowering
 
     private TcoContext? _tcoCtx;
 
-    // Async context tracking — true when lowering inside an async block body
-    private bool _insideAsync;
-    // The error type variable for the current async block; unified from each await's E.
-    // Uses save/restore pattern to support nested async blocks.
-    private TypeRef? _currentAsyncErrorType;
-
-
-
-
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
 
@@ -122,6 +113,7 @@ public sealed partial class Lowering
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        rootScope["async"] = CreateAsyncTaskBinding();
         if (_hasAshesIO)
         {
             AddStdIOBindings(rootScope);
@@ -513,6 +505,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncTaskBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
@@ -2084,15 +2077,6 @@ public sealed partial class Lowering
                 return ReportArityMismatch(rootExpr, expectedArity, collectedArgs.Count);
             }
 
-            if (!_insideAsync && IsAsyncOnlyNetworkingIntrinsic(intrinsic.Kind))
-            {
-                ReportDiagnostic(
-                    GetSpan(rootExpr),
-                    $"'{varFunc.Name}' returns Task and can only be called inside an 'async' block.",
-                    DiagnosticCodes.AsyncOnlyNetworkingApi);
-                return ReturnNeverWithDummyTemp();
-            }
-
             return intrinsic.Kind switch
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
@@ -2120,6 +2104,7 @@ public sealed partial class Lowering
                 IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                 IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
@@ -2165,15 +2150,6 @@ public sealed partial class Lowering
                     return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
                 }
 
-                if (!_insideAsync && IsAsyncOnlyNetworkingBuiltin(builtinMember.Kind))
-                {
-                    ReportDiagnostic(
-                        GetSpan(qv),
-                        $"'{resolvedModule}.{qv.Name}' returns Task and can only be called inside an 'async' block.",
-                        DiagnosticCodes.AsyncOnlyNetworkingApi);
-                    return ReturnNeverWithDummyTemp();
-                }
-
                 return builtinMember.Kind switch
                 {
                     BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
@@ -2201,6 +2177,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
@@ -2633,14 +2610,8 @@ public sealed partial class Lowering
         // Lift the async body into a separate coroutine function,
         // then create a task struct pointing to the coroutine.
 
-        var savedInsideAsync = _insideAsync;
-        var savedAsyncErrorType = _currentAsyncErrorType;
-        _insideAsync = true;
-
-        // The error type variable for this async block — unified from awaits.
-        // Each await inside this block unifies its Task(E, A)'s E with this variable.
+        // Error type parameter used for the coroutine Task(E, A) return type.
         var errorTypeVar = NewTypeVar();
-        _currentAsyncErrorType = errorTypeVar;
 
         // --- Capture computation (same as lambda lifting) ---
         var bound = new HashSet<string>(StringComparer.Ordinal);
@@ -2794,8 +2765,6 @@ public sealed partial class Lowering
             _arenaWatermarks.Push(w);
         }
         _tcoCtx = savedTcoCtx;
-        _insideAsync = savedInsideAsync;
-        _currentAsyncErrorType = savedAsyncErrorType;
 
         // --- Build Task(E, A) type ---
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -2819,17 +2788,11 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerAwait(Expr.Await awaitExpr)
     {
-        if (!_insideAsync)
-        {
-            ReportDiagnostic(GetSpan(awaitExpr), "'await' can only be used inside an 'async' block.", DiagnosticCodes.AwaitOutsideAsync);
-            return ReturnNeverWithDummyTemp();
-        }
-
         var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
 
-        // Verify the operand is a Task(E, A)
+        // Verify the operand is a Task(E, A), then run it to a Result(E, A).
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
-            || !TryGetStandardResultParts(out _, out var okConstructor, out _))
+            || !TryGetStandardResultParts(out var resultSymbol, out _, out _))
         {
             ReportDiagnostic(GetSpan(awaitExpr), "Internal error: Task or Result type not registered.");
             return ReturnNeverWithDummyTemp();
@@ -2840,41 +2803,10 @@ public sealed partial class Lowering
         var expectedType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedType);
 
-        // Unify the awaited task's error type with the enclosing async block's error type.
-        // This ensures all awaits within the same async block share a consistent error type.
-        if (_currentAsyncErrorType is not null)
-        {
-            Unify(errorType, _currentAsyncErrorType);
-        }
-
-        // AwaitTask yields the underlying Result(E, A).
         int resultTemp = NewTemp();
-        Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
-
-        int tagTemp = NewTemp();
-        int expectedOkTagTemp = NewTemp();
-        int isOkTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, resultTemp));
-        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-
-        string errorLabel = NewLabel("await_error");
-        string endLabel = NewLabel("await_ok");
-        int payloadSlot = NewLocal();
-
-        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
-        int payloadTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(payloadTemp, resultTemp, 0));
-        Emit(new IrInst.StoreLocal(payloadSlot, payloadTemp));
-        Emit(new IrInst.Jump(endLabel));
-
-        Emit(new IrInst.Label(errorLabel));
-        Emit(new IrInst.Return(resultTemp));
-
-        Emit(new IrInst.Label(endLabel));
-        int finalTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(finalTemp, payloadSlot));
-        return (finalTemp, Prune(successType));
+        Emit(new IrInst.RunTask(resultTemp, taskTemp));
+        var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
+        return (resultTemp, resultType);
     }
 
 

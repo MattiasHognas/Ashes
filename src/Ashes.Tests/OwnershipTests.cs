@@ -252,11 +252,9 @@ public sealed class OwnershipTests
     {
         var ir = LowerProgram(
             """
-            Ashes.IO.print(match Ashes.Async.run(async
-                let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(80)
-                in "connected") with
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                 | Error(msg) -> msg
-                | Ok(text) -> text)
+                | Ok(sock) -> "connected")
             """);
         HasDropInstruction(ir, "Socket").ShouldBeTrue();
     }

@@ -53,16 +53,16 @@ public sealed class ExampleSocketFixtureTests
     public async Task Async_all_should_preserve_input_order_for_http_tasks_against_loopback_fixture()
     {
         const string source = """
-Ashes.IO.print(match Ashes.Async.run(async
-    let responses = await Ashes.Async.all([
+Ashes.IO.print(
+    match await Ashes.Async.all([
         Ashes.Http.get("http://127.0.0.1:8080/first"),
         Ashes.Http.get("http://127.0.0.1:8080/second")
-    ])
-    in match responses with
-        | a :: b :: [] -> a + "," + b
-        | _ -> "bad-shape") with
-    | Ok(text) -> text
-    | Error(err) -> err)
+    ]) with
+        | Error(err) -> err
+        | Ok(responses) ->
+            match responses with
+                | a :: b :: [] -> a + "," + b
+                | _ -> "bad-shape")
 """;
 
         await RunSourceWithServerAsync(
@@ -89,13 +89,13 @@ Ashes.IO.print(match Ashes.Async.run(async
     public async Task Async_race_should_return_first_completed_http_task_against_loopback_fixture()
     {
         const string source = """
-Ashes.IO.print(match Ashes.Async.run(async
-    await Ashes.Async.race([
+Ashes.IO.print(
+    match await Ashes.Async.race([
         Ashes.Http.get("http://127.0.0.1:8080/slow"),
         Ashes.Http.get("http://127.0.0.1:8080/fast")
-    ])) with
-    | Ok(text) -> text
-    | Error(err) -> err)
+    ]) with
+        | Ok(text) -> text
+        | Error(err) -> err)
 """;
 
         var fastResponded = new TaskCompletionSource();
@@ -141,12 +141,13 @@ Ashes.IO.print(match Ashes.Async.run(async
     public async Task Tcp_close_should_release_socket_and_allow_async_program_to_continue_against_loopback_fixture()
     {
         const string source = """
-Ashes.IO.print(match Ashes.Async.run(async
-    let sock = await Ashes.Net.Tcp.connect("127.0.0.1")(8080)
-    in let _ = await Ashes.Net.Tcp.close(sock)
-    in "cleanup-ok") with
-    | Ok(text) -> text
-    | Error(err) -> err)
+Ashes.IO.print(
+    match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
+        | Error(err) -> err
+        | Ok(sock) ->
+            match await Ashes.Net.Tcp.close(sock) with
+                | Ok(_) -> "cleanup-ok"
+                | Error(err) -> err)
 """;
 
         await RunSourceWithServerAsync(
@@ -167,11 +168,10 @@ Ashes.IO.print(match Ashes.Async.run(async
     public async Task Awaited_http_failure_should_propagate_error_through_async_program_against_loopback_fixture()
     {
         const string source = """
-Ashes.IO.print(match Ashes.Async.run(async
-    let response = await Ashes.Http.get("http://127.0.0.1:8080/fail")
-    in "unreachable:" + response) with
-    | Ok(text) -> text
-    | Error(err) -> err)
+Ashes.IO.print(
+    match await Ashes.Http.get("http://127.0.0.1:8080/fail") with
+        | Ok(response) -> "unreachable:" + response
+        | Error(err) -> err)
 """;
 
         await RunSourceWithServerAsync(

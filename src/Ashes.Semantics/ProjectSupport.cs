@@ -90,7 +90,7 @@ public static class ProjectSupport
     private static readonly HashSet<string> ReservedKeywords = new(StringComparer.Ordinal)
     {
         "let", "rec", "in", "if", "then", "else", "match", "with",
-        "fun", "true", "false", "type", "async", "await"
+        "fun", "true", "false", "type", "await"
     };
 
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;

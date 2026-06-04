@@ -309,11 +309,6 @@ public sealed class Parser
 
     private Expr ParseMatch()
     {
-        if (_current.Kind == TokenKind.Async)
-        {
-            return ParseAsync();
-        }
-
         if (_current.Kind != TokenKind.Match)
         {
             return ParseIf();
@@ -370,14 +365,6 @@ public sealed class Parser
         {
             _matchCasePipeSuppressionDepth--;
         }
-    }
-
-    private Expr ParseAsync()
-    {
-        var start = _current.Position;
-        Consume(TokenKind.Async);
-        var body = ParseExpressionCore();
-        return RegisterExpr(new Expr.Async(body), start, LastConsumedEnd);
     }
 
     private Expr ParseIf()
@@ -880,7 +867,7 @@ public sealed class Parser
             if (IsWhitespaceArgStarter(_current.Kind))
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
-                var arg = ParsePrimary();
+                var arg = ParseWhitespaceArgument();
                 expr = RegisterExpr(new Expr.Call(expr, arg) { IsWhitespaceApplication = true }, start, AstSpans.GetOrDefault(arg).End);
                 continue;
             }
@@ -894,7 +881,22 @@ public sealed class Parser
     private static bool IsWhitespaceArgStarter(TokenKind kind)
     {
         return kind is TokenKind.Ident or TokenKind.Int or TokenKind.Float or TokenKind.String
-            or TokenKind.True or TokenKind.False or TokenKind.LBracket;
+            or TokenKind.True or TokenKind.False or TokenKind.LBracket
+            or TokenKind.Await or TokenKind.Let
+            or TokenKind.If or TokenKind.Match or TokenKind.Fun;
+    }
+
+    private Expr ParseWhitespaceArgument()
+    {
+        return _current.Kind switch
+        {
+            TokenKind.Await => ParseUnary(),
+            TokenKind.Let => ParseLet(),
+            TokenKind.If => ParseIf(),
+            TokenKind.Match => ParseMatch(),
+            TokenKind.Fun => ParseLambda(),
+            _ => ParsePrimary()
+        };
     }
 
     private Expr ParsePrimary()

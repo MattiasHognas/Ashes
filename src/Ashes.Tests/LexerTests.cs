@@ -27,7 +27,7 @@ public sealed class LexerTests
             TokenKind.True,
             TokenKind.False,
             TokenKind.Type,
-            TokenKind.Async,
+            TokenKind.Ident,
             TokenKind.Await,
             TokenKind.Ident,
             TokenKind.GreaterEquals,
@@ -192,10 +192,10 @@ public sealed class LexerTests
     }
 
     [Test]
-    public void Next_should_tokenize_async_keyword()
+    public void Next_should_treat_async_as_identifier()
     {
         var tokens = LexAll("async");
-        tokens[0].Kind.ShouldBe(TokenKind.Async);
+        tokens[0].Kind.ShouldBe(TokenKind.Ident);
         tokens[0].Text.ShouldBe("async");
     }
 

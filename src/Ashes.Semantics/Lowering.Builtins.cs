@@ -1024,6 +1024,29 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Ashes.Async.task(value) — creates a pre-completed successful task.
+    /// Convenience form of creating a successful task with error type Str.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncTask(Expr valueArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(valueArg);
+        _usesAsync = true;
+
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+
+        if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
+            || !_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        int okResultTemp = LowerSingleFieldConstructorValue(okConstructor, valueTemp);
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateCompletedTask(taskTemp, okResultTemp));
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), Prune(valueType)]));
+    }
+
+    /// <summary>
     /// Ashes.Async.fromResult(result) — creates a pre-completed task.
     /// Wraps a Result(E, A) into a Task(E, A) that is already completed.
     /// </summary>
@@ -1386,6 +1409,22 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.AsyncRun,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, resultType))
+        );
+    }
+
+    // Ashes.Async.task : A -> Task(Str, A)
+    private Binding.Intrinsic CreateAsyncTaskBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncTask,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(a, taskType))
         );
     }
 
