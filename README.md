@@ -136,18 +136,16 @@ import Ashes.Async as task
 import Ashes.IO as io
 
 let work = 
-    async(
-        match await task.all([async 21, async 21]) with
-            | Ok(values) -> 
-                match values with
-                    | a :: b :: [] -> a + b
-                    | _ -> 0
-            | Error(_) -> 0
-    )
+    async(match await task.all([async 21, async 21]) with
+        | Error(_) -> 0
+        | Ok(values) -> 
+            match values with
+                | a :: b :: [] -> a + b
+                | _ -> 0)
 in
-    match task.run(work) with
-        | Ok(n) -> io.print(n)
-        | Error(_) -> io.print(0)
+    io.print(match task.run(work) with
+        | Ok(n) -> n
+        | Error(_) -> 0)
 ```
 
 ### Polymorphism
