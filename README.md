@@ -6,7 +6,6 @@ native executables without runtime dependencies.
 ```ash
 import Ashes.IO as io
 import Ashes.List as list
-import Ashes.Result as result
 import Ashes.Async as task
 
 type Shape =
@@ -21,18 +20,12 @@ in
     let shapes = [Circle(5.0), Rect(3.0)(4.0), Circle(1.0)]
     in 
         let t = 
-            async
-                let count = 
-                    await task.fromResult(shapes
-                    |> list.map(area)
-                    |> list.map(fun (a) -> 
-                        if a >= 10.0
-                        then Ok(a)
-                        else Error("too small"))
-                    |> list.filter(result.isOk)
-                    |> list.length
-                    |> Ok)
-                in count
+            async(let count = 
+                shapes
+                |> list.map(area)
+                |> list.filter(fun (a) -> a >= 10.0)
+                |> list.length
+            in count)
         in 
             match task.run(t) with
                 | Ok(n) when n >= 1 -> io.print(n)
@@ -127,10 +120,11 @@ in io.print(sum([1, 2, 3, 4, 5])(0))
 
 ```ash
 import Ashes.Result as result
+import Ashes.Text as text
 import Ashes.IO as io
 
 "42"
-|> parseOr
+|> text.parseInt
 |> result.map(fun (n) -> n + 1)
 |> result.default(0)
 |> io.print
@@ -142,12 +136,11 @@ import Ashes.IO as io
 import Ashes.Async as task
 import Ashes.IO as io
 
-let work = async
-    let! a = task.fromResult(21)
-    in
-        let! b = task.fromResult(21)
-        in a + b
-in task.run(work) |> io.print
+io.print(match task.run(async(match await task.fromResult(Ok(42)) with
+    | Ok(n) -> n
+    | Error(_) -> 0)) with
+    | Ok(n) -> n
+    | Error(_) -> 0)
 ```
 
 ### Polymorphism
