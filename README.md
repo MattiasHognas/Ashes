@@ -6,13 +6,12 @@ native executables without runtime dependencies.
 ```ash
 import Ashes.IO as io
 import Ashes.List as list
-import Ashes.Async as task
 
 type Shape =
     | Circle(Float)
     | Rect(Float, Float)
 
-let area = fun (shape) ->
+let area shape
     match shape with
         | Circle(r) -> 3.14159 * r * r
         | Rect(w, h) -> w * h
@@ -28,8 +27,8 @@ in
             )
         in 
             match await work with
-                | Ok(count) -> io.print(count)
-                | Error(_) -> io.print(0)
+                | Ok(count) -> io.print count
+                | Error(_) -> io.print 0
 ```
 
 No GC. No runtime. Just a native binary.
