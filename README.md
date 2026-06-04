@@ -27,7 +27,7 @@ in
                 |> list.length
             )
         in 
-            match task.run(work) with
+            match await work with
                 | Ok(count) -> io.print(count)
                 | Error(_) -> io.print(0)
 ```
@@ -143,7 +143,7 @@ let work =
                 | a :: b :: [] -> a + b
                 | _ -> 0)
 in
-    io.print(match task.run(work) with
+    io.print(match await work with
         | Ok(n) -> n
         | Error(_) -> 0)
 ```
