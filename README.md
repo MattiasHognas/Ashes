@@ -136,11 +136,14 @@ import Ashes.IO as io
 import Ashes.Async as task
 import Ashes.IO as io
 
-io.print(match task.run(async(match await task.fromResult(Ok(42)) with
-    | Ok(n) -> n
-    | Error(_) -> 0)) with
-    | Ok(n) -> n
-    | Error(_) -> 0)
+let work = async
+    match await task.fromResult(Ok(42)) with
+        | Ok(n) -> n
+        | Error(_) -> 0
+in
+    match task.run(work) with
+        | Ok(n) -> io.print(n)
+        | Error(_) -> io.print(0)
 ```
 
 ### Polymorphism
