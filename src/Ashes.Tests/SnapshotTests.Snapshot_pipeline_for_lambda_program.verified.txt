@@ -299,9 +299,11 @@
       },
       LocalTypes: {
         2: {
-          Arg: {},
-          Ret: {
+          Arg: {
             Id: 1
+          },
+          Ret: {
+            Id: 2
           }
         }
       }

@@ -65,7 +65,7 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `get(url)` returning `Task(Str, Str)`
 - `post(url, body)` returning `Task(Str, Str)`
 
-All networking APIs are async-only and must be awaited inside `async` blocks.
+All networking APIs return `Task(...)` and are consumed with `await`.
 
 Current HTTP support is intentionally small:
 

@@ -412,7 +412,6 @@ public sealed class Lexer
             "true" => TokenKind.True,
             "false" => TokenKind.False,
             "type" => TokenKind.Type,
-            "async" => TokenKind.Async,
             "await" => TokenKind.Await,
             "extern" => TokenKind.Extern,
             _ => TokenKind.Ident

@@ -13,7 +13,7 @@ namespace Ashes.Tests;
 
 public sealed class LinuxArm64BackendCoverageTests
 {
-    private const string HttpsProgram = """match Ashes.Async.run(async await Ashes.Http.get("https://localhost/")) with | Ok(text) -> text | Error(msg) -> msg""";
+    private const string HttpsProgram = """match await Ashes.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg""";
     private static readonly string[] LinuxArm64EmulatorCandidates = ["qemu-aarch64", "qemu-aarch64-static"];
     private static readonly string[] LinuxArm64SysrootCandidates = ["/usr/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/aarch64-linux-gnu", "/opt/aarch64-linux-gnu"];
 
@@ -69,7 +69,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);
@@ -109,7 +109,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -132,7 +132,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/")) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096);
@@ -161,7 +161,7 @@ public sealed class LinuxArm64BackendCoverageTests
         // observed to exceed SocketTestConstants.ProcessExitTimeout on loaded CI runners. The
         // equivalent HTTPS race coverage continues to run natively on Linux x64 and Windows x64.
         var result = await CompileRunWithLinuxArm64LlvmHttpLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Async.race([Ashes.Http.get("http://__HOST__:__PORT__/a"), Ashes.Http.get("http://__HOST__:__PORT__/b")])) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("http://__HOST__:__PORT__/a"), Ashes.Http.get("http://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 await using var stream = client.GetStream();
@@ -189,7 +189,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match Ashes.Async.run(async await Ashes.Http.get("https://__HOST__:__PORT__/empty")) with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096);

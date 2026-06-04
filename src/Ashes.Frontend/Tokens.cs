@@ -56,7 +56,6 @@ public enum TokenKind
     Colon, // :
     LBrace, // {
     RBrace, // }
-    Async,
     Await,
     LetBang,
     Extern,
