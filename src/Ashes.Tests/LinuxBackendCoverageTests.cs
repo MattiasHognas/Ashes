@@ -178,6 +178,28 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_preserve_nested_string_results_across_scope_cleanup()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            """
+            let prefix = "outer" in
+            let text =
+                match 1 with
+                    | 1 ->
+                        let suffix = "inner" in
+                        prefix + suffix
+                    | _ -> "bad"
+            in Ashes.IO.print(text)
+            """);
+        result.Stdout.ShouldBe("outerinner\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_program_args_programs()
     {
         if (!OperatingSystem.IsLinux())
