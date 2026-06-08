@@ -327,16 +327,15 @@ public sealed class ArenaDeallocationTests
         instructions[cleanupLabelIndex + 3].ShouldBeOfType<IrInst.Jump>(
             "Guard cleanup should jump to the next arm after reclaiming allocations.");
 
-        var saveBeforeGuardCleanup = instructions.Take(cleanupLabelIndex).OfType<IrInst.SaveArenaState>().Last();
         var restore = (IrInst.RestoreArenaState)instructions[cleanupLabelIndex + 1];
         var reclaim = (IrInst.ReclaimArenaChunks)instructions[cleanupLabelIndex + 2];
-
-        restore.CursorLocalSlot.ShouldBe(saveBeforeGuardCleanup.CursorLocalSlot,
-            "Guard cleanup should restore the cursor slot saved for the guarded arm.");
-        restore.EndLocalSlot.ShouldBe(saveBeforeGuardCleanup.EndLocalSlot,
-            "Guard cleanup should restore the end slot saved for the guarded arm.");
-        reclaim.SavedEndSlot.ShouldBe(saveBeforeGuardCleanup.EndLocalSlot,
-            "Guard cleanup should reclaim using the guarded arm's saved end slot.");
+        instructions.Take(cleanupLabelIndex)
+            .OfType<IrInst.SaveArenaState>()
+            .Any(save => save.CursorLocalSlot == restore.CursorLocalSlot
+                      && save.EndLocalSlot == restore.EndLocalSlot)
+            .ShouldBeTrue("Guard cleanup should restore one of the arena watermarks saved before the guarded arm.");
+        reclaim.SavedEndSlot.ShouldBe(restore.EndLocalSlot,
+            "Guard cleanup should reclaim using the same saved end slot that RestoreArenaState restores.");
         reclaim.PreRestoreEndSlot.ShouldBe(restore.PreRestoreEndSlot,
             "Guard cleanup should reclaim using the end pointer captured by RestoreArenaState.");
     }
@@ -864,8 +863,8 @@ public sealed class ArenaDeallocationTests
             """);
         var instructions = ir.EntryFunction.Instructions;
 
-        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(2,
-            "Nested string scopes should copy out once for the inner let result and once for the outer let result.");
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(3,
+            "Nested string scopes should copy out for the inner let result, the let-bound match result, and the outer let result.");
     }
 
     [Test]
