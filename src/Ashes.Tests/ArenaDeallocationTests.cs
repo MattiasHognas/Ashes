@@ -320,6 +320,8 @@ public sealed class ArenaDeallocationTests
         cleanupLabelIndex.ShouldBeGreaterThan(jumpIfFalseIndex,
             "Guard cleanup label should appear after the guard branch.");
 
+        cleanupLabelIndex.ShouldBeLessThan(instructions.Count - 3,
+            "Guard cleanup label should be followed by RestoreArenaState, ReclaimArenaChunks, and Jump.");
         instructions[cleanupLabelIndex + 1].ShouldBeOfType<IrInst.RestoreArenaState>(
             "Guard cleanup should restore the arena watermark before continuing to the next arm.");
         instructions[cleanupLabelIndex + 2].ShouldBeOfType<IrInst.ReclaimArenaChunks>(
