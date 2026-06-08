@@ -299,6 +299,49 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Guard_failure_with_heap_allocating_guard_emits_cleanup_for_guard_allocations()
+    {
+        var ir = LowerProgram(
+            """
+            match 42 with
+                | n when (let xs = [n, n + 1, n + 2] in false) -> 1
+                | _ -> 0
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        var jumpIfFalseIndex = instructions.FindIndex(i => i is IrInst.JumpIfFalse);
+        jumpIfFalseIndex.ShouldBeGreaterThanOrEqualTo(0, "Guarded arm should branch to a cleanup label when the guard is false.");
+
+        instructions.Take(jumpIfFalseIndex).Any(i => i is IrInst.Alloc).ShouldBeTrue(
+            "The guard should allocate heap-backed list cells before evaluating the false guard branch.");
+
+        var jumpIfFalse = (IrInst.JumpIfFalse)instructions[jumpIfFalseIndex];
+        var cleanupLabelIndex = instructions.FindIndex(i => i is IrInst.Label label && label.Name == jumpIfFalse.Target);
+        cleanupLabelIndex.ShouldBeGreaterThan(jumpIfFalseIndex,
+            "Guard cleanup label should appear after the guard branch.");
+
+        instructions[cleanupLabelIndex + 1].ShouldBeOfType<IrInst.RestoreArenaState>(
+            "Guard cleanup should restore the arena watermark before continuing to the next arm.");
+        instructions[cleanupLabelIndex + 2].ShouldBeOfType<IrInst.ReclaimArenaChunks>(
+            "Guard cleanup should reclaim abandoned arena chunks after restoring the watermark.");
+        instructions[cleanupLabelIndex + 3].ShouldBeOfType<IrInst.Jump>(
+            "Guard cleanup should jump to the next arm after reclaiming allocations.");
+
+        var saveBeforeGuardCleanup = instructions.Take(cleanupLabelIndex).OfType<IrInst.SaveArenaState>().Last();
+        var restore = (IrInst.RestoreArenaState)instructions[cleanupLabelIndex + 1];
+        var reclaim = (IrInst.ReclaimArenaChunks)instructions[cleanupLabelIndex + 2];
+
+        restore.CursorLocalSlot.ShouldBe(saveBeforeGuardCleanup.CursorLocalSlot,
+            "Guard cleanup should restore the cursor slot saved for the guarded arm.");
+        restore.EndLocalSlot.ShouldBe(saveBeforeGuardCleanup.EndLocalSlot,
+            "Guard cleanup should restore the end slot saved for the guarded arm.");
+        reclaim.SavedEndSlot.ShouldBe(saveBeforeGuardCleanup.EndLocalSlot,
+            "Guard cleanup should reclaim using the guarded arm's saved end slot.");
+        reclaim.PreRestoreEndSlot.ShouldBe(restore.PreRestoreEndSlot,
+            "Guard cleanup should reclaim using the end pointer captured by RestoreArenaState.");
+    }
+
+    [Test]
     public void Match_arm_cleanup_RestoreArenaState_uses_same_slots_as_Save()
     {
         var ir = LowerProgram(
@@ -803,6 +846,26 @@ public sealed class ArenaDeallocationTests
         }
         foundSequence.ShouldBeTrue(
             "String result copy-out should follow RestoreArenaState with StaticSizeBytes == -1.");
+    }
+
+    [Test]
+    public void Nested_owned_string_scopes_emit_copy_out_sequences_for_each_escaping_result()
+    {
+        var ir = LowerProgram(
+            """
+            let prefix = "outer" in
+            let text =
+                match 1 with
+                    | 1 ->
+                        let suffix = "inner" in
+                        prefix + suffix
+                    | _ -> "bad"
+            in text
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(2,
+            "Nested string scopes should copy out once for the inner let result and once for the outer let result.");
     }
 
     [Test]
@@ -1326,6 +1389,22 @@ public sealed class ArenaDeallocationTests
     private static bool HasCopyOutArena(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.CopyOutArena);
+    }
+
+    private static int CountRestoreCopyOutArenaReclaimSequences(List<IrInst> instructions)
+    {
+        int count = 0;
+        for (int i = 0; i < instructions.Count - 2; i++)
+        {
+            if (instructions[i] is IrInst.RestoreArenaState
+                && instructions[i + 1] is IrInst.CopyOutArena
+                && instructions[i + 2] is IrInst.ReclaimArenaChunks)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
