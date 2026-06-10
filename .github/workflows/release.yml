@@ -100,20 +100,24 @@ jobs:
       - name: Stage and zip artifact (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p staging
+          mkdir -p staging/runtimes/${{ matrix.rid }}
           cp publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
           cp publish/${{ matrix.rid }}/libLLVM.so staging/
+          cp publish/${{ matrix.rid }}/runtimes/${{ matrix.rid }}/librustls.so staging/runtimes/${{ matrix.rid }}/
+          cp publish/${{ matrix.rid }}/runtimes/${{ matrix.rid }}/rustls.version staging/runtimes/${{ matrix.rid }}/
           [ -f LICENSE ] && cp LICENSE staging/ || true
           cp README.md staging/
-          (cd staging && zip ../${{ matrix.artifact }}.zip *)
+          (cd staging && zip -r ../${{ matrix.artifact }}.zip *)
 
       - name: Stage and zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          New-Item -ItemType Directory -Force -Path staging\runtimes\win-x64 | Out-Null
           Copy-Item publish/${{ matrix.rid }}/${{ matrix.binary }} staging/
           Copy-Item publish/${{ matrix.rid }}/libLLVM.dll staging/
+          Copy-Item publish/${{ matrix.rid }}/runtimes/win-x64/rustls.dll staging/runtimes/win-x64/
+          Copy-Item publish/${{ matrix.rid }}/runtimes/win-x64/rustls.version staging/runtimes/win-x64/
           if (Test-Path LICENSE) { Copy-Item LICENSE staging/ }
           Copy-Item README.md staging/
           Compress-Archive -Path staging\* -DestinationPath ${{ matrix.artifact }}.zip
