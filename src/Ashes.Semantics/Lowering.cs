@@ -524,6 +524,14 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU32LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU64LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerQualifiedBuiltinFunctionReference(name, CreateSpawnProcessBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerQualifiedBuiltinFunctionReference(name, CreateProcessWriteStdinBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ProcessReadStdoutLine => LowerQualifiedBuiltinFunctionReference(name, CreateProcessReadStdoutLineBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ProcessReadStderrLine => LowerQualifiedBuiltinFunctionReference(name, CreateProcessReadStderrLineBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ProcessWaitForExit => LowerQualifiedBuiltinFunctionReference(name, CreateProcessWaitForExitBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ProcessKill => LowerQualifiedBuiltinFunctionReference(name, CreateProcessKillBinding().S.Body),
             _ => StdMemberNotFound(module.Name, name)
         };
     }
@@ -2123,6 +2131,14 @@ public sealed partial class Lowering
                 IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.ReadExact => LowerReadExact(collectedArgs[0]),
+                IntrinsicKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
+                IntrinsicKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
+                IntrinsicKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
+                IntrinsicKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
+                IntrinsicKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
                 _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
             };
         }
@@ -2196,6 +2212,14 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerReadExact(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
                     _ => StdMemberNotFound(resolvedModule, qv.Name)
                 };
             }

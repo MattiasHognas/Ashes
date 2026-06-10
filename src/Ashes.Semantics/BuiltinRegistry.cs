@@ -55,7 +55,15 @@ public static class BuiltinRegistry
         BytesGetU16Le,
         BytesGetU32Le,
         BytesGetU64Le,
-        FileWriteBytes
+        FileWriteBytes,
+        IoReadExact,
+        TextByteLength,
+        SpawnProcess,
+        ProcessWriteStdin,
+        ProcessReadStdoutLine,
+        ProcessReadStderrLine,
+        ProcessWaitForExit,
+        ProcessKill
     }
 
     public sealed record BuiltinModuleMember(
@@ -97,7 +105,8 @@ public static class BuiltinRegistry
                     ["args"] = new("args", BuiltinValueKind.Args, IsCallable: false, Arity: 0),
                     ["write"] = new("write", BuiltinValueKind.Write, IsCallable: true, Arity: 1),
                     ["writeLine"] = new("writeLine", BuiltinValueKind.WriteLine, IsCallable: true, Arity: 1),
-                    ["readLine"] = new("readLine", BuiltinValueKind.ReadLine, IsCallable: true, Arity: 1)
+                    ["readLine"] = new("readLine", BuiltinValueKind.ReadLine, IsCallable: true, Arity: 1),
+                    ["readExact"] = new("readExact", BuiltinValueKind.IoReadExact, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Result"] = new(
                 "Ashes.Result",
@@ -147,7 +156,8 @@ public static class BuiltinRegistry
                     ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
                     ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
-                    ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1)
+                    ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1),
+                    ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Bytes"] = new(
                 "Ashes.Bytes",
@@ -207,7 +217,31 @@ public static class BuiltinRegistry
                     ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
                     ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
                     ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
-                })
+                }),
+            ["Ashes.Process"] = new(
+                "Ashes.Process",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["spawn"] = new("spawn", BuiltinValueKind.SpawnProcess, IsCallable: true, Arity: 2),
+                    ["writeStdin"] = new("writeStdin", BuiltinValueKind.ProcessWriteStdin, IsCallable: true, Arity: 2),
+                    ["readStdoutLine"] = new("readStdoutLine", BuiltinValueKind.ProcessReadStdoutLine, IsCallable: true, Arity: 1),
+                    ["readStderrLine"] = new("readStderrLine", BuiltinValueKind.ProcessReadStderrLine, IsCallable: true, Arity: 1),
+                    ["waitForExit"] = new("waitForExit", BuiltinValueKind.ProcessWaitForExit, IsCallable: true, Arity: 1),
+                    ["kill"] = new("kill", BuiltinValueKind.ProcessKill, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Json"] = new(
+                "Ashes.Json",
+                "Ashes.Semantics.StdLib.Ashes.Json.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Rpc"] = new(
+                "Ashes.Rpc",
+                "Ashes.Semantics.StdLib.Ashes.Rpc.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Regex"] = new(
+                "Ashes.Regex",
+                "Ashes.Semantics.StdLib.Ashes.Regex.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal))
         };
 
     /// <summary>
@@ -218,7 +252,8 @@ public static class BuiltinRegistry
     private static readonly HashSet<string> ResourceTypeNames = new(StringComparer.Ordinal)
     {
         "Socket",
-        "TlsSocket"
+        "TlsSocket",
+        "Process"
     };
 
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
@@ -365,6 +400,12 @@ public static class BuiltinRegistry
             [new TypeParameter("E"), new TypeParameter("A")],
             []);
 
+        var processTypeParameters = Array.Empty<TypeParameterSymbol>();
+        var processDecl = new TypeDecl(
+            "Process",
+            [],
+            []);
+
         return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
         {
             ["Unit"] = new(
@@ -424,7 +465,12 @@ public static class BuiltinRegistry
                 "Task",
                 taskTypeParameters,
                 [],
-                taskDecl)
+                taskDecl),
+            ["Process"] = new(
+                "Process",
+                processTypeParameters,
+                [],
+                processDecl)
         };
     }
 }
