@@ -46,7 +46,7 @@ jobs:
         - language: actions
           build-mode: none
         - language: csharp
-          build-mode: autobuild
+          build-mode: manual
         - language: javascript-typescript
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
@@ -79,6 +79,41 @@ jobs:
 
         # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
         # queries: security-extended,security-and-quality
+
+    - name: Cache LLVM runtimes
+      if: matrix.language == 'csharp' && matrix.build-mode == 'manual'
+      id: cache-llvm
+      uses: actions/cache@v5
+      with:
+        path: |
+          runtimes/linux-x64/libLLVM.so
+          runtimes/linux-arm64/libLLVM.so
+          runtimes/win-x64/libLLVM.dll
+        key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
+        enableCrossOsArchive: true
+
+    - name: Download all LLVM native libraries
+      if: matrix.language == 'csharp' && matrix.build-mode == 'manual' && steps.cache-llvm.outputs.cache-hit != 'true'
+      run: bash scripts/download-llvm-native.sh --all
+
+    - name: Save LLVM cache
+      if: matrix.language == 'csharp' && matrix.build-mode == 'manual' && steps.cache-llvm.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          runtimes/linux-x64/libLLVM.so
+          runtimes/linux-arm64/libLLVM.so
+          runtimes/win-x64/libLLVM.dll
+        key: runtimes-llvm-${{ hashFiles('scripts/download-llvm-native.sh') }}
+        enableCrossOsArchive: true
+
+    - name: Restore
+      if: matrix.language == 'csharp' && matrix.build-mode == 'manual'
+      run: dotnet restore Ashes.slnx
+
+    - name: Build
+      if: matrix.language == 'csharp' && matrix.build-mode == 'manual'
+      run: dotnet build Ashes.slnx --configuration Release --no-restore
 
     # If the analyze step fails for one of the languages you are analyzing with
     # "We were unable to automatically build your code", modify the matrix above
