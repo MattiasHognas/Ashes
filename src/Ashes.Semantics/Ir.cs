@@ -104,6 +104,8 @@ public abstract record IrInst
     public sealed record PrintBool(int Source) : IrInst;
     public sealed record WriteStr(int Source) : IrInst;
     public sealed record ReadLine(int Target) : IrInst;
+    public sealed record ReadExact(int Target, int CountTemp) : IrInst;
+    public sealed record TextByteLength(int Target, int TextTemp) : IrInst;
     public sealed record FileReadText(int Target, int PathTemp) : IrInst;
     public sealed record FileWriteText(int Target, int PathTemp, int TextTemp) : IrInst;
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
@@ -135,6 +137,14 @@ public abstract record IrInst
     public sealed record BytesGetU32Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record BytesGetU64Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record FileWriteBytes(int Target, int PathTemp, int BytesTemp) : IrInst;
+
+    // Ashes.Process operations. ProcessRef is a pointer to {stdin_fd, stdout_fd, stderr_fd, pid} (32 bytes).
+    public sealed record SpawnProcess(int Target, int ExeTemp, int ArgsTemp) : IrInst;
+    public sealed record ProcessWriteStdin(int Target, int ProcessTemp, int TextTemp) : IrInst;
+    public sealed record ProcessReadStdoutLine(int Target, int ProcessTemp) : IrInst;
+    public sealed record ProcessReadStderrLine(int Target, int ProcessTemp) : IrInst;
+    public sealed record ProcessWaitForExit(int Target, int ProcessTemp) : IrInst;
+    public sealed record ProcessKill(int Target, int ProcessTemp) : IrInst;
 
     /// <summary>
     /// Drop instruction for deterministic cleanup of owned values.

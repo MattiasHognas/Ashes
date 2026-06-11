@@ -19,7 +19,7 @@
 | Catchable error propagation for compile pipeline flows | Yes |
 | Memory-management hardening (grow-on-demand arena + scope reclamation) | Yes |
 | Large-ADT exhaustiveness/performance hardening | Yes |
-| JSON parsing/serialization support for `ashes.json` and JSON-RPC (CLI/LSP/DAP) | No |
-| Stdio JSON-RPC framing utilities (Content-Length read/write over byte streams) for LSP/DAP | No |
-| Interactive subprocess control with piped stdin/stdout/stderr, async reads, and request timeouts (DAP debugger backends) | No |
-| Regex utilities/module for protocol and tooling text parsing (import/project/LSP/DAP parsing paths) | No |
+| JSON parsing/serialization support for `ashes.json` and JSON-RPC (CLI/LSP/DAP) | Yes |
+| Stdio JSON-RPC framing utilities (Content-Length read/write over byte streams) for LSP/DAP | Yes |
+| Interactive subprocess control with piped stdin/stdout/stderr, async reads, and request timeouts (DAP debugger backends) | Yes |
+| Regex utilities/module for protocol and tooling text parsing (import/project/LSP/DAP parsing paths) | Yes |

@@ -91,7 +91,15 @@ public sealed partial class Lowering
         BytesGetU16Le,
         BytesGetU32Le,
         BytesGetU64Le,
-        FileWriteBytes
+        FileWriteBytes,
+        ReadExact,
+        TextByteLength,
+        SpawnProcess,
+        ProcessWriteStdin,
+        ProcessReadStdoutLine,
+        ProcessReadStderrLine,
+        ProcessWaitForExit,
+        ProcessKill
     }
 
     private enum PreludeValueKind
