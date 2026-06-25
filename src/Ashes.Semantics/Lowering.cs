@@ -197,7 +197,9 @@ public sealed partial class Lowering
             Expr.ShiftLeft shiftLeft => LowerShiftLeft(shiftLeft),
             Expr.ShiftRight shiftRight => LowerShiftRight(shiftRight),
             Expr.BitwiseNot bitwiseNot => LowerBitwiseNot(bitwiseNot),
+            Expr.GreaterThan gt => LowerGreaterThan(gt),
             Expr.GreaterOrEqual ge => LowerGreaterOrEqual(ge),
+            Expr.LessThan lt => LowerLessThan(lt),
             Expr.LessOrEqual le => LowerLessOrEqual(le),
             Expr.Equal eq => LowerEqual(eq),
             Expr.NotEqual ne => LowerNotEqual(ne),
@@ -740,6 +742,15 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
+    private (int, TypeRef) LowerGreaterThan(Expr.GreaterThan gt)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(gt);
+        var (leftTemp, leftType) = LowerExpr(gt.Left);
+        var (rightTemp, rightType) = LowerExpr(gt.Right);
+
+        return LowerNumericComparisonOp(gt, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGt(target, left, right), (target, left, right) => new IrInst.CmpFloatGt(target, left, right), (target, left, right) => new IrInst.CmpUIntGt(target, left, right), "'>'");
+    }
+
     private (int, TypeRef) LowerGreaterOrEqual(Expr.GreaterOrEqual ge)
     {
         using var diagnosticSpan = PushDiagnosticSpan(ge);
@@ -747,6 +758,15 @@ public sealed partial class Lowering
         var (rightTemp, rightType) = LowerExpr(ge.Right);
 
         return LowerNumericComparisonOp(ge, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), (target, left, right) => new IrInst.CmpUIntGe(target, left, right), "'>='");
+    }
+
+    private (int, TypeRef) LowerLessThan(Expr.LessThan lt)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(lt);
+        var (leftTemp, leftType) = LowerExpr(lt.Left);
+        var (rightTemp, rightType) = LowerExpr(lt.Right);
+
+        return LowerNumericComparisonOp(lt, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLt(target, left, right), (target, left, right) => new IrInst.CmpFloatLt(target, left, right), (target, left, right) => new IrInst.CmpUIntLt(target, left, right), "'<'");
     }
 
     private (int, TypeRef) LowerLessOrEqual(Expr.LessOrEqual le)
@@ -1447,7 +1467,10 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerLetRec(Expr.LetRec letRec)
     {
         int slot = NewLocal();
-        var recType = letRec.Value is Expr.Lambda
+        // The module system may wrap a lambda in alias lets: let alias = mangled in fun (x) -> ...
+        // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
+        var innerLambda = FindInnermostLambdaUnderLets(letRec.Value);
+        var recType = innerLambda is not null
             ? (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar())
             : NewTypeVar();
         RecordLocalDebugInfo(slot, letRec.Name, recType);
@@ -1487,6 +1510,54 @@ public sealed partial class Lowering
 
             _tcoCtx = savedTcoCtx;
         }
+        else if (innerLambda is not null)
+        {
+            // Value is a let-chain of alias bindings (injected by the module system) wrapping a lambda.
+            // Process each alias let into scope first, then lower the innermost lambda with the
+            // self-reference (selfName) set so that recursive calls use Binding.Self rather than
+            // capturing the uninitialized slot value (which would be 0 at closure-creation time).
+            //
+            // Self-aliases (let unmangledName = mangledSelf) must NOT be processed as regular lets
+            // because the mangled slot is uninitialized at this point. Instead, they are collected
+            // as selfAliases and given Binding.Self treatment inside LowerLambdaCore.
+            var savedTcoCtx = _tcoCtx;
+            _tcoCtx = null;
+
+            int aliasCount = 0;
+            List<string>? selfAliases = null;
+            var aliasExpr = letRec.Value;
+            while (aliasExpr is Expr.Let aliasLet)
+            {
+                if (aliasLet.Value is Expr.Var selfVar && string.Equals(selfVar.Name, letRec.Name, StringComparison.Ordinal))
+                {
+                    // Self-alias: let unmangledName = mangledSelf — skip slot capture, pass as Binding.Self alias.
+                    selfAliases ??= new List<string>();
+                    selfAliases.Add(aliasLet.Name);
+                }
+                else
+                {
+                    var (aliasValueTemp, aliasValueType) = LowerExpr(aliasLet.Value);
+                    int aliasSlot = NewLocal();
+                    Emit(new IrInst.StoreLocal(aliasSlot, aliasValueTemp));
+                    RecordLocalDebugInfo(aliasSlot, aliasLet.Name, aliasValueType);
+                    var aliasScheme = Generalize(Prune(aliasValueType));
+                    RecordHoverType(AstSpans.GetLetNameOrDefault(aliasLet), aliasLet.Name, aliasScheme.Body);
+                    PushLetScope(aliasLet, aliasSlot, aliasScheme);
+                    aliasCount++;
+                }
+
+                aliasExpr = aliasLet.Body;
+            }
+
+            valueAndType = LowerLambdaRecursive(letRec.Name, recType, innerLambda, selfAliases: selfAliases);
+
+            for (int i = 0; i < aliasCount; i++)
+            {
+                _scopes.Pop();
+            }
+
+            _tcoCtx = savedTcoCtx;
+        }
         else
         {
             ReportDiagnostic(GetSpan(letRec.Value), "let rec currently requires a function value.");
@@ -1508,6 +1579,13 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerExpr(letRec.Body);
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private static Expr.Lambda? FindInnermostLambdaUnderLets(Expr value)
+    {
+        if (value is Expr.Lambda lam) return lam;
+        if (value is Expr.Let let) return FindInnermostLambdaUnderLets(let.Body);
+        return null;
     }
 
     private static int CountLambdaChain(Expr.Lambda lam)
@@ -1655,12 +1733,12 @@ public sealed partial class Lowering
         return LowerLambdaCore(lam, null, null, stackAllocateClosure);
     }
 
-    private (int, TypeRef) LowerLambdaRecursive(string selfName, TypeRef selfType, Expr.Lambda lam, bool stackAllocateClosure = false)
+    private (int, TypeRef) LowerLambdaRecursive(string selfName, TypeRef selfType, Expr.Lambda lam, bool stackAllocateClosure = false, IReadOnlyList<string>? selfAliases = null)
     {
-        return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure);
+        return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure, selfAliases);
     }
 
-    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure)
+    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null)
     {
         _usesClosures = true;
 
@@ -1762,6 +1840,13 @@ public sealed partial class Lowering
         if (selfName is not null && selfType is not null)
         {
             scope[selfName] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
+            if (selfAliases is not null)
+            {
+                foreach (var alias in selfAliases)
+                {
+                    scope[alias] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
+                }
+            }
         }
 
         _scopes.Clear();
@@ -3004,9 +3089,17 @@ public sealed partial class Lowering
                 case Expr.BitwiseNot bitwiseNot:
                     Visit(bitwiseNot.Operand, bnd);
                     return;
+                case Expr.GreaterThan gt:
+                    Visit(gt.Left, bnd);
+                    Visit(gt.Right, bnd);
+                    return;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left, bnd);
                     Visit(ge.Right, bnd);
+                    return;
+                case Expr.LessThan lt:
+                    Visit(lt.Left, bnd);
+                    Visit(lt.Right, bnd);
                     return;
                 case Expr.LessOrEqual le:
                     Visit(le.Left, bnd);
@@ -3196,9 +3289,17 @@ public sealed partial class Lowering
             case Expr.BitwiseNot bitwiseNot:
                 CollectQualifiedVarsVisit(bitwiseNot.Operand, result);
                 break;
+            case Expr.GreaterThan gt:
+                CollectQualifiedVarsVisit(gt.Left, result);
+                CollectQualifiedVarsVisit(gt.Right, result);
+                break;
             case Expr.GreaterOrEqual ge:
                 CollectQualifiedVarsVisit(ge.Left, result);
                 CollectQualifiedVarsVisit(ge.Right, result);
+                break;
+            case Expr.LessThan lt:
+                CollectQualifiedVarsVisit(lt.Left, result);
+                CollectQualifiedVarsVisit(lt.Right, result);
                 break;
             case Expr.LessOrEqual le:
                 CollectQualifiedVarsVisit(le.Left, result);
@@ -3343,9 +3444,15 @@ public sealed partial class Lowering
                     && UsesNameOnlyAsDirectCallee(shiftRight.Right, targetName, shadowed);
             case Expr.BitwiseNot bitwiseNot:
                 return UsesNameOnlyAsDirectCallee(bitwiseNot.Operand, targetName, shadowed);
+            case Expr.GreaterThan gt:
+                return UsesNameOnlyAsDirectCallee(gt.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(gt.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return UsesNameOnlyAsDirectCallee(ge.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(ge.Right, targetName, shadowed);
+            case Expr.LessThan lt:
+                return UsesNameOnlyAsDirectCallee(lt.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(lt.Right, targetName, shadowed);
             case Expr.LessOrEqual le:
                 return UsesNameOnlyAsDirectCallee(le.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(le.Right, targetName, shadowed);
@@ -3459,8 +3566,12 @@ public sealed partial class Lowering
                 return ExprReferencesName(shiftRight.Left, targetName, shadowed) || ExprReferencesName(shiftRight.Right, targetName, shadowed);
             case Expr.BitwiseNot bitwiseNot:
                 return ExprReferencesName(bitwiseNot.Operand, targetName, shadowed);
+            case Expr.GreaterThan gt:
+                return ExprReferencesName(gt.Left, targetName, shadowed) || ExprReferencesName(gt.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:
                 return ExprReferencesName(ge.Left, targetName, shadowed) || ExprReferencesName(ge.Right, targetName, shadowed);
+            case Expr.LessThan lt:
+                return ExprReferencesName(lt.Left, targetName, shadowed) || ExprReferencesName(lt.Right, targetName, shadowed);
             case Expr.LessOrEqual le:
                 return ExprReferencesName(le.Left, targetName, shadowed) || ExprReferencesName(le.Right, targetName, shadowed);
             case Expr.Equal eq:

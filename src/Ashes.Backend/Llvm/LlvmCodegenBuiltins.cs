@@ -7090,8 +7090,8 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         const int MaxArgs = 256;
 
-        // Allocate pipe fd arrays on stack: each is 2 x i64
-        LlvmTypeHandle pipeArrayType = LlvmApi.ArrayType2(state.I64, 2);
+        // Allocate pipe fd arrays on stack: each is 2 x i32 (pipe2 writes int[2])
+        LlvmTypeHandle pipeArrayType = LlvmApi.ArrayType2(state.I32, 2);
         LlvmValueHandle stdinPipe = LlvmApi.BuildAlloca(builder, pipeArrayType, "spawn_stdin_pipe");
         LlvmValueHandle stdoutPipe = LlvmApi.BuildAlloca(builder, pipeArrayType, "spawn_stdout_pipe");
         LlvmValueHandle stderrPipe = LlvmApi.BuildAlloca(builder, pipeArrayType, "spawn_stderr_pipe");
@@ -7123,8 +7123,8 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, listLoopBlock);
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, listCursorSlot, "spawn_cursor");
-        LlvmValueHandle tag = LoadMemory(state, cursor, 0, "spawn_list_tag");
-        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, tag, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_is_nil");
+        // List Nil = pointer 0; Cons cell = {head:i64@0, tail:i64@8}
+        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cursor, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_is_nil");
         LlvmApi.BuildCondBr(builder, isNil, listDoneBlock, listBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, listBodyBlock);
@@ -7134,12 +7134,12 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, tooMany, listTooManyBlock, listAppendBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, listAppendBlock);
-        LlvmValueHandle headRef = LoadMemory(state, cursor, 8, "spawn_head");
+        LlvmValueHandle headRef = LoadMemory(state, cursor, 0, "spawn_head");
         LlvmValueHandle headCstr = EmitStringToCString(state, headRef, "spawn_arg_cstr");
         // argvArray[argc] = headCstr: store via base pointer + offset
         LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, headCstr, state.I64, "spawn_arg_ptr"), LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, argvBase, LlvmApi.BuildMul(builder, argc, LlvmApi.ConstInt(state.I64, 8, 0), "spawn_off"), "spawn_slot_addr"), state.I8Ptr, "spawn_slot_ptr"));
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, argc, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_argc_next"), argcSlot);
-        LlvmValueHandle tail = LoadMemory(state, cursor, 16, "spawn_tail");
+        LlvmValueHandle tail = LoadMemory(state, cursor, 8, "spawn_tail");
         LlvmApi.BuildStore(builder, tail, listCursorSlot);
         LlvmApi.BuildBr(builder, listLoopBlock);
 
@@ -7160,16 +7160,13 @@ internal static partial class LlvmCodegen
         EmitLinuxSyscall(state, SyscallPipe2, stdoutPipePtr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_pipe_stdout");
         EmitLinuxSyscall(state, SyscallPipe2, stderrPipePtr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_pipe_stderr");
 
-        // Load pipe fds
-        LlvmValueHandle stdinPipeBase = LlvmApi.BuildPtrToInt(builder, stdinPipe, state.I64, "spawn_stdin_base");
-        LlvmValueHandle stdoutPipeBase = LlvmApi.BuildPtrToInt(builder, stdoutPipe, state.I64, "spawn_stdout_base");
-        LlvmValueHandle stderrPipeBase = LlvmApi.BuildPtrToInt(builder, stderrPipe, state.I64, "spawn_stderr_base");
-        LlvmValueHandle stdinReadFd = LoadMemory(state, stdinPipeBase, 0, "spawn_stdin_read_fd");
-        LlvmValueHandle stdinWriteFd = LoadMemory(state, stdinPipeBase, 8, "spawn_stdin_write_fd");
-        LlvmValueHandle stdoutReadFd = LoadMemory(state, stdoutPipeBase, 0, "spawn_stdout_read_fd");
-        LlvmValueHandle stdoutWriteFd = LoadMemory(state, stdoutPipeBase, 8, "spawn_stdout_write_fd");
-        LlvmValueHandle stderrReadFd = LoadMemory(state, stderrPipeBase, 0, "spawn_stderr_read_fd");
-        LlvmValueHandle stderrWriteFd = LoadMemory(state, stderrPipeBase, 8, "spawn_stderr_write_fd");
+        // Load pipe fds: pipe2 writes int[2] so each fd is i32; zero-extend to i64 for syscalls.
+        LlvmValueHandle stdinReadFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stdinPipe, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_stdin_r_ptr"), "spawn_stdin_read_fd_i32"), state.I64, "spawn_stdin_read_fd");
+        LlvmValueHandle stdinWriteFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stdinPipe, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_stdin_w_ptr"), "spawn_stdin_write_fd_i32"), state.I64, "spawn_stdin_write_fd");
+        LlvmValueHandle stdoutReadFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stdoutPipe, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_stdout_r_ptr"), "spawn_stdout_read_fd_i32"), state.I64, "spawn_stdout_read_fd");
+        LlvmValueHandle stdoutWriteFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stdoutPipe, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_stdout_w_ptr"), "spawn_stdout_write_fd_i32"), state.I64, "spawn_stdout_write_fd");
+        LlvmValueHandle stderrReadFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stderrPipe, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_stderr_r_ptr"), "spawn_stderr_read_fd_i32"), state.I64, "spawn_stderr_read_fd");
+        LlvmValueHandle stderrWriteFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stderrPipe, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_stderr_w_ptr"), "spawn_stderr_write_fd_i32"), state.I64, "spawn_stderr_write_fd");
 
         // fork() on x86-64 / clone(SIGCHLD, 0, 0) on arm64.
         // On arm64, SyscallFork maps to clone(); flags=SIGCHLD(17) is required for
@@ -7298,8 +7295,8 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, argLoopBlock);
         LlvmValueHandle argCursor = LlvmApi.BuildLoad2(builder, state.I64, argCursorSlot, "spawn_w_arg_cursor_val");
-        LlvmValueHandle argTag = LoadMemory(state, argCursor, 0, "spawn_w_arg_tag");
-        LlvmValueHandle argIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, argTag, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_w_arg_nil");
+        // List Nil = pointer 0; Cons cell = {head:i64@0, tail:i64@8}
+        LlvmValueHandle argIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, argCursor, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_w_arg_nil");
         LlvmApi.BuildCondBr(builder, argIsNil, argDoneBlock, argBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, argBodyBlock);
@@ -7307,9 +7304,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle spaceDestPtr = LlvmApi.BuildGEP2(builder, state.I8, cmdPtr, [argCmdLen], "spawn_w_space_ptr");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, (byte)' ', 0), spaceDestPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, argCmdLen, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_w_cmd_len_space"), cmdLenSlot);
-        LlvmValueHandle argHead = LoadMemory(state, argCursor, 8, "spawn_w_arg_head");
+        LlvmValueHandle argHead = LoadMemory(state, argCursor, 0, "spawn_w_arg_head");
         EmitAppendToCmdBuf(state, cmdPtr, cmdLenSlot, argHead, CmdBufSize);
-        LlvmValueHandle argTail = LoadMemory(state, argCursor, 16, "spawn_w_arg_tail");
+        LlvmValueHandle argTail = LoadMemory(state, argCursor, 8, "spawn_w_arg_tail");
         LlvmApi.BuildStore(builder, argTail, argCursorSlot);
         LlvmApi.BuildBr(builder, argLoopBlock);
 
