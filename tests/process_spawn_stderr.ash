@@ -1,4 +1,5 @@
 // expect: err
+// skip-on: win-x64
 match Ashes.Process.spawn("/bin/sh")(["-c", "echo err >&2"]) with
     | Error(msg) -> Ashes.IO.print(msg)
     | Ok(proc) -> 

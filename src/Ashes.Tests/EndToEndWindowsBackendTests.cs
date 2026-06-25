@@ -103,6 +103,87 @@ public sealed class EndToEndWindowsBackendTests
         (await CompileRunCaptureAsync(src, ["first", "second"])).ShouldBe("first:second\n");
     }
 
+    [Test]
+    public async Task Read_exact_reads_requested_byte_count()
+    {
+        if (!CanRunWindowsPrograms())
+        {
+            return;
+        }
+
+        var src = "match Ashes.IO.readExact(5) with | Error(msg) -> Ashes.IO.print(msg) | Ok(text) -> Ashes.IO.print(text)";
+        (await CompileRunCaptureAsync(src, stdin: "hello world")).ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Read_exact_reports_error_on_eof()
+    {
+        if (!CanRunWindowsPrograms())
+        {
+            return;
+        }
+
+        var src = "match Ashes.IO.readExact(10) with | Ok(_) -> Ashes.IO.print(\"ok\") | Error(_) -> Ashes.IO.print(\"eof\")";
+        (await CompileRunCaptureAsync(src, stdin: "hi")).ShouldBe("eof\n");
+    }
+
+    [Test]
+    public async Task Process_spawn_captures_child_stdout()
+    {
+        if (!CanRunWindowsPrograms())
+        {
+            return;
+        }
+
+        var src = """
+            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "echo hello"]) with
+                | Error(msg) -> Ashes.IO.print(msg)
+                | Ok(proc) ->
+                    match Ashes.Process.readStdoutLine(proc) with
+                        | None -> Ashes.IO.print("no output")
+                        | Some(line) -> let _ = Ashes.Process.waitForExit(proc) in Ashes.IO.print(line)
+            """;
+        (await CompileRunCaptureAsync(src)).ShouldBe("hello\n");
+    }
+
+    [Test]
+    public async Task Process_wait_for_exit_returns_child_exit_code()
+    {
+        if (!CanRunWindowsPrograms())
+        {
+            return;
+        }
+
+        var src = """
+            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "exit 3"]) with
+                | Error(msg) -> Ashes.IO.print(msg)
+                | Ok(proc) -> Ashes.IO.print(Ashes.Process.waitForExit(proc))
+            """;
+        (await CompileRunCaptureAsync(src)).ShouldBe("3\n");
+    }
+
+    [Test]
+    public async Task Process_write_stdin_is_delivered_to_child()
+    {
+        if (!CanRunWindowsPrograms())
+        {
+            return;
+        }
+
+        // findstr "^" echoes every input line, so it round-trips whatever we write
+        // to the child's stdin back through its stdout.
+        var src = """
+            match Ashes.Process.spawn("C:\\Windows\\System32\\findstr.exe")(["^"]) with
+                | Error(msg) -> Ashes.IO.print(msg)
+                | Ok(proc) ->
+                    let _ = Ashes.Process.writeStdin(proc)("hello\n")
+                    in match Ashes.Process.readStdoutLine(proc) with
+                        | None -> Ashes.IO.print("no output")
+                        | Some(line) -> let _ = Ashes.Process.waitForExit(proc) in Ashes.IO.print(line)
+            """;
+        (await CompileRunCaptureAsync(src)).ShouldBe("hello\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

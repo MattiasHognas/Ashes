@@ -1578,6 +1578,7 @@ internal static partial class LlvmCodegen
                 default,
                 default,
                 default,
+                default,
                 new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
                 flavor,
                 false,
@@ -1659,6 +1660,7 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                default,
                 default,
                 default,
                 default,
@@ -7029,11 +7031,23 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
         LlvmValueHandle cursorPtr = LlvmApi.BuildGEP2(builder, state.I8, destPtr, [readSoFar], "re_cursor_ptr");
         LlvmValueHandle remaining = LlvmApi.BuildSub(builder, countVal, readSoFar, "re_remaining");
-        LlvmValueHandle nRead = IsLinuxFlavor(state.Flavor)
-            ? EmitLinuxSyscall(state, SyscallRead, LlvmApi.ConstInt(state.I64, 0, 0),
-                LlvmApi.BuildPtrToInt(builder, cursorPtr, state.I64, "re_cursor_int"), remaining, "re_read_call")
-            : LlvmApi.BuildSExt(builder, EmitWindowsReadFile(state, stdinHandle, cursorPtr,
-                LlvmApi.BuildTrunc(builder, remaining, state.I32, "re_remaining_i32"), bytesReadSlot, "re_read_call"), state.I64, "re_read_i64");
+        LlvmValueHandle nRead;
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            nRead = EmitLinuxSyscall(state, SyscallRead, LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.BuildPtrToInt(builder, cursorPtr, state.I64, "re_cursor_int"), remaining, "re_read_call");
+        }
+        else
+        {
+            // EmitWindowsReadFile returns a success flag (i1); the actual byte count
+            // is written to bytesReadSlot. Treat a failed read (or a zero-byte read at
+            // EOF) as a non-positive count so the loop reports unexpected EOF.
+            LlvmValueHandle readOk = EmitWindowsReadFile(state, stdinHandle, cursorPtr,
+                LlvmApi.BuildTrunc(builder, remaining, state.I32, "re_remaining_i32"), bytesReadSlot, "re_read_call");
+            LlvmValueHandle bytesRead = LlvmApi.BuildZExt(builder,
+                LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "re_bytes_read_val"), state.I64, "re_bytes_read_i64");
+            nRead = LlvmApi.BuildSelect(builder, readOk, bytesRead, LlvmApi.ConstInt(state.I64, 0, 0), "re_read_i64");
+        }
 
         LlvmValueHandle readFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, nRead, LlvmApi.ConstInt(state.I64, 0, 0), "re_read_failed");
         LlvmApi.BuildCondBr(builder, readFailed, errorBlock, continueBlock);
@@ -7436,11 +7450,23 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, writeBodyBlock);
         LlvmValueHandle cursorPtr = LlvmApi.BuildGEP2(builder, state.I8, textPtr, [written], "proc_write_cursor");
         LlvmValueHandle remaining = LlvmApi.BuildSub(builder, textLen, written, "proc_write_remaining");
-        LlvmValueHandle nWritten = IsLinuxFlavor(state.Flavor)
-            ? EmitLinuxSyscall(state, SyscallWrite, stdinFd,
-                LlvmApi.BuildPtrToInt(builder, cursorPtr, state.I64, "proc_write_ptr_int"), remaining, "proc_write_call")
-            : LlvmApi.BuildSExt(builder, EmitWindowsWriteFile(state, stdinHandle, cursorPtr,
-                LlvmApi.BuildTrunc(builder, remaining, state.I32, "proc_write_remaining_i32"), bytesWrittenSlot, "proc_write_call"), state.I64, "proc_write_i64");
+        LlvmValueHandle nWritten;
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            nWritten = EmitLinuxSyscall(state, SyscallWrite, stdinFd,
+                LlvmApi.BuildPtrToInt(builder, cursorPtr, state.I64, "proc_write_ptr_int"), remaining, "proc_write_call");
+        }
+        else
+        {
+            // EmitWindowsWriteFile returns a success flag (i1); the actual byte count
+            // is written to bytesWrittenSlot. A failed write yields a non-positive count
+            // so the loop terminates.
+            LlvmValueHandle writeOk = EmitWindowsWriteFile(state, stdinHandle, cursorPtr,
+                LlvmApi.BuildTrunc(builder, remaining, state.I32, "proc_write_remaining_i32"), bytesWrittenSlot, "proc_write_call");
+            LlvmValueHandle bytesWritten = LlvmApi.BuildZExt(builder,
+                LlvmApi.BuildLoad2(builder, state.I32, bytesWrittenSlot, "proc_write_bytes_val"), state.I64, "proc_write_bytes_i64");
+            nWritten = LlvmApi.BuildSelect(builder, writeOk, bytesWritten, LlvmApi.ConstInt(state.I64, 0, 0), "proc_write_i64");
+        }
 
         LlvmValueHandle writeFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, nWritten, LlvmApi.ConstInt(state.I64, 0, 0), "proc_write_failed");
         var writeOkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "proc_write_ok");
@@ -7581,7 +7607,17 @@ internal static partial class LlvmCodegen
                 state.WindowsWaitForSingleObjectImport, "proc_wait_fn_ptr");
             LlvmApi.BuildCall2(builder, waitType, waitPtr,
                 [pid, LlvmApi.ConstInt(state.I32, unchecked((uint)-1), 0)], "proc_wait_call");
-            return LlvmApi.ConstInt(state.I64, 0, 0);
+            // GetExitCodeProcess(handle, &exitCode) -> exitCode (i32)
+            LlvmValueHandle exitCodeSlot = LlvmApi.BuildAlloca(builder, state.I32, "proc_exit_code_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), exitCodeSlot);
+            LlvmTypeHandle getExitCodeType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32Ptr]);
+            LlvmValueHandle getExitCodePtr = LlvmApi.BuildLoad2(builder,
+                LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+                state.WindowsGetExitCodeProcessImport, "proc_exit_fn_ptr");
+            LlvmApi.BuildCall2(builder, getExitCodeType, getExitCodePtr,
+                [pid, exitCodeSlot], "proc_exit_call");
+            LlvmValueHandle exitCode = LlvmApi.BuildLoad2(builder, state.I32, exitCodeSlot, "proc_exit_code_val");
+            return LlvmApi.BuildZExt(builder, exitCode, state.I64, "proc_exit_code_i64");
         }
     }
 

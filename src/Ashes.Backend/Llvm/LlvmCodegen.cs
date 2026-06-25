@@ -365,6 +365,8 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.ProcessWaitForExit>(program)
             || ProgramUsesInstruction<IrInst.ProcessKill>(program);
         bool usesWindowsProcess = flavor == LlvmCodegenFlavor.WindowsX64 && usesProcess;
+        bool usesWindowsReadExact = flavor == LlvmCodegenFlavor.WindowsX64
+            && ProgramUsesInstruction<IrInst.ReadExact>(program);
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -404,6 +406,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsCreateProcessAImport = default;
         LlvmValueHandle windowsTerminateProcessImport = default;
         LlvmValueHandle windowsWaitForSingleObjectImport = default;
+        LlvmValueHandle windowsGetExitCodeProcessImport = default;
         LlvmValueHandle windowsIocpPortGlobal = default;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
@@ -411,28 +414,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
         LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
-        if (usesWindowsStdout || usesWindowsReadLine)
+        if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
             windowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
             LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi)
+        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi || usesWindowsProcess)
         {
             LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
             LlvmApi.SetLinkage(windowsWriteFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsReadLine || usesWindowsFileOps)
+        if (usesWindowsReadLine || usesWindowsFileOps || usesWindowsReadExact || usesWindowsProcess)
         {
             LlvmTypeHandle readFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
             LlvmApi.SetLinkage(windowsReadFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps || usesWindowsSockets)
+        if (usesWindowsFileOps || usesWindowsSockets || usesWindowsProcess)
         {
             windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
             LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
@@ -541,6 +544,8 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsTerminateProcessImport, LlvmLinkage.External);
             windowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
             LlvmApi.SetLinkage(windowsWaitForSingleObjectImport, LlvmLinkage.External);
+            windowsGetExitCodeProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetExitCodeProcess");
+            LlvmApi.SetLinkage(windowsGetExitCodeProcessImport, LlvmLinkage.External);
         }
 
         if (usesWindowsProgramArgs)
@@ -704,6 +709,7 @@ internal static partial class LlvmCodegen
             windowsCreateProcessAImport,
             windowsTerminateProcessImport,
             windowsWaitForSingleObjectImport,
+            windowsGetExitCodeProcessImport,
             isEntry: true,
             debugContext: dbg);
 
@@ -761,6 +767,7 @@ internal static partial class LlvmCodegen
                 windowsCreateProcessAImport,
                 windowsTerminateProcessImport,
                 windowsWaitForSingleObjectImport,
+                windowsGetExitCodeProcessImport,
                 isEntry: false,
                 debugContext: dbg);
         }
@@ -874,6 +881,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsCreateProcessAImport,
         LlvmValueHandle windowsTerminateProcessImport,
         LlvmValueHandle windowsWaitForSingleObjectImport,
+        LlvmValueHandle windowsGetExitCodeProcessImport,
         bool isEntry,
         DebugInfoContext? debugContext = null)
     {
@@ -990,6 +998,7 @@ internal static partial class LlvmCodegen
             windowsCreateProcessAImport,
             windowsTerminateProcessImport,
             windowsWaitForSingleObjectImport,
+            windowsGetExitCodeProcessImport,
             new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
             flavor,
             usesProgramArgs,
@@ -1316,6 +1325,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsCreateProcessAImport,
         LlvmValueHandle WindowsTerminateProcessImport,
         LlvmValueHandle WindowsWaitForSingleObjectImport,
+        LlvmValueHandle WindowsGetExitCodeProcessImport,
         Dictionary<string, LlvmValueHandle> WindowsExternImports,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,

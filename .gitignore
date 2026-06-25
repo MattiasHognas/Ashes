@@ -88,7 +88,6 @@ out
 # Workfiles
 _*.sh
 _*.md
-CLAUDE.md
 
 # Git
 .git/

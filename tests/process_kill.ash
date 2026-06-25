@@ -1,4 +1,5 @@
 // expect: ok
+// skip-on: win-x64
 match Ashes.Process.spawn("/usr/bin/sleep")(["100"]) with
     | Error(msg) -> Ashes.IO.print(msg)
     | Ok(proc) -> 
