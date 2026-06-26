@@ -66,6 +66,36 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 The matrix skips the network examples (`http_get`, `https_get`, `tcp_*`), same as
 GitHub. It is fail-fast:false — all three arches run, then it fails if any did.
 
+### linux-arm64: compile-only by default
+
+The arm64 leg is **compile-only**: it compiles every example to a native arm64 binary
+under `qemu` and verifies formatting, but does **not** execute the examples/tests. This
+fully exercises the arm64 backend (IR → LLVM → arm64 codegen → link) — the
+compiler-specific risk — without needing to *run* arm64 code.
+
+Running arm64 output requires the emulated compiler to **exec** the arm64 binaries it
+produces (nested foreign-arch execution), which **does not work in the rootless-podman
+runner**:
+
+- host `binfmt_misc` handlers are not propagated into rootless containers (the
+  control fs isn't even mounted there), so a host registration doesn't reach the runner;
+- `binfmt_misc` can't be registered *inside* a rootless container either — the user
+  namespace denies mounting it, even `--privileged`;
+- `qemu-user` does not transparently re-exec for .NET's process spawning, so the
+  explicit-`qemu` path fails with `Exec format error`.
+
+So arm64 **execution** is validated on native arm64 CI runners / hardware, not under
+local emulation. (win-x64 differs: Wine execs win-x64 children directly, so its leg
+runs the full suite.)
+
+If you have a runner that *can* exec arm64 — a **rootful** engine that inherits a host
+`binfmt_misc` handler (e.g. from `qemu-user-static` / `systemd-binfmt`), or a native
+arm64 host — opt into the full suite with:
+
+```sh
+ASHES_MATRIX_ARM64_RUN=1 just matrix
+```
+
 ## Triggers
 
 ```sh
@@ -148,6 +178,9 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - **`run_in: unknown runner` / image not found** — run `just images` first.
 - **arm64/win matrix fails to start the binary** — ensure `just provision` ran so
   the published binaries bundle the right `libLLVM`.
+- **arm64 leg fails with `Exec format error`** — you set `ASHES_MATRIX_ARM64_RUN=1`
+  on a runner that can't exec arm64. The default (compile-only) avoids this; full
+  run/test needs a rootful engine with a host `binfmt_misc` handler or native arm64.
 - **Upload can't reach MinIO** — `just minio-up` must be running; `s3.sh` uses
   `--network=host` so `http://localhost:9000` resolves.
 - **Permission/ownership oddities in the repo** — Podman runs with

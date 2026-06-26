@@ -137,10 +137,13 @@ publish_cli() {
   "
 }
 
-# Shared body for one matrix arch: run examples, run tests, verify fmt is stable.
-# $1 = runner image, $2 = CLI invocation prefix (may contain emulator + path).
+# Shared body for one matrix arch: exercise examples, tests, and fmt stability.
+# $1 = runner image, $2 = mode (run|compile), $3 = CLI invocation prefix (may
+# contain emulator + path). In 'compile' mode the examples are only compiled, not
+# executed, and the test suite is skipped — used when the runner can build but not
+# execute the produced binaries (e.g. linux-arm64 without a binfmt_misc handler).
 _matrix_one() {
-  local runner="$1" cli="$2"
+  local runner="$1" mode="$2" cli="$3"
   run_in "$runner" "
     set -euo pipefail
     git config --global --add safe.directory /work
@@ -153,16 +156,26 @@ _matrix_one() {
 
     CLI='$cli'
 
-    echo '--- Running examples ($runner)...'
-    for example in examples/*.ash; do
-      case \"\$(basename \"\$example\")\" in
-        $SKIP_EXAMPLES) continue ;;
-      esac
-      \$CLI run \"\$example\" < /dev/null
-    done
+    if [ '$mode' = compile ]; then
+      echo '--- Compiling examples ($runner, compile-only)...'
+      for example in examples/*.ash; do
+        case \"\$(basename \"\$example\")\" in
+          $SKIP_EXAMPLES) continue ;;
+        esac
+        \$CLI compile \"\$example\" -o /tmp/ashes-matrix-out < /dev/null > /dev/null
+      done
+    else
+      echo '--- Running examples ($runner)...'
+      for example in examples/*.ash; do
+        case \"\$(basename \"\$example\")\" in
+          $SKIP_EXAMPLES) continue ;;
+        esac
+        \$CLI run \"\$example\" < /dev/null
+      done
 
-    echo '--- Running tests ($runner)...'
-    \$CLI test tests
+      echo '--- Running tests ($runner)...'
+      \$CLI test tests
+    fi
 
     echo '--- Verifying fmt ($runner)...'
     \$CLI fmt examples -w > /dev/null
@@ -178,9 +191,26 @@ _matrix_one() {
 # Run the example/test/fmt matrix across all three runners (fail-fast: false).
 matrix() {
   local failed=()
-  _matrix_one base "./artifacts/ashes/linux-x64/ashes" || failed+=("linux-x64")
-  _matrix_one arm64 "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" || failed+=("linux-arm64")
-  _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" || failed+=("win-x64")
+  _matrix_one base run "./artifacts/ashes/linux-x64/ashes" || failed+=("linux-x64")
+
+  # arm64 is compile-only by default. Running (vs compiling) arm64 output requires
+  # the emulated compiler to exec the arm64 binaries it produces — nested foreign-arch
+  # execution. That does NOT work in the rootless-podman runner: host binfmt_misc is
+  # not propagated into rootless containers, it can't be registered inside one (the
+  # userns denies the mount), and qemu-user does not transparently re-exec for .NET's
+  # process spawning — so run/test fail with "Exec format error". Compile-only still
+  # validates the full arm64 backend (IR -> LLVM -> arm64 codegen -> link).
+  #
+  # On a runner that CAN exec arm64 (a rootful engine that inherits the host
+  # binfmt_misc handler, or a native arm64 host), set ASHES_MATRIX_ARM64_RUN=1 to run
+  # the full suite. See docs/LOCAL_CI.md.
+  local arm64_mode=compile
+  if [[ -n "${ASHES_MATRIX_ARM64_RUN:-}" ]]; then
+    arm64_mode=run
+  fi
+  _matrix_one arm64 "$arm64_mode" "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" || failed+=("linux-arm64")
+
+  _matrix_one win run "wine ./artifacts/ashes/win-x64/ashes.exe" || failed+=("win-x64")
   if (( ${#failed[@]} )); then
     echo "Matrix failed for: ${failed[*]}" >&2
     return 1
