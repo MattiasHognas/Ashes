@@ -91,3 +91,8 @@ _*.md
 
 # Git
 .git/
+
+# Local CI/CD (ci/) secrets and outputs
+ci/.ci.env
+staging/
+.ci-cache/

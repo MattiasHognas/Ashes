@@ -1,0 +1,74 @@
+# ashes-ci-base — the linux-x64 runner and the toolchain base for the other images.
+#
+# Carries the heavy, slow-changing toolchain: .NET 10 SDK, Node, pnpm (via
+# corepack), the libraries the VS Code integration tests need under xvfb, and the
+# MinIO `mc` client used for release uploads. The arm64 and win runner images are
+# thin `FROM` layers on top of this one so the toolchain is built only once.
+#
+# The repo (including a populated runtimes/ directory) is bind-mounted at run
+# time, so LLVM/rustls native libs are NOT baked in here — run `just provision`
+# on the host first.
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+# Node major used by the VS Code extension (mirrors actions/setup-node in CI).
+ARG NODE_MAJOR=26
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    # Keep NuGet/dotnet writable caches inside the container's HOME, not the
+    # bind-mounted repo, so host file ownership stays clean.
+    NUGET_PACKAGES=/home/ci/.nuget/packages
+
+# Persist apt downloads in podman/buildah cache mounts so image rebuilds reuse
+# them instead of re-fetching. Keep the .debs (the base images ship a docker-clean
+# hook that deletes them) and never `rm` the lists — with cache mounts neither the
+# archives nor the lists are committed into the image layer, so it stays slim.
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+
+# Base utilities + the runtime libraries Electron/VS Code need to launch headless.
+# Library names follow the Ubuntu 24.04 (noble) t64 transition used by the .NET
+# SDK base image: libasound2t64, libcups2t64, libatk*t64, libgtk-3-0t64.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl wget git zip unzip gnupg \
+        xvfb \
+        libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
+        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 libx11-xcb1 \
+        libsecret-1-0
+
+# Node via NodeSource (resolves the latest within NODE_MAJOR). Node 25+ no longer
+# bundles corepack, so install it separately, then enable the pnpm shim.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/root/.npm,sharing=locked \
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g corepack@latest \
+    && corepack enable \
+    && node --version && corepack --version
+
+# MinIO client for release artifact uploads (cached in a download mount so rebuilds
+# don't re-fetch the ~25 MB binary).
+RUN --mount=type=cache,target=/ci-downloads,sharing=locked \
+    if [ ! -x /ci-downloads/mc ]; then \
+        curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /ci-downloads/mc \
+        && chmod +x /ci-downloads/mc; \
+    fi \
+    && cp /ci-downloads/mc /usr/local/bin/mc
+
+# Run as UID 1000 (maps to the host user via `podman --userns=keep-id`, so files
+# written into the bind-mounted repo are owned by the caller). The .NET SDK image
+# already ships a uid-1000 user, so we just provision a writable HOME for it.
+ENV HOME=/home/ci
+# Pre-create the HOME cache subdirs owned by uid 1000. This is important: bind
+# mounting the pnpm cache onto /home/ci/.local/share/pnpm would otherwise make
+# podman create the parent .local/share as root, blocking NuGet from writing its
+# vulnerability-data cache at /home/ci/.local/share/NuGet.
+RUN mkdir -p /home/ci/.nuget /home/ci/.local/share/pnpm /home/ci/.local/share/NuGet \
+    && chown -R 1000:1000 /home/ci
+USER 1000
+WORKDIR /work

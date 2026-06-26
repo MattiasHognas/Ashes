@@ -1,0 +1,22 @@
+# ashes-ci-win — smoke-tests produced win-x64 binaries under Wine on Linux.
+#
+# A native Windows runner is not feasible locally, so win-x64 example/test
+# binaries are executed via `wine ashes.exe ...`. The published win-x64 output
+# bundles libLLVM.dll + rustls.dll (see Directory.Build.targets), so no Windows
+# toolchain is required at run time.
+ARG BASE_IMAGE=ashes-ci-base:latest
+FROM ${BASE_IMAGE}
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive \
+    # Keep the Wine prefix inside HOME; suppress the interactive mono/gecko prompts.
+    WINEPREFIX=/home/ci/.wine \
+    WINEDEBUG=-all
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        wine wine64 \
+    && wine --version
+USER 1000
+# Initialise the Wine prefix once at build time so first run is not slowed by it.
+RUN wineboot --init 2>/dev/null; true

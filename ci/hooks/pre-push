@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# pre-push — full local gate: the PR-equivalent pipeline in containers.
+# Bypass with: SKIP_CI=1 git push ...   or   git push --no-verify
+set -euo pipefail
+
+if [[ "${SKIP_CI:-}" == "1" ]]; then
+  echo "pre-push: SKIP_CI=1 set, skipping ci."
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+echo "pre-push: running 'just ci' (set SKIP_CI=1 to skip)..."
+exec just ci

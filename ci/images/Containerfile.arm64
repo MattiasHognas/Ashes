@@ -1,0 +1,22 @@
+# ashes-ci-arm64 — runs produced linux-arm64 binaries under qemu user emulation.
+#
+# Mirrors the "Install linux-arm64 execution prerequisites" step in
+# .github/workflows/pull-request.yaml: qemu-user + the arm64 cross sysroot so a
+# self-contained arm64 ELF (with its bundled libLLVM.so) can execute on an x86_64
+# host. The published binary is invoked as:
+#     qemu-aarch64 -L /usr/aarch64-linux-gnu <ashes-arm64> ...
+ARG BASE_IMAGE=ashes-ci-base:latest
+FROM ${BASE_IMAGE}
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+# apt cache mounts (inherited keep-cache config from the base image) so rebuilds
+# reuse the qemu/cross-lib downloads.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        qemu-user-static \
+        libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross \
+    && qemu-aarch64-static --version \
+    && test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+USER 1000
