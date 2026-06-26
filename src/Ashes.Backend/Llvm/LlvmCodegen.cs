@@ -28,6 +28,12 @@ internal static partial class LlvmCodegen
     private const long SyscallEpollWait = 232;
     private const long SyscallEpollCreate1 = 291;
     private const long SyscallNanosleep = 35;
+    private const long SyscallDup2 = 33;
+    private const long SyscallFork = 57;
+    private const long SyscallExecve = 59;
+    private const long SyscallWaitpid = 61;
+    private const long SyscallKill = 62;
+    private const long SyscallPipe2 = 293;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
     private const long LinuxErrWouldBlock = -11;
@@ -55,6 +61,12 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallEpollPwait = 22;
     private const long Arm64SyscallNanosleep = 101;
     private const long Arm64SyscallClockGettime = 113;
+    private const long Arm64SyscallDup3 = 24;
+    private const long Arm64SyscallClone = 220;
+    private const long Arm64SyscallExecve = 221;
+    private const long Arm64SyscallWait4 = 260;
+    private const long Arm64SyscallKill = 129;
+    private const long Arm64SyscallPipe2 = 59;
     private const uint WindowsFionBio = 0x8004667E;
     private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
     private const int WindowsWsaErrorWouldBlock = 10035;
@@ -346,6 +358,15 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
                 || ProgramUsesInstruction<IrInst.AsyncRace>(program)
                 || usesNetworkingRuntimeAbi);
+        bool usesProcess = ProgramUsesInstruction<IrInst.SpawnProcess>(program)
+            || ProgramUsesInstruction<IrInst.ProcessWriteStdin>(program)
+            || ProgramUsesInstruction<IrInst.ProcessReadStdoutLine>(program)
+            || ProgramUsesInstruction<IrInst.ProcessReadStderrLine>(program)
+            || ProgramUsesInstruction<IrInst.ProcessWaitForExit>(program)
+            || ProgramUsesInstruction<IrInst.ProcessKill>(program);
+        bool usesWindowsProcess = flavor == LlvmCodegenFlavor.WindowsX64 && usesProcess;
+        bool usesWindowsReadExact = flavor == LlvmCodegenFlavor.WindowsX64
+            && ProgramUsesInstruction<IrInst.ReadExact>(program);
         LlvmValueHandle windowsGetStdHandleImport = default;
         LlvmValueHandle windowsWriteFileImport = default;
         LlvmValueHandle windowsReadFileImport = default;
@@ -381,6 +402,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSleepImport = default;
         LlvmValueHandle windowsVirtualAllocImport = default;
         LlvmValueHandle windowsVirtualFreeImport = default;
+        LlvmValueHandle windowsCreatePipeImport = default;
+        LlvmValueHandle windowsCreateProcessAImport = default;
+        LlvmValueHandle windowsTerminateProcessImport = default;
+        LlvmValueHandle windowsWaitForSingleObjectImport = default;
+        LlvmValueHandle windowsGetExitCodeProcessImport = default;
         LlvmValueHandle windowsIocpPortGlobal = default;
         LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
         LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
@@ -388,28 +414,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
         LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
-        if (usesWindowsStdout || usesWindowsReadLine)
+        if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
             windowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
             LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi)
+        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi || usesWindowsProcess)
         {
             LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
             LlvmApi.SetLinkage(windowsWriteFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsReadLine || usesWindowsFileOps)
+        if (usesWindowsReadLine || usesWindowsFileOps || usesWindowsReadExact || usesWindowsProcess)
         {
             LlvmTypeHandle readFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             windowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
             LlvmApi.SetLinkage(windowsReadFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps || usesWindowsSockets)
+        if (usesWindowsFileOps || usesWindowsSockets || usesWindowsProcess)
         {
             windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
             LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
@@ -506,6 +532,20 @@ internal static partial class LlvmCodegen
         {
             windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
             LlvmApi.SetLinkage(windowsSleepImport, LlvmLinkage.External);
+        }
+
+        if (usesWindowsProcess)
+        {
+            windowsCreatePipeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreatePipe");
+            LlvmApi.SetLinkage(windowsCreatePipeImport, LlvmLinkage.External);
+            windowsCreateProcessAImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateProcessA");
+            LlvmApi.SetLinkage(windowsCreateProcessAImport, LlvmLinkage.External);
+            windowsTerminateProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_TerminateProcess");
+            LlvmApi.SetLinkage(windowsTerminateProcessImport, LlvmLinkage.External);
+            windowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
+            LlvmApi.SetLinkage(windowsWaitForSingleObjectImport, LlvmLinkage.External);
+            windowsGetExitCodeProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetExitCodeProcess");
+            LlvmApi.SetLinkage(windowsGetExitCodeProcessImport, LlvmLinkage.External);
         }
 
         if (usesWindowsProgramArgs)
@@ -665,6 +705,11 @@ internal static partial class LlvmCodegen
             windowsSleepImport,
             windowsVirtualAllocImport,
             windowsVirtualFreeImport,
+            windowsCreatePipeImport,
+            windowsCreateProcessAImport,
+            windowsTerminateProcessImport,
+            windowsWaitForSingleObjectImport,
+            windowsGetExitCodeProcessImport,
             isEntry: true,
             debugContext: dbg);
 
@@ -718,6 +763,11 @@ internal static partial class LlvmCodegen
                 windowsSleepImport,
                 windowsVirtualAllocImport,
                 windowsVirtualFreeImport,
+                windowsCreatePipeImport,
+                windowsCreateProcessAImport,
+                windowsTerminateProcessImport,
+                windowsWaitForSingleObjectImport,
+                windowsGetExitCodeProcessImport,
                 isEntry: false,
                 debugContext: dbg);
         }
@@ -827,6 +877,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSleepImport,
         LlvmValueHandle windowsVirtualAllocImport,
         LlvmValueHandle windowsVirtualFreeImport,
+        LlvmValueHandle windowsCreatePipeImport,
+        LlvmValueHandle windowsCreateProcessAImport,
+        LlvmValueHandle windowsTerminateProcessImport,
+        LlvmValueHandle windowsWaitForSingleObjectImport,
+        LlvmValueHandle windowsGetExitCodeProcessImport,
         bool isEntry,
         DebugInfoContext? debugContext = null)
     {
@@ -939,6 +994,11 @@ internal static partial class LlvmCodegen
             windowsSleepImport,
             windowsVirtualAllocImport,
             windowsVirtualFreeImport,
+            windowsCreatePipeImport,
+            windowsCreateProcessAImport,
+            windowsTerminateProcessImport,
+            windowsWaitForSingleObjectImport,
+            windowsGetExitCodeProcessImport,
             new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
             flavor,
             usesProgramArgs,
@@ -1041,6 +1101,14 @@ internal static partial class LlvmCodegen
             IrInst.BytesGetU32Le bytesGetU32Le => StoreTemp(state, bytesGetU32Le.Target, EmitBytesGetU32Le(state, LoadTemp(state, bytesGetU32Le.BytesTemp), LoadTemp(state, bytesGetU32Le.OffsetTemp))),
             IrInst.BytesGetU64Le bytesGetU64Le => StoreTemp(state, bytesGetU64Le.Target, EmitBytesGetU64Le(state, LoadTemp(state, bytesGetU64Le.BytesTemp), LoadTemp(state, bytesGetU64Le.OffsetTemp))),
             IrInst.FileWriteBytes fileWriteBytes => StoreTemp(state, fileWriteBytes.Target, EmitFileWriteBytes(state, LoadTemp(state, fileWriteBytes.PathTemp), LoadTemp(state, fileWriteBytes.BytesTemp))),
+            IrInst.ReadExact readExact => StoreTemp(state, readExact.Target, EmitReadExact(state, LoadTemp(state, readExact.CountTemp))),
+            IrInst.TextByteLength textByteLength => StoreTemp(state, textByteLength.Target, EmitTextByteLength(state, LoadTemp(state, textByteLength.TextTemp))),
+            IrInst.SpawnProcess spawnProcess => StoreTemp(state, spawnProcess.Target, EmitSpawnProcess(state, LoadTemp(state, spawnProcess.ExeTemp), LoadTemp(state, spawnProcess.ArgsTemp))),
+            IrInst.ProcessWriteStdin procWriteStdin => StoreTemp(state, procWriteStdin.Target, EmitProcessWriteStdin(state, LoadTemp(state, procWriteStdin.ProcessTemp), LoadTemp(state, procWriteStdin.TextTemp))),
+            IrInst.ProcessReadStdoutLine procReadStdout => StoreTemp(state, procReadStdout.Target, EmitProcessReadLine(state, LoadTemp(state, procReadStdout.ProcessTemp), stdoutFd: true)),
+            IrInst.ProcessReadStderrLine procReadStderr => StoreTemp(state, procReadStderr.Target, EmitProcessReadLine(state, LoadTemp(state, procReadStderr.ProcessTemp), stdoutFd: false)),
+            IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
+            IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
             IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
@@ -1111,9 +1179,15 @@ internal static partial class LlvmCodegen
             IrInst.XorInt xorInt => StoreTemp(state, xorInt.Target, LlvmApi.BuildXor(builder, LoadTemp(state, xorInt.Left), LoadTemp(state, xorInt.Right), $"xor_{xorInt.Target}")),
             IrInst.ShlInt shlInt => StoreTemp(state, shlInt.Target, EmitShiftInt(state, LoadTemp(state, shlInt.Left), LoadTemp(state, shlInt.Right), left: true, name: $"shl_{shlInt.Target}")),
             IrInst.ShrInt shrInt => StoreTemp(state, shrInt.Target, EmitShiftInt(state, LoadTemp(state, shrInt.Left), LoadTemp(state, shrInt.Right), left: false, name: $"shr_{shrInt.Target}")),
+            IrInst.CmpIntGt cmpIntGt => StoreTemp(state, cmpIntGt.Target, EmitIntComparison(state, LlvmIntPredicate.Sgt, LoadTemp(state, cmpIntGt.Left), LoadTemp(state, cmpIntGt.Right), $"cmp_gt_{cmpIntGt.Target}")),
+            IrInst.CmpUIntGt cmpUIntGt => StoreTemp(state, cmpUIntGt.Target, EmitIntComparison(state, LlvmIntPredicate.Ugt, LoadTemp(state, cmpUIntGt.Left), LoadTemp(state, cmpUIntGt.Right), $"cmp_gt_{cmpUIntGt.Target}")),
+            IrInst.CmpFloatGt cmpFloatGt => StoreTemp(state, cmpFloatGt.Target, EmitFloatComparison(state, LlvmRealPredicate.Ogt, LoadTempAsFloat(state, cmpFloatGt.Left), LoadTempAsFloat(state, cmpFloatGt.Right), $"fcmp_gt_{cmpFloatGt.Target}")),
             IrInst.CmpIntGe cmpIntGe => StoreTemp(state, cmpIntGe.Target, EmitIntComparison(state, LlvmIntPredicate.Sge, LoadTemp(state, cmpIntGe.Left), LoadTemp(state, cmpIntGe.Right), $"cmp_ge_{cmpIntGe.Target}")),
             IrInst.CmpUIntGe cmpUIntGe => StoreTemp(state, cmpUIntGe.Target, EmitIntComparison(state, LlvmIntPredicate.Uge, LoadTemp(state, cmpUIntGe.Left), LoadTemp(state, cmpUIntGe.Right), $"cmp_ge_{cmpUIntGe.Target}")),
             IrInst.CmpFloatGe cmpFloatGe => StoreTemp(state, cmpFloatGe.Target, EmitFloatComparison(state, LlvmRealPredicate.Oge, LoadTempAsFloat(state, cmpFloatGe.Left), LoadTempAsFloat(state, cmpFloatGe.Right), $"fcmp_ge_{cmpFloatGe.Target}")),
+            IrInst.CmpIntLt cmpIntLt => StoreTemp(state, cmpIntLt.Target, EmitIntComparison(state, LlvmIntPredicate.Slt, LoadTemp(state, cmpIntLt.Left), LoadTemp(state, cmpIntLt.Right), $"cmp_lt_{cmpIntLt.Target}")),
+            IrInst.CmpUIntLt cmpUIntLt => StoreTemp(state, cmpUIntLt.Target, EmitIntComparison(state, LlvmIntPredicate.Ult, LoadTemp(state, cmpUIntLt.Left), LoadTemp(state, cmpUIntLt.Right), $"cmp_lt_{cmpUIntLt.Target}")),
+            IrInst.CmpFloatLt cmpFloatLt => StoreTemp(state, cmpFloatLt.Target, EmitFloatComparison(state, LlvmRealPredicate.Olt, LoadTempAsFloat(state, cmpFloatLt.Left), LoadTempAsFloat(state, cmpFloatLt.Right), $"fcmp_lt_{cmpFloatLt.Target}")),
             IrInst.CmpIntLe cmpIntLe => StoreTemp(state, cmpIntLe.Target, EmitIntComparison(state, LlvmIntPredicate.Sle, LoadTemp(state, cmpIntLe.Left), LoadTemp(state, cmpIntLe.Right), $"cmp_le_{cmpIntLe.Target}")),
             IrInst.CmpUIntLe cmpUIntLe => StoreTemp(state, cmpUIntLe.Target, EmitIntComparison(state, LlvmIntPredicate.Ule, LoadTemp(state, cmpUIntLe.Left), LoadTemp(state, cmpUIntLe.Right), $"cmp_le_{cmpUIntLe.Target}")),
             IrInst.CmpFloatLe cmpFloatLe => StoreTemp(state, cmpFloatLe.Target, EmitFloatComparison(state, LlvmRealPredicate.Ole, LoadTempAsFloat(state, cmpFloatLe.Left), LoadTempAsFloat(state, cmpFloatLe.Right), $"fcmp_le_{cmpFloatLe.Target}")),
@@ -1247,6 +1321,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsSleepImport,
         LlvmValueHandle WindowsVirtualAllocImport,
         LlvmValueHandle WindowsVirtualFreeImport,
+        LlvmValueHandle WindowsCreatePipeImport,
+        LlvmValueHandle WindowsCreateProcessAImport,
+        LlvmValueHandle WindowsTerminateProcessImport,
+        LlvmValueHandle WindowsWaitForSingleObjectImport,
+        LlvmValueHandle WindowsGetExitCodeProcessImport,
         Dictionary<string, LlvmValueHandle> WindowsExternImports,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
@@ -1584,6 +1663,12 @@ internal static partial class LlvmCodegen
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,
+            SyscallDup2 => Arm64SyscallDup3,
+            SyscallFork => Arm64SyscallClone,
+            SyscallExecve => Arm64SyscallExecve,
+            SyscallWaitpid => Arm64SyscallWait4,
+            SyscallKill => Arm64SyscallKill,
+            SyscallPipe2 => Arm64SyscallPipe2,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
     }

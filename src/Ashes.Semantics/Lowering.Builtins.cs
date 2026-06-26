@@ -556,6 +556,8 @@ public sealed partial class Lowering
         IntrinsicKind.NetTlsConnect => 2,
         IntrinsicKind.NetTlsSend => 2,
         IntrinsicKind.NetTlsReceive => 2,
+        IntrinsicKind.SpawnProcess => 2,
+        IntrinsicKind.ProcessWriteStdin => 2,
         _ => 1
     };
 
@@ -2055,5 +2057,313 @@ public sealed partial class Lowering
             IntrinsicKind.FileWriteBytes,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TBytes(), CreateStringResultType(_resolvedTypes["Unit"]))))
         );
+    }
+
+    // Ashes.IO.readExact : Int -> Result(Str, Str)
+    private Binding.Intrinsic CreateReadExactBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ReadExact,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr())))
+        );
+    }
+
+    private (int, TypeRef) LowerReadExact(Expr countArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(countArg);
+        var (countTemp, countType) = LowerExpr(countArg);
+        var prunedCountType = Prune(countType);
+
+        if (prunedCountType is TypeRef.TNever)
+        {
+            return (countTemp, prunedCountType);
+        }
+
+        if (prunedCountType is TypeRef.TVar)
+        {
+            Unify(prunedCountType, new TypeRef.TInt());
+            prunedCountType = new TypeRef.TInt();
+        }
+
+        if (prunedCountType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(countArg), $"Ashes.IO.readExact() expects Int but got {Pretty(prunedCountType)}.");
+            return (countTemp, prunedCountType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ReadExact(target, countTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
+    }
+
+    // Ashes.Text.byteLength : Str -> Int
+    private Binding.Intrinsic CreateTextByteLengthBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextByteLength,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TInt()))
+        );
+    }
+
+    private (int, TypeRef) LowerTextByteLength(Expr textArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var prunedTextType = Prune(textType);
+
+        if (prunedTextType is TypeRef.TNever)
+        {
+            return (textTemp, prunedTextType);
+        }
+
+        if (prunedTextType is TypeRef.TVar)
+        {
+            Unify(prunedTextType, new TypeRef.TStr());
+            prunedTextType = new TypeRef.TStr();
+        }
+
+        if (prunedTextType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.byteLength() expects Str but got {Pretty(prunedTextType)}.");
+            return (textTemp, prunedTextType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextByteLength(target, textTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    // Ashes.Process.spawn : Str -> List(Str) -> Result(Str, Process)
+    private Binding.Intrinsic CreateSpawnProcessBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.SpawnProcess,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TList(new TypeRef.TStr()), CreateStringResultType(_resolvedTypes["Process"]))))
+        );
+    }
+
+    private (int, TypeRef) LowerSpawnProcess(Expr exeArg, Expr argsArg)
+    {
+        using var exeSpan = PushDiagnosticSpan(exeArg);
+        var (exeTemp, exeType) = LowerExpr(exeArg);
+        var prunedExeType = Prune(exeType);
+
+        if (prunedExeType is TypeRef.TNever)
+        {
+            return (exeTemp, prunedExeType);
+        }
+
+        if (prunedExeType is TypeRef.TVar)
+        {
+            Unify(prunedExeType, new TypeRef.TStr());
+            prunedExeType = new TypeRef.TStr();
+        }
+
+        if (prunedExeType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(exeArg), $"Ashes.Process.spawn() expects Str for exe but got {Pretty(prunedExeType)}.");
+            return (exeTemp, prunedExeType);
+        }
+
+        using var argsSpan = PushDiagnosticSpan(argsArg);
+        var (argsTemp, argsType) = LowerExpr(argsArg);
+        var prunedArgsType = Prune(argsType);
+
+        if (prunedArgsType is TypeRef.TNever)
+        {
+            return (argsTemp, prunedArgsType);
+        }
+
+        if (prunedArgsType is TypeRef.TVar)
+        {
+            Unify(prunedArgsType, new TypeRef.TList(new TypeRef.TStr()));
+            prunedArgsType = new TypeRef.TList(new TypeRef.TStr());
+        }
+
+        if (prunedArgsType is not TypeRef.TList)
+        {
+            ReportDiagnostic(GetSpan(argsArg), $"Ashes.Process.spawn() expects List(Str) for args but got {Pretty(prunedArgsType)}.");
+            return (argsTemp, prunedArgsType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.SpawnProcess(target, exeTemp, argsTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Process"]));
+    }
+
+    // Ashes.Process.writeStdin : Process -> Str -> Unit
+    private Binding.Intrinsic CreateProcessWriteStdinBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ProcessWriteStdin,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Process"], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"])))
+        );
+    }
+
+    private (int, TypeRef) LowerProcessWriteStdin(Expr procArg, Expr textArg)
+    {
+        using var procSpan = PushDiagnosticSpan(procArg);
+        CheckUseAfterDrop(procArg);
+        var (procTemp, procType) = LowerExpr(procArg);
+        var prunedProcType = Prune(procType);
+
+        if (prunedProcType is TypeRef.TNever)
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.writeStdin() expects Process."))
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        using var textSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var prunedTextType = Prune(textType);
+
+        if (prunedTextType is TypeRef.TNever)
+        {
+            return (textTemp, prunedTextType);
+        }
+
+        if (prunedTextType is TypeRef.TVar)
+        {
+            Unify(prunedTextType, new TypeRef.TStr());
+            prunedTextType = new TypeRef.TStr();
+        }
+
+        if (prunedTextType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Process.writeStdin() expects Str but got {Pretty(prunedTextType)}.");
+            return (textTemp, prunedTextType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ProcessWriteStdin(target, procTemp, textTemp));
+        return (target, _resolvedTypes["Unit"]);
+    }
+
+    // Ashes.Process.readStdoutLine : Process -> Maybe(Str)
+    private Binding.Intrinsic CreateProcessReadStdoutLineBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ProcessReadStdoutLine,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Process"], CreateMaybeType(new TypeRef.TStr())))
+        );
+    }
+
+    private (int, TypeRef) LowerProcessReadStdoutLine(Expr procArg)
+    {
+        using var procSpan = PushDiagnosticSpan(procArg);
+        CheckUseAfterDrop(procArg);
+        var (procTemp, procType) = LowerExpr(procArg);
+        var prunedProcType = Prune(procType);
+
+        if (prunedProcType is TypeRef.TNever)
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.readStdoutLine() expects Process."))
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ProcessReadStdoutLine(target, procTemp));
+        return (target, CreateMaybeType(new TypeRef.TStr()));
+    }
+
+    // Ashes.Process.readStderrLine : Process -> Maybe(Str)
+    private Binding.Intrinsic CreateProcessReadStderrLineBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ProcessReadStderrLine,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Process"], CreateMaybeType(new TypeRef.TStr())))
+        );
+    }
+
+    private (int, TypeRef) LowerProcessReadStderrLine(Expr procArg)
+    {
+        using var procSpan = PushDiagnosticSpan(procArg);
+        CheckUseAfterDrop(procArg);
+        var (procTemp, procType) = LowerExpr(procArg);
+        var prunedProcType = Prune(procType);
+
+        if (prunedProcType is TypeRef.TNever)
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.readStderrLine() expects Process."))
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ProcessReadStderrLine(target, procTemp));
+        return (target, CreateMaybeType(new TypeRef.TStr()));
+    }
+
+    // Ashes.Process.waitForExit : Process -> Int
+    private Binding.Intrinsic CreateProcessWaitForExitBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ProcessWaitForExit,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Process"], new TypeRef.TInt()))
+        );
+    }
+
+    private (int, TypeRef) LowerProcessWaitForExit(Expr procArg)
+    {
+        using var procSpan = PushDiagnosticSpan(procArg);
+        CheckUseAfterDrop(procArg);
+        var (procTemp, procType) = LowerExpr(procArg);
+        var prunedProcType = Prune(procType);
+
+        if (prunedProcType is TypeRef.TNever)
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.waitForExit() expects Process."))
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ProcessWaitForExit(target, procTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    // Ashes.Process.kill : Process -> Unit
+    private Binding.Intrinsic CreateProcessKillBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ProcessKill,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Process"], _resolvedTypes["Unit"]))
+        );
+    }
+
+    private (int, TypeRef) LowerProcessKill(Expr procArg)
+    {
+        using var procSpan = PushDiagnosticSpan(procArg);
+        CheckUseAfterDrop(procArg);
+        var (procTemp, procType) = LowerExpr(procArg);
+        var prunedProcType = Prune(procType);
+
+        if (prunedProcType is TypeRef.TNever)
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.kill() expects Process."))
+        {
+            return (procTemp, prunedProcType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.ProcessKill(target, procTemp));
+        return (target, _resolvedTypes["Unit"]);
     }
 }

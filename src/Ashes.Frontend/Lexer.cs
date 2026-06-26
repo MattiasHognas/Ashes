@@ -147,6 +147,20 @@ public sealed class Lexer
             return true;
         }
 
+        if (_text[_pos] == '<')
+        {
+            _pos++;
+            token = new Token(TokenKind.LessThan, "<", 0, start, 1);
+            return true;
+        }
+
+        if (_text[_pos] == '>')
+        {
+            _pos++;
+            token = new Token(TokenKind.GreaterThan, ">", 0, start, 1);
+            return true;
+        }
+
         if (TryMatch(':', ':'))
         {
             _pos += 2;

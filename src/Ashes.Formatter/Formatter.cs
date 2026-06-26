@@ -264,7 +264,9 @@ public static class Formatter
             Expr.ShiftLeft shiftLeft => IsSingleLine(shiftLeft.Left, preferPipelines) && IsSingleLine(shiftLeft.Right, preferPipelines),
             Expr.ShiftRight shiftRight => IsSingleLine(shiftRight.Left, preferPipelines) && IsSingleLine(shiftRight.Right, preferPipelines),
             Expr.BitwiseNot bitwiseNot => IsSingleLine(bitwiseNot.Operand, preferPipelines),
+            Expr.GreaterThan gt => IsSingleLine(gt.Left, preferPipelines) && IsSingleLine(gt.Right, preferPipelines),
             Expr.GreaterOrEqual ge => IsSingleLine(ge.Left, preferPipelines) && IsSingleLine(ge.Right, preferPipelines),
+            Expr.LessThan lt => IsSingleLine(lt.Left, preferPipelines) && IsSingleLine(lt.Right, preferPipelines),
             Expr.LessOrEqual le => IsSingleLine(le.Left, preferPipelines) && IsSingleLine(le.Right, preferPipelines),
             Expr.Equal eq => IsSingleLine(eq.Left, preferPipelines) && IsSingleLine(eq.Right, preferPipelines),
             Expr.NotEqual ne => IsSingleLine(ne.Left, preferPipelines) && IsSingleLine(ne.Right, preferPipelines),
@@ -912,6 +914,25 @@ public static class Formatter
                     return;
                 }
 
+            case Expr.GreaterThan gt:
+                {
+                    var needsParens = parentPrec > PrecCmp;
+                    if (needsParens)
+                    {
+                        sb.Append('(');
+                    }
+
+                    WriteExprInline(sb, gt.Left, indent, PrecCmp, preferPipelines, options);
+                    sb.Append(" > ");
+                    WriteExprInline(sb, gt.Right, indent, PrecCmp, preferPipelines, options);
+                    if (needsParens)
+                    {
+                        sb.Append(')');
+                    }
+
+                    return;
+                }
+
             case Expr.GreaterOrEqual ge:
                 {
                     var needsParens = parentPrec > PrecCmp;
@@ -923,6 +944,25 @@ public static class Formatter
                     WriteExprInline(sb, ge.Left, indent, PrecCmp, preferPipelines, options);
                     sb.Append(" >= ");
                     WriteExprInline(sb, ge.Right, indent, PrecCmp, preferPipelines, options);
+                    if (needsParens)
+                    {
+                        sb.Append(')');
+                    }
+
+                    return;
+                }
+
+            case Expr.LessThan lt:
+                {
+                    var needsParens = parentPrec > PrecCmp;
+                    if (needsParens)
+                    {
+                        sb.Append('(');
+                    }
+
+                    WriteExprInline(sb, lt.Left, indent, PrecCmp, preferPipelines, options);
+                    sb.Append(" < ");
+                    WriteExprInline(sb, lt.Right, indent, PrecCmp, preferPipelines, options);
                     if (needsParens)
                     {
                         sb.Append(')');
@@ -1055,7 +1095,7 @@ public static class Formatter
                     var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If
                         or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
                         or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-                        or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await;
+                        or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await;
                     if (funcNeedsParens)
                     {
                         sb.Append('(');

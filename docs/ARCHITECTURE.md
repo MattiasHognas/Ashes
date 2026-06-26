@@ -334,8 +334,10 @@ executable images.
    section; `.bss` becomes a separate zero-filled PE section.
 4. Import tables are constructed for **KERNEL32.DLL** (`ExitProcess`,
    `GetStdHandle`, `WriteFile`, `ReadFile`, `CreateFileA`, `CloseHandle`,
-   etc.), **SHELL32.DLL** (`CommandLineToArgvW`), and **WS2_32.DLL**
-   (socket APIs).
+   `VirtualAlloc`, `VirtualFree`, `Sleep`, `CreatePipe`, `CreateProcessA`,
+   `TerminateProcess`, `WaitForSingleObject`, etc.), **SHELL32.DLL**
+   (`CommandLineToArgvW`), **WS2_32.DLL** (socket APIs), and **CRYPT32.DLL**
+   (certificate store APIs).
 5. COFF relocations (`IMAGE_REL_AMD64_ADDR32`, `IMAGE_REL_AMD64_REL32`)
    are resolved, preserving encoded addends.
 6. A 24-byte **trampoline** + 35-byte **`__chkstk` stub** are prepended.
