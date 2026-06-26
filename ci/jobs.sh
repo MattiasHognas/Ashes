@@ -44,6 +44,64 @@ coverage() {
   "
 }
 
+# Dependency freshness + vulnerabilities (the local Dependabot stand-in).
+# Gates on known-vulnerable NuGet packages and high+ pnpm advisories; the
+# "outdated" listings are informational only (upstream releases shouldn't break
+# the build). Needs network (NuGet advisory DB + npm registry).
+deps_check() {
+  run_in base "
+    set -uo pipefail
+    fail=0
+    dotnet restore Ashes.slnx
+
+    echo '--- NuGet: vulnerable packages (gating) ---'
+    vuln=\$(dotnet list Ashes.slnx package --vulnerable --include-transitive 2>&1)
+    echo \"\$vuln\"
+    if echo \"\$vuln\" | grep -q 'has the following vulnerable packages'; then
+      echo '::error:: NuGet vulnerabilities found.' >&2
+      fail=1
+    fi
+
+    echo '--- NuGet: outdated packages (report only) ---'
+    dotnet list Ashes.slnx package --outdated || true
+
+    echo '--- pnpm: audit high+ (gating) ---'
+    cd vscode-extension
+    corepack enable
+    pnpm install --frozen-lockfile --force
+    if ! pnpm audit --audit-level high; then
+      echo '::error:: pnpm high/critical advisories found.' >&2
+      fail=1
+    fi
+
+    echo '--- pnpm: outdated packages (report only) ---'
+    pnpm outdated || true
+
+    exit \$fail
+  "
+}
+
+# Static analysis / SAST via Semgrep (the local CodeQL stand-in). Scans C#, TS/JS
+# and for leaked secrets; exits non-zero on findings. Needs network on first run
+# to fetch the registry rule packs.
+sast() {
+  run_in base "
+    set -euo pipefail
+    git config --global --add safe.directory /work
+    semgrep --version
+    semgrep scan \
+      --config p/security-audit \
+      --config p/csharp \
+      --config p/typescript \
+      --config p/secrets \
+      --error \
+      --metrics off \
+      --exclude artifacts --exclude dist --exclude publish --exclude staging \
+      --exclude runtimes --exclude node_modules --exclude .ci-cache \
+      --exclude '*.vsix'
+  "
+}
+
 # VS Code extension: lint, format check, compile, and xvfb integration tests
 # against freshly published cli/lsp/dap binaries.
 ext() {
@@ -134,6 +192,8 @@ ci() {
   build
   fmt_check
   test
+  deps_check
+  sast
   ext
   publish_cli
   matrix
@@ -211,7 +271,7 @@ release() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | ext | publish_cli | matrix | ci_quick | ci | release) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | ci_quick | ci | release) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1

@@ -52,11 +52,13 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 | Command            | What it does                                                        | Mirrors |
 |--------------------|---------------------------------------------------------------------|---------|
 | `just ci-quick`    | build + .NET/LSP tests (fast inner loop)                            | —       |
-| `just ci`          | build, format check, tests, VS Code ext + integration, publish, 3-arch matrix | `pull-request.yaml` |
+| `just ci`          | build, format check, tests, deps, sast, VS Code ext + integration, publish, 3-arch matrix | `pull-request.yaml` |
 | `just build`       | `dotnet restore` + `build -c Release`                              | Restore/Build |
 | `just fmt-check`   | `dotnet format --verify-no-changes`                               | Verify formatting |
 | `just test`        | `Ashes.Tests` + `Ashes.Lsp.Tests`                                 | Run tests |
 | `just coverage`    | tests with cobertura coverage                                      | `push-to-main.yaml` |
+| `just deps-check`  | NuGet + pnpm vulnerability/outdated check (local Dependabot)       | — |
+| `just sast`        | Semgrep static analysis: C#, TS, secrets (local CodeQL)           | — |
 | `just ext`         | extension lint/format/compile + xvfb integration tests            | extension steps |
 | `just publish-cli` | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`    | Publish CLI |
 | `just matrix`      | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine) | `test-matrix` |
@@ -114,10 +116,29 @@ ci/
   .ci.env.example        # template for local S3 overrides
 ```
 
+## Dependencies & static analysis
+
+These replace the GitHub-hosted Dependabot/CodeQL checks with local equivalents
+that run in the same Podman runner. Both need network access (advisory DBs /
+Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
+`just ci-quick` (pre-commit).
+
+- `just deps-check` — the local **Dependabot** stand-in. **Gates** on
+  known-vulnerable NuGet packages (`dotnet list package --vulnerable
+  --include-transitive`) and high/critical pnpm advisories (`pnpm audit
+  --audit-level high`). Outdated listings (`dotnet list package --outdated`,
+  `pnpm outdated`) are printed for information only — they don't fail the build.
+  Dependabot is still useful on GitHub for *opening* update PRs; this only
+  *checks*. For local auto-PRs, self-hosted Renovate is the next step.
+- `just sast` — the local **CodeQL** stand-in, via **Semgrep**. Scans C#, TS/JS,
+  and for leaked secrets (registry packs `p/security-audit`, `p/csharp`,
+  `p/typescript`, `p/secrets`) and **fails on findings** (`--error`). Build
+  outputs (`artifacts/`, `dist/`, `runtimes/`, `node_modules/`, …) are excluded.
+
 ## Notes
 
-- **CodeQL** stays on GitHub (`codeql.yml`) — it is GitHub-specific and not part
-  of the local pipeline.
+- **CodeQL** (`codeql.yml`) is disabled; `just sast` (Semgrep) is the local
+  replacement. Re-enable the workflow if you want results in GitHub's Security tab.
 - Windows binaries are smoke-tested under **Wine**; true native Windows runs
   remain on GitHub if ever needed.
 - The GitHub workflows are left intact, so you can run both during the transition.

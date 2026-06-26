@@ -68,6 +68,7 @@ tests/*.exe
 examples/*.exe
 /*.exe
 /*.txt
+/*.log
 *.received.txt
 runtimes/*
 !runtimes/linux-x64/

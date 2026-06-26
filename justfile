@@ -56,6 +56,15 @@ test:
 coverage:
     ci/jobs.sh coverage
 
+# Dependency freshness + vulnerabilities (local Dependabot stand-in). Gates on
+# vulnerable NuGet packages and high+ pnpm advisories; reports outdated packages.
+deps-check:
+    ci/jobs.sh deps_check
+
+# Static analysis / SAST via Semgrep (local CodeQL stand-in). C#, TS, secrets.
+sast:
+    ci/jobs.sh sast
+
 ext:
     ci/jobs.sh ext
 

@@ -60,6 +60,21 @@ RUN --mount=type=cache,target=/ci-downloads,sharing=locked \
     fi \
     && cp /ci-downloads/mc /usr/local/bin/mc
 
+# Semgrep — local SAST (the CodeQL stand-in) covering C#, TS/JS, GitHub Actions
+# and secrets. Installed into an isolated venv so it doesn't perturb the system
+# Python (Ubuntu noble enforces PEP 668), then symlinked onto PATH. The pip cache
+# mount keeps wheels across rebuilds.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv \
+    && python3 -m venv /opt/semgrep \
+    && /opt/semgrep/bin/pip install --upgrade pip \
+    && /opt/semgrep/bin/pip install semgrep \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
+    && semgrep --version
+
 # Run as UID 1000 (maps to the host user via `podman --userns=keep-id`, so files
 # written into the bind-mounted repo are owned by the caller). The .NET SDK image
 # already ships a uid-1000 user, so we just provision a writable HOME for it.
