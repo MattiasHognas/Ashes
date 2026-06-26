@@ -170,10 +170,13 @@ public sealed class EndToEndWindowsBackendTests
             return;
         }
 
-        // findstr "^" echoes every input line, so it round-trips whatever we write
-        // to the child's stdin back through its stdout.
+        // `cmd /v:on /c "set /p line=&echo !line!"` reads a single line from stdin
+        // and echoes it back, then exits. Unlike findstr, it does not wait for stdin
+        // to reach EOF before producing output, so the parent can write one line and
+        // read it back without having to close the child's stdin (which the language
+        // has no API for) — mirroring the `read x; echo $x` shell child used on Unix.
         var src = """
-            match Ashes.Process.spawn("C:\\Windows\\System32\\findstr.exe")(["^"]) with
+            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/v:on", "/c", "set /p line=&echo !line!"]) with
                 | Error(msg) -> Ashes.IO.print(msg)
                 | Ok(proc) ->
                     let _ = Ashes.Process.writeStdin(proc)("hello\n")
