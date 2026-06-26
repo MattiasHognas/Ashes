@@ -167,13 +167,31 @@ _matrix_one() {
     CLI='$cli'
 
     if [ '$mode' = compile ]; then
-      echo '--- Compiling examples ($runner, compile-only)...'
+      # Compile-only is the emulated (arm64/qemu) path: each compile is a fresh,
+      # CPU-bound qemu process (~4s of emulation overhead, startup-dominated), so
+      # a 70-example sweep is ~5min serially. The compiles are independent and
+      # write only to /tmp, so fan them out across host cores (~5x faster). A
+      # non-zero from any child propagates via xargs (exit 123) + pipefail.
+      echo '--- Compiling examples ($runner, compile-only, parallel)...'
+      export CLI
+      compile_one() {
+        local out
+        if ! out=\$(\$CLI compile \"\$1\" -o \"\$(mktemp)\" < /dev/null 2>&1); then
+          echo \"=== FAILED compiling \$1 ===\"
+          echo \"\$out\"
+          return 1
+        fi
+      }
+      export -f compile_one
+      examples=()
       for example in examples/*.ash; do
         case \"\$(basename \"\$example\")\" in
           $SKIP_EXAMPLES) continue ;;
         esac
-        \$CLI compile \"\$example\" -o /tmp/ashes-matrix-out < /dev/null > /dev/null
+        examples+=(\"\$example\")
       done
+      printf '%s\\n' \"\${examples[@]}\" \
+        | xargs -P \"\$(nproc)\" -I{} bash -c 'compile_one \"\$@\"' _ {}
     else
       echo '--- Running examples ($runner)...'
       for example in examples/*.ash; do
