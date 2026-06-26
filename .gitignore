@@ -85,6 +85,7 @@ runtimes/win-x64/*
 !runtimes/win-x64/rustls.version
 out
 *.lscache
+.pnpm-store/
 
 # Workfiles
 _*.sh
