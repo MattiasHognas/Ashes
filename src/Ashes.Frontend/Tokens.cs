@@ -36,6 +36,8 @@ public enum TokenKind
     Caret,
     LessLess,
     GreaterGreater,
+    GreaterThan,
+    LessThan,
     GreaterEquals,
     LessEquals,
     EqualsEquals,

@@ -1115,9 +1115,17 @@ public static class ProjectSupport
                 case Expr.BitwiseNot bitwiseNot:
                     Visit(bitwiseNot.Operand);
                     break;
+                case Expr.GreaterThan gt:
+                    Visit(gt.Left);
+                    Visit(gt.Right);
+                    break;
                 case Expr.GreaterOrEqual ge:
                     Visit(ge.Left);
                     Visit(ge.Right);
+                    break;
+                case Expr.LessThan lt:
+                    Visit(lt.Left);
+                    Visit(lt.Right);
                     break;
                 case Expr.LessOrEqual le:
                     Visit(le.Left);

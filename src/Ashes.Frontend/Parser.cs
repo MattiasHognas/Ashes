@@ -4,6 +4,7 @@ public sealed class Parser
 {
     private readonly Lexer _lexer;
     private readonly Diagnostics _diag;
+    private readonly string _source;
     private Token _current;
     private Token _previous;
     private int _matchCasePipeSuppressionDepth;
@@ -11,9 +12,18 @@ public sealed class Parser
     public Parser(string text, Diagnostics diag)
     {
         _diag = diag;
+        _source = text;
         _lexer = new Lexer(text, diag);
         _previous = new Token(TokenKind.EOF, "", 0, 0, 0);
         _current = _lexer.Next();
+    }
+
+    // Returns the 0-based column of the character at `pos` in _source.
+    private int GetColumn(int pos)
+    {
+        if (pos <= 0) return 0;
+        var lineStart = _source.LastIndexOf('\n', pos - 1);
+        return lineStart < 0 ? pos : pos - lineStart - 1;
     }
 
     public Expr ParseExpression()
@@ -320,6 +330,7 @@ public sealed class Parser
         Consume(TokenKind.With);
 
         var cases = new List<MatchCase>();
+        int firstPipeColumn = _current.Kind == TokenKind.Pipe ? GetColumn(_current.Position) : -1;
         if (_current.Kind == TokenKind.Pipe)
         {
             Consume(TokenKind.Pipe);
@@ -336,7 +347,7 @@ public sealed class Parser
         var body = ParseMatchCaseBody();
         cases.Add(new MatchCase(pattern, body, guard));
 
-        while (_current.Kind == TokenKind.Pipe)
+        while (_current.Kind == TokenKind.Pipe && (firstPipeColumn < 0 || GetColumn(_current.Position) >= firstPipeColumn))
         {
             Consume(TokenKind.Pipe);
             pattern = ParsePattern();
@@ -660,7 +671,7 @@ public sealed class Parser
     {
         var left = ParseBitwiseOr();
 
-        while (_current.Kind == TokenKind.GreaterEquals || _current.Kind == TokenKind.LessEquals || _current.Kind == TokenKind.EqualsEquals || _current.Kind == TokenKind.BangEquals)
+        while (_current.Kind == TokenKind.GreaterThan || _current.Kind == TokenKind.GreaterEquals || _current.Kind == TokenKind.LessThan || _current.Kind == TokenKind.LessEquals || _current.Kind == TokenKind.EqualsEquals || _current.Kind == TokenKind.BangEquals)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             var op = _current.Kind;
@@ -668,7 +679,9 @@ public sealed class Parser
             var right = ParseBitwiseOr();
             left = op switch
             {
+                TokenKind.GreaterThan => RegisterExpr(new Expr.GreaterThan(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.GreaterEquals => RegisterExpr(new Expr.GreaterOrEqual(left, right), start, AstSpans.GetOrDefault(right).End),
+                TokenKind.LessThan => RegisterExpr(new Expr.LessThan(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.LessEquals => RegisterExpr(new Expr.LessOrEqual(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.EqualsEquals => RegisterExpr(new Expr.Equal(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.BangEquals => RegisterExpr(new Expr.NotEqual(left, right), start, AstSpans.GetOrDefault(right).End),

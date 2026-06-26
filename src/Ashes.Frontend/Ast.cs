@@ -26,6 +26,8 @@ public abstract record Expr
     public sealed record ShiftLeft(Expr Left, Expr Right) : Expr;
     public sealed record ShiftRight(Expr Left, Expr Right) : Expr;
     public sealed record BitwiseNot(Expr Operand) : Expr;
+    public sealed record GreaterThan(Expr Left, Expr Right) : Expr;
+    public sealed record LessThan(Expr Left, Expr Right) : Expr;
     public sealed record GreaterOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record LessOrEqual(Expr Left, Expr Right) : Expr;
     public sealed record Equal(Expr Left, Expr Right) : Expr;

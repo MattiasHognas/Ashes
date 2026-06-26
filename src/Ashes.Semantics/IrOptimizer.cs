@@ -166,11 +166,15 @@ public static class IrOptimizer
             IrInst.SubFloat s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.MulFloat m => m with { Left = R(m.Left), Right = R(m.Right) },
             IrInst.DivFloat d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.CmpIntGt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpIntLt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntLe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntEq c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntNe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatGt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpFloatGe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpFloatLt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpFloatLe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpFloatEq c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpFloatNe c => c with { Left = R(c.Left), Right = R(c.Right) },
@@ -473,11 +477,29 @@ public static class IrOptimizer
                         break;
                     }
 
+                case IrInst.CmpIntGt cmpGt when knownInts.ContainsKey(cmpGt.Left) && knownInts.ContainsKey(cmpGt.Right):
+                    {
+                        bool folded = knownInts[cmpGt.Left] > knownInts[cmpGt.Right];
+                        knownBools[cmpGt.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpGt.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
                 case IrInst.CmpIntGe cmpGe when knownInts.ContainsKey(cmpGe.Left) && knownInts.ContainsKey(cmpGe.Right):
                     {
                         bool folded = knownInts[cmpGe.Left] >= knownInts[cmpGe.Right];
                         knownBools[cmpGe.Target] = folded;
                         result.Add(new IrInst.LoadConstBool(cmpGe.Target, folded) { Location = inst.Location });
+                        changed = true;
+                        break;
+                    }
+
+                case IrInst.CmpIntLt cmpLt when knownInts.ContainsKey(cmpLt.Left) && knownInts.ContainsKey(cmpLt.Right):
+                    {
+                        bool folded = knownInts[cmpLt.Left] < knownInts[cmpLt.Right];
+                        knownBools[cmpLt.Target] = folded;
+                        result.Add(new IrInst.LoadConstBool(cmpLt.Target, folded) { Location = inst.Location });
                         changed = true;
                         break;
                     }
@@ -1005,11 +1027,15 @@ public static class IrOptimizer
             case IrInst.SubFloat s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.MulFloat m: usedTemps.Add(m.Left); usedTemps.Add(m.Right); break;
             case IrInst.DivFloat d: usedTemps.Add(d.Left); usedTemps.Add(d.Right); break;
+            case IrInst.CmpIntGt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntGe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
+            case IrInst.CmpIntLt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntLe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntEq c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntNe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
+            case IrInst.CmpFloatGt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatGe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
+            case IrInst.CmpFloatLt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatLe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatEq c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatNe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;

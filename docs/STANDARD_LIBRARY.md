@@ -14,6 +14,7 @@ These types are always available without imports:
 - `List<T>` as the type shown for list syntax and list values
 - `Socket`
 - `TlsSocket`
+- `Process`
 
 ## Built-in Modules
 
@@ -25,6 +26,7 @@ These types are always available without imports:
 - `write(text)`
 - `writeLine(text)`
 - `readLine()` returning `Maybe(Str)`
+- `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
 
 ### `Ashes.File`
 
@@ -59,7 +61,22 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `fromInt(value)` returning `Str`
 - `fromFloat(value)` returning `Str`
 - `toHex(value)` returning `Str`
+- `byteLength(text)` returning `Int` — UTF-8 byte length of a string
  
+### `Ashes.Process`
+
+Synchronous subprocess control with piped stdin/stdout/stderr.
+`Process` is a resource type; it is automatically closed when it goes out of scope.
+
+- `spawn(exe)(args)` returning `Result(Str, Process)` — launch `exe` with argument list `args`
+- `writeStdin(proc)(text)` returning `Unit` — write bytes to the process's stdin pipe
+- `readStdoutLine(proc)` returning `Maybe(Str)` — read one line from stdout (`None` on EOF)
+- `readStderrLine(proc)` returning `Maybe(Str)` — read one line from stderr (`None` on EOF)
+- `waitForExit(proc)` returning `Int` — block until the process exits, return its exit code
+- `kill(proc)` returning `Unit` — send SIGTERM (Linux) or `TerminateProcess` (Windows)
+
+Supported on Linux x64, Linux arm64, and Windows x64.
+
 ### `Ashes.Http`
 
 - `get(url)` returning `Task(Str, Str)`
@@ -179,6 +196,33 @@ have a built-in ordering abstraction, callers supply a total ordering function
 - `isLetter`
 - `isDigit`
 - `isWhiteSpace`
+
+### `Ashes.Json`
+
+Full JSON value type and recursive-descent parser/serializer.
+
+- **Type**: `Json` — ADT with constructors `JsonNull`, `JsonBool(Bool)`, `JsonNumber(Float)`, `JsonString(Str)`, `JsonArray(Json, Json)` (head/tail list), `JsonObject(Str, Json, Json)` (key/value/rest list)
+- `parse(text)` returning `Result(Str, Json)` — parse a JSON string
+- `stringify(value)` returning `Str` — serialize a JSON value to a string
+- Accessor helpers: `getBool`, `getNumber`, `getString`, `getArray`, `getField`, `isNull`, `isBool`, `isNumber`, `isString`, `isArray`, `isObject`
+
+### `Ashes.Rpc`
+
+Stdio JSON-RPC 2.0 Content-Length framing for LSP/DAP transports.
+
+- `readMessage()` returning `Result(Str, Str)` — read one framed message from stdin (reads the `Content-Length:` header, then exactly that many bytes via `Ashes.IO.readExact`)
+- `writeMessage(msg)` returning `Unit` — write a framed message to stdout with a `Content-Length:` header
+
+### `Ashes.Regex`
+
+Backtracking regular-expression engine with a combinator API.
+
+- **Type**: `Regex` — opaque pattern value
+- Pattern builders: `literal(s)`, `anyChar`, `anyOf(chars)`, `noneOf(chars)`, `digit`, `letter`, `whitespace`, `seq(a)(b)`, `alt(a)(b)`, `star(r)`, `plus(r)`, `optional(r)`, `capture(r)`
+- `matches(pattern)(text)` returning `Bool` — true if the pattern matches anywhere in `text`
+- `find(pattern)(text)` returning `Maybe(Str)` — return the first matching substring
+- `findAll(pattern)(text)` returning `List(Str)` — return all non-overlapping matches
+- `replace(pattern)(replacement)(text)` returning `Str` — replace all matches
 
 ### `Ashes.Test`
 
