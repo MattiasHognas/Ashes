@@ -58,6 +58,11 @@ vscode-extension/lsp-server/
 vscode-extension/dap-server/
 *.vsix
 .vscode-test/
+# Native binaries emitted by the real-compiler integration tests (named after
+# the .ash fixture they compile) — build artifacts, never source.
+vscode-extension/src/test/fixtures/error
+vscode-extension/src/test/fixtures/hello
+vscode-extension/src/test/fixtures/types
 
 # Publish output
 dist/
