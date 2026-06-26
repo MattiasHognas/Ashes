@@ -27,6 +27,12 @@
       LogicalName="Ashes.Semantics.StdLib.Ashes.String.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Test.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Test.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Json.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Json.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Rpc.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Rpc.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Regex.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Regex.ash" />
   </ItemGroup>
 
 </Project>
