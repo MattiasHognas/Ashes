@@ -152,7 +152,16 @@ _matrix_one() {
     # The linux-arm64 cross sysroot has no libicu, so the self-contained binary
     # aborts on first globalization use under qemu. Run it in invariant mode (the
     # base/linux-x64 leg above still exercises full ICU). qemu propagates host env.
-    if [ '$runner' = arm64 ]; then export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1; fi
+    #
+    # Tiered compilation spins up background JIT threads whose on-stack
+    # replacement / code-patching qemu-aarch64-user mis-emulates, producing a
+    # deterministic SIGSEGV during the first real compile (codegen is fine under
+    # -strace, which serializes threads). Disabling it makes the emulated
+    # compiler stable; the base leg still exercises the tiered JIT natively.
+    if [ '$runner' = arm64 ]; then
+      export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+      export DOTNET_TieredCompilation=0
+    fi
 
     CLI='$cli'
 
