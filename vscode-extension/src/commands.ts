@@ -109,6 +109,7 @@ async function executeCompiler(
   channel.appendLine("");
 
   return new Promise<number>((resolve) => {
+    // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- spawns the configured Ashes compiler binary with shell:false (no shell interpolation); path comes from extension settings / installed toolchain, not untrusted input
     const proc = spawn(compilerPath, finalArgs, {
       cwd,
       shell: false,
