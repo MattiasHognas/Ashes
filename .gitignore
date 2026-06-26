@@ -49,7 +49,7 @@ CodeCoverage/
 
 
 # VS Code extension
-.pnpm-store/
+.pnpm-store
 vscode-extension/package-lock.json
 vscode-extension/node_modules/
 vscode-extension/out/
@@ -85,7 +85,7 @@ runtimes/win-x64/*
 !runtimes/win-x64/rustls.version
 out
 *.lscache
-.pnpm-store/
+.pnpm-store
 
 # Workfiles
 _*.sh
