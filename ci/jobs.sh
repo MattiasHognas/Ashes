@@ -137,7 +137,8 @@ publish_cli() {
   "
 }
 
-# Shared body for one matrix arch: exercise examples, tests, and fmt stability.
+# Shared body for one matrix arch: exercise examples and tests. fmt stability is
+# checked separately, once, by _matrix_fmt (it's arch-independent).
 # $1 = runner image, $2 = mode (run|compile), $3 = CLI invocation prefix (may
 # contain emulator + path). In 'compile' mode the examples are only compiled, not
 # executed, and the test suite is skipped — used when the runner can build but not
@@ -185,8 +186,19 @@ _matrix_one() {
       echo '--- Running tests ($runner)...'
       \$CLI test tests
     fi
+  "
+}
 
-    echo '--- Verifying fmt ($runner)...'
+# Verify fmt stability once, on the base runner. The formatter is pure
+# Ashes.Formatter C# with no arch dependence — running it under qemu/wine would
+# produce byte-identical output — so there's no value in repeating it per arch,
+# and doing so would race three legs writing the shared /work tree in place.
+_matrix_fmt() {
+  run_in base "
+    set -euo pipefail
+    git config --global --add safe.directory /work
+    CLI='./artifacts/ashes/linux-x64/ashes'
+    echo '--- Verifying fmt...'
     \$CLI fmt examples -w > /dev/null
     \$CLI fmt tests/imports -w > /dev/null
     for test in tests/*.ash; do
@@ -197,11 +209,16 @@ _matrix_one() {
   "
 }
 
-# Run the example/test/fmt matrix across all three runners (fail-fast: false).
+# Run the example/test matrix across all three runners, then verify fmt once.
+#
+# The three legs are independent containers over the same read-only-ish /work
+# mount (their per-example output goes to /tmp inside each container), so they
+# run in parallel — mirroring the GitHub matrix (fail-fast: false) and cutting
+# wall-clock to the slowest leg. Each leg's output is captured to a log and
+# replayed grouped afterwards so the interleaved streams stay readable. fmt is
+# verified afterwards, sequentially, by _matrix_fmt (writes the shared tree in
+# place, so it must not race the legs).
 matrix() {
-  local failed=()
-  _matrix_one base run "./artifacts/ashes/linux-x64/ashes" || failed+=("linux-x64")
-
   # arm64 is compile-only by default. Running (vs compiling) arm64 output requires
   # the emulated compiler to exec the arm64 binaries it produces — nested foreign-arch
   # execution. That does NOT work in the rootless-podman runner: host binfmt_misc is
@@ -217,9 +234,36 @@ matrix() {
   if [[ -n "${ASHES_MATRIX_ARM64_RUN:-}" ]]; then
     arm64_mode=run
   fi
-  _matrix_one arm64 "$arm64_mode" "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" || failed+=("linux-arm64")
 
-  _matrix_one win run "wine ./artifacts/ashes/win-x64/ashes.exe" || failed+=("win-x64")
+  local logdir
+  logdir="$(mktemp -d)"
+  local -a names=(linux-x64 linux-arm64 win-x64)
+  local -a pids=()
+
+  _matrix_one base "run" "./artifacts/ashes/linux-x64/ashes" \
+    >"$logdir/linux-x64.log" 2>&1 &
+  pids+=("$!")
+  _matrix_one arm64 "$arm64_mode" "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" \
+    >"$logdir/linux-arm64.log" 2>&1 &
+  pids+=("$!")
+  _matrix_one win "run" "wine ./artifacts/ashes/win-x64/ashes.exe" \
+    >"$logdir/win-x64.log" 2>&1 &
+  pids+=("$!")
+
+  local failed=() i
+  for i in "${!names[@]}"; do
+    wait "${pids[$i]}" || failed+=("${names[$i]}")
+  done
+
+  for i in "${!names[@]}"; do
+    echo "==================== ${names[$i]} ===================="
+    cat "$logdir/${names[$i]}.log"
+  done
+  rm -rf "$logdir"
+
+  # fmt stability — once, sequentially (writes the shared /work tree in place).
+  _matrix_fmt || failed+=("fmt")
+
   if (( ${#failed[@]} )); then
     echo "Matrix failed for: ${failed[*]}" >&2
     return 1
