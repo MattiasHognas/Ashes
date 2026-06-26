@@ -4,6 +4,10 @@
 # binaries are executed via `wine ashes.exe ...`. The published win-x64 output
 # bundles libLLVM.dll + rustls.dll (see Directory.Build.targets), so no Windows
 # toolchain is required at run time.
+#
+# The distro's wine (9.0) is too old to host the .NET 10 CoreCLR — it fails to
+# map System.Private.CoreLib.dll with ERROR_INVALID_ALIGNMENT (0x8007046C). We
+# install the latest stable wine from the official WineHQ repository instead.
 ARG BASE_IMAGE=ashes-ci-base:latest
 FROM ${BASE_IMAGE}
 
@@ -12,10 +16,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # Keep the Wine prefix inside HOME; suppress the interactive mono/gecko prompts.
     WINEPREFIX=/home/ci/.wine \
     WINEDEBUG=-all
+# Add the WineHQ apt repo (keyring + sources for this Debian release) and install
+# winehq-stable. i386 is enabled because wine ships 32-bit support libraries.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
-        wine wine64 \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates wget \
+    && dpkg --add-architecture i386 \
+    && mkdir -p /etc/apt/keyrings \
+    && wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
+    && . /etc/os-release \
+    && wget -NP /etc/apt/sources.list.d/ "https://dl.winehq.org/wine-builds/${ID}/dists/${VERSION_CODENAME}/winehq-${VERSION_CODENAME}.sources" \
+    && apt-get update && apt-get install -y --no-install-recommends winehq-stable \
     && wine --version
 USER 1000
 # Initialise the Wine prefix once at build time so first run is not slowed by it.

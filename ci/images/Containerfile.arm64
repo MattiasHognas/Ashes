@@ -1,22 +1,35 @@
 # ashes-ci-arm64 — runs produced linux-arm64 binaries under qemu user emulation.
 #
-# Mirrors the "Install linux-arm64 execution prerequisites" step in
-# .github/workflows/pull-request.yaml: qemu-user + the arm64 cross sysroot so a
-# self-contained arm64 ELF (with its bundled libLLVM.so) can execute on an x86_64
-# host. The published binary is invoked as:
-#     qemu-aarch64 -L /usr/aarch64-linux-gnu <ashes-arm64> ...
+# The published self-contained arm64 ELF bundles libLLVM.so, which in turn pulls
+# in a wide set of native deps — libffi, libedit, libz3, zlib, libzstd, libxml2 —
+# that the bare arm64 cross toolchain libs do not provide. So instead of the
+# cross libs we install a real arm64 runtime via Ubuntu multiarch and run with a
+# root prefix so qemu's loader resolves everything from /usr/lib/aarch64-linux-gnu:
+#     qemu-aarch64-static -L / <ashes-arm64> ...
+#
+# Ubuntu serves non-amd64 architectures from ports.ubuntu.com (not archive.…), so
+# the stock source is scoped to amd64 and an arm64 ports source is added.
 ARG BASE_IMAGE=ashes-ci-base:latest
 FROM ${BASE_IMAGE}
 
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
 # apt cache mounts (inherited keep-cache config from the base image) so rebuilds
-# reuse the qemu/cross-lib downloads.
+# reuse the qemu/runtime-lib downloads.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+    dpkg --add-architecture arm64 \
+    && sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources \
+    && . /etc/os-release \
+    && printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: %s %s-updates %s-backports\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+        "$VERSION_CODENAME" "$VERSION_CODENAME" "$VERSION_CODENAME" \
+        > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
         qemu-user-static \
-        libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross \
+        libc6:arm64 libgcc-s1:arm64 libstdc++6:arm64 \
+        libffi8:arm64 libedit2:arm64 libz3-4:arm64 \
+        zlib1g:arm64 libzstd1:arm64 libxml2:arm64 \
     && qemu-aarch64-static --version \
-    && test -f /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+    && test -f /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 \
+    && test -f /usr/lib/aarch64-linux-gnu/libffi.so.8
 USER 1000

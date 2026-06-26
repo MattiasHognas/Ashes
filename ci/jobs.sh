@@ -145,6 +145,12 @@ _matrix_one() {
     set -euo pipefail
     git config --global --add safe.directory /work
     chmod +x artifacts/ashes/*/ashes 2>/dev/null || true
+
+    # The linux-arm64 cross sysroot has no libicu, so the self-contained binary
+    # aborts on first globalization use under qemu. Run it in invariant mode (the
+    # base/linux-x64 leg above still exercises full ICU). qemu propagates host env.
+    if [ '$runner' = arm64 ]; then export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1; fi
+
     CLI='$cli'
 
     echo '--- Running examples ($runner)...'
@@ -173,7 +179,7 @@ _matrix_one() {
 matrix() {
   local failed=()
   _matrix_one base "./artifacts/ashes/linux-x64/ashes" || failed+=("linux-x64")
-  _matrix_one arm64 "qemu-aarch64-static -L /usr/aarch64-linux-gnu ./artifacts/ashes/linux-arm64/ashes" || failed+=("linux-arm64")
+  _matrix_one arm64 "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" || failed+=("linux-arm64")
   _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" || failed+=("win-x64")
   if (( ${#failed[@]} )); then
     echo "Matrix failed for: ${failed[*]}" >&2
