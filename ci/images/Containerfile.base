@@ -30,6 +30,8 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean \
 # Base utilities + the runtime libraries Electron/VS Code need to launch headless.
 # Library names follow the Ubuntu 24.04 (noble) t64 transition used by the .NET
 # SDK base image: libasound2t64, libcups2t64, libatk*t64, libgtk-3-0t64.
+# libz3-4 provides libz3.so.4, a runtime dependency of the bundled libLLVM.so
+# (present on dev hosts via system packages, but absent from this base image).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -38,7 +40,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 libx11-xcb1 \
-        libsecret-1-0
+        libsecret-1-0 \
+        libz3-4
 
 # Node via NodeSource (resolves the latest within NODE_MAJOR). Node 25+ no longer
 # bundles corepack, so install it separately, then enable the pnpm shim.

@@ -49,6 +49,11 @@ run_in() {
 
   mkdir -p "${CI_CACHE_DIR}/nuget" "${CI_CACHE_DIR}/pnpm"
 
+  # LD_LIBRARY_PATH points the native loader at the mounted runtimes/ so
+  # framework-dependent `dotnet run` (tests/coverage, no RID) can resolve
+  # libLLVM.so / librustls.so. On a host these come from system packages; in the
+  # container they only exist under runtimes/linux-x64. Self-contained publishes
+  # (matrix/ext/release) bundle their own copies, so this is harmless for them.
   "$CI_ENGINE" run --rm \
     "${userns_args[@]}" \
     -v "${CI_REPO_ROOT}:/work:Z" \
@@ -58,6 +63,7 @@ run_in() {
     -e HOME=/home/ci \
     -e PNPM_HOME=/home/ci/.local/share/pnpm \
     -e CI=1 \
+    -e LD_LIBRARY_PATH=/work/runtimes/linux-x64 \
     "$image" \
     bash -lc "$*"
 }

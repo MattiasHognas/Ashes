@@ -19,6 +19,7 @@ SKIP_EXAMPLES='http_get.ash|https_get.ash|tcp_close.ash|tcp_connect.ash|tcp_rece
 
 build() {
   run_in base "
+    set -e
     dotnet restore Ashes.slnx
     dotnet build Ashes.slnx --configuration Release --no-restore
   "
@@ -30,6 +31,7 @@ fmt_check() {
 
 test() {
   run_in base "
+    set -e
     dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
     dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
   "
