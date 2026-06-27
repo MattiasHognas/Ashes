@@ -31,8 +31,8 @@ Line comments are supported:
 
 The following words are **reserved keywords** and cannot be used as identifiers:
 
-`let`, `rec`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
-`true`, `false`, `type`, `extern`, `await`
+`let`, `rec`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
+`true`, `false`, `type`, `extern`, `await`, `import`, `as`
 
 Programs are composed using nested expressions such as:
 
@@ -95,6 +95,89 @@ Built-in runtime types available without import include:
 `Ashes` is reserved for compiler-provided modules and cannot be redefined by user code.
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
 `print`, `panic`, or `args`; those live under `Ashes.IO` only.
+
+## 1.1 File Structure and Top-Level Declarations
+
+A source file is a flat sequence of imports, then top-level declarations, then an
+optional trailing expression:
+
+```
+file        ::= import* declaration* expr?
+declaration ::= let | letrec | type | extern
+letrec      ::= "let" "rec" binding ("and" binding)*
+```
+
+- `import` lines come first (see §13.1).
+- `declaration` is a top-level `let`, a `let rec ... and ...` group, a `type`
+  declaration, or an `extern` declaration. Top-level `let`/`let rec` declarations
+  do **not** take a trailing `in`; their scope is the rest of the file.
+- The optional trailing `expr` is the program's entry point.
+
+Example:
+
+```ash
+import Ashes.IO
+
+type Color =
+    | Red
+    | Green
+
+let name = "world"
+
+let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
+and odd = fun (n) -> if n == 0 then false else even(n - 1)
+
+Ashes.IO.print("hello " + name)
+```
+
+### Sequential scoping (Model A)
+
+Top-level binding scope is **sequential**, following OCaml/F# ordering:
+
+- Each top-level binding is visible to all **subsequent** declarations and to the
+  trailing expression.
+- A binding is **not** visible to declarations that appear before it. Referring to a
+  later binding from an earlier one is a forward-reference error
+  (diagnostic `ASH014`).
+- Two top-level declarations may not bind the same name (diagnostic `ASH013`).
+
+A plain top-level `let f = ...` cannot refer to itself; self-recursion requires
+`let rec` exactly as in nested `let` bindings (see §6).
+
+### Mutual recursion (`let rec ... and ...`)
+
+`let rec` may be followed by one or more `and` clauses to declare a group of
+mutually recursive bindings:
+
+```ash
+let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
+and odd = fun (n) -> if n == 0 then false else even(n - 1)
+```
+
+- Every binding in a `let rec ... and ...` group is visible to **every other**
+  binding in the same group (and to all subsequent declarations).
+- `and` is only valid as a continuation of a `let rec`. An `and` clause that does
+  not follow a `let rec` is an error (diagnostic `ASH015`).
+- Like nested `let rec`, each binding in the group is monomorphic within the group
+  (no polymorphic recursion; see §6 and §14.2).
+
+### Trailing expression
+
+- The trailing expression is **optional**. A file containing only declarations is
+  legal and, when compiled as a program, produces no output.
+- When present, the trailing expression is the program's entry point in a
+  single-file program.
+- When a file is imported as a module, its trailing expression is **ignored
+  entirely** — only its top-level declarations contribute exports (see §13.1).
+
+### Backward compatibility
+
+Both existing styles remain fully valid:
+
+- A file that is a single expression (today's bare-expression style).
+- The nested `let ... in` pyramid style. Nested `let ... in` expressions are
+  ordinary expressions and may still appear anywhere an expression is allowed,
+  including as the trailing expression of a file with top-level declarations.
 
 ---
 
@@ -1231,6 +1314,62 @@ For multi-segment module imports, both full and short qualification are supporte
     compile-time error and full qualification must be used.
 
 Both styles may be mixed freely.
+
+### Import Selectors
+
+In addition to whole-module imports (`import M` and `import M as X`), an import may
+select an individual binding or type from a module. A selector brings the selected
+name into scope **unqualified**:
+
+| Form | Brings into scope |
+|------|-------------------|
+| `import M` | module `M` (qualified access; exported names also unqualified) |
+| `import M as X` | module `M` under alias `X` |
+| `import M.binding` | `binding` (unqualified) |
+| `import M.binding as x` | `binding` under unqualified name `x` |
+| `import M.Type` | `Type` (unqualified) |
+| `import M.Type as T` | `Type` under unqualified name `T` |
+
+Examples:
+
+```ash
+import Ashes.IO.print
+import Ashes.List.map as listMap
+import Ashes.Result.Result as R
+```
+
+Rules:
+
+- `import M.name` makes `name` (a binding or type exported by `M`) available
+  unqualified. `import M.name as alias` makes it available as `alias` instead.
+- The selected name must be an export of `M` (see “Module Exports” below).
+- If two unqualified selectors bring the **same** unqualified name into scope, it is
+  a compile-time error (diagnostic `ASH016`). Resolve the conflict with `as`.
+- Selector imports compose with whole-module imports; the same module may be imported
+  both wholesale and via selectors.
+
+Built-in standard-library modules (`Ashes.IO`, `Ashes.List`, `Ashes.Text`,
+`Ashes.Result`, `Ashes.Maybe`, etc.) resolve through the **identical** path as
+user modules: each module has a known set of exported bindings and types, and
+selectors are checked against that set. For example `import Ashes.IO.print` and
+`import Ashes.IO.print as p` behave exactly like selectors against a user module.
+
+### Module Exports
+
+When a file is imported as a module, its exports are:
+
+- all top-level `let` bindings,
+- all bindings of top-level `let rec ... and ...` groups, and
+- all top-level `type` declarations (and their constructors).
+
+The following are **never** exported:
+
+- `extern` declarations, and
+- the trailing expression.
+
+There is **no implicit re-export**: names a module itself imported from other
+modules are not re-exported to its importers. Each importer must import what it
+needs directly.
 
 ## 13.2 Ashes.IO Module
 

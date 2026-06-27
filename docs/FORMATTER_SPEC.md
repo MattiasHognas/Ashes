@@ -17,11 +17,50 @@ Line endings
 - Formatter tests normalize line endings for cross-platform stability.
 - Programmatic callers may request a different newline style explicitly, but repo-owned `.ash` files should remain canonical `\n`.
 
+Top-level declarations
+
+- A file is a sequence of imports, then top-level declarations, then an optional
+  trailing expression (see [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §1.1).
+- Exactly one blank line separates adjacent top-level declarations, and one blank
+  line separates the last declaration from the trailing expression.
+- The block of `import` lines at the top of the file is not blank-line separated
+  internally; a single blank line separates the import block from the first
+  declaration.
+- Top-level `let` / `let rec` declarations have no trailing `in`; they are formatted
+  like a `let` binding without the `in` line.
+
+Example:
+
+```ash
+import Ashes.IO
+
+let name = "world"
+
+let greeting = "hello " + name
+
+Ashes.IO.print(greeting)
+```
+
+`let rec ... and ...` groups
+
+- The `let rec` binding starts the group. Each `and` clause starts its own line at
+  the same indentation as `let rec` (no blank line between members of the group).
+- Each binding's value follows the same multiline rules as any `let` binding.
+
+Example:
+
+```ash
+let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
+and odd = fun (n) -> if n == 0 then false else even(n - 1)
+```
+
 `let ... in ...`
 
 - `let` starts the binding line.
 - Multiline values are indented one level.
 - `in` starts its own line when either the value or body is multiline.
+- Nested `let ... in` expressions are preserved as written; the formatter does not
+  flatten a nested `let ... in` pyramid into top-level declarations, nor the reverse.
 
 Example:
 
