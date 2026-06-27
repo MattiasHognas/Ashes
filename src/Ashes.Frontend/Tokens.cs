@@ -14,6 +14,7 @@ public enum TokenKind
     LetQuestion,
     Rec,
     In,
+    And,
 
     If,
     Then,
