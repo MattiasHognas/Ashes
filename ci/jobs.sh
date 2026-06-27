@@ -69,6 +69,7 @@ deps_check() {
     echo '--- pnpm: audit high+ (gating) ---'
     cd vscode-extension
     corepack enable
+    export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
     if ! pnpm audit --audit-level high; then
       echo '::error:: pnpm high/critical advisories found.' >&2
@@ -113,6 +114,7 @@ ext() {
     dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/extension-test/dap
     cd vscode-extension
     corepack enable
+    export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
     pnpm run lint
     pnpm run format:check
@@ -329,6 +331,7 @@ release_build() {
 
     cd vscode-extension
     corepack enable
+    export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
     pnpm version --no-git-tag-version \$VERSION
     pnpm run compile
