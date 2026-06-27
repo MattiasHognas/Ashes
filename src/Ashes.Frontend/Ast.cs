@@ -135,10 +135,87 @@ public abstract record ExternDecl
         string? SymbolName = null) : ExternDecl;
 }
 
-public sealed record Program(IReadOnlyList<TypeDecl> TypeDecls, IReadOnlyList<ExternDecl> ExternDecls, Expr Body)
+/// <summary>
+/// A single top-level item, kept in source order. Model-A sequential scoping makes the order
+/// significant: a binding is visible only to the items that follow it (and the trailing body).
+/// </summary>
+public abstract record TopLevelItem
 {
+    /// <summary>A top-level <c>type</c> declaration.</summary>
+    public sealed record Type(TypeDecl Decl) : TopLevelItem;
+
+    /// <summary>A top-level <c>extern</c> declaration.</summary>
+    public sealed record Extern(ExternDecl Decl) : TopLevelItem;
+
+    /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
+    public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem;
+
+    /// <summary>
+    /// A mutual-recursion group: <c>let rec A = ... and B = ...</c>. Every binding is implicitly
+    /// recursive within the group and visible to the others regardless of order.
+    /// </summary>
+    public sealed record RecGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem;
+}
+
+/// <summary>
+/// A whole compilation unit: an ordered sequence of top-level items followed by an optional
+/// trailing expression.
+/// </summary>
+public sealed record Program
+{
+    /// <summary>The top-level items in source order (significant under Model-A scoping).</summary>
+    public IReadOnlyList<TopLevelItem> Items { get; init; }
+
+    /// <summary>
+    /// The trailing expression, if any. A program may omit it (e.g. a module that only declares
+    /// bindings), represented by a null backing value. It is surfaced with a non-null type so the
+    /// current consumers — all of which run on programs that do have a trailing expression — keep
+    /// compiling without change; teaching them to tolerate an absent body is follow-up work that
+    /// flips this to <c>Expr?</c>.
+    /// </summary>
+    public Expr Body { get; init; }
+
+    public Program(IReadOnlyList<TopLevelItem> Items, Expr? Body)
+    {
+        this.Items = Items;
+        this.Body = Body!;
+    }
+
+    /// <summary>Back-compat constructor: separated type/extern declarations plus a trailing expression.</summary>
+    public Program(IReadOnlyList<TypeDecl> TypeDecls, IReadOnlyList<ExternDecl> ExternDecls, Expr Body)
+        : this(BuildItems(TypeDecls, ExternDecls), Body)
+    {
+    }
+
+    /// <summary>Back-compat constructor: type declarations plus a trailing expression.</summary>
     public Program(IReadOnlyList<TypeDecl> TypeDecls, Expr Body)
         : this(TypeDecls, [], Body)
     {
+    }
+
+    /// <summary>The <c>type</c> declarations in source order, derived from <see cref="Items"/>.</summary>
+    public IReadOnlyList<TypeDecl> TypeDecls =>
+        Items.OfType<TopLevelItem.Type>().Select(item => item.Decl).ToList();
+
+    /// <summary>The <c>extern</c> declarations in source order, derived from <see cref="Items"/>.</summary>
+    public IReadOnlyList<ExternDecl> ExternDecls =>
+        Items.OfType<TopLevelItem.Extern>().Select(item => item.Decl).ToList();
+
+    private static IReadOnlyList<TopLevelItem> BuildItems(
+        IReadOnlyList<TypeDecl> typeDecls,
+        IReadOnlyList<ExternDecl> externDecls)
+    {
+        var items = new List<TopLevelItem>(typeDecls.Count + externDecls.Count);
+        foreach (var typeDecl in typeDecls)
+        {
+            items.Add(new TopLevelItem.Type(typeDecl));
+        }
+
+        foreach (var externDecl in externDecls)
+        {
+            items.Add(new TopLevelItem.Extern(externDecl));
+        }
+
+        return items;
     }
 }
