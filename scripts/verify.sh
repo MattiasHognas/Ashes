@@ -111,7 +111,7 @@ cd vscode-extension
 if [[ "$enableCorepack" == "true" ]]; then
   "$corepackCmd" enable
 fi
-"$pnpmCmd" install --frozen-lockfile --force
+"$pnpmCmd" install --frozen-lockfile
 "$pnpmCmd" run lint
 "$pnpmCmd" run format:check
 "$pnpmCmd" run compile

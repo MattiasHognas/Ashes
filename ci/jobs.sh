@@ -69,7 +69,7 @@ deps_check() {
     echo '--- pnpm: audit high+ (gating) ---'
     cd vscode-extension
     corepack enable
-    pnpm install --frozen-lockfile --force
+    pnpm install --frozen-lockfile
     if ! pnpm audit --audit-level high; then
       echo '::error:: pnpm high/critical advisories found.' >&2
       fail=1
@@ -113,7 +113,7 @@ ext() {
     dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/extension-test/dap
     cd vscode-extension
     corepack enable
-    pnpm install --frozen-lockfile --force
+    pnpm install --frozen-lockfile
     pnpm run lint
     pnpm run format:check
     pnpm run compile
@@ -329,7 +329,7 @@ release_build() {
 
     cd vscode-extension
     corepack enable
-    pnpm install --frozen-lockfile --force
+    pnpm install --frozen-lockfile
     pnpm version --no-git-tag-version \$VERSION
     pnpm run compile
     pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix

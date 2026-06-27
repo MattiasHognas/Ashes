@@ -273,7 +273,7 @@ projects:
 
 ```sh
 cd vscode-extension
-pnpm install --frozen-lockfile --force
+pnpm install --frozen-lockfile
 pnpm run compile
 pnpm run lint
 pnpm run format:check
