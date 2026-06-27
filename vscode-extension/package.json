@@ -10,7 +10,7 @@
     "url": "https://github.com/MattiasHognas/Ashes"
   },
   "engines": {
-    "vscode": "^1.120.0",
+    "vscode": "^1.125.0",
     "node": "^26.0.0"
   },
   "icon": "icon.png",
