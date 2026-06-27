@@ -416,6 +416,7 @@ public sealed class Lexer
             "let" => TokenKind.Let,
             "rec" => TokenKind.Rec,
             "in" => TokenKind.In,
+            "and" => TokenKind.And,
             "if" => TokenKind.If,
             "then" => TokenKind.Then,
             "else" => TokenKind.Else,
