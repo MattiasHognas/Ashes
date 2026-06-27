@@ -128,11 +128,106 @@ public sealed partial class Lowering
 
 
 
+    // All top-level value-binding names in the program, used to specialize the "undefined variable"
+    // diagnostic into a forward-reference diagnostic (ASH014) when the name IS declared later.
+    private readonly HashSet<string> _topLevelBindingNames = new(StringComparer.Ordinal);
+
     public IrProgram Lower(Program program)
     {
+        // Type and extern declarations are registered upfront; their relative order among value
+        // bindings does not affect ADT/extern visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternDeclarations(program.ExternDecls);
-        return Lower(program.Body);
+
+        var valueItems = program.Items
+            .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecGroup)
+            .ToList();
+
+        CollectTopLevelBindingNames(valueItems);
+
+        // Desugar the ordered value declarations into the existing nested let / let rec forms so
+        // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
+        // name and all enclosing ones, never a later sibling.
+        var body = DesugarTopLevel(valueItems, program.Body);
+        return Lower(body);
+    }
+
+    /// <summary>
+    /// Records every top-level value-binding name and reports duplicates (ASH013). The recorded set
+    /// later lets <see cref="LowerVar"/> distinguish a forward reference from an unknown identifier.
+    /// </summary>
+    private void CollectTopLevelBindingNames(IReadOnlyList<TopLevelItem> valueItems)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in valueItems)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl let:
+                    RegisterTopLevelBindingName(let.Name, let.Value, seen);
+                    break;
+                case TopLevelItem.RecGroup group:
+                    foreach (var (name, value) in group.Bindings)
+                    {
+                        RegisterTopLevelBindingName(name, value, seen);
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private void RegisterTopLevelBindingName(string name, Expr valueForSpan, HashSet<string> seen)
+    {
+        _topLevelBindingNames.Add(name);
+        if (!seen.Add(name))
+        {
+            ReportDiagnostic(GetSpan(valueForSpan), $"Duplicate top-level binding '{name}'.", DuplicateTopLevelBindingCode);
+        }
+    }
+
+    private Expr DesugarTopLevel(IReadOnlyList<TopLevelItem> valueItems, Expr? trailingBody)
+    {
+        // A program may omit the trailing expression (e.g. a module that only declares bindings);
+        // synthesize a unit value so the entry point is well-typed and produces no output.
+        Expr body = trailingBody ?? new Expr.Var("Unit");
+
+        for (int i = valueItems.Count - 1; i >= 0; i--)
+        {
+            body = valueItems[i] switch
+            {
+                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRec(let.Name, let.Value, body),
+                TopLevelItem.LetDecl let => new Expr.Let(let.Name, let.Value, body),
+                TopLevelItem.RecGroup group => DesugarRecGroup(group, body),
+                _ => body
+            };
+        }
+
+        return body;
+    }
+
+    /// <summary>
+    /// Seam for mutual-recursion groups (<c>let rec X = ... and Y = ...</c>), to be implemented by
+    /// semantics-rec-and-groups. The parser only emits a <see cref="TopLevelItem.RecGroup"/> for a
+    /// genuine multi-binding <c>and</c> group, whose bindings must all see one another — a property
+    /// that nesting independent <c>let rec</c> forms cannot express. Rather than silently miscompile
+    /// it with the wrong scoping, report a clear "not yet supported" diagnostic. The bindings are
+    /// still nested afterwards so the remainder of the program keeps lowering (build stays green)
+    /// until that unit lands.
+    /// </summary>
+    private Expr DesugarRecGroup(TopLevelItem.RecGroup group, Expr body)
+    {
+        var span = group.Bindings.Count > 0 ? GetSpan(group.Bindings[0].Value) : default;
+        ReportDiagnostic(span, "Mutual recursion ('let rec ... and ...') is not yet supported.");
+
+        Expr result = body;
+        for (int i = group.Bindings.Count - 1; i >= 0; i--)
+        {
+            var (name, value) = group.Bindings[i];
+            result = new Expr.LetRec(name, value, result);
+        }
+
+        return result;
     }
 
 
@@ -297,7 +392,13 @@ public sealed partial class Lowering
                 return LowerExpr(BuildConstructorLambda(ctorSym));
             }
 
-            if (v.Name.Length > 0 && char.IsUpper(v.Name[0]))
+            if (_topLevelBindingNames.Contains(v.Name))
+            {
+                // Out of scope but declared later in the file: a forward reference under Model-A
+                // sequential scoping. Self/mutual recursion needs 'let rec' / 'let rec ... and ...'.
+                ReportDiagnostic(GetSpan(v), $"Binding '{v.Name}' is not yet declared at this point.", ForwardReferenceCode);
+            }
+            else if (v.Name.Length > 0 && char.IsUpper(v.Name[0]))
             {
                 ReportDiagnostic(GetSpan(v), $"Unknown constructor '{v.Name}'.{BuildUnknownConstructorHint(v.Name)}");
             }
