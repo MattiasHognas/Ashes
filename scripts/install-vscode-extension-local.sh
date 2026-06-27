@@ -186,7 +186,7 @@ ensure_extension_dependencies() {
   fi
 
   invoke_step "Restoring VS Code extension dependencies" \
-    "$pnpmCommand" install --frozen-lockfile --force
+    "$pnpmCommand" install --frozen-lockfile
 }
 
 ## Publish functions
