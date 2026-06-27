@@ -133,6 +133,18 @@ immutable linked lists, never arrays. Never collapse `match` into if-chains. Typ
 Hindley-Milner with let-polymorphism. Don't add syntax/evaluation/typing rules without updating
 `LANGUAGE_SPEC.md` first.
 
+**Top-level declarations:** a file is `import* declaration* expr?` — a flat sequence of top-level
+`let` / `let rec ... and ...` / `type` / `extern` declarations (no trailing `in`) followed by an
+optional trailing expression. Scoping is sequential (Model A): a binding is visible to subsequent
+declarations and the trailing expression, never to earlier ones; self-recursion needs `let rec`,
+mutual recursion needs `let rec X = ... and Y = ...`. Imports support whole-module (`import M`,
+`import M as X`) and selector forms (`import M.binding [as x]`, `import M.Type [as T]`) that bring
+the name in unqualified, with built-in `Ashes.*` modules resolving via the same path. A module's
+exports are its top-level `let`/`type` declarations only — `extern` and the trailing expression are
+never exported, and there is no implicit re-export. The bare-expression and nested `let ... in`
+pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this surface (see
+[docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)).
+
 **Memory model:** no GC and no reference counting — memory is managed by deterministic destruction,
 with ownership + borrowing planned (`Lowering.Ownership.cs` is the in-progress home for this; see
 [docs/future/FUTURE_FEATURES.md](docs/future/FUTURE_FEATURES.md)). Don't reach for GC/RC-style designs.
