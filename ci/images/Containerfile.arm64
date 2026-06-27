@@ -1,35 +1,35 @@
-# ashes-ci-arm64 — runs produced linux-arm64 binaries under qemu user emulation.
+# ashes-ci-arm64 — a genuine linux-arm64 userland for running produced arm64
+# binaries. This mirrors GitHub's native `ubuntu-24.04-arm` matrix leg, except the
+# arm64 instructions are emulated by the host's qemu-user-static binfmt_misc handler.
 #
-# The published self-contained arm64 ELF bundles libLLVM.so, which in turn pulls
-# in a wide set of native deps — libffi, libedit, libz3, zlib, libzstd, libxml2 —
-# that the bare arm64 cross toolchain libs do not provide. So instead of the
-# cross libs we install a real arm64 runtime via Ubuntu multiarch and run with a
-# root prefix so qemu's loader resolves everything from /usr/lib/aarch64-linux-gnu:
-#     qemu-aarch64-static -L / <ashes-arm64> ...
+# Unlike the other two runners, this is NOT `FROM ashes-ci-base` (which is x64):
+# it is built `--platform linux/arm64`, so every binary inside — bash, git, the
+# arm64 `ashes`, and the arm64 programs `ashes` itself compiles and execs — is
+# aarch64 and runs transparently through the host's qemu handler.
 #
-# Ubuntu serves non-amd64 architectures from ports.ubuntu.com (not archive.…), so
-# the stock source is scoped to amd64 and an arm64 ports source is added.
-ARG BASE_IMAGE=ashes-ci-base:latest
-FROM ${BASE_IMAGE}
+# This only works because the host registers `qemu-aarch64` with the **F
+# (fix-binary)** flag (qemu-user-static + binfmt): the kernel opens
+# /usr/bin/qemu-aarch64-static at registration time and keeps the fd, so emulation
+# reaches into this container (which ships no qemu) and survives nested `exec`. An
+# explicit `qemu-aarch64 <bin>` wrapper cannot follow the compiler's exec of its
+# output — which is why the previous design was compile-only. See docs/LOCAL_CI.md.
+#
+# Based on dotnet `runtime-deps` (the native deps for a self-contained .NET app);
+# the published arm64 `ashes` additionally bundles libLLVM.so, so its extra native
+# deps (libffi/libedit/libz3/zlib/zstd/xml2) are installed on top.
+FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/runtime-deps:10.0
 
-USER root
 ENV DEBIAN_FRONTEND=noninteractive
-# apt cache mounts (inherited keep-cache config from the base image) so rebuilds
-# reuse the qemu/runtime-lib downloads.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    dpkg --add-architecture arm64 \
-    && sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources \
-    && . /etc/os-release \
-    && printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: %s %s-updates %s-backports\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
-        "$VERSION_CODENAME" "$VERSION_CODENAME" "$VERSION_CODENAME" \
-        > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        qemu-user-static \
-        libc6:arm64 libgcc-s1:arm64 libstdc++6:arm64 \
-        libffi8:arm64 libedit2:arm64 libz3-4:arm64 \
-        zlib1g:arm64 libzstd1:arm64 libxml2:arm64 \
-    && qemu-aarch64-static --version \
-    && test -f /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 \
-    && test -f /usr/lib/aarch64-linux-gnu/libffi.so.8
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates \
+        libffi8 libedit2 libz3-4 zlib1g libzstd1 libxml2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Writable HOME at /home/ci for uid 1000 (the runtime-deps image already ships a
+# uid/gid-1000 user, so its /etc/passwd entry keeps git happy). The runner is
+# launched with `podman --userns=keep-id`, mapping the host caller to uid 1000.
+ENV HOME=/home/ci
+RUN mkdir -p /home/ci/.nuget /home/ci/.local/share/pnpm /home/ci/.local/share/NuGet \
+    && chown -R 1000:1000 /home/ci
 USER 1000
+WORKDIR /work

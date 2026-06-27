@@ -23,10 +23,12 @@ init *args:
 
 # --- Container images ------------------------------------------------------
 
-# Build the base, arm64, and win runner images.
+# Build the base, arm64, and win runner images. The arm64 image is a genuine
+# aarch64 image (emulated via the host qemu-user-static binfmt handler), so it is
+# built --platform linux/arm64 and does not derive from the x64 base.
 images:
     {{engine}} build -t ashes-ci-base:latest --build-arg NODE_MAJOR={{node_major}} -f ci/images/Containerfile.base ci/images
-    {{engine}} build -t ashes-ci-arm64:latest --build-arg BASE_IMAGE=ashes-ci-base:latest -f ci/images/Containerfile.arm64 ci/images
+    {{engine}} build -t ashes-ci-arm64:latest --platform=linux/arm64 -f ci/images/Containerfile.arm64 ci/images
     {{engine}} build -t ashes-ci-win:latest --build-arg BASE_IMAGE=ashes-ci-base:latest -f ci/images/Containerfile.win ci/images
 
 # Populate runtimes/ with LLVM native libs (run after `just images`; re-run on LLVM bump).

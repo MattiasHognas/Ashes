@@ -138,26 +138,25 @@ publish_cli() {
 
 # Shared body for one matrix arch: exercise examples and tests. fmt stability is
 # checked separately, once, by _matrix_fmt (it's arch-independent).
-# $1 = runner image, $2 = mode (run|compile), $3 = CLI invocation prefix (may
-# contain emulator + path). In 'compile' mode the examples are only compiled, not
-# executed, and the test suite is skipped — used when the runner can build but not
-# execute the produced binaries (e.g. linux-arm64 without a binfmt_misc handler).
+# $1 = runner image, $2 = CLI invocation (path to the ashes binary, possibly with
+# an emulator prefix). Compiles and runs every (non-network) example, then runs the
+# test suite. All three legs execute their produced binaries directly: x64 natively,
+# arm64 via the host qemu-user-static binfmt handler (the arm64 image is a real
+# aarch64 image), win-x64 via Wine.
 _matrix_one() {
-  local runner="$1" mode="$2" cli="$3"
+  local runner="$1" cli="$2"
   run_in "$runner" "
     set -euo pipefail
     git config --global --add safe.directory /work
     chmod +x artifacts/ashes/*/ashes 2>/dev/null || true
 
-    # The linux-arm64 cross sysroot has no libicu, so the self-contained binary
-    # aborts on first globalization use under qemu. Run it in invariant mode (the
-    # base/linux-x64 leg above still exercises full ICU). qemu propagates host env.
-    #
-    # Tiered compilation spins up background JIT threads whose on-stack
-    # replacement / code-patching qemu-aarch64-user mis-emulates, producing a
-    # deterministic SIGSEGV during the first real compile (codegen is fine under
-    # -strace, which serializes threads). Disabling it makes the emulated
-    # compiler stable; the base leg still exercises the tiered JIT natively.
+    # The arm64 leg runs under qemu-user (TCG) emulation. Tiered compilation spins
+    # up background JIT threads whose on-stack replacement / code-patching qemu
+    # mis-emulates, producing a deterministic SIGSEGV during the first real compile
+    # (codegen is fine under -strace, which serializes threads). Disabling it makes
+    # the emulated compiler stable; the native x64 leg still exercises the tiered
+    # JIT. Globalization runs in invariant mode to keep the emulated leg focused on
+    # codegen (the x64 leg exercises full ICU).
     if [ '$runner' = arm64 ]; then
       export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
       export DOTNET_TieredCompilation=0
@@ -165,44 +164,16 @@ _matrix_one() {
 
     CLI='$cli'
 
-    if [ '$mode' = compile ]; then
-      # Compile-only is the emulated (arm64/qemu) path: each compile is a fresh,
-      # CPU-bound qemu process (~4s of emulation overhead, startup-dominated), so
-      # a 70-example sweep is ~5min serially. The compiles are independent and
-      # write only to /tmp, so fan them out across host cores (~5x faster). A
-      # non-zero from any child propagates via xargs (exit 123) + pipefail.
-      echo '--- Compiling examples ($runner, compile-only, parallel)...'
-      export CLI
-      compile_one() {
-        local out
-        if ! out=\$(\$CLI compile \"\$1\" -o \"\$(mktemp)\" < /dev/null 2>&1); then
-          echo \"=== FAILED compiling \$1 ===\"
-          echo \"\$out\"
-          return 1
-        fi
-      }
-      export -f compile_one
-      examples=()
-      for example in examples/*.ash; do
-        case \"\$(basename \"\$example\")\" in
-          $SKIP_EXAMPLES) continue ;;
-        esac
-        examples+=(\"\$example\")
-      done
-      printf '%s\\n' \"\${examples[@]}\" \
-        | xargs -P \"\$(nproc)\" -I{} bash -c 'compile_one \"\$@\"' _ {}
-    else
-      echo '--- Running examples ($runner)...'
-      for example in examples/*.ash; do
-        case \"\$(basename \"\$example\")\" in
-          $SKIP_EXAMPLES) continue ;;
-        esac
-        \$CLI run \"\$example\" < /dev/null
-      done
+    echo '--- Running examples ($runner)...'
+    for example in examples/*.ash; do
+      case \"\$(basename \"\$example\")\" in
+        $SKIP_EXAMPLES) continue ;;
+      esac
+      \$CLI run \"\$example\" < /dev/null
+    done
 
-      echo '--- Running tests ($runner)...'
-      \$CLI test tests
-    fi
+    echo '--- Running tests ($runner)...'
+    \$CLI test tests
   "
 }
 
@@ -236,34 +207,25 @@ _matrix_fmt() {
 # verified afterwards, sequentially, by _matrix_fmt (writes the shared tree in
 # place, so it must not race the legs).
 matrix() {
-  # arm64 is compile-only by default. Running (vs compiling) arm64 output requires
-  # the emulated compiler to exec the arm64 binaries it produces — nested foreign-arch
-  # execution. That does NOT work in the rootless-podman runner: host binfmt_misc is
-  # not propagated into rootless containers, it can't be registered inside one (the
-  # userns denies the mount), and qemu-user does not transparently re-exec for .NET's
-  # process spawning — so run/test fail with "Exec format error". Compile-only still
-  # validates the full arm64 backend (IR -> LLVM -> arm64 codegen -> link).
-  #
-  # On a runner that CAN exec arm64 (a rootful engine that inherits the host
-  # binfmt_misc handler, or a native arm64 host), set ASHES_MATRIX_ARM64_RUN=1 to run
-  # the full suite. See docs/LOCAL_CI.md.
-  local arm64_mode=compile
-  if [[ -n "${ASHES_MATRIX_ARM64_RUN:-}" ]]; then
-    arm64_mode=run
-  fi
-
+  # All three legs run the full suite. The arm64 leg executes its binaries inside a
+  # genuine aarch64 container (ashes-ci-arm64), emulated transparently by the host's
+  # qemu-user-static binfmt_misc handler — which must be registered with the F
+  # (fix-binary) flag so emulation crosses into the container and survives the
+  # compiler's nested exec of its output. `scripts/init-local-ci.sh` sets this up;
+  # see docs/LOCAL_CI.md. If the handler is missing, the arm64 leg fails with
+  # "Exec format error".
   local logdir
   logdir="$(mktemp -d)"
   local -a names=(linux-x64 linux-arm64 win-x64)
   local -a pids=()
 
-  _matrix_one base "run" "./artifacts/ashes/linux-x64/ashes" \
+  _matrix_one base "./artifacts/ashes/linux-x64/ashes" \
     >"$logdir/linux-x64.log" 2>&1 &
   pids+=("$!")
-  _matrix_one arm64 "$arm64_mode" "qemu-aarch64-static -L / ./artifacts/ashes/linux-arm64/ashes" \
+  _matrix_one arm64 "./artifacts/ashes/linux-arm64/ashes" \
     >"$logdir/linux-arm64.log" 2>&1 &
   pids+=("$!")
-  _matrix_one win "run" "wine ./artifacts/ashes/win-x64/ashes.exe" \
+  _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" \
     >"$logdir/win-x64.log" 2>&1 &
   pids+=("$!")
 

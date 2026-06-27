@@ -30,8 +30,10 @@ installed you can also re-run it as `just init` (e.g. `just init --skip-deps`).
 Install once (CachyOS/Arch):
 
 ```sh
-sudo pacman -S podman just slirp4netns fuse-overlayfs shadow
+sudo pacman -S podman just slirp4netns fuse-overlayfs shadow \
+    qemu-user-static qemu-user-static-binfmt   # last two: arm64 leg
 podman info >/dev/null && echo OK     # verify rootless works
+cat /proc/sys/fs/binfmt_misc/qemu-aarch64   # want: flags: ...F
 ```
 
 Then build the images and fetch the native libs:
@@ -68,35 +70,33 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 The matrix skips the network examples (`http_get`, `https_get`, `tcp_*`), same as
 GitHub. It is fail-fast:false — all three arches run, then it fails if any did.
 
-### linux-arm64: compile-only by default
+### linux-arm64 runs the full suite under emulation
 
-The arm64 leg is **compile-only**: it compiles every example to a native arm64 binary
-under `qemu` and verifies formatting, but does **not** execute the examples/tests. This
-fully exercises the arm64 backend (IR → LLVM → arm64 codegen → link) — the
-compiler-specific risk — without needing to *run* arm64 code.
+All three legs run the **full** suite (examples + tests) — there is no compile-only
+mode. The arm64 leg mirrors GitHub's native `ubuntu-24.04-arm` leg, only emulated:
+its runner image (`ashes-ci-arm64`) is a **genuine aarch64 image** (built
+`--platform linux/arm64` from .NET's `runtime-deps`), so every binary inside it —
+`bash`, `git`, the arm64 `ashes`, and the arm64 programs `ashes` itself compiles and
+execs — is aarch64 and is run transparently by the host's **qemu-user-static
+binfmt_misc handler**.
 
-Running arm64 output requires the emulated compiler to **exec** the arm64 binaries it
-produces (nested foreign-arch execution), which **does not work in the rootless-podman
-runner**:
+This works only because that handler is registered with the **`F` (fix-binary)**
+flag: the kernel opens `/usr/bin/qemu-aarch64-static` at registration time and holds
+the fd, so emulation reaches into the container (which ships no qemu of its own) and —
+crucially — survives nested `exec`. An explicit `qemu-aarch64 <bin>` wrapper, by
+contrast, can't follow the compiler's `exec` of its output — which is why the earlier
+design was compile-only.
 
-- host `binfmt_misc` handlers are not propagated into rootless containers (the
-  control fs isn't even mounted there), so a host registration doesn't reach the runner;
-- `binfmt_misc` can't be registered *inside* a rootless container either — the user
-  namespace denies mounting it, even `--privileged`;
-- `qemu-user` does not transparently re-exec for .NET's process spawning, so the
-  explicit-`qemu` path fails with `Exec format error`.
-
-So arm64 **execution** is validated on native arm64 CI runners / hardware, not under
-local emulation. (win-x64 differs: Wine execs win-x64 children directly, so its leg
-runs the full suite.)
-
-If you have a runner that *can* exec arm64 — a **rootful** engine that inherits a host
-`binfmt_misc` handler (e.g. from `qemu-user-static` / `systemd-binfmt`), or a native
-arm64 host — opt into the full suite with:
+`scripts/init-local-ci.sh` installs `qemu-user-static` + binfmt and verifies the
+handler. Check it yourself:
 
 ```sh
-ASHES_MATRIX_ARM64_RUN=1 just matrix
+cat /proc/sys/fs/binfmt_misc/qemu-aarch64    # want: flags: ...F
 ```
+
+The arm64 leg disables tiered compilation (`DOTNET_TieredCompilation=0`): qemu-user
+mis-emulates the JIT's multi-threaded on-stack replacement, which would SIGSEGV the
+emulated compiler. The native x64 leg exercises the tiered JIT.
 
 ## Triggers
 
@@ -193,9 +193,10 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - **`run_in: unknown runner` / image not found** — run `just images` first.
 - **arm64/win matrix fails to start the binary** — ensure `just provision` ran so
   the published binaries bundle the right `libLLVM`.
-- **arm64 leg fails with `Exec format error`** — you set `ASHES_MATRIX_ARM64_RUN=1`
-  on a runner that can't exec arm64. The default (compile-only) avoids this; full
-  run/test needs a rootful engine with a host `binfmt_misc` handler or native arm64.
+- **arm64 leg fails with `Exec format error`** — the host's `qemu-aarch64`
+  binfmt_misc handler is missing or lacks the `F` flag. Run `scripts/init-local-ci.sh`
+  (or `just init`) and check `cat /proc/sys/fs/binfmt_misc/qemu-aarch64` shows
+  `flags: ...F`.
 - **`gh` release fails to authenticate** — run `gh auth status`; `just release-github`
   needs an authenticated `gh`.
 - **Permission/ownership oddities in the repo** — Podman runs with

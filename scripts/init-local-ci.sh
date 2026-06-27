@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # init-local-ci.sh — bootstrap local CI/CD on a fresh machine.
 #
-# Installs the host prerequisites (Podman + rootless plumbing, just), ensures
-# rootless user-namespace mappings exist, builds the runner images, and
-# provisions the LLVM native libs. Optionally installs the git hooks.
-# Idempotent — safe to re-run. Also runnable as `just init`.
+# Installs the host prerequisites (Podman + rootless plumbing, just, qemu-user-static
+# for the arm64 leg), ensures rootless user-namespace mappings and the arm64
+# binfmt_misc handler exist, builds the runner images, and provisions the LLVM
+# native libs. Optionally installs the git hooks. Idempotent — safe to re-run.
+# Also runnable as `just init`.
 #
 # Usage:
 #   ./scripts/init-local-ci.sh                # deps + images + provision
@@ -57,17 +58,19 @@ need_root() { [[ -n "$SUDO" || "$(id -u)" -eq 0 ]]; }
 install_deps() {
   step "Installing host prerequisites (podman, just, rootless plumbing)"
 
+  # qemu-user-static + binfmt let the arm64 CI leg run a genuine aarch64 container
+  # under emulation (see ensure_binfmt / docs/LOCAL_CI.md).
   if have pacman; then
     need_root || die "need root/sudo to install packages"
-    $SUDO pacman -S --needed --noconfirm podman just slirp4netns fuse-overlayfs shadow || die "pacman install failed"
+    $SUDO pacman -S --needed --noconfirm podman just slirp4netns fuse-overlayfs shadow qemu-user-static qemu-user-static-binfmt || die "pacman install failed"
   elif have apt-get; then
     need_root || die "need root/sudo to install packages"
     $SUDO apt-get update
-    $SUDO apt-get install -y --no-install-recommends podman slirp4netns fuse-overlayfs uidmap || die "apt install failed"
+    $SUDO apt-get install -y --no-install-recommends podman slirp4netns fuse-overlayfs uidmap qemu-user-static binfmt-support || die "apt install failed"
     # `just` is often absent from apt; fall back to the official installer below.
   elif have dnf; then
     need_root || die "need root/sudo to install packages"
-    $SUDO dnf install -y podman slirp4netns fuse-overlayfs shadow-utils just || warn "dnf install partial"
+    $SUDO dnf install -y podman slirp4netns fuse-overlayfs shadow-utils just qemu-user-static || warn "dnf install partial"
   else
     warn "no supported package manager (pacman/apt/dnf) found; install podman + just manually, then re-run with --skip-deps"
     return
@@ -107,10 +110,39 @@ verify_engine() {
   ok "$CI_ENGINE works rootless"
 }
 
+# --- arm64 binfmt handler --------------------------------------------------
+# The arm64 CI leg runs a real aarch64 container, emulated by the host's
+# qemu-aarch64 binfmt_misc handler. The handler MUST carry the F (fix-binary)
+# flag — that's what lets emulation reach into the container and survive the
+# compiler's nested exec of its arm64 output. See docs/LOCAL_CI.md.
+binfmt_ok() {
+  local h=/proc/sys/fs/binfmt_misc/qemu-aarch64
+  [[ -r "$h" ]] && grep -q '^flags:.*F' "$h"
+}
+ensure_binfmt() {
+  step "Checking arm64 binfmt_misc handler (for the arm64 CI leg)"
+  if binfmt_ok; then ok "qemu-aarch64 registered with the F flag"; return; fi
+
+  # systemd-binfmt applies the qemu-user-static-binfmt configs (Arch) / package
+  # registration (Debian) installed above.
+  if have systemctl; then $SUDO systemctl restart systemd-binfmt >/dev/null 2>&1 || true; fi
+  if binfmt_ok; then ok "registered via systemd-binfmt"; return; fi
+
+  # Fallback that needs no host packages: register from a privileged container.
+  warn "registering qemu-user-static via container (multiarch/qemu-user-static)"
+  "$CI_ENGINE" run --rm --privileged docker.io/multiarch/qemu-user-static --reset -p yes >/dev/null 2>&1 || true
+  if binfmt_ok; then ok "registered via container"; return; fi
+
+  warn "arm64 binfmt handler with the F flag not found — the arm64 CI leg will fail"
+  warn "with 'Exec format error' until 'qemu-aarch64' is registered (F flag)."
+  warn "Install qemu-user-static + binfmt and re-run; see docs/LOCAL_CI.md."
+}
+
 # --- main ------------------------------------------------------------------
 [[ "$do_deps" == 1 ]] && install_deps
 ensure_subid
 verify_engine
+ensure_binfmt
 
 if [[ "$do_images" == 1 ]]; then
   step "Building runner images (just images)"
