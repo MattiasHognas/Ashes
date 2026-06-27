@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# ci/jobs.sh — CI/CD job implementations, each running inside a Podman runner.
+# ci/jobs.sh — CI/CD job implementations. Most run inside a Podman runner; the
+# release_github job is host-side orchestration (git + gh) around the container build.
 #
-# Invoked by the justfile, e.g. `ci/jobs.sh build` or `ci/jobs.sh release 1.2.3`.
+# Invoked by the justfile, e.g. `ci/jobs.sh build` or `ci/jobs.sh release_github 1.2.3`.
 # Mirrors the steps in .github/workflows/{pull-request,push-to-main,release}.yaml
 # so local runs match GitHub CI. See docs/LOCAL_CI.md.
 set -euo pipefail
@@ -9,8 +10,6 @@ set -euo pipefail
 JOBS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ci/lib/run.sh
 source "${JOBS_DIR}/lib/run.sh"
-# shellcheck source=ci/lib/s3.sh
-source "${JOBS_DIR}/lib/s3.sh"
 
 # Network-dependent examples that the GH matrix skips (no outbound net in CI).
 SKIP_EXAMPLES='http_get.ash|https_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash'
@@ -310,19 +309,22 @@ ci() {
 
 # --- Release (release.yml) -------------------------------------------------
 
-# release <version>: publish CLI/LSP/DAP for 3 RIDs, build the vsix, zip every
-# artifact into dist/, then upload dist/ to S3 under releases/<version>/.
-release() {
-  local version="${1:?usage: release <version>}"
+# release_build <version>: publish CLI/LSP/DAP for 3 RIDs, build the vsix, and
+# zip every artifact into artifacts/release/ on local disk (dist/ is reserved for
+# scripts/publish.sh's per-target copies). Publishing those artifacts to a GitHub
+# Release is done by the release_github job (`just release-github`).
+release_build() {
+  local version="${1:?usage: release_build <version>}"
   if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
-    echo "release: invalid version '$version' (expected semver, e.g. 1.2.3)" >&2
+    echo "release_build: invalid version '$version' (expected semver, e.g. 1.2.3)" >&2
     return 1
   fi
 
   run_in base "
     set -euo pipefail
     VERSION='$version'
-    rm -rf dist publish && mkdir -p dist
+    OUT=artifacts/release
+    rm -rf \$OUT publish && mkdir -p \$OUT
 
     for rid in linux-x64 linux-arm64 win-x64; do
       dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/cli/\$rid
@@ -340,7 +342,7 @@ release() {
       cp \"publish/cli/\$rid/runtimes/\$rid/rustls.version\" \"\$s/runtimes/\$rid/\"
       [ -f LICENSE ] && cp LICENSE \"\$s/\" || true
       cp README.md \"\$s/\"
-      (cd \"\$s\" && zip -r \"\$OLDPWD/dist/ashes-\$rid.zip\" . > /dev/null)
+      (cd \"\$s\" && zip -r \"\$OLDPWD/\$OUT/ashes-\$rid.zip\" . > /dev/null)
     }
     stage_tool() { # <publish-subdir> <rid> <binary> <artifact>
       local sub=\$1 rid=\$2 binary=\$3 artifact=\$4
@@ -349,7 +351,7 @@ release() {
       cp \"publish/\$sub/\$rid/\$binary\" \"\$s/\"
       [ -f LICENSE ] && cp LICENSE \"\$s/\" || true
       cp README.md \"\$s/\"
-      (cd \"\$s\" && zip \"\$OLDPWD/dist/\$artifact.zip\" * > /dev/null)
+      (cd \"\$s\" && zip \"\$OLDPWD/\$OUT/\$artifact.zip\" * > /dev/null)
     }
 
     stage_compiler linux-x64   ashes     libLLVM.so  librustls.so
@@ -368,11 +370,164 @@ release() {
     pnpm install --frozen-lockfile --force
     pnpm version --no-git-tag-version \$VERSION
     pnpm run compile
-    pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../dist/ashes-language-\$VERSION.vsix
+    pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
   "
+}
 
-  echo "--- Uploading dist/ to S3 (releases/${version}/)..."
-  s3_upload "dist" "releases/${version}"
+# --- Release helpers (host-side; used by release_github) -------------------
+if [[ -t 1 ]]; then _B=$'\033[1m'; _G=$'\033[32m'; _Y=$'\033[33m'; _R=$'\033[31m'; _N=$'\033[0m'; else _B= _G= _Y= _R= _N=; fi
+_step() { echo "${_B}==>${_N} $*"; }
+_ok()   { echo "  ${_G}ok${_N} $*"; }
+_warn() { echo "  ${_Y}warn${_N} $*" >&2; }
+_die()  { echo "${_R}error${_N} $*" >&2; exit 1; }
+_have() { command -v "$1" >/dev/null 2>&1; }
+_valid_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; }
+
+# release_github [version] [-y]: cut a release/X.Y.Z branch from origin/main,
+# build the artifacts (release_build → artifacts/release/), tag vX.Y.Z, and
+# publish a GitHub Release with that artifact set. Interactive: prompts for and
+# validates the version (pass it as an arg to pre-fill; -y/--yes skips confirms).
+# Host-side orchestration (git + gh); the build itself runs in the base runner.
+# Local stand-in for the disabled .github/workflows/release.yml.
+release_github() {
+  cd "$CI_REPO_ROOT"
+
+  local base_branch="${RELEASE_BASE_BRANCH:-main}"
+  local remote="${RELEASE_REMOTE:-origin}"
+  local version="" assume_yes=0
+  for arg in "$@"; do
+    case "$arg" in
+      -y | --yes) assume_yes=1 ;;
+      -*) _die "release_github: unknown option '$arg'" ;;
+      *) version="$arg" ;;
+    esac
+  done
+
+  _confirm() { # <prompt>
+    [[ "$assume_yes" == 1 ]] && return 0
+    local reply
+    read -r -p "$1 [y/N] " reply
+    [[ "$reply" =~ ^[Yy]$ ]]
+  }
+
+  # --- preflight ---
+  _step "Preflight checks"
+  _have git || _die "git not found on PATH"
+  _have gh || _die "gh (GitHub CLI) not found on PATH — install it and run 'gh auth login'"
+  gh auth status >/dev/null 2>&1 || _die "gh is not authenticated — run 'gh auth login'"
+  [[ -z "$(git status --porcelain)" ]] || _die "working tree is not clean — commit or stash changes before releasing"
+  _ok "git, gh authenticated, working tree clean"
+
+  local orig_ref
+  orig_ref="$(git rev-parse --abbrev-ref HEAD)"
+  _restore_branch() { git switch "$orig_ref" >/dev/null 2>&1 || true; }
+
+  _step "Fetching ${remote}/${base_branch}"
+  git fetch --quiet "$remote" "$base_branch" --tags
+  git rev-parse --verify --quiet "refs/remotes/${remote}/${base_branch}" >/dev/null \
+    || _die "${remote}/${base_branch} not found"
+  _ok "${remote}/${base_branch} is at $(git rev-parse --short "${remote}/${base_branch}")"
+
+  # --- choose version ---
+  local latest_tag
+  latest_tag="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+  [[ -n "$latest_tag" ]] && echo "  latest released tag: ${_B}${latest_tag}${_N}" || echo "  no previous release tags found"
+
+  if [[ -z "$version" ]]; then
+    local suggestion=""
+    if [[ "$latest_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      suggestion="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( BASH_REMATCH[3] + 1 ))"
+    fi
+    read -r -p "Release version (semver, e.g. ${suggestion:-1.2.3}): " version
+    version="${version:-$suggestion}"
+  fi
+  [[ -n "$version" ]] || _die "no version provided"
+  version="${version#v}" # tolerate a leading 'v'
+  _valid_semver "$version" || _die "invalid version '$version' (expected semver like 1.2.3)"
+
+  local tag="v$version" branch="release/$version"
+
+  # --- collision checks ---
+  git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null \
+    && _die "tag $tag already exists locally"
+  git ls-remote --exit-code --tags "$remote" "$tag" >/dev/null 2>&1 \
+    && _die "tag $tag already exists on $remote"
+  git ls-remote --exit-code --heads "$remote" "$branch" >/dev/null 2>&1 \
+    && _die "branch $branch already exists on $remote"
+  gh release view "$tag" >/dev/null 2>&1 \
+    && _die "a GitHub release for $tag already exists"
+
+  echo
+  echo "About to release ${_B}Ashes ${tag}${_N}:"
+  echo "  • branch  ${_B}${branch}${_N}  (from ${remote}/${base_branch})"
+  echo "  • tag     ${_B}${tag}${_N}"
+  echo "  • build   CLI + LSP + DAP for linux-x64 / linux-arm64 / win-x64, plus the .vsix"
+  echo "  • publish a GitHub Release with the artifacts attached"
+  echo
+  _confirm "Proceed?" || _die "aborted"
+
+  # --- create release branch locally ---
+  # Built and tagged locally; pushed only after a successful build so a failed
+  # build never leaves a dangling release/* branch on the remote.
+  _step "Creating local branch $branch from ${remote}/${base_branch}"
+  git branch -f "$branch" "${remote}/${base_branch}"
+  git switch "$branch"
+  _ok "on $branch"
+
+  _cleanup_on_fail() {
+    _warn "release failed — cleaning up local refs"
+    _restore_branch
+    git branch -D "$branch" >/dev/null 2>&1 || true
+    git tag -d "$tag" >/dev/null 2>&1 || true
+  }
+  trap _cleanup_on_fail ERR
+
+  # --- build artifacts ---
+  local out="artifacts/release"
+  _step "Building release artifacts (version $version) → $out/"
+  release_build "$version"
+
+  # The exact artifact set published by release.yml (filenames match release_build).
+  local artifacts=(
+    "$out/ashes-win-x64.zip"
+    "$out/ashes-linux-x64.zip"
+    "$out/ashes-linux-arm64.zip"
+    "$out/ashes-lsp-win-x64.zip"
+    "$out/ashes-lsp-linux-x64.zip"
+    "$out/ashes-lsp-linux-arm64.zip"
+    "$out/ashes-dap-win-x64.zip"
+    "$out/ashes-dap-linux-x64.zip"
+    "$out/ashes-dap-linux-arm64.zip"
+    "$out/ashes-language-$version.vsix"
+  )
+  local f
+  for f in "${artifacts[@]}"; do
+    [[ -f "$f" ]] || _die "expected artifact missing: $f"
+  done
+  _ok "built ${#artifacts[@]} artifacts"
+
+  # --- tag, push, publish ---
+  _step "Tagging $tag"
+  git tag -a "$tag" -m "Ashes $tag"
+
+  trap - ERR  # past the point where local-only cleanup is safe
+
+  _step "Pushing $branch and $tag to $remote"
+  git push "$remote" "$branch"
+  git push "$remote" "$tag"
+
+  _step "Creating GitHub Release $tag"
+  gh release create "$tag" "${artifacts[@]}" \
+    --title "Ashes $tag" \
+    --target "$branch" \
+    --notes ""
+
+  _restore_branch
+
+  echo
+  echo "${_G}${_B}Released Ashes ${tag}.${_N}"
+  echo "  branch:  ${_B}${branch}${_N}"
+  echo "  release: $(gh release view "$tag" --json url --jq .url 2>/dev/null || echo "$tag")"
 }
 
 # --- Dispatcher ------------------------------------------------------------
@@ -380,7 +535,7 @@ release() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | ci_quick | ci | release) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1

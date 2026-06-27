@@ -1,9 +1,9 @@
 # ashes-ci-base — the linux-x64 runner and the toolchain base for the other images.
 #
 # Carries the heavy, slow-changing toolchain: .NET 10 SDK, Node, pnpm (via
-# corepack), the libraries the VS Code integration tests need under xvfb, and the
-# MinIO `mc` client used for release uploads. The arm64 and win runner images are
-# thin `FROM` layers on top of this one so the toolchain is built only once.
+# corepack), and the libraries the VS Code integration tests need under xvfb. The
+# arm64 and win runner images are thin `FROM` layers on top of this one so the
+# toolchain is built only once.
 #
 # The repo (including a populated runtimes/ directory) is bind-mounted at run
 # time, so LLVM/rustls native libs are NOT baked in here — run `just provision`
@@ -53,15 +53,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && npm install -g corepack@latest \
     && corepack enable \
     && node --version && corepack --version
-
-# MinIO client for release artifact uploads (cached in a download mount so rebuilds
-# don't re-fetch the ~25 MB binary).
-RUN --mount=type=cache,target=/ci-downloads,sharing=locked \
-    if [ ! -x /ci-downloads/mc ]; then \
-        curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /ci-downloads/mc \
-        && chmod +x /ci-downloads/mc; \
-    fi \
-    && cp /ci-downloads/mc /usr/local/bin/mc
 
 # Semgrep — local SAST (the CodeQL stand-in) covering C#, TS/JS, GitHub Actions
 # and secrets. Installed into an isolated venv so it doesn't perturb the system

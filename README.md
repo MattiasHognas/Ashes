@@ -277,6 +277,27 @@ See [docs/TESTING.md](docs/TESTING.md) for the full testing reference.
 
 ---
 
+## Local CI/CD
+
+The full CI/CD pipeline runs locally in rootless **Podman** containers — no
+GitHub required. Jobs are driven by a `justfile` and reproduce the
+`.github/workflows/{pull-request,push-to-main,release}` steps, with each
+architecture in its own image: **linux-x64** natively, **linux-arm64** under
+`qemu`, **win-x64** under `wine`.
+
+```sh
+./scripts/init-local-ci.sh   # one-command bootstrap (deps + images + LLVM libs)
+just ci-quick                # fast inner loop: build + tests
+just ci                      # full PR-equivalent pipeline
+just release-github 1.2.3    # branch, build, tag, and publish a GitHub Release
+```
+
+`just install-hooks` wires `pre-commit` → `just ci-quick` and `pre-push` →
+`just ci`. See [docs/LOCAL_CI.md](docs/LOCAL_CI.md) for the full guide
+(recipes, releases, dependency/SAST scanning, and troubleshooting).
+
+---
+
 ## Examples
 
 Explore the [`examples/`](examples/) directory:
@@ -307,6 +328,7 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 | Document | Contents |
 |---|---|
 | [Development Guide](docs/DEVELOPMENT.md) | Building, testing, and developing locally |
+| [Local CI/CD](docs/LOCAL_CI.md) | Containerized CI/CD pipeline and releases |
 | [Language Specification](docs/LANGUAGE_SPEC.md) | Authoritative syntax and semantics |
 | [Project Specification](docs/PROJECT_SPEC.md) | Multi-file project format |
 | [Compiler Architecture](docs/ARCHITECTURE.md) | Pipeline, backend, memory model, linking |

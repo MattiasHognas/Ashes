@@ -3,17 +3,16 @@
 #
 # Installs the host prerequisites (Podman + rootless plumbing, just), ensures
 # rootless user-namespace mappings exist, builds the runner images, and
-# provisions the LLVM native libs. Optionally installs the git hooks and starts
-# MinIO. Idempotent — safe to re-run. Also runnable as `just init`.
+# provisions the LLVM native libs. Optionally installs the git hooks.
+# Idempotent — safe to re-run. Also runnable as `just init`.
 #
 # Usage:
 #   ./scripts/init-local-ci.sh                # deps + images + provision
 #   ./scripts/init-local-ci.sh --with-hooks   # also wire pre-commit/pre-push
-#   ./scripts/init-local-ci.sh --with-minio   # also start local S3 (MinIO)
 #   ./scripts/init-local-ci.sh --all          # everything
 #   ./scripts/init-local-ci.sh --skip-deps    # assume podman/just already installed
 #
-# Flags: --skip-deps --skip-images --skip-provision --with-hooks --with-minio --all -h
+# Flags: --skip-deps --skip-images --skip-provision --with-hooks --all -h
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,17 +21,16 @@ cd "$REPO_ROOT"
 CI_ENGINE="${CI_ENGINE:-podman}"
 
 # --- options ---------------------------------------------------------------
-do_deps=1 do_images=1 do_provision=1 do_hooks=0 do_minio=0
+do_deps=1 do_images=1 do_provision=1 do_hooks=0
 for arg in "$@"; do
   case "$arg" in
     --skip-deps) do_deps=0 ;;
     --skip-images) do_images=0 ;;
     --skip-provision) do_provision=0 ;;
     --with-hooks) do_hooks=1 ;;
-    --with-minio) do_minio=1 ;;
-    --all) do_hooks=1; do_minio=1 ;;
+    --all) do_hooks=1 ;;
     -h | --help)
-      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "init.sh: unknown option '$arg' (try --help)" >&2; exit 1 ;;
@@ -131,12 +129,6 @@ if [[ "$do_hooks" == 1 ]]; then
   just install-hooks
 fi
 
-if [[ "$do_minio" == 1 ]]; then
-  step "Starting MinIO (just minio-up)"
-  just minio-up
-fi
-
 echo
 echo "${G}${B}Done.${N} Try:  ${B}just ci-quick${N}   (fast)   or   ${B}just ci${N}   (full pipeline)"
 [[ "$do_hooks" == 0 ]] && echo "      Enable git triggers with: ${B}just install-hooks${N}"
-[[ "$do_minio" == 0 ]] && echo "      Start local S3 with:       ${B}just minio-up${N}  then  ${B}just release <ver>${N}"

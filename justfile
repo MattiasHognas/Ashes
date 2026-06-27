@@ -5,14 +5,12 @@
 #   just provision       # fetch LLVM native libs into runtimes/ (once / on bump)
 #   just ci-quick        # fast build + test
 #   just ci              # full PR-equivalent pipeline
-#   just minio-up        # start local S3 (MinIO)
-#   just release 1.2.3   # publish artifacts and upload to S3
+#   just release 1.2.3   # build release artifacts into artifacts/release/ (local)
+#   just release-github  # build + tag + publish a GitHub Release
 #   just install-hooks   # wire pre-commit (ci-quick) + pre-push (ci)
 
 engine     := env_var_or_default("CI_ENGINE", "podman")
 node_major := env_var_or_default("NODE_MAJOR", "26")
-minio_user := env_var_or_default("CI_S3_ACCESS_KEY", "minioadmin")
-minio_pass := env_var_or_default("CI_S3_SECRET_KEY", "minioadmin")
 
 # List available recipes.
 default:
@@ -84,28 +82,15 @@ ci:
 
 # --- Release / CD ----------------------------------------------------------
 
-# Publish all artifacts for version VERSION and upload to S3 (releases/VERSION/).
+# Build all release artifacts for version VERSION into artifacts/release/ (local).
 release version:
-    ci/jobs.sh release {{version}}
+    ci/jobs.sh release_build {{version}}
 
-# --- MinIO (local S3) ------------------------------------------------------
-
-# Start MinIO (S3 API :9000, console :9001) with a persistent data volume.
-minio-up:
-    {{engine}} volume create ashes-minio-data >/dev/null
-    -{{engine}} rm -f ashes-minio >/dev/null 2>&1
-    {{engine}} run -d --name ashes-minio \
-        -p 9000:9000 -p 9001:9001 \
-        -v ashes-minio-data:/data \
-        -e MINIO_ROOT_USER={{minio_user}} \
-        -e MINIO_ROOT_PASSWORD={{minio_pass}} \
-        quay.io/minio/minio server /data --console-address ":9001"
-    @echo "MinIO API:     http://localhost:9000"
-    @echo "MinIO console: http://localhost:9001  ({{minio_user}} / {{minio_pass}})"
-
-# Stop and remove the MinIO container (data volume is kept).
-minio-down:
-    -{{engine}} rm -f ashes-minio
+# Interactive GitHub release: cut release/X.Y.Z from origin/main, build the
+# artifacts, tag vX.Y.Z, and publish a GitHub Release. Pass a version to
+# pre-fill, e.g. `just release-github 1.2.3`. Requires gh (authenticated).
+release-github *args:
+    ci/jobs.sh release_github {{args}}
 
 # --- Git hooks -------------------------------------------------------------
 

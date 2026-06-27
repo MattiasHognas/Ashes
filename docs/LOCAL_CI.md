@@ -14,8 +14,8 @@ steps in `.github/workflows/{pull-request,push-to-main,release}.yaml`.
 ## Fresh machine — one command
 
 ```sh
-./scripts/init-local-ci.sh        # install deps + build images + provision
-./scripts/init-local-ci.sh --all  # also install git hooks + start MinIO
+./scripts/init-local-ci.sh          # install deps + build images + provision
+./scripts/init-local-ci.sh --all    # also install git hooks
 ```
 
 This installs the host prerequisites (Podman + rootless plumbing, `just`),
@@ -23,7 +23,7 @@ ensures rootless subuid/subgid mappings, builds the runner images, and
 provisions the LLVM libs. It is idempotent — safe to re-run. Once `just` is
 installed you can also re-run it as `just init` (e.g. `just init --skip-deps`).
 
-> Prefer Docker? Set `CI_ENGINE=docker` (env or `ci/.ci.env`).
+> Prefer Docker? Set `CI_ENGINE=docker` (env var).
 
 ## Manual setup (what init does)
 
@@ -62,6 +62,8 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 | `just ext`         | extension lint/format/compile + xvfb integration tests            | extension steps |
 | `just publish-cli` | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`    | Publish CLI |
 | `just matrix`      | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine) | `test-matrix` |
+| `just release VER` | build release artifacts into `artifacts/release/` (local disk only) | `release.yml` build |
+| `just release-github` | interactive: branch + build + tag + GitHub Release            | `release.yml` |
 
 The matrix skips the network examples (`http_get`, `https_get`, `tcp_*`), same as
 GitHub. It is fail-fast:false — all three arches run, then it fails if any did.
@@ -110,28 +112,41 @@ with `just uninstall-hooks`.
 
 ## Release / CD
 
-```sh
-just minio-up          # start local S3 (MinIO): API :9000, console :9001
-just release 1.2.3     # publish CLI/LSP/DAP (3 RIDs) + vsix, zip into dist/, upload
-```
+Artifacts are always built to **local disk**; only a GitHub release additionally
+pushes them to GitHub. Both paths share the same build (`ci/jobs.sh release_build`),
+which stages and zips the 9 binary artifacts plus the `.vsix` into
+`artifacts/release/` (`dist/` is reserved for `scripts/publish.sh`'s per-target copies).
 
-`just release` reproduces `release.yml`: it stages and zips the 9 binary
-artifacts plus the `.vsix` into `dist/`, then uploads them to
-`s3://<bucket>/releases/<version>/`. Browse them at http://localhost:9001
-(default `minioadmin` / `minioadmin`).
-
-### Switching to AWS S3 later
-
-Copy `ci/.ci.env.example` → `ci/.ci.env` (git-ignored) and set:
+### Build locally
 
 ```sh
-CI_S3_ENDPOINT=https://s3.<region>.amazonaws.com
-CI_S3_BUCKET=your-bucket
-CI_S3_ACCESS_KEY=...
-CI_S3_SECRET_KEY=...
+just release 1.2.3     # build CLI/LSP/DAP (3 RIDs) + vsix into artifacts/release/
 ```
 
-No code changes — the same `mc`-based uploader (`ci/lib/s3.sh`) is used.
+Nothing is pushed anywhere — inspect or hand-distribute the zips from
+`artifacts/release/`.
+
+### GitHub Release (interactive)
+
+```sh
+just release-github          # prompt for the version, then release
+just release-github 1.2.3    # pre-fill the version (still confirms)
+```
+
+`just release-github` (the `release_github` job in `ci/jobs.sh`) is the local
+stand-in for the disabled `.github/workflows/release.yml`. It:
+
+1. prompts for and validates a semver version (suggesting the next patch),
+2. cuts a `release/X.Y.Z` branch from `origin/main`,
+3. builds the 9 binary artifacts + `.vsix` into `artifacts/release/` with the version embedded,
+4. tags `vX.Y.Z`, pushes the branch and tag,
+5. publishes a GitHub Release with the same artifact set `release.yml` attaches
+   (release notes are left empty for now).
+
+The branch and tag are created locally and only pushed after a successful build,
+so a failed build never leaves dangling `release/*` refs on the remote. Requires
+`gh` authenticated (`gh auth status`) and a provisioned build env (`just images
+&& just provision`).
 
 ## Layout
 
@@ -140,10 +155,10 @@ justfile                 # entrypoint: just <recipe>
 ci/
   images/Containerfile.* # base (linux-x64) + arm64 + win runner images
   lib/run.sh             # run_in <runner> <cmd> — podman run with repo mounted
-  lib/s3.sh              # mc-based S3/MinIO uploader
-  jobs.sh                # job implementations (build/test/ext/matrix/release)
+  jobs.sh                # job implementations (build/test/ext/matrix/release_*)
   hooks/{pre-commit,pre-push}
-  .ci.env.example        # template for local S3 overrides
+scripts/
+  init-local-ci.sh       # one-command bootstrap (just init)
 ```
 
 ## Dependencies & static analysis
@@ -181,8 +196,8 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - **arm64 leg fails with `Exec format error`** — you set `ASHES_MATRIX_ARM64_RUN=1`
   on a runner that can't exec arm64. The default (compile-only) avoids this; full
   run/test needs a rootful engine with a host `binfmt_misc` handler or native arm64.
-- **Upload can't reach MinIO** — `just minio-up` must be running; `s3.sh` uses
-  `--network=host` so `http://localhost:9000` resolves.
+- **`gh` release fails to authenticate** — run `gh auth status`; `just release-github`
+  needs an authenticated `gh`.
 - **Permission/ownership oddities in the repo** — Podman runs with
   `--userns=keep-id`; with Docker set `CI_ENGINE=docker` and expect root-owned
   build outputs, or run Docker rootless.
