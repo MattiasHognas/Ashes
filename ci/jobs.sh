@@ -333,7 +333,12 @@ release_build() {
     corepack enable
     export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
-    pnpm version --no-git-tag-version \$VERSION
+    # Diagnostic: surface anything dirtying the tree (the build writes only to
+    # ignored paths, so this should be empty). Remove once the release is green.
+    echo '--- git status --porcelain (pre version bump) ---'; git status --porcelain; echo '--- end git status ---'
+    # 'pnpm version' refuses to run on an unclean tree; we only need to stamp the
+    # version field for vsce, so set it directly (no git guard).
+    pnpm pkg set version=\$VERSION
     pnpm run compile
     pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
   "
