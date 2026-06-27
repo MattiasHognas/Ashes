@@ -9,6 +9,11 @@ public sealed class Parser
     private Token _previous;
     private int _matchCasePipeSuppressionDepth;
 
+    // While parsing the value of a flat top-level declaration, a following `let` starts the next
+    // declaration rather than being absorbed as a whitespace-application argument (per LANGUAGE_SPEC:
+    // a flat top-level `let` value is terminated by EOF or the start of the next `type`/`extern`/`let`).
+    private bool _suppressLetWhitespaceArgument;
+
     public Parser(string text, Diagnostics diag)
     {
         _diag = diag;
@@ -35,22 +40,86 @@ public sealed class Parser
 
     public Program ParseProgram()
     {
-        var typeDecls = new List<TypeDecl>();
-        var externDecls = new List<ExternDecl>();
-        while (_current.Kind is TokenKind.Type or TokenKind.Extern)
+        // A file is `declaration* expr?` (imports are stripped upstream). Declarations are `type`,
+        // `extern`, flat `let [rec] name = value` (no `in`), and `let rec ... and ...` groups,
+        // freely interleaved and ordered. A `let ... in ...` is an ordinary expression, not a
+        // declaration, so it terminates the loop and becomes the (optional) trailing body.
+        var items = new List<TopLevelItem>();
+        Expr? body = null;
+
+        while (_current.Kind is TokenKind.Type or TokenKind.Extern or TokenKind.Let)
         {
             if (_current.Kind == TokenKind.Type)
             {
-                typeDecls.Add(ParseTypeDecl());
+                items.Add(new TopLevelItem.Type(ParseTypeDecl()));
+                continue;
             }
-            else
+
+            if (_current.Kind == TokenKind.Extern)
             {
-                externDecls.Add(ParseExternDecl());
+                items.Add(new TopLevelItem.Extern(ParseExternDecl()));
+                continue;
             }
+
+            // A let-pattern binding (`let (a, b) = e in body`) is always an expression.
+            if (IsLetPatternBinding())
+            {
+                break;
+            }
+
+            var header = ParseLetHeaderAndValue(topLevel: true);
+            if (_current.Kind == TokenKind.In)
+            {
+                // `let ... in ...` — a nested-let expression, which is the trailing body.
+                body = FinishLetExpression(header);
+                break;
+            }
+
+            if (_current.Kind == TokenKind.And)
+            {
+                items.Add(ParseRecGroup(header));
+                continue;
+            }
+
+            // A flat top-level binding, terminated by EOF or the next declaration.
+            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive));
         }
-        var body = ParseExpressionCore();
+
+        // The trailing expression is optional once the file has declarations: a file may end after
+        // its last declaration (Body = null). But a file with no declarations at all must be a
+        // single expression — parsing one here surfaces the "expected expression" diagnostic for an
+        // empty or comment-only file rather than silently yielding an empty program.
+        if (body is null && (_current.Kind != TokenKind.EOF || items.Count == 0))
+        {
+            body = ParseExpressionCore();
+        }
+
         EnsureEndOfInput();
-        return new Program(typeDecls, externDecls, body);
+        return new Program(items, body);
+    }
+
+    /// <summary>
+    /// Parses the remainder of a mutual-recursion group given its first binding's header: while the
+    /// current token is <c>and</c>, consumes <c>and name = value</c> bindings. Reports a parse error
+    /// if the group is not introduced by <c>let rec</c>.
+    /// </summary>
+    private TopLevelItem.RecGroup ParseRecGroup(LetHeader header)
+    {
+        if (!header.IsRecursive)
+        {
+            _diag.Error(CurrentErrorSpan(), "'and' is only allowed in a 'let rec' binding group.", DiagnosticCodes.ParseError);
+        }
+
+        var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
+        while (_current.Kind == TokenKind.And)
+        {
+            var andStart = _current.Position;
+            Consume(TokenKind.And);
+            var (_, name, value, _, _) = ParseLetBinding(andStart, topLevel: true);
+            bindings.Add((name, value));
+        }
+
+        return new TopLevelItem.RecGroup(bindings);
     }
 
     private ExternDecl ParseExternDecl()
@@ -410,61 +479,8 @@ public sealed class Parser
                 return ParseLetPattern(start);
             }
 
-            Consume(TokenKind.Let);
-            var isRec = _current.Kind == TokenKind.Rec;
-            if (isRec)
-            {
-                Consume(TokenKind.Rec);
-            }
-
-            var nameToken = Consume(TokenKind.Ident);
-            var name = nameToken.Text;
-
-            // Optional type annotation: let name : TypeExpr = value
-            TypeExpr? typeAnnotation = null;
-            if (_current.Kind == TokenKind.Colon)
-            {
-                Consume(TokenKind.Colon);
-                typeAnnotation = ParseTypeExpr();
-            }
-
-            // ML-style function sugar: let f x y = body => let f = fun (x) -> fun (y) -> body
-            // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = fun x -> ...`)
-            var sugarParams = new List<string>();
-            var sugarParamTokens = new List<Token>();
-            if (typeAnnotation is null)
-            {
-                while (_current.Kind == TokenKind.Ident)
-                {
-                    var paramToken = Consume(TokenKind.Ident);
-                    sugarParams.Add(paramToken.Text);
-                    sugarParamTokens.Add(paramToken);
-                }
-            }
-
-            Consume(TokenKind.Equals);
-            var value = ParseExpressionCore();
-
-            // Desugar ML-style parameters into nested lambdas
-            for (int i = sugarParams.Count - 1; i >= 0; i--)
-            {
-                var lambda = RegisterExpr(new Expr.Lambda(sugarParams[i], value), start, AstSpans.GetOrDefault(value).End);
-                AstSpans.SetLambdaParameter(lambda, sugarParamTokens[i].Span);
-                value = lambda;
-            }
-
-            Consume(TokenKind.In);
-            var body = ParseExpressionCore();
-            if (isRec)
-            {
-                var letRec = RegisterExpr(new Expr.LetRec(name, value, body) { SugarParams = sugarParams, TypeAnnotation = typeAnnotation }, start, LastConsumedEnd);
-                AstSpans.SetLetRecName(letRec, nameToken.Span);
-                return letRec;
-            }
-
-            var letExpr = RegisterExpr(new Expr.Let(name, value, body) { SugarParams = sugarParams, TypeAnnotation = typeAnnotation }, start, LastConsumedEnd);
-            AstSpans.SetLetName(letExpr, nameToken.Span);
-            return letExpr;
+            var header = ParseLetHeaderAndValue(topLevel: false);
+            return FinishLetExpression(header);
         }
 
         if (_current.Kind == TokenKind.LetQuestion)
@@ -490,6 +506,104 @@ public sealed class Parser
         }
 
         return ParseLambda();
+    }
+
+    /// <summary>
+    /// The parsed prefix of a <c>let</c> binding up to and including its value, but *not* the
+    /// terminating <c>in</c>. Shared between the nested <c>let ... in ...</c> expression form and
+    /// the flat top-level <c>let</c> declaration form, which differ only in what follows the value.
+    /// </summary>
+    private readonly record struct LetHeader(
+        int Start,
+        Token NameToken,
+        string Name,
+        bool IsRecursive,
+        Expr Value,
+        List<string> SugarParams,
+        TypeExpr? TypeAnnotation);
+
+    /// <summary>
+    /// Parses <c>let [rec] name [params] [: type] = value</c>, stopping before <c>in</c>. When
+    /// <paramref name="topLevel"/> is set, a following <c>let</c> terminates the value (it begins the
+    /// next declaration) rather than being absorbed as a whitespace-application argument.
+    /// </summary>
+    private LetHeader ParseLetHeaderAndValue(bool topLevel)
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Let);
+        var isRec = _current.Kind == TokenKind.Rec;
+        if (isRec)
+        {
+            Consume(TokenKind.Rec);
+        }
+
+        var (nameToken, name, value, sugarParams, typeAnnotation) = ParseLetBinding(start, topLevel);
+        return new LetHeader(start, nameToken, name, isRec, value, sugarParams, typeAnnotation);
+    }
+
+    /// <summary>
+    /// Parses the <c>name [params] [: type] = value</c> portion of a binding (the part after
+    /// <c>let [rec]</c> or after <c>and</c>), desugaring ML-style parameters into nested lambdas.
+    /// </summary>
+    private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation) ParseLetBinding(int start, bool topLevel)
+    {
+        var nameToken = Consume(TokenKind.Ident);
+        var name = nameToken.Text;
+
+        // Optional type annotation: let name : TypeExpr = value
+        TypeExpr? typeAnnotation = null;
+        if (_current.Kind == TokenKind.Colon)
+        {
+            Consume(TokenKind.Colon);
+            typeAnnotation = ParseTypeExpr();
+        }
+
+        // ML-style function sugar: let f x y = body => let f = fun (x) -> fun (y) -> body
+        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = fun x -> ...`)
+        var sugarParams = new List<string>();
+        var sugarParamTokens = new List<Token>();
+        if (typeAnnotation is null)
+        {
+            while (_current.Kind == TokenKind.Ident)
+            {
+                var paramToken = Consume(TokenKind.Ident);
+                sugarParams.Add(paramToken.Text);
+                sugarParamTokens.Add(paramToken);
+            }
+        }
+
+        Consume(TokenKind.Equals);
+        var previousSuppression = _suppressLetWhitespaceArgument;
+        _suppressLetWhitespaceArgument = topLevel;
+        var value = ParseExpressionCore();
+        _suppressLetWhitespaceArgument = previousSuppression;
+
+        // Desugar ML-style parameters into nested lambdas
+        for (int i = sugarParams.Count - 1; i >= 0; i--)
+        {
+            var lambda = RegisterExpr(new Expr.Lambda(sugarParams[i], value), start, AstSpans.GetOrDefault(value).End);
+            AstSpans.SetLambdaParameter(lambda, sugarParamTokens[i].Span);
+            value = lambda;
+        }
+
+        return (nameToken, name, value, sugarParams, typeAnnotation);
+    }
+
+    /// <summary>Completes a nested <c>let ... in body</c> expression from an already-parsed header.</summary>
+    private Expr FinishLetExpression(LetHeader header)
+    {
+        Consume(TokenKind.In);
+        var body = ParseExpressionCore();
+        if (header.IsRecursive)
+        {
+            var letRec = RegisterExpr(new Expr.LetRec(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            AstSpans.SetLetRecName(letRec, header.NameToken.Span);
+            return letRec;
+        }
+
+        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+        AstSpans.SetLetName(letExpr, header.NameToken.Span);
+        return letExpr;
     }
 
     /// <summary>
@@ -877,7 +991,8 @@ public sealed class Parser
                 continue;
             }
 
-            if (IsWhitespaceArgStarter(_current.Kind))
+            if (IsWhitespaceArgStarter(_current.Kind)
+                && !(_suppressLetWhitespaceArgument && _current.Kind == TokenKind.Let))
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
                 var arg = ParseWhitespaceArgument();
