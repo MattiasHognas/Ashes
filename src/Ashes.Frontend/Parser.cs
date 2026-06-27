@@ -81,6 +81,17 @@ public sealed class Parser
                 continue;
             }
 
+            if (header.ValueLeadsWithLet)
+            {
+                // `let x = let y = ... in ...` (a bare `let`-introduced value) is the nested
+                // `let ... in ...` pyramid, not a flat declaration: it requires an outer `in`. We
+                // are not at `in` here, so finishing the expression surfaces the expected-`in`
+                // diagnostic (and lets the REPL keep reading for the continuation line). Wrap the
+                // value in parentheses to write a flat declaration with a `let`-expression value.
+                body = FinishLetExpression(header);
+                break;
+            }
+
             // A flat top-level binding, terminated by EOF or the next declaration.
             items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive));
         }
@@ -115,7 +126,7 @@ public sealed class Parser
         {
             var andStart = _current.Position;
             Consume(TokenKind.And);
-            var (_, name, value, _, _) = ParseLetBinding(andStart, topLevel: true);
+            var (_, name, value, _, _, _) = ParseLetBinding(andStart, topLevel: true);
             bindings.Add((name, value));
         }
 
@@ -520,7 +531,8 @@ public sealed class Parser
         bool IsRecursive,
         Expr Value,
         List<string> SugarParams,
-        TypeExpr? TypeAnnotation);
+        TypeExpr? TypeAnnotation,
+        bool ValueLeadsWithLet);
 
     /// <summary>
     /// Parses <c>let [rec] name [params] [: type] = value</c>, stopping before <c>in</c>. When
@@ -537,15 +549,15 @@ public sealed class Parser
             Consume(TokenKind.Rec);
         }
 
-        var (nameToken, name, value, sugarParams, typeAnnotation) = ParseLetBinding(start, topLevel);
-        return new LetHeader(start, nameToken, name, isRec, value, sugarParams, typeAnnotation);
+        var (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet) = ParseLetBinding(start, topLevel);
+        return new LetHeader(start, nameToken, name, isRec, value, sugarParams, typeAnnotation, valueLeadsWithLet);
     }
 
     /// <summary>
     /// Parses the <c>name [params] [: type] = value</c> portion of a binding (the part after
     /// <c>let [rec]</c> or after <c>and</c>), desugaring ML-style parameters into nested lambdas.
     /// </summary>
-    private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation) ParseLetBinding(int start, bool topLevel)
+    private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation, bool ValueLeadsWithLet) ParseLetBinding(int start, bool topLevel)
     {
         var nameToken = Consume(TokenKind.Ident);
         var name = nameToken.Text;
@@ -573,6 +585,13 @@ public sealed class Parser
         }
 
         Consume(TokenKind.Equals);
+
+        // Whether the value is a bare (unparenthesized) `let`-introduced expression. Such a value
+        // makes the whole construct a nested `let ... in ...` expression that requires an outer
+        // `in`; it is never a flat top-level declaration (see ParseProgram). Parenthesizing the
+        // value escapes this — `let x = (let y = 2 in y)` is a flat declaration.
+        var valueLeadsWithLet = _current.Kind is TokenKind.Let or TokenKind.LetBang or TokenKind.LetQuestion;
+
         var previousSuppression = _suppressLetWhitespaceArgument;
         _suppressLetWhitespaceArgument = topLevel;
         var value = ParseExpressionCore();
@@ -586,7 +605,7 @@ public sealed class Parser
             value = lambda;
         }
 
-        return (nameToken, name, value, sugarParams, typeAnnotation);
+        return (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet);
     }
 
     /// <summary>Completes a nested <c>let ... in body</c> expression from an already-parsed header.</summary>

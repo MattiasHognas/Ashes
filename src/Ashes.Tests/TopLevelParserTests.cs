@@ -1,5 +1,4 @@
 using Ashes.Frontend;
-using Ashes.Semantics;
 using Shouldly;
 
 namespace Ashes.Tests;
@@ -65,6 +64,39 @@ public sealed class TopLevelParserTests
         letExpr.Name.ShouldBe("x");
         letExpr.Value.ShouldBe(new Expr.IntLit(1));
         letExpr.Body.ShouldBe(new Expr.Var("x"));
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_let_with_a_bare_let_in_value_as_a_nested_let_expression()
+    {
+        var program = ParseProgram("let x = let y = 2 in y in x + 1");
+
+        program.Items.ShouldBeEmpty();
+        var outer = program.Body.ShouldBeOfType<Expr.Let>();
+        outer.Name.ShouldBe("x");
+        outer.Value.ShouldBeOfType<Expr.Let>().Name.ShouldBe("y");
+    }
+
+    [Test]
+    public void ParseProgram_should_require_an_outer_in_for_a_bare_let_in_value()
+    {
+        // Without the outer `in` this is ambiguous with the nested-let pyramid, so it is reported
+        // as a missing `in` rather than silently parsed as a flat declaration. (The REPL relies on
+        // this diagnostic to keep reading the continuation line.)
+        var diag = new Diagnostics();
+        _ = new Parser("let x = let y = 2 in y", diag).ParseProgram();
+        diag.Errors.ShouldNotBeEmpty();
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_parenthesized_let_in_value_as_a_flat_declaration()
+    {
+        var program = ParseProgram("let x = (let y = 2 in y)");
+
+        var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        letItem.Name.ShouldBe("x");
+        letItem.Value.ShouldBeOfType<Expr.Let>().Name.ShouldBe("y");
+        program.Body.ShouldBeNull();
     }
 
     [Test]
