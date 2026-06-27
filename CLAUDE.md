@@ -22,6 +22,7 @@ Windows) via LLVM, with zero runtime dependencies — no GC, no runtime. Targets
 - [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) — multi-file project / `ashes.json` format
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building, testing, developing locally
 - [docs/DEBUGGING.md](docs/DEBUGGING.md) — debug extension setup and usage
+- [docs/LOCAL_CI.md](docs/LOCAL_CI.md) — containerized local CI/CD (`just` + Podman), release flow
 - [docs/future/FUTURE_FEATURES.md](docs/future/FUTURE_FEATURES.md) — planned work (incl. memory/ownership roadmap)
 
 If implementation conflicts with the spec, **update the spec first**.
