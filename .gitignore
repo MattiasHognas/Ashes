@@ -96,6 +96,8 @@ out
 # Workfiles
 _*.sh
 _*.md
+/*.sh
+.orchestrator/
 
 # Git
 .git/
