@@ -49,7 +49,7 @@ CodeCoverage/
 
 
 # VS Code extension
-.pnpm-store/
+.pnpm-store
 vscode-extension/package-lock.json
 vscode-extension/node_modules/
 vscode-extension/out/
@@ -58,16 +58,23 @@ vscode-extension/lsp-server/
 vscode-extension/dap-server/
 *.vsix
 .vscode-test/
+# Native binaries emitted by the real-compiler integration tests (named after
+# the .ash fixture they compile) — build artifacts, never source.
+vscode-extension/src/test/fixtures/error
+vscode-extension/src/test/fixtures/hello
+vscode-extension/src/test/fixtures/types
 
 # Publish output
 dist/
 publish/
 
 # Builds
+.pnpm-store/*
 tests/*.exe
 examples/*.exe
 /*.exe
 /*.txt
+/*.log
 *.received.txt
 runtimes/*
 !runtimes/linux-x64/
@@ -84,6 +91,7 @@ runtimes/win-x64/*
 !runtimes/win-x64/rustls.version
 out
 *.lscache
+*.core
 
 # Workfiles
 _*.sh
@@ -91,3 +99,7 @@ _*.md
 
 # Git
 .git/
+
+# Local CI/CD (ci/) outputs
+staging/
+.ci-cache/
