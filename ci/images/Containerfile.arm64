@@ -1,0 +1,35 @@
+# ashes-ci-arm64 — a genuine linux-arm64 userland for running produced arm64
+# binaries. This mirrors GitHub's native `ubuntu-24.04-arm` matrix leg, except the
+# arm64 instructions are emulated by the host's qemu-user-static binfmt_misc handler.
+#
+# Unlike the other two runners, this is NOT `FROM ashes-ci-base` (which is x64):
+# it is built `--platform linux/arm64`, so every binary inside — bash, git, the
+# arm64 `ashes`, and the arm64 programs `ashes` itself compiles and execs — is
+# aarch64 and runs transparently through the host's qemu handler.
+#
+# This only works because the host registers `qemu-aarch64` with the **F
+# (fix-binary)** flag (qemu-user-static + binfmt): the kernel opens
+# /usr/bin/qemu-aarch64-static at registration time and keeps the fd, so emulation
+# reaches into this container (which ships no qemu) and survives nested `exec`. An
+# explicit `qemu-aarch64 <bin>` wrapper cannot follow the compiler's exec of its
+# output — which is why the previous design was compile-only. See docs/LOCAL_CI.md.
+#
+# Based on dotnet `runtime-deps` (the native deps for a self-contained .NET app);
+# the published arm64 `ashes` additionally bundles libLLVM.so, so its extra native
+# deps (libffi/libedit/libz3/zlib/zstd/xml2) are installed on top.
+FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/runtime-deps:10.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates \
+        libffi8 libedit2 libz3-4 zlib1g libzstd1 libxml2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Writable HOME at /home/ci for uid 1000 (the runtime-deps image already ships a
+# uid/gid-1000 user, so its /etc/passwd entry keeps git happy). The runner is
+# launched with `podman --userns=keep-id`, mapping the host caller to uid 1000.
+ENV HOME=/home/ci
+RUN mkdir -p /home/ci/.nuget /home/ci/.local/share/pnpm /home/ci/.local/share/NuGet \
+    && chown -R 1000:1000 /home/ci
+USER 1000
+WORKDIR /work

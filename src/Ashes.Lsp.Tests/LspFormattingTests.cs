@@ -55,6 +55,7 @@ public sealed class LspFormattingTests
             var directory = Path.Combine(Path.GetTempPath(), "ashes-lsp-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             var filePath = Path.Combine(directory, fileName);
+            // nosemgrep: csharp.lang.security.filesystem.unsafe-path-combine.unsafe-path-combine -- test-only helper; path is a fresh per-test temp dir plus a test-controlled fileName, never user input
             File.WriteAllText(filePath, source);
             return new TempDocument(directory, filePath);
         }

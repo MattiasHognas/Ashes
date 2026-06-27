@@ -1,4 +1,8 @@
 // tls-server: accept
+// skip-on: win-x64
+// The loopback TLS fixture is unsupported under the local Wine smoke-test
+// (incomplete TLS/loopback in Wine); win-x64 TLS is covered by the native
+// Windows CI runner. See http_https_not_supported.ash.
 // tls-expect: ping
 // tls-send: pong
 // expect: ok

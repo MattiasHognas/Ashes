@@ -2,3 +2,9 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAge: 0
+
+# pnpm reads overrides from here (not package.json) when a workspace file exists.
+overrides:
+  # Force a patched serialize-javascript; mocha still pins the vulnerable 6.0.2
+  # (GHSA-5c6j-r48x-rmvq, RCE via RegExp.flags / Date.toISOString). 7.x stays CommonJS.
+  serialize-javascript: 7.0.6

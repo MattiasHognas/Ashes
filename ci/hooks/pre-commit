@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# pre-commit — fast local gate: build + test in a container.
+# Bypass with: SKIP_CI=1 git commit ...   or   git commit --no-verify
+set -euo pipefail
+
+if [[ "${SKIP_CI:-}" == "1" ]]; then
+  echo "pre-commit: SKIP_CI=1 set, skipping ci-quick."
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+echo "pre-commit: running 'just ci-quick' (set SKIP_CI=1 to skip)..."
+exec just ci-quick

@@ -842,14 +842,27 @@ public static class Runner
                 }
             }
 
+            // UTF-8 without a BOM. The default StreamReader/Writer encoding falls
+            // back to Console.OutputEncoding, which is the OEM/ANSI code page on
+            // Windows (and under Wine) and mangles the non-ASCII bytes Ashes
+            // programs emit as UTF-8. The BOM-less encoder is essential for stdin:
+            // the shared Encoding.UTF8 emits a preamble, which would prepend a stray
+            // BOM to the bytes fed to the child (corrupting readExact/readLine).
+            var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
             var psi = new ProcessStartInfo(exePath)
             {
                 UseShellExecute = false,
                 RedirectStandardInput = stdin is not null,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = utf8NoBom,
+                StandardErrorEncoding = utf8NoBom,
                 WorkingDirectory = workDir
             };
+            if (stdin is not null)
+            {
+                psi.StandardInputEncoding = utf8NoBom;
+            }
 
             if (environmentVariables is not null)
             {

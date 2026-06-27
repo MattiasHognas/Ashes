@@ -214,23 +214,20 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.9.3",
-    "@types/vscode": "^1.120.0",
-    "@typescript-eslint/eslint-plugin": "^8.61.0",
-    "@typescript-eslint/parser": "^8.61.1",
+    "@types/node": "^26.0.1",
+    "@types/vscode": "^1.125.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
     "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "mocha": "^11.7.6",
-    "prettier": "^3.8.4",
+    "prettier": "^3.8.5",
     "typescript": "^6.0.3"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
-    "vscode-languageclient": "^10.0.0"
-  },
-  "overrides": {
-    "minimatch": "10.2.1"
+    "vscode-languageclient": "^10.0.1"
   }
 }

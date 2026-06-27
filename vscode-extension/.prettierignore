@@ -1,7 +1,9 @@
 node_modules
 out
 dist
-server/win-x64
-server/linux-x64
+# Downloaded/published toolchain binaries (gitignored); not source to format.
+compiler
+dap-server
+lsp-server
 pnpm-lock.yaml
 .vscode-test
