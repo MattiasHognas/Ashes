@@ -70,19 +70,18 @@ let balance =
 let get = 
     fun (compare) -> 
         fun (searchKey) -> 
-            let rec go = 
-                fun (map) -> 
-                    match map with
-                        | Empty -> None
-                        | Node(_height, left, key, value, right) -> 
-                            let ordering = compare(searchKey)(key)
-                            in 
-                                if ordering == 0
-                                then Some(value)
-                                else 
-                                    if ordering <= -1
-                                    then go(left)
-                                    else go(right)
+            let rec go map = 
+                match map with
+                    | Empty -> None
+                    | Node(_height, left, key, value, right) -> 
+                        let ordering = compare(searchKey)(key)
+                        in 
+                            if ordering == 0
+                            then Some(value)
+                            else 
+                                if ordering <= -1
+                                then go(left)
+                                else go(right)
             in go
 
 let contains = 
@@ -97,19 +96,18 @@ let set =
     fun (compare) -> 
         fun (newKey) -> 
             fun (newValue) -> 
-                let rec go = 
-                    fun (map) -> 
-                        match map with
-                            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
-                            | Node(_height, left, key, value, right) -> 
-                                let ordering = compare(newKey)(key)
-                                in 
-                                    if ordering == 0
-                                    then makeNode(left)(newKey)(newValue)(right)
-                                    else 
-                                        if ordering <= -1
-                                        then balance(makeNode(go(left))(key)(value)(right))
-                                        else balance(makeNode(left)(key)(value)(go(right)))
+                let rec go map = 
+                    match map with
+                        | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
+                        | Node(_height, left, key, value, right) -> 
+                            let ordering = compare(newKey)(key)
+                            in 
+                                if ordering == 0
+                                then makeNode(left)(newKey)(newValue)(right)
+                                else 
+                                    if ordering <= -1
+                                    then balance(makeNode(go(left))(key)(value)(right))
+                                    else balance(makeNode(left)(key)(value)(go(right)))
                 in go
 
 let insert = set
@@ -123,33 +121,26 @@ let rec size =
 let foldLeft = 
     fun (folder) -> 
         fun (state) -> 
-            let rec go = 
-                fun (acc) -> 
-                    fun (map) -> 
-                        match map with
-                            | Empty -> acc
-                            | Node(_height, left, key, value, right) -> 
-                                let afterLeft = go(acc)(left)
-                                in 
-                                    let afterNode = folder(afterLeft)(key)(value)
-                                    in go(afterNode)(right)
+            let rec go acc map = 
+                match map with
+                    | Empty -> acc
+                    | Node(_height, left, key, value, right) -> 
+                        let afterLeft = go(acc)(left)
+                        in 
+                            let afterNode = folder(afterLeft)(key)(value)
+                            in go(afterNode)(right)
             in go(state)
 
 let toList = 
     fun (map) -> 
-        let prepend = 
-            fun (rest) -> 
-                fun (key) -> 
-                    fun (value) -> (key, value) :: rest
+        let prepend rest key value = (key, value) :: rest
         in foldLeft(prepend)([])(map)
 
 let fromList = 
     fun (compare) -> 
-        let rec go = 
-            fun (entries) -> 
-                fun (map) -> 
-                    match entries with
-                        | [] -> map
-                        | (key, value) :: tail -> go(tail)(set(compare)(key)(value)(map))
+        let rec go entries map = 
+            match entries with
+                | [] -> map
+                | (key, value) :: tail -> go(tail)(set(compare)(key)(value)(map))
         in 
             fun (entries) -> go(entries)(empty)

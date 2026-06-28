@@ -89,27 +89,25 @@ let rec tryMatchHere =
                         | Some(rest) -> Some(rest)
                         | None -> tryMatchHere(r2)(text)
                 | RStar(r) -> 
-                    let rec goStar = 
-                        fun (remaining) -> 
-                            match tryMatchHere(r)(remaining) with
-                                | None -> Some(remaining)
-                                | Some(rest) -> 
-                                    if rest == remaining
-                                    then Some(remaining)
-                                    else goStar(rest)
+                    let rec goStar remaining = 
+                        match tryMatchHere(r)(remaining) with
+                            | None -> Some(remaining)
+                            | Some(rest) -> 
+                                if rest == remaining
+                                then Some(remaining)
+                                else goStar(rest)
                     in goStar(text)
                 | RPlus(r) -> 
                     match tryMatchHere(r)(text) with
                         | None -> None
                         | Some(first) -> 
-                            let rec goPlus = 
-                                fun (remaining) -> 
-                                    match tryMatchHere(r)(remaining) with
-                                        | None -> Some(remaining)
-                                        | Some(rest) -> 
-                                            if rest == remaining
-                                            then Some(remaining)
-                                            else goPlus(rest)
+                            let rec goPlus remaining = 
+                                match tryMatchHere(r)(remaining) with
+                                    | None -> Some(remaining)
+                                    | Some(rest) -> 
+                                        if rest == remaining
+                                        then Some(remaining)
+                                        else goPlus(rest)
                             in goPlus(first)
                 | ROpt(r) -> 
                     match tryMatchHere(r)(text) with
@@ -126,40 +124,38 @@ let matches =
 let find = 
     fun (regex) -> 
         fun (text) -> 
-            let rec search = 
-                fun (remaining) -> 
-                    match tryMatchHere(regex)(remaining) with
-                        | Some(rest) -> 
-                            let matchLen = strLen(remaining) - strLen(rest)
-                            in Some(strTake(matchLen)(remaining))
-                        | None -> 
-                            match Ashes.Text.uncons(remaining) with
-                                | None -> None
-                                | Some((_h, t)) -> search(t)
+            let rec search remaining = 
+                match tryMatchHere(regex)(remaining) with
+                    | Some(rest) -> 
+                        let matchLen = strLen(remaining) - strLen(rest)
+                        in Some(strTake(matchLen)(remaining))
+                    | None -> 
+                        match Ashes.Text.uncons(remaining) with
+                            | None -> None
+                            | Some((_h, t)) -> search(t)
             in search(text)
 
 let rec findAll = 
     fun (regex) -> 
         fun (text) -> 
-            let rec go = 
-                fun (remaining) -> 
-                    if remaining == ""
-                    then []
-                    else 
-                        match tryMatchHere(regex)(remaining) with
-                            | Some(rest) -> 
-                                if rest == remaining
-                                then 
-                                    match Ashes.Text.uncons(remaining) with
-                                        | None -> []
-                                        | Some((_h, t)) -> go(t)
-                                else 
-                                    let matchLen = strLen(remaining) - strLen(rest)
-                                    in 
-                                        let matched = strTake(matchLen)(remaining)
-                                        in matched :: go(rest)
-                            | None -> 
+            let rec go remaining = 
+                if remaining == ""
+                then []
+                else 
+                    match tryMatchHere(regex)(remaining) with
+                        | Some(rest) -> 
+                            if rest == remaining
+                            then 
                                 match Ashes.Text.uncons(remaining) with
                                     | None -> []
                                     | Some((_h, t)) -> go(t)
+                            else 
+                                let matchLen = strLen(remaining) - strLen(rest)
+                                in 
+                                    let matched = strTake(matchLen)(remaining)
+                                    in matched :: go(rest)
+                        | None -> 
+                            match Ashes.Text.uncons(remaining) with
+                                | None -> []
+                                | Some((_h, t)) -> go(t)
             in go(text)
