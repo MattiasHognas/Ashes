@@ -164,8 +164,21 @@ public static class Formatter
             sb.Append("rec ");
         }
         sb.Append(decl.Name);
+
+        // ML-style sugar: let f x y = <value>, unwrapping one lambda layer per parameter.
+        var value = decl.Value;
+        foreach (var p in decl.SugarParams)
+        {
+            sb.Append(' ');
+            sb.Append(p);
+            if (value is Expr.Lambda lam)
+            {
+                value = lam.Body;
+            }
+        }
+
         sb.Append(" = ");
-        WriteTopLevelValue(sb, decl.Value, preferPipelines, options);
+        WriteTopLevelValue(sb, value, preferPipelines, options);
     }
 
     private static void WriteRecGroup(StringBuilder sb, TopLevelItem.RecGroup group, bool preferPipelines, FormattingOptions options)
@@ -177,8 +190,24 @@ public static class Formatter
         {
             sb.Append(i == 0 ? "let rec " : "and ");
             sb.Append(group.Bindings[i].Name);
+
+            // ML-style sugar: let rec f x y = <value>, unwrapping one lambda layer per parameter.
+            var value = group.Bindings[i].Value;
+            if (i < group.SugarParams.Count)
+            {
+                foreach (var p in group.SugarParams[i])
+                {
+                    sb.Append(' ');
+                    sb.Append(p);
+                    if (value is Expr.Lambda lam)
+                    {
+                        value = lam.Body;
+                    }
+                }
+            }
+
             sb.Append(" = ");
-            WriteTopLevelValue(sb, group.Bindings[i].Value, preferPipelines, options);
+            WriteTopLevelValue(sb, value, preferPipelines, options);
         }
     }
 

@@ -148,13 +148,30 @@ public abstract record TopLevelItem
     public sealed record Extern(ExternDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
-    public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem;
+    public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem
+    {
+        /// <summary>
+        /// ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c>
+        /// instead of <c>let f = fun (x) -> fun (y) -> ...</c>. Codegen is unaffected: the value is
+        /// already the desugared nested-lambda form regardless of this list.
+        /// </summary>
+        public IReadOnlyList<string> SugarParams { get; init; } = [];
+    }
 
     /// <summary>
     /// A mutual-recursion group: <c>let rec A = ... and B = ...</c>. Every binding is implicitly
     /// recursive within the group and visible to the others regardless of order.
     /// </summary>
-    public sealed record RecGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem;
+    public sealed record RecGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem
+    {
+        /// <summary>
+        /// ML-style sugar parameters per binding, parallel to <see cref="Bindings"/> by index. An
+        /// entry that is absent or empty renders without sugar. Kept as a side list (rather than
+        /// widening the binding tuple) so the desugared value stays the single source of truth for
+        /// lowering, which consumes <see cref="Bindings"/> directly.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<string>> SugarParams { get; init; } = [];
+    }
 }
 
 /// <summary>

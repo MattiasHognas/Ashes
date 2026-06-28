@@ -101,7 +101,7 @@ public sealed class Parser
             }
 
             // A flat top-level binding, terminated by EOF or the next declaration.
-            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive));
+            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive) { SugarParams = header.SugarParams });
         }
 
         // The trailing expression is optional once the file has declarations: a file may end after
@@ -130,15 +130,17 @@ public sealed class Parser
         }
 
         var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
+        var sugarParams = new List<IReadOnlyList<string>> { header.SugarParams };
         while (_current.Kind == TokenKind.And)
         {
             var andStart = _current.Position;
             Consume(TokenKind.And);
-            var (_, name, value, _, _, _) = ParseLetBinding(andStart, topLevel: true);
+            var (_, name, value, andSugarParams, _, _) = ParseLetBinding(andStart, topLevel: true);
             bindings.Add((name, value));
+            sugarParams.Add(andSugarParams);
         }
 
-        return new TopLevelItem.RecGroup(bindings);
+        return new TopLevelItem.RecGroup(bindings) { SugarParams = sugarParams };
     }
 
     private ExternDecl ParseExternDecl()
