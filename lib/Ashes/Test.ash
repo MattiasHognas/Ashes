@@ -1,9 +1,6 @@
-let assertEqual = 
-    fun (expected) -> 
-        fun (actual) -> 
-            if expected == actual
-            then Unit
-            else Ashes.IO.panic("Assertion failed")
+let assertEqual expected actual = 
+    if expected == actual
+    then Unit
+    else Ashes.IO.panic("Assertion failed")
 
-let fail = 
-    fun (msg) -> Ashes.IO.panic(msg)
+let fail msg = Ashes.IO.panic(msg)
