@@ -89,13 +89,15 @@ public sealed class Parser
                 continue;
             }
 
-            if (header.ValueLeadsWithLet)
+            if (header.ValueLeadsWithLet && _current.Kind == TokenKind.EOF)
             {
-                // `let x = let y = ... in ...` (a bare `let`-introduced value) is the nested
-                // `let ... in ...` pyramid, not a flat declaration: it requires an outer `in`. We
-                // are not at `in` here, so finishing the expression surfaces the expected-`in`
-                // diagnostic (and lets the REPL keep reading for the continuation line). Wrap the
-                // value in parentheses to write a flat declaration with a `let`-expression value.
+                // `let x = let y = ... in ...` (a bare `let`-introduced value) at EOF is ambiguous
+                // with the nested `let ... in ...` pyramid, which needs an outer `in`. Finishing the
+                // expression here surfaces the expected-`in` diagnostic, which lets the REPL keep
+                // reading the continuation line (its `IsLikelyNeedMoreInput` keys on it). When the
+                // value's leading `let..in` is instead followed by the next top-level declaration or
+                // a trailing expression, it is a complete flat declaration RHS and falls through
+                // below. Parenthesizing the value also escapes the pyramid: `let x = (let y = 2 in y)`.
                 body = FinishLetExpression(header);
                 break;
             }
