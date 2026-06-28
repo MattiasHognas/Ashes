@@ -1,20 +1,15 @@
-let rpcStartsWith = 
+let rec rpcStartsWith = 
     fun (text) -> 
         fun (prefix) -> 
-            let rec go = 
-                fun (pair) -> 
-                    match pair with
-                        | (t, p) -> 
-                            match Ashes.Text.uncons(p) with
-                                | None -> true
-                                | Some((ph, pt)) -> 
-                                    match Ashes.Text.uncons(t) with
-                                        | None -> false
-                                        | Some((th, tt)) -> 
-                                            if th == ph
-                                            then go((tt, pt))
-                                            else false
-            in go((text, prefix))
+            match Ashes.Text.uncons(prefix) with
+                | None -> true
+                | Some((ph, pt)) -> 
+                    match Ashes.Text.uncons(text) with
+                        | None -> false
+                        | Some((th, tt)) -> 
+                            if th == ph
+                            then rpcStartsWith(tt)(pt)
+                            else false
 
 let rec rpcDrop = 
     fun (text) -> 
