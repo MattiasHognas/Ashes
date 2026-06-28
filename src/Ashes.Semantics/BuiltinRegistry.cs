@@ -258,6 +258,16 @@ public static class BuiltinRegistry
 
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
 
+    /// <summary>
+    /// Per-module export-name sets, computed once from the same knowledge the registry uses to
+    /// expose qualified members: intrinsic modules contribute their <see cref="BuiltinModule.Members"/>
+    /// keys, and resource-backed modules contribute the top-level <c>let</c> binding and <c>type</c>
+    /// names parsed from their embedded <c>.ash</c> source. The import resolver queries this to
+    /// validate <c>import Ashes.IO.print</c>-style selectors against built-in modules.
+    /// </summary>
+    private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlySet<string>>> ModuleExportsByName =
+        new(BuildModuleExports);
+
     public static IReadOnlyCollection<string> StandardModuleNames => ModulesByName.Keys.ToArray();
 
     public static IReadOnlyCollection<BuiltinType> Types => TypesByName.Values.ToArray();
@@ -301,6 +311,34 @@ public static class BuiltinRegistry
         return ModulesByName.TryGetValue(moduleName, out module!);
     }
 
+    /// <summary>
+    /// Surfaces the set of names a built-in module exports (its public value bindings and types),
+    /// so the import resolver can validate selector imports such as <c>import Ashes.IO.print</c>
+    /// against built-in modules with the same query it uses for user modules. Returns false when
+    /// the module is not a known built-in module.
+    /// </summary>
+    public static bool TryGetModuleExports(string moduleName, out IReadOnlySet<string> exportNames)
+    {
+        if (ModuleExportsByName.Value.TryGetValue(moduleName, out var exports))
+        {
+            exportNames = exports;
+            return true;
+        }
+
+        exportNames = EmptyExports;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true when the named built-in module exports the given name. Returns false for
+    /// unknown modules and for names the module does not export.
+    /// </summary>
+    public static bool ModuleExportsName(string moduleName, string name)
+    {
+        return ModuleExportsByName.Value.TryGetValue(moduleName, out var exports)
+            && exports.Contains(name);
+    }
+
     public static bool TryGetType(string typeName, out BuiltinType type)
     {
         return TypesByName.TryGetValue(typeName, out type!);
@@ -334,6 +372,107 @@ public static class BuiltinRegistry
 
         type = null!;
         return false;
+    }
+
+    private static readonly IReadOnlySet<string> EmptyExports =
+        new HashSet<string>(StringComparer.Ordinal);
+
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildModuleExports()
+    {
+        var exportsByModule = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var module in ModulesByName.Values)
+        {
+            var exports = new HashSet<string>(StringComparer.Ordinal);
+
+            // Intrinsic members: the same data backing qualified `Ashes.IO.print` resolution.
+            foreach (var memberName in module.Members.Keys)
+            {
+                exports.Add(memberName);
+            }
+
+            // Resource-backed modules: the public top-level bindings/types parsed from the same
+            // embedded `.ash` source the registry exposes to qualified access.
+            if (module.ResourceName is not null)
+            {
+                CollectResourceModuleExports(module.ResourceName, exports);
+            }
+
+            exportsByModule[module.Name] = exports;
+        }
+
+        return exportsByModule;
+    }
+
+    private static void CollectResourceModuleExports(string resourceName, HashSet<string> exports)
+    {
+        var source = LoadEmbeddedResource(resourceName);
+        if (source is null)
+        {
+            return;
+        }
+
+        var diagnostics = new Diagnostics();
+        var program = new Parser(source, diagnostics).ParseProgram();
+        if (diagnostics.StructuredErrors.Count > 0)
+        {
+            return;
+        }
+
+        // Model-A top-level declarations: a module exports its top-level `let`/`type` items only.
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    exports.Add(letDecl.Name);
+                    break;
+                case TopLevelItem.RecGroup recGroup:
+                    foreach (var (name, _) in recGroup.Bindings)
+                    {
+                        exports.Add(name);
+                    }
+
+                    break;
+                case TopLevelItem.Type typeDecl:
+                    exports.Add(typeDecl.Decl.Name);
+                    break;
+            }
+        }
+
+        // Legacy pyramid modules carry their bindings as a trailing `let ... in` chain rather than
+        // top-level items. Walk the chain spine (never descending into binding values) so those
+        // names are exposed identically to how qualified access resolves them today.
+        for (var expr = program.Body; expr is not null;)
+        {
+            switch (expr)
+            {
+                case Expr.Let letExpr:
+                    exports.Add(letExpr.Name);
+                    expr = letExpr.Body;
+                    break;
+                case Expr.LetRec letRecExpr:
+                    exports.Add(letRecExpr.Name);
+                    expr = letRecExpr.Body;
+                    break;
+                default:
+                    expr = null;
+                    break;
+            }
+        }
+    }
+
+    private static string? LoadEmbeddedResource(string resourceName)
+    {
+        var assembly = typeof(BuiltinRegistry).Assembly;
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private static IReadOnlyDictionary<string, BuiltinType> CreateBuiltinTypes()
