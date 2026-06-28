@@ -54,15 +54,13 @@ let indexOf =
             if needle == ""
             then 0
             else 
-                let rec go = 
-                    fun (remaining) -> 
-                        fun (offset) -> 
-                            if startsWith(remaining)(needle)
-                            then offset
-                            else 
-                                match Ashes.Text.uncons(remaining) with
-                                    | None -> -1
-                                    | Some((_head, tail)) -> go(tail)(offset + 1)
+                let rec go remaining offset = 
+                    if startsWith(remaining)(needle)
+                    then offset
+                    else 
+                        match Ashes.Text.uncons(remaining) with
+                            | None -> -1
+                            | Some((_head, tail)) -> go(tail)(offset + 1)
                 in go(text)(0)
 
 let contains = 
@@ -77,21 +75,20 @@ let split =
             else 
                 let separatorLength = length(separator)
                 in 
-                    let rec go = 
-                        fun (remaining) -> 
-                            let foundAt = indexOf(remaining)(separator)
-                            in 
-                                if foundAt <= -1
-                                then [remaining]
-                                else 
-                                    let piece = substring(remaining)(0)(foundAt)
+                    let rec go remaining = 
+                        let foundAt = indexOf(remaining)(separator)
+                        in 
+                            if foundAt <= -1
+                            then [remaining]
+                            else 
+                                let piece = substring(remaining)(0)(foundAt)
+                                in 
+                                    let restStart = foundAt + separatorLength
                                     in 
-                                        let restStart = foundAt + separatorLength
+                                        let restLen = length(remaining) - restStart
                                         in 
-                                            let restLen = length(remaining) - restStart
-                                            in 
-                                                let rest = substring(remaining)(restStart)(restLen)
-                                                in piece :: go(rest)
+                                            let rest = substring(remaining)(restStart)(restLen)
+                                            in piece :: go(rest)
                     in go(text)
 
 let isDigit = 

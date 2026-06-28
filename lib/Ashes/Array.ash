@@ -142,26 +142,22 @@ let append =
 
 let toList = 
     fun (array) -> 
-        let rec go = 
-            fun (tree) -> 
-                fun (acc) -> 
-                    match tree with
-                        | TreeEmpty -> acc
-                        | TreeNode(_height, left, _index, value, right) -> 
-                            let afterRight = go(right)(acc)
-                            in 
-                                let withNode = value :: afterRight
-                                in go(left)(withNode)
+        let rec go tree acc = 
+            match tree with
+                | TreeEmpty -> acc
+                | TreeNode(_height, left, _index, value, right) -> 
+                    let afterRight = go(right)(acc)
+                    in 
+                        let withNode = value :: afterRight
+                        in go(left)(withNode)
         in 
             match array with
                 | (_arrayLength, root) -> go(root)([])
 
 let fromList = 
     fun (values) -> 
-        let rec go = 
-            fun (remaining) -> 
-                fun (array) -> 
-                    match remaining with
-                        | [] -> array
-                        | head :: tail -> go(tail)(append(head)(array))
+        let rec go remaining array = 
+            match remaining with
+                | [] -> array
+                | head :: tail -> go(tail)(append(head)(array))
         in go(values)(empty)
