@@ -2355,37 +2355,59 @@ public sealed partial class Lowering
 
                     if (allCopyable)
                     {
-                        // Emit arena reset (pointer reset only, no chunk freeing), then
-                        // copy-out for each heap-type arg (source still readable because
-                        // chunks haven't been freed yet), then reclaim abandoned chunks.
-                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                        // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args
+                        // across the back-edge cannot be done with a single round of
+                        // copy-outs to the watermark W: each copy-out compacts its arg
+                        // *down* to W, but a copy whose destination block [W, …) reaches
+                        // high enough overwrites a later arg's still-unread source bytes
+                        // (e.g. startsWith(textTail)(prefixTail): copying textTail to W
+                        // clobbers prefixTail's source once the string exceeds ~11 bytes,
+                        // corrupting the second arg → the rt_sigsuspend deadlock).
+                        //
+                        // Phase A (BEFORE the reset): copy every heap arg UP to a fresh
+                        // alloc above the current cursor. Sources are all below the cursor,
+                        // destinations above it → disjoint, overlap-free regardless of
+                        // order. Phase B (AFTER the reset): copy each up-copy DOWN to W.
+                        // The destination block [W, …) lies entirely below every up-copy
+                        // source (which sits above the pre-reset cursor), so these copies
+                        // are also disjoint and order-independent.
+                        var upCopyTemps = new int[newArgTypes.Length];
                         for (int i = 0; i < newArgTypes.Length; i++)
                         {
                             if (CanArenaReset(newArgTypes[i]))
+                            {
+                                upCopyTemps[i] = -1;
                                 continue;
+                            }
 
                             var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
                             if (kind == CopyOutKind.None)
+                            {
+                                upCopyTemps[i] = -1;
+                                continue;
+                            }
+
+                            upCopyTemps[i] = NewTemp();
+                            EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
+                        }
+
+                        // Reset (pointer reset only, no chunk freeing): cursor → W.
+                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+
+                        // Phase B: copy each up-copy down to W and store into the slot.
+                        for (int i = 0; i < newArgTypes.Length; i++)
+                        {
+                            if (upCopyTemps[i] < 0)
                                 continue;
 
+                            var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
                             int copyDest = NewTemp();
-                            switch (kind)
-                            {
-                                case CopyOutKind.Shallow:
-                                    Emit(new IrInst.CopyOutArena(copyDest, newArgTemps[i], sizeBytes));
-                                    break;
-                                case CopyOutKind.List:
-                                    Emit(new IrInst.CopyOutList(copyDest, newArgTemps[i], headCopy));
-                                    break;
-                                case CopyOutKind.Closure:
-                                    Emit(new IrInst.CopyOutClosure(copyDest, newArgTemps[i]));
-                                    break;
-                                case CopyOutKind.TcoListCell:
-                                    Emit(new IrInst.CopyOutTcoListCell(copyDest, newArgTemps[i], headCopy));
-                                    break;
-                            }
+                            EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
                             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
                         }
+
+                        // Free the chunks abandoned above W (including the Phase A
+                        // up-copies, now fully consumed by Phase B).
                         Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     }
                     // else: complex heap types — no arena reset.
