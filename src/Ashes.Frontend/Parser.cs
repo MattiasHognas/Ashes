@@ -91,13 +91,20 @@ public sealed class Parser
 
             if (header.ValueLeadsWithLet && _current.Kind == TokenKind.EOF)
             {
-                // `let x = let y = ... in ...` (a bare `let`-introduced value) at EOF is ambiguous
-                // with the nested `let ... in ...` pyramid, which needs an outer `in`. Finishing the
-                // expression here surfaces the expected-`in` diagnostic, which lets the REPL keep
-                // reading the continuation line (its `IsLikelyNeedMoreInput` keys on it). When the
-                // value's leading `let..in` is instead followed by the next top-level declaration or
-                // a trailing expression, it is a complete flat declaration RHS and falls through
-                // below. Parenthesizing the value also escapes the pyramid: `let x = (let y = 2 in y)`.
+                // `let x = let y = ... in ...` (a bare `let`-introduced value) at EOF is genuinely
+                // ambiguous with the nested `let ... in ...` pyramid, which needs an outer `in`: the
+                // value's `let..in` is byte-for-byte identical whether the author meant a complete
+                // flat declaration or the start of a pyramid still awaiting its outer `in`. The REPL
+                // resolves the ambiguity toward "keep reading": its `Repl_should_support_multiline_
+                // nested_let_input` feeds `let x =` / `let y = 2 in y` / `in x + 1` line by line, so
+                // the intermediate `let x = let y = 2 in y`<EOF> MUST surface a need-more-input
+                // diagnostic rather than commit to a flat decl (treating it as a complete decl here
+                // makes the REPL stop early and that test fail — verified empirically). Finishing the
+                // expression emits the expected-`in` diagnostic that `IsLikelyNeedMoreInput` keys on.
+                // This carve-out is ONLY for EOF: a bare `let..in` value followed by the next
+                // top-level declaration or a trailing expression is unambiguous and falls through to
+                // a flat `LetDecl` below. A flat declaration whose `let..in` value must end the file
+                // is written with parentheses, which escapes the pyramid: `let x = (let y = 2 in y)`.
                 body = FinishLetExpression(header);
                 break;
             }
