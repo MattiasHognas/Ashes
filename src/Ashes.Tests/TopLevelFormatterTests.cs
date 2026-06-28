@@ -144,6 +144,32 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
+    public void Top_level_let_declaration_with_parameter_sugar_round_trips()
+    {
+        // `let f x y = body` must survive formatting as parameter sugar, not be re-expanded into
+        // `let f = fun (x) -> fun (y) -> body`.
+        var formatted = Format("let add x y = x + y\n");
+
+        formatted.ShouldBe("let add x y = x + y\n");
+    }
+
+    [Test]
+    public void Top_level_let_rec_declaration_with_parameter_sugar_round_trips()
+    {
+        var formatted = Format("let rec loop n = loop n\n");
+
+        formatted.ShouldBe("let rec loop n = loop n\n");
+    }
+
+    [Test]
+    public void Rec_group_preserves_parameter_sugar_per_binding()
+    {
+        var formatted = Format("let rec even n = odd n\nand odd n = even n\n");
+
+        formatted.ShouldBe("let rec even n = odd n\nand odd n = even n\n");
+    }
+
+    [Test]
     public void Single_expression_program_formats_as_before()
     {
         var formatted = Format("1 + 2\n");
@@ -164,6 +190,9 @@ public sealed class TopLevelFormatterTests
     [Arguments("let rec even = fun (n) -> n\nand odd = fun (n) -> n\n")]
     [Arguments("let x = let y = 1 in y in x\n")]
     [Arguments("let b = (let y = 2 in y)\n")]
+    [Arguments("let add x y = x + y\n")]
+    [Arguments("let rec loop n = loop n\n")]
+    [Arguments("let rec even n = odd n\nand odd n = even n\n")]
     [Arguments("1 + 2\n")]
     public void Formatting_is_idempotent(string source)
     {
