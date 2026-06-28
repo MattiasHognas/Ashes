@@ -1,9 +1,7 @@
 // expect: 4
-let inc = 
-    fun (x) -> x + 1
+let inc x = x + 1
 in 
-    let double = 
-        fun (x) -> x + x
+    let double x = x + x
     in 
         1
         |> inc

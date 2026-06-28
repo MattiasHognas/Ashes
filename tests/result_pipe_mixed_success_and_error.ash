@@ -5,8 +5,7 @@ type ParseError =
 type AppError =
     | Parse(ParseError)
 
-let parse = 
-    fun (x) -> Error(NotAnInt("not-an-int"))
+let parse x = Error(NotAnInt("not-an-int"))
 in 
     let y = 
         Ok("abc")

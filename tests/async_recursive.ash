@@ -1,9 +1,8 @@
 // expect: 3
-Ashes.IO.print(match Ashes.Async.run(async(let rec countDown = 
-    fun (n) -> 
-        if n == 0
-        then 0
-        else countDown(n - 1) + 1
+Ashes.IO.print(match Ashes.Async.run(async(let rec countDown n = 
+    if n == 0
+    then 0
+    else countDown(n - 1) + 1
 in countDown(3))) with
     | Ok(n) -> n
     | Error(_) -> 0)

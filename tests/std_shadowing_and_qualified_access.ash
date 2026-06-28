@@ -1,4 +1,3 @@
 // expect: ok
-let print = 
-    fun (x) -> "ignored"
+let print x = "ignored"
 in Ashes.IO.print("ok")

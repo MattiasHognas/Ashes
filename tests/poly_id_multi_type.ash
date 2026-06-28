@@ -1,6 +1,5 @@
 // expect: ok
-let id = 
-    fun (x) -> x
+let id x = x
 in 
     let intId = 
         id(fun (n) -> n)

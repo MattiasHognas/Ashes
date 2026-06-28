@@ -1,10 +1,8 @@
 // expect: 10
-let unwrapOr = 
-    fun (opt) -> 
-        fun (def) -> 
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def = 
+    match opt with
+        | None -> def
+        | Some(x) -> x
 in 
     let inner = Some(Some(10))
     in 

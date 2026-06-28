@@ -1,7 +1,5 @@
 // expect: ok
-let const = 
-    fun (x) -> 
-        fun (y) -> x
+let const x y = x
 in 
     let _a = const(1)("ignore")
     in 

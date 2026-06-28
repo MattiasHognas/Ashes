@@ -5,11 +5,10 @@ type ParseError =
 type AppError =
     | Parse(ParseError)
 
-let parse = 
-    fun (x) -> 
-        if x == "41"
-        then Ok(41)
-        else Error(NotAnInt(x))
+let parse x = 
+    if x == "41"
+    then Ok(41)
+    else Error(NotAnInt(x))
 in 
     let y = 
         Ok("41")

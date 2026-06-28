@@ -1,18 +1,17 @@
 // expect: ok
-let isWhitespace = 
-    fun (head) -> 
-        if head == " "
+let isWhitespace head = 
+    if head == " "
+    then true
+    else 
+        if head == "\n"
         then true
         else 
-            if head == "\n"
+            if head == "\t"
             then true
             else 
-                if head == "\t"
+                if head == "\r"
                 then true
-                else 
-                    if head == "\r"
-                    then true
-                    else false
+                else false
 in 
     let rec skipWhitespace text = 
         match Ashes.Text.uncons(text) with
@@ -22,11 +21,10 @@ in
                 then skipWhitespace(tail)
                 else text
     in 
-        let isDigit = 
-            fun (head) -> 
-                match Ashes.Text.parseInt(head) with
-                    | Ok(_) -> true
-                    | Error(_) -> false
+        let isDigit head = 
+            match Ashes.Text.parseInt(head) with
+                | Ok(_) -> true
+                | Error(_) -> false
         in 
             let rec consumeExact expected text = 
                 match Ashes.Text.uncons(expected) with
@@ -50,14 +48,13 @@ in
                                 then Error("string escapes not supported in this demo")
                                 else parseStringBody(acc + head)(tail)
                 in 
-                    let parseString = 
-                        fun (text) -> 
-                            match Ashes.Text.uncons(text) with
-                                | None -> Error("expected string")
-                                | Some((head, tail)) -> 
-                                    if head == "\""
-                                    then parseStringBody("")(tail)
-                                    else Error("expected string")
+                    let parseString text = 
+                        match Ashes.Text.uncons(text) with
+                            | None -> Error("expected string")
+                            | Some((head, tail)) -> 
+                                if head == "\""
+                                then parseStringBody("")(tail)
+                                else Error("expected string")
                     in 
                         let rec takeNumberToken acc text = 
                             match Ashes.Text.uncons(text) with
@@ -248,14 +245,13 @@ in
                                                                                                             | Error(message) -> Error(message)
                                                                                     else Error("expected JSON value")
                                 in 
-                                    let parseDocument = 
-                                        fun (text) -> 
-                                            match parseValue(text) with
-                                                | Error(message) -> Error(message)
-                                                | Ok((value, rest)) -> 
-                                                    if skipWhitespace(rest) == ""
-                                                    then Ok(value)
-                                                    else Error("trailing input")
+                                    let parseDocument text = 
+                                        match parseValue(text) with
+                                            | Error(message) -> Error(message)
+                                            | Ok((value, rest)) -> 
+                                                if skipWhitespace(rest) == ""
+                                                then Ok(value)
+                                                else Error("trailing input")
                                     in 
                                         let sample = " { \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] } "
                                         in 

@@ -1,6 +1,5 @@
 // expect: 3
-let inc = 
-    fun (x) -> x + 1
+let inc x = x + 1
 in 
     2
     |> inc

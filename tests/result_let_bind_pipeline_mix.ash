@@ -1,9 +1,8 @@
 // expect: 43
-let parse = 
-    fun (text) -> 
-        if text == "42"
-        then Ok(42)
-        else Error("bad")
+let parse text = 
+    if text == "42"
+    then Ok(42)
+    else Error("bad")
 in 
     let x = 
         let? a = Ok("42") |?> parse
