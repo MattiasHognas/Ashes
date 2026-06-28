@@ -619,6 +619,39 @@ public sealed class CliDiagnosticsTests
         }
     }
 
+    [Test]
+    public async Task Fmt_should_round_trip_selector_imports()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "selector_imports.ash");
+            var source =
+                "import Ashes.IO.print\n" +
+                "import Ashes.IO.print as p\n" +
+                "p(\"hello\")\n";
+            await File.WriteAllTextAsync(filePath, source);
+
+            var result = await RunCliAsync("fmt", filePath);
+
+            result.ExitCode.ShouldBe(0);
+            result.Stderr.ShouldBeEmpty();
+            result.Stdout.ShouldContain("import Ashes.IO.print\n");
+            result.Stdout.ShouldContain("import Ashes.IO.print as p");
+            result.Stdout.ShouldNotContain("import Ashes.IO as");
+
+            // Idempotent: formatting the formatted output is a no-op (zero diff).
+            await File.WriteAllTextAsync(filePath, result.Stdout);
+            var second = await RunCliAsync("fmt", filePath);
+            second.ExitCode.ShouldBe(0);
+            second.Stdout.ShouldBe(result.Stdout);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static (int Line, int Column) GetLocation(string source, int position)
     {
         var line = 1;
