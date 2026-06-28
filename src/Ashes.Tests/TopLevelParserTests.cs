@@ -99,6 +99,81 @@ public sealed class TopLevelParserTests
     }
 
     [Test]
+    public void ParseProgram_should_not_absorb_the_next_decl_into_a_qualified_call_binding_value()
+    {
+        // A binding value that is a qualified application (`List.length(xs)`) must terminate at the
+        // declaration boundary just like an unqualified one — the following decl/trailing expression
+        // must NOT be pulled in as a whitespace-application argument.
+        var program = ParseProgram("let xs = [1, 2, 3]\nlet ys = List.reverse(xs)\nlet n = List.length(ys)\nn");
+
+        program.Items.Count.ShouldBe(3);
+        program.Items[0].ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("xs");
+
+        var ysItem = program.Items[1].ShouldBeOfType<TopLevelItem.LetDecl>();
+        ysItem.Name.ShouldBe("ys");
+        ysItem.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("reverse");
+
+        var nItem = program.Items[2].ShouldBeOfType<TopLevelItem.LetDecl>();
+        nItem.Name.ShouldBe("n");
+        nItem.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("length");
+
+        program.Body.ShouldBe(new Expr.Var("n"));
+    }
+
+    [Test]
+    public void ParseProgram_should_parse_a_parenthesized_flat_declaration_block_as_nested_lets()
+    {
+        // The combined-source stitcher wraps a flat top-level entry as `(decl decl ... trailingExpr)`.
+        // The parenthesized flat declarations (no `in`) must fold into nested let expressions instead
+        // of being absorbed as whitespace-application arguments of the preceding value.
+        var program = ParseProgram("(let xs = [1, 2, 3]\nlet n = List.length(xs)\nprint(n))");
+
+        program.Items.ShouldBeEmpty();
+        var outer = program.Body.ShouldBeOfType<Expr.Let>();
+        outer.Name.ShouldBe("xs");
+
+        var inner = outer.Body.ShouldBeOfType<Expr.Let>();
+        inner.Name.ShouldBe("n");
+        inner.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("length");
+
+        var call = inner.Body.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBe(new Expr.Var("print"));
+    }
+
+    [Test]
+    public void ParseProgram_should_parse_the_stitched_flat_entry_form_with_qualified_call_values()
+    {
+        // Mirrors the exact shape the combined-source stitcher emits for a flat entry that imports a
+        // flat standard-library module: a boundary binding whose `in` body is the parenthesized flat
+        // declaration block.
+        var program = ParseProgram("let m = 0 in (let xs = [1, 2, 3]\nlet n = List.length(xs)\nprint(n))");
+
+        program.Items.ShouldBeEmpty();
+        var boundary = program.Body.ShouldBeOfType<Expr.Let>();
+        boundary.Name.ShouldBe("m");
+
+        var xs = boundary.Body.ShouldBeOfType<Expr.Let>();
+        xs.Name.ShouldBe("xs");
+        var n = xs.Body.ShouldBeOfType<Expr.Let>();
+        n.Name.ShouldBe("n");
+        n.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("length");
+        n.Body.ShouldBeOfType<Expr.Call>().Func.ShouldBe(new Expr.Var("print"));
+    }
+
+    [Test]
+    public void ParseProgram_should_still_parse_a_parenthesized_let_in_expression()
+    {
+        // The flat-block handling must not regress the ordinary parenthesized `let ... in` expression.
+        var program = ParseProgram("(let x = 1 in x)");
+
+        program.Items.ShouldBeEmpty();
+        var letExpr = program.Body.ShouldBeOfType<Expr.Let>();
+        letExpr.Name.ShouldBe("x");
+        letExpr.Value.ShouldBe(new Expr.IntLit(1));
+        letExpr.Body.ShouldBe(new Expr.Var("x"));
+    }
+
+    [Test]
     public void ParseProgram_should_terminate_a_flat_let_before_a_trailing_expression_between_two_decls()
     {
         var program = ParseProgram("let a = 1\nlet b = 2\nf(a)");
