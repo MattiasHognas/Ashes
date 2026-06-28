@@ -14,6 +14,14 @@ public sealed class Parser
     // a flat top-level `let` value is terminated by EOF or the start of the next `type`/`extern`/`let`).
     private bool _suppressLetWhitespaceArgument;
 
+    // The source column at which the current flat top-level declaration began, or -1 when not parsing
+    // such a declaration's value. A whitespace-application argument that opens a new source line at
+    // this column or further left starts the next top-level item — the next declaration, or the
+    // trailing expression (e.g. `let a = 1` <newline> `print(a)`) — and therefore terminates the
+    // value instead of being absorbed (the grammar is `declaration* expr?`). Multi-line whitespace
+    // application *within* an expression body is indented past this column and is preserved.
+    private int _topLevelDeclColumn = -1;
+
     public Parser(string text, Diagnostics diag)
     {
         _diag = diag;
@@ -593,9 +601,15 @@ public sealed class Parser
         var valueLeadsWithLet = _current.Kind is TokenKind.Let or TokenKind.LetBang or TokenKind.LetQuestion;
 
         var previousSuppression = _suppressLetWhitespaceArgument;
+        var previousDeclColumn = _topLevelDeclColumn;
         _suppressLetWhitespaceArgument = topLevel;
+        if (topLevel)
+        {
+            _topLevelDeclColumn = GetColumn(start);
+        }
         var value = ParseExpressionCore();
         _suppressLetWhitespaceArgument = previousSuppression;
+        _topLevelDeclColumn = previousDeclColumn;
 
         // Desugar ML-style parameters into nested lambdas
         for (int i = sugarParams.Count - 1; i >= 0; i--)
@@ -1011,7 +1025,8 @@ public sealed class Parser
             }
 
             if (IsWhitespaceArgStarter(_current.Kind)
-                && !(_suppressLetWhitespaceArgument && _current.Kind == TokenKind.Let))
+                && !(_suppressLetWhitespaceArgument && _current.Kind == TokenKind.Let)
+                && !StartsNextTopLevelItem())
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
                 var arg = ParseWhitespaceArgument();
@@ -1023,6 +1038,42 @@ public sealed class Parser
         }
 
         return expr;
+    }
+
+    /// <summary>
+    /// While parsing a flat top-level declaration's value, returns <c>true</c> when the current token
+    /// opens a new source line at (or left of) the declaration's column. Such a token begins the next
+    /// top-level item — the next declaration or the trailing expression — so it must terminate the
+    /// value rather than be absorbed as a whitespace-application argument. Continuation arguments of a
+    /// multi-line expression are indented past the declaration's column and so are preserved.
+    /// </summary>
+    private bool StartsNextTopLevelItem()
+    {
+        // The rule applies only to the outermost value of a flat top-level declaration (the same
+        // scope in which `let` is suppressed). A nested `let ... in` value turns the flag off, so its
+        // own multi-line application is governed by the explicit `in`, not by source layout.
+        if (!_suppressLetWhitespaceArgument || _topLevelDeclColumn < 0)
+        {
+            return false;
+        }
+
+        return StartsSourceLine(_current.Position) && GetColumn(_current.Position) <= _topLevelDeclColumn;
+    }
+
+    // Returns true when only whitespace precedes `pos` on its source line (i.e. `pos` is the line's
+    // first token).
+    private bool StartsSourceLine(int pos)
+    {
+        var lineStart = pos <= 0 ? 0 : _source.LastIndexOf('\n', pos - 1) + 1;
+        for (var i = lineStart; i < pos; i++)
+        {
+            if (!char.IsWhiteSpace(_source[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsWhitespaceArgStarter(TokenKind kind)
