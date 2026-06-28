@@ -55,6 +55,87 @@ public sealed class TopLevelParserTests
     }
 
     [Test]
+    public void ParseProgram_should_treat_a_bare_trailing_call_after_a_flat_let_as_the_body()
+    {
+        // The trailing call must NOT be absorbed as a whitespace-application argument of `1`
+        // (i.e. NOT `1 (print(a))`). It is a separate top-level item: the program's Body.
+        var program = ParseProgram("let a = 1\nprint(a)");
+
+        var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        letItem.Name.ShouldBe("a");
+        letItem.Value.ShouldBe(new Expr.IntLit(1));
+
+        var call = program.Body.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBe(new Expr.Var("print"));
+        call.Arg.ShouldBe(new Expr.Var("a"));
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_bare_trailing_identifier_after_a_flat_let_as_the_body()
+    {
+        var program = ParseProgram("let a = 1\na");
+
+        program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("a");
+        program.Body.ShouldBe(new Expr.Var("a"));
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_bare_trailing_if_after_a_flat_let_as_the_body()
+    {
+        var program = ParseProgram("let a = 1\nif a then 2 else 3");
+
+        program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("a");
+        program.Body.ShouldBeOfType<Expr.If>();
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_bare_trailing_qualified_call_after_a_flat_let_as_the_body()
+    {
+        var program = ParseProgram("let x = 5\nAshes.IO.print(x)");
+
+        program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("x");
+        var call = program.Body.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("print");
+    }
+
+    [Test]
+    public void ParseProgram_should_terminate_a_flat_let_before_a_trailing_expression_between_two_decls()
+    {
+        var program = ParseProgram("let a = 1\nlet b = 2\nf(a)");
+
+        program.Items.Count.ShouldBe(2);
+        program.Items[0].ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("a");
+        program.Items[1].ShouldBeOfType<TopLevelItem.LetDecl>().Name.ShouldBe("b");
+        program.Body.ShouldBeOfType<Expr.Call>();
+    }
+
+    [Test]
+    public void ParseProgram_should_preserve_indented_multiline_whitespace_application_in_a_flat_let_value()
+    {
+        // The continuation `y` is indented past the declaration's column, so it is a genuine
+        // whitespace-application argument of `f` — NOT a new top-level item. Regressing this is
+        // the failure mode the terminating rule must avoid.
+        var program = ParseProgram("let x = f\n    y");
+
+        var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        letItem.Name.ShouldBe("x");
+        var call = letItem.Value.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBe(new Expr.Var("f"));
+        call.Arg.ShouldBe(new Expr.Var("y"));
+        program.Body.ShouldBeNull();
+    }
+
+    [Test]
+    public void ParseProgram_should_preserve_same_line_whitespace_application_in_a_flat_let_value()
+    {
+        var program = ParseProgram("let x = f y\ng");
+
+        var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        letItem.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBe(new Expr.Var("f"));
+        program.Body.ShouldBe(new Expr.Var("g"));
+    }
+
+    [Test]
     public void ParseProgram_should_treat_let_with_in_as_a_nested_let_expression()
     {
         var program = ParseProgram("let x = 1 in x");
