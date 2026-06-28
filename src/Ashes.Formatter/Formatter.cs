@@ -34,19 +34,33 @@ public static class Formatter
     {
         var formattingOptions = (options ?? new FormattingOptions()).Normalize();
         var sb = new StringBuilder();
-        foreach (var decl in program.TypeDecls)
+
+        // A file is a flat sequence of top-level items in source order, followed by an optional
+        // trailing expression. Exactly one blank line separates adjacent items, and one blank line
+        // separates the last item from the trailing expression. Each writer below ends the item with
+        // a single newline; the blank line is the extra '\n' inserted before each subsequent block.
+        // Consecutive `extern` declarations are the one exception: they stay grouped as a block with
+        // no blank line between them (matching established formatting of FFI declaration blocks).
+        TopLevelItem? previous = null;
+        foreach (var item in program.Items)
         {
-            WriteTypeDecl(sb, decl, formattingOptions);
+            if (previous is not null && !(previous is TopLevelItem.Extern && item is TopLevelItem.Extern))
+            {
+                sb.Append('\n');
+            }
+            WriteTopLevelItem(sb, item, preferPipelines, formattingOptions);
+            previous = item;
         }
-        foreach (var decl in program.ExternDecls)
+
+        if (program.Body is not null)
         {
-            WriteExternDecl(sb, decl);
+            if (previous is not null)
+            {
+                sb.Append('\n');
+            }
+            WriteExpr(sb, program.Body, indent: 0, parentPrec: 0, preferPipelines, formattingOptions);
         }
-        if (program.ExternDecls.Count > 0)
-        {
-            sb.Append('\n');
-        }
-        WriteExpr(sb, program.Body, indent: 0, parentPrec: 0, preferPipelines, formattingOptions);
+
         if (sb.Length == 0 || sb[^1] != '\n')
         {
             sb.Append('\n');
@@ -103,7 +117,7 @@ public static class Formatter
                 sb.Append(": ");
                 sb.Append(ctor.Parameters[i]);
             }
-            sb.Append(" }\n\n");
+            sb.Append(" }\n");
             return;
         }
 
@@ -121,7 +135,80 @@ public static class Formatter
             }
             sb.Append('\n');
         }
+    }
+
+    private static void WriteTopLevelItem(StringBuilder sb, TopLevelItem item, bool preferPipelines, FormattingOptions options)
+    {
+        switch (item)
+        {
+            case TopLevelItem.Type t:
+                WriteTypeDecl(sb, t.Decl, options);
+                return;
+            case TopLevelItem.Extern e:
+                WriteExternDecl(sb, e.Decl);
+                return;
+            case TopLevelItem.LetDecl let:
+                WriteLetDecl(sb, let, preferPipelines, options);
+                return;
+            case TopLevelItem.RecGroup group:
+                WriteRecGroup(sb, group, preferPipelines, options);
+                return;
+        }
+    }
+
+    private static void WriteLetDecl(StringBuilder sb, TopLevelItem.LetDecl decl, bool preferPipelines, FormattingOptions options)
+    {
+        sb.Append("let ");
+        if (decl.IsRecursive)
+        {
+            sb.Append("rec ");
+        }
+        sb.Append(decl.Name);
+        sb.Append(" = ");
+        WriteTopLevelValue(sb, decl.Value, preferPipelines, options);
+    }
+
+    private static void WriteRecGroup(StringBuilder sb, TopLevelItem.RecGroup group, bool preferPipelines, FormattingOptions options)
+    {
+        // `let rec NAME0 = <value0>` followed by one `and NAMEi = <valuei>` line per remaining
+        // binding, each at the same indentation column as `let`. The whole group is one block with
+        // no blank lines between members.
+        for (int i = 0; i < group.Bindings.Count; i++)
+        {
+            sb.Append(i == 0 ? "let rec " : "and ");
+            sb.Append(group.Bindings[i].Name);
+            sb.Append(" = ");
+            WriteTopLevelValue(sb, group.Bindings[i].Value, preferPipelines, options);
+        }
+    }
+
+    /// <summary>
+    /// Writes the right-hand side of a top-level <c>let</c>/<c>and</c> binding (no trailing <c>in</c>),
+    /// following the same single-line/multiline rules as a nested <c>let</c> value. Always ends the
+    /// binding with a single newline.
+    /// </summary>
+    private static void WriteTopLevelValue(StringBuilder sb, Expr value, bool preferPipelines, FormattingOptions options)
+    {
+        if (IsSingleLine(value, preferPipelines))
+        {
+            WriteExprInline(sb, value, indent: 0, parentPrec: 0, preferPipelines, options);
+            sb.Append('\n');
+            return;
+        }
+
         sb.Append('\n');
+        WriteIndent(sb, options.IndentSize, options);
+
+        // A bare `let`-leading value would re-parse as a nested `let ... in` expression (the trailing
+        // body) rather than this flat declaration's value. Parenthesize it — the higher parent
+        // precedence makes the let-writer wrap itself in `(...)` — so the round-trip stays a flat
+        // declaration and formatting is idempotent.
+        var parentPrec = value is Expr.Let or Expr.LetResult or Expr.LetRec ? PrecCall : 0;
+        WriteExpr(sb, value, options.IndentSize, parentPrec, preferPipelines, options);
+        if (!EndsWithNewLine(sb, "\n"))
+        {
+            sb.Append('\n');
+        }
     }
 
     private static string WriteParsedType(ParsedType type)
