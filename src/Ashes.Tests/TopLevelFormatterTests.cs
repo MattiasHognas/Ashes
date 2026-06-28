@@ -52,6 +52,34 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
+    public void Consecutive_type_declarations_are_separated_by_one_blank_line()
+    {
+        var formatted = Format("type A =\n    | X\ntype B =\n    | Y\nX\n");
+
+        formatted.ShouldBe("type A =\n    | X\n\ntype B =\n    | Y\n\nX\n");
+    }
+
+    [Test]
+    public void Let_declaration_and_a_following_extern_are_separated_by_one_blank_line()
+    {
+        // `extern` is a top-level declaration like any other: a preceding `let` is separated from it
+        // by exactly one blank line (the grouping exception below applies only between two externs).
+        var formatted = Format("let f = 1\nextern strlen(Str) -> Int\nf\n");
+
+        formatted.ShouldBe("let f = 1\n\nextern strlen(Str) -> Int\n\nf\n");
+    }
+
+    [Test]
+    public void Consecutive_extern_declarations_stay_grouped_as_a_block()
+    {
+        // FFI declaration blocks keep adjacent `extern` lines together with no blank line between
+        // them, separated from the trailing expression by one blank line (matches FormatterTests).
+        var formatted = Format("extern type Handle\nextern makeHandle(Int) -> Handle\n0\n");
+
+        formatted.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\n\n0\n");
+    }
+
+    [Test]
     public void Interleaved_type_let_and_trailing_let_in_are_each_blank_line_separated()
     {
         var formatted = Format("type Color =\n    | Red\n    | Green\nlet c = Red\nlet r = c in r\n");
@@ -81,6 +109,14 @@ public sealed class TopLevelFormatterTests
         var formatted = Format("let rec a = 1\nand b = 2\n");
 
         formatted.ShouldBe("let rec a = 1\nand b = 2\n");
+    }
+
+    [Test]
+    public void Rec_group_with_three_members_formats_as_a_single_block()
+    {
+        var formatted = Format("let rec a = 1\nand b = 2\nand c = 3\n");
+
+        formatted.ShouldBe("let rec a = 1\nand b = 2\nand c = 3\n");
     }
 
     [Test]
@@ -119,8 +155,12 @@ public sealed class TopLevelFormatterTests
     [Arguments("let a = 1\nlet b = 2\n")]
     [Arguments("let a = 1\nlet z = a in z\n")]
     [Arguments("type Color =\n    | Red\n    | Green\nRed\n")]
+    [Arguments("type A =\n    | X\ntype B =\n    | Y\nX\n")]
+    [Arguments("let f = 1\nextern strlen(Str) -> Int\nf\n")]
+    [Arguments("extern type Handle\nextern makeHandle(Int) -> Handle\n0\n")]
     [Arguments("type Color =\n    | Red\n    | Green\nlet c = Red\nlet r = c in r\n")]
     [Arguments("let rec a = 1\nand b = 2\n")]
+    [Arguments("let rec a = 1\nand b = 2\nand c = 3\n")]
     [Arguments("let rec even = fun (n) -> n\nand odd = fun (n) -> n\n")]
     [Arguments("let x = let y = 1 in y in x\n")]
     [Arguments("let b = (let y = 2 in y)\n")]
