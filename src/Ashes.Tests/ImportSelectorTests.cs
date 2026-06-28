@@ -79,19 +79,62 @@ public sealed class ImportSelectorTests
         stdout.TrimEnd().ShouldBe("42");
     }
 
+    private static readonly Dictionary<string, string> ShapesModule = new()
+    {
+        ["Shapes"] =
+            "type Color = | Red | Green\n" +
+            "let name = fun (c) -> match c with | Red -> \"red\" | Green -> \"green\"\n",
+    };
+
     [Test]
-    public async Task TypeSelector_brings_type_into_scope()
+    public async Task TypeSelectorWithAlias_binds_type_under_alias()
+    {
+        // `import Shapes.Color as C` must make `C` usable as the type in an annotation. The combined
+        // source hoists `type Color` globally under its real name, so the alias `C` is realized by
+        // rewriting it back to `Color`; without that the annotation references an unknown type.
+        var stdout = await RunAsync(
+            "import Shapes.Color as C\nimport Shapes.name\n" +
+            "let c : C = Green in Ashes.IO.print(name(c))\n",
+            ShapesModule);
+        stdout.TrimEnd().ShouldBe("green");
+    }
+
+    [Test]
+    public async Task TypeSelectorAlias_is_required_for_the_alias_to_resolve()
+    {
+        // The same program without the `as C` selector must fail: `C` is otherwise an unknown type.
+        // This isolates the type-selector behavior so the positive test above is not tautological
+        // (global type hoisting alone never introduces the alias name `C`).
+        var ex = await Should.ThrowAsync<Exception>(() => RunAsync(
+            "import Shapes.name\nlet c : C = Green in Ashes.IO.print(name(c))\n",
+            ShapesModule));
+        ex.Message.ShouldContain("Unknown type name 'C'");
+    }
+
+    [Test]
+    public async Task BareTypeSelector_brings_type_into_scope()
     {
         var stdout = await RunAsync(
             "import Shapes.Color\nimport Shapes.name\n" +
             "let red : Color = Red in Ashes.IO.print(name(red))\n",
-            new Dictionary<string, string>
-            {
-                ["Shapes"] =
-                    "type Color = | Red | Green\n" +
-                    "let name = fun (c) -> match c with | Red -> \"red\" | Green -> \"green\"\n",
-            });
+            ShapesModule);
         stdout.TrimEnd().ShouldBe("red");
+    }
+
+    [Test]
+    public void UnknownTypeExport_is_a_compile_error()
+    {
+        // The bare `import M.Type` path is reclassified from a folded module path into a type selector
+        // and validated against M's real export set — a non-existent type is a clear compile error,
+        // proving the bare type-selector path is wired (not silently dropped).
+        var ex = Should.Throw<InvalidOperationException>(() =>
+        {
+            var plan = ProjectSupport.BuildCompilationPlan(WriteProject(
+                "import Shapes.Missing\nAshes.IO.print(0)\n",
+                ShapesModule));
+            ProjectSupport.BuildCompilationSource(plan);
+        });
+        ex.Message.ShouldContain("does not export 'Missing'");
     }
 
     [Test]
@@ -158,6 +201,22 @@ public sealed class ImportSelectorTests
 
         await Should.ThrowAsync<Exception>(() =>
             RunAsync("import A.helper\nAshes.IO.print(secret)\n", modules));
+    }
+
+    [Test]
+    public async Task StandaloneBuiltinSelector_takes_effect_in_entry_expression()
+    {
+        // Single-file (non-project) mode resolves built-in selectors through the same selector-rename
+        // machinery, applied to the entry expression. `import Ashes.IO.print as p` must rewrite `p` to
+        // the qualified intrinsic call in the standalone-stitched source, just like in project mode.
+        var parsed = ProjectSupport.ParseImportHeader("import Ashes.IO.print as p\np(\"hi\")\n", "<mem>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports, parsed.ImportNames, "<mem>", parsed.ImportSelectors);
+        layout.Source.ShouldContain("Ashes.IO.print");
+        layout.Source.ShouldNotContain("p(");
+
+        var stdout = await CompileRunCaptureAsync(layout.Source, parsed.ImportNames.ToHashSet(), null);
+        stdout.TrimEnd().ShouldBe("hi");
     }
 
     [Test]
