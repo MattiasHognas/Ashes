@@ -1,43 +1,37 @@
-let rec rpcStartsWith = 
-    fun (text) -> 
-        fun (prefix) -> 
-            match Ashes.Text.uncons(prefix) with
-                | None -> true
-                | Some((ph, pt)) -> 
-                    match Ashes.Text.uncons(text) with
-                        | None -> false
-                        | Some((th, tt)) -> 
-                            if th == ph
-                            then rpcStartsWith(tt)(pt)
-                            else false
+let rec rpcStartsWith text prefix = 
+    match Ashes.Text.uncons(prefix) with
+        | None -> true
+        | Some((ph, pt)) -> 
+            match Ashes.Text.uncons(text) with
+                | None -> false
+                | Some((th, tt)) -> 
+                    if th == ph
+                    then rpcStartsWith(tt)(pt)
+                    else false
 
-let rec rpcDrop = 
-    fun (text) -> 
-        fun (n) -> 
-            if n <= 0
-            then text
-            else 
-                match Ashes.Text.uncons(text) with
-                    | None -> ""
-                    | Some((_h, t)) -> rpcDrop(t)(n - 1)
-
-let rec rpcStrLen = 
-    fun (text) -> 
-        match Ashes.Text.uncons(text) with
-            | None -> 0
-            | Some((_h, t)) -> 1 + rpcStrLen(t)
-
-let rec rpcTrimStart = 
-    fun (text) -> 
+let rec rpcDrop text n = 
+    if n <= 0
+    then text
+    else 
         match Ashes.Text.uncons(text) with
             | None -> ""
-            | Some((h, t)) -> 
-                if h == " "
+            | Some((_h, t)) -> rpcDrop(t)(n - 1)
+
+let rec rpcStrLen text = 
+    match Ashes.Text.uncons(text) with
+        | None -> 0
+        | Some((_h, t)) -> 1 + rpcStrLen(t)
+
+let rec rpcTrimStart text = 
+    match Ashes.Text.uncons(text) with
+        | None -> ""
+        | Some((h, t)) -> 
+            if h == " "
+            then rpcTrimStart(t)
+            else 
+                if h == "\t"
                 then rpcTrimStart(t)
-                else 
-                    if h == "\t"
-                    then rpcTrimStart(t)
-                    else text
+                else text
 
 let parseContentLength = 
     fun (line) -> 
@@ -52,29 +46,27 @@ let parseContentLength =
                         | Error(_) -> None
             else None
 
-let rec readHeaders = 
-    fun (contentLength) -> 
-        match Ashes.IO.readLine(Unit) with
-            | None -> Error("unexpected EOF reading RPC headers")
-            | Some(line) -> 
-                if line == ""
-                then 
-                    if contentLength < 0
-                    then Error("missing Content-Length header")
-                    else Ok(contentLength)
-                else 
-                    match parseContentLength(line) with
-                        | Some(n) -> readHeaders(n)
-                        | None -> readHeaders(contentLength)
+let rec readHeaders contentLength = 
+    match Ashes.IO.readLine(Unit) with
+        | None -> Error("unexpected EOF reading RPC headers")
+        | Some(line) -> 
+            if line == ""
+            then 
+                if contentLength < 0
+                then Error("missing Content-Length header")
+                else Ok(contentLength)
+            else 
+                match parseContentLength(line) with
+                    | Some(n) -> readHeaders(n)
+                    | None -> readHeaders(contentLength)
 
-let readMessage = 
-    fun (unit) -> 
-        match readHeaders(-1) with
-            | Error(e) -> Error(e)
-            | Ok(n) -> 
-                if n < 0
-                then Error("invalid Content-Length")
-                else Ashes.IO.readExact(n)
+let readMessage unit = 
+    match readHeaders(-1) with
+        | Error(e) -> Error(e)
+        | Ok(n) -> 
+            if n < 0
+            then Error("invalid Content-Length")
+            else Ashes.IO.readExact(n)
 
 let writeMessage = 
     fun (msg) -> 

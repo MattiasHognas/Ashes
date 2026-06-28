@@ -9,124 +9,115 @@ type Json(B, N, F, S) =
     | JsonObject(S, Json, Json)
     | JsonObjectEnd
 
-let rec skipWs = 
-    fun (text) -> 
-        match Ashes.Text.uncons(text) with
-            | None -> ""
-            | Some((h, t)) -> 
-                if h == " "
+let rec skipWs text = 
+    match Ashes.Text.uncons(text) with
+        | None -> ""
+        | Some((h, t)) -> 
+            if h == " "
+            then skipWs(t)
+            else 
+                if h == "\n"
                 then skipWs(t)
                 else 
-                    if h == "\n"
+                    if h == "\r"
                     then skipWs(t)
                     else 
-                        if h == "\r"
+                        if h == "\t"
                         then skipWs(t)
-                        else 
-                            if h == "\t"
-                            then skipWs(t)
-                            else text
+                        else text
 
-let rec consumeExact = 
-    fun (expected) -> 
-        fun (txt) -> 
-            match Ashes.Text.uncons(expected) with
-                | None -> Ok(txt)
-                | Some((want, wantRest)) -> 
-                    match Ashes.Text.uncons(txt) with
-                        | None -> Error("unexpected end of input")
-                        | Some((got, gotRest)) -> 
-                            if got == want
-                            then consumeExact(wantRest)(gotRest)
-                            else Error("unexpected character: " + got)
+let rec consumeExact expected txt = 
+    match Ashes.Text.uncons(expected) with
+        | None -> Ok(txt)
+        | Some((want, wantRest)) -> 
+            match Ashes.Text.uncons(txt) with
+                | None -> Error("unexpected end of input")
+                | Some((got, gotRest)) -> 
+                    if got == want
+                    then consumeExact(wantRest)(gotRest)
+                    else Error("unexpected character: " + got)
 
-let rec parseStrBody = 
-    fun (acc) -> 
-        fun (text) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> Error("unterminated string")
-                | Some((h, t)) -> 
-                    if h == "\""
-                    then Ok((acc, t))
-                    else 
-                        if h == "\\"
-                        then 
-                            match Ashes.Text.uncons(t) with
-                                | None -> Error("unterminated escape")
-                                | Some((esc, t2)) -> 
-                                    if esc == "\""
-                                    then parseStrBody(acc + "\"")(t2)
+let rec parseStrBody acc text = 
+    match Ashes.Text.uncons(text) with
+        | None -> Error("unterminated string")
+        | Some((h, t)) -> 
+            if h == "\""
+            then Ok((acc, t))
+            else 
+                if h == "\\"
+                then 
+                    match Ashes.Text.uncons(t) with
+                        | None -> Error("unterminated escape")
+                        | Some((esc, t2)) -> 
+                            if esc == "\""
+                            then parseStrBody(acc + "\"")(t2)
+                            else 
+                                if esc == "\\"
+                                then parseStrBody(acc + "\\")(t2)
+                                else 
+                                    if esc == "/"
+                                    then parseStrBody(acc + "/")(t2)
                                     else 
-                                        if esc == "\\"
-                                        then parseStrBody(acc + "\\")(t2)
+                                        if esc == "n"
+                                        then parseStrBody(acc + "\n")(t2)
                                         else 
-                                            if esc == "/"
-                                            then parseStrBody(acc + "/")(t2)
+                                            if esc == "r"
+                                            then parseStrBody(acc + "\r")(t2)
                                             else 
-                                                if esc == "n"
-                                                then parseStrBody(acc + "\n")(t2)
+                                                if esc == "t"
+                                                then parseStrBody(acc + "\t")(t2)
                                                 else 
-                                                    if esc == "r"
-                                                    then parseStrBody(acc + "\r")(t2)
+                                                    if esc == "b"
+                                                    then parseStrBody(acc + "\n")(t2)
                                                     else 
-                                                        if esc == "t"
+                                                        if esc == "f"
                                                         then parseStrBody(acc + "\t")(t2)
-                                                        else 
-                                                            if esc == "b"
-                                                            then parseStrBody(acc + "\n")(t2)
-                                                            else 
-                                                                if esc == "f"
-                                                                then parseStrBody(acc + "\t")(t2)
-                                                                else Error("unknown escape: \\" + esc)
-                        else parseStrBody(acc + h)(t)
+                                                        else Error("unknown escape: \\" + esc)
+                else parseStrBody(acc + h)(t)
 
-let parseQuotedStr = 
-    fun (text) -> 
-        match Ashes.Text.uncons(text) with
-            | None -> Error("expected '\"'")
-            | Some((h, t)) -> 
-                if h == "\""
-                then parseStrBody("")(t)
-                else Error("expected '\"' to open string")
+let parseQuotedStr text = 
+    match Ashes.Text.uncons(text) with
+        | None -> Error("expected '\"'")
+        | Some((h, t)) -> 
+            if h == "\""
+            then parseStrBody("")(t)
+            else Error("expected '\"' to open string")
 
-let rec takeNum = 
-    fun (acc) -> 
-        fun (text) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> (acc, "")
-                | Some((h, t)) -> 
-                    match h with
-                        | "0" -> takeNum(acc + h)(t)
-                        | "1" -> takeNum(acc + h)(t)
-                        | "2" -> takeNum(acc + h)(t)
-                        | "3" -> takeNum(acc + h)(t)
-                        | "4" -> takeNum(acc + h)(t)
-                        | "5" -> takeNum(acc + h)(t)
-                        | "6" -> takeNum(acc + h)(t)
-                        | "7" -> takeNum(acc + h)(t)
-                        | "8" -> takeNum(acc + h)(t)
-                        | "9" -> takeNum(acc + h)(t)
-                        | "-" -> takeNum(acc + h)(t)
-                        | "+" -> takeNum(acc + h)(t)
-                        | "." -> takeNum(acc + h)(t)
-                        | "e" -> takeNum(acc + h)(t)
-                        | "E" -> takeNum(acc + h)(t)
-                        | _ -> (acc, text)
+let rec takeNum acc text = 
+    match Ashes.Text.uncons(text) with
+        | None -> (acc, "")
+        | Some((h, t)) -> 
+            match h with
+                | "0" -> takeNum(acc + h)(t)
+                | "1" -> takeNum(acc + h)(t)
+                | "2" -> takeNum(acc + h)(t)
+                | "3" -> takeNum(acc + h)(t)
+                | "4" -> takeNum(acc + h)(t)
+                | "5" -> takeNum(acc + h)(t)
+                | "6" -> takeNum(acc + h)(t)
+                | "7" -> takeNum(acc + h)(t)
+                | "8" -> takeNum(acc + h)(t)
+                | "9" -> takeNum(acc + h)(t)
+                | "-" -> takeNum(acc + h)(t)
+                | "+" -> takeNum(acc + h)(t)
+                | "." -> takeNum(acc + h)(t)
+                | "e" -> takeNum(acc + h)(t)
+                | "E" -> takeNum(acc + h)(t)
+                | _ -> (acc, text)
 
-let rec hasFloatMark = 
-    fun (text) -> 
-        match Ashes.Text.uncons(text) with
-            | None -> false
-            | Some((h, t)) -> 
-                if h == "."
+let rec hasFloatMark text = 
+    match Ashes.Text.uncons(text) with
+        | None -> false
+        | Some((h, t)) -> 
+            if h == "."
+            then true
+            else 
+                if h == "e"
                 then true
                 else 
-                    if h == "e"
+                    if h == "E"
                     then true
-                    else 
-                        if h == "E"
-                        then true
-                        else hasFloatMark(t)
+                    else hasFloatMark(t)
 
 let rec parseValue = 
     fun (text) -> 
@@ -250,36 +241,33 @@ let rec parseValue =
                                                                     | Ok(n) -> Ok((JsonInt(n), numRest))
                                                                     | Error(e) -> Error(e)
 
-let parse = 
-    fun (text) -> 
-        match parseValue(text) with
-            | Error(e) -> Error(e)
-            | Ok((value, rest)) -> 
-                if skipWs(rest) == ""
-                then Ok(value)
-                else Error("trailing input after JSON value")
+let parse text = 
+    match parseValue(text) with
+        | Error(e) -> Error(e)
+        | Ok((value, rest)) -> 
+            if skipWs(rest) == ""
+            then Ok(value)
+            else Error("trailing input after JSON value")
 
-let rec escStr = 
-    fun (acc) -> 
-        fun (text) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> acc
-                | Some((h, t)) -> 
-                    if h == "\""
-                    then escStr(acc + "\\\"")(t)
+let rec escStr acc text = 
+    match Ashes.Text.uncons(text) with
+        | None -> acc
+        | Some((h, t)) -> 
+            if h == "\""
+            then escStr(acc + "\\\"")(t)
+            else 
+                if h == "\\"
+                then escStr(acc + "\\\\")(t)
+                else 
+                    if h == "\n"
+                    then escStr(acc + "\\n")(t)
                     else 
-                        if h == "\\"
-                        then escStr(acc + "\\\\")(t)
+                        if h == "\r"
+                        then escStr(acc + "\\r")(t)
                         else 
-                            if h == "\n"
-                            then escStr(acc + "\\n")(t)
-                            else 
-                                if h == "\r"
-                                then escStr(acc + "\\r")(t)
-                                else 
-                                    if h == "\t"
-                                    then escStr(acc + "\\t")(t)
-                                    else escStr(acc + h)(t)
+                            if h == "\t"
+                            then escStr(acc + "\\t")(t)
+                            else escStr(acc + h)(t)
 
 let rec stringify = 
     fun (json) -> 
@@ -324,35 +312,30 @@ let get =
                     | _ -> Error("not a JSON object")
             in go(json)
 
-let asStr = 
-    fun (json) -> 
-        match json with
-            | JsonStr(s) -> Ok(s)
-            | _ -> Error("not a JSON string")
+let asStr json = 
+    match json with
+        | JsonStr(s) -> Ok(s)
+        | _ -> Error("not a JSON string")
 
-let asInt = 
-    fun (json) -> 
-        match json with
-            | JsonInt(n) -> Ok(n)
-            | _ -> Error("not a JSON integer")
+let asInt json = 
+    match json with
+        | JsonInt(n) -> Ok(n)
+        | _ -> Error("not a JSON integer")
 
-let asFloat = 
-    fun (json) -> 
-        match json with
-            | JsonFloat(f) -> Ok(f)
-            | _ -> Error("not a JSON float")
+let asFloat json = 
+    match json with
+        | JsonFloat(f) -> Ok(f)
+        | _ -> Error("not a JSON float")
 
-let asBool = 
-    fun (json) -> 
-        match json with
-            | JsonBool(b) -> Ok(b)
-            | _ -> Error("not a JSON boolean")
+let asBool json = 
+    match json with
+        | JsonBool(b) -> Ok(b)
+        | _ -> Error("not a JSON boolean")
 
-let isNull = 
-    fun (json) -> 
-        match json with
-            | JsonNull -> true
-            | _ -> false
+let isNull json = 
+    match json with
+        | JsonNull -> true
+        | _ -> false
 
 let index = 
     fun (i) -> 

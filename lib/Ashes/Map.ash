@@ -4,68 +4,57 @@ type MapTree(K, V) =
 
 let empty = Empty
 
-let isEmpty = 
-    fun (map) -> 
-        match map with
-            | Empty -> true
-            | _ -> false
+let isEmpty map = 
+    match map with
+        | Empty -> true
+        | _ -> false
 
-let height = 
-    fun (map) -> 
-        match map with
-            | Empty -> 0
-            | Node(nodeHeight, _left, _key, _value, _right) -> nodeHeight
+let height map = 
+    match map with
+        | Empty -> 0
+        | Node(nodeHeight, _left, _key, _value, _right) -> nodeHeight
 
-let max = 
-    fun (left) -> 
-        fun (right) -> 
-            if left >= right
-            then left
-            else right
+let max left right = 
+    if left >= right
+    then left
+    else right
 
-let makeNode = 
-    fun (left) -> 
-        fun (key) -> 
-            fun (value) -> 
-                fun (right) -> Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
+let makeNode left key value right = Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
 
-let rotateLeft = 
-    fun (map) -> 
-        match map with
-            | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) -> makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
-            | _ -> map
+let rotateLeft map = 
+    match map with
+        | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) -> makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
+        | _ -> map
 
-let rotateRight = 
-    fun (map) -> 
-        match map with
-            | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) -> makeNode(leftLeft)(leftKey)(leftValue)(makeNode(leftRight)(key)(value)(right))
-            | _ -> map
+let rotateRight map = 
+    match map with
+        | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) -> makeNode(leftLeft)(leftKey)(leftValue)(makeNode(leftRight)(key)(value)(right))
+        | _ -> map
 
-let balance = 
-    fun (map) -> 
-        match map with
-            | Empty -> Empty
-            | Node(_height, left, key, value, right) -> 
-                let normalized = makeNode(left)(key)(value)(right)
-                in 
-                    if height(left) >= height(right) + 2
+let balance map = 
+    match map with
+        | Empty -> Empty
+        | Node(_height, left, key, value, right) -> 
+            let normalized = makeNode(left)(key)(value)(right)
+            in 
+                if height(left) >= height(right) + 2
+                then 
+                    match left with
+                        | Empty -> normalized
+                        | Node(_leftHeight, leftLeft, _leftKey, _leftValue, leftRight) -> 
+                            if height(leftLeft) >= height(leftRight)
+                            then rotateRight(normalized)
+                            else rotateRight(makeNode(rotateLeft(left))(key)(value)(right))
+                else 
+                    if height(right) >= height(left) + 2
                     then 
-                        match left with
+                        match right with
                             | Empty -> normalized
-                            | Node(_leftHeight, leftLeft, _leftKey, _leftValue, leftRight) -> 
-                                if height(leftLeft) >= height(leftRight)
-                                then rotateRight(normalized)
-                                else rotateRight(makeNode(rotateLeft(left))(key)(value)(right))
-                    else 
-                        if height(right) >= height(left) + 2
-                        then 
-                            match right with
-                                | Empty -> normalized
-                                | Node(_rightHeight, rightLeft, _rightKey, _rightValue, rightRight) -> 
-                                    if height(rightRight) >= height(rightLeft)
-                                    then rotateLeft(normalized)
-                                    else rotateLeft(makeNode(left)(key)(value)(rotateRight(right)))
-                        else normalized
+                            | Node(_rightHeight, rightLeft, _rightKey, _rightValue, rightRight) -> 
+                                if height(rightRight) >= height(rightLeft)
+                                then rotateLeft(normalized)
+                                else rotateLeft(makeNode(left)(key)(value)(rotateRight(right)))
+                    else normalized
 
 let get = 
     fun (compare) -> 
@@ -84,13 +73,10 @@ let get =
                                 else go(right)
             in go
 
-let contains = 
-    fun (compare) -> 
-        fun (searchKey) -> 
-            fun (map) -> 
-                match get(compare)(searchKey)(map) with
-                    | None -> false
-                    | Some(_) -> true
+let contains compare searchKey map = 
+    match get(compare)(searchKey)(map) with
+        | None -> false
+        | Some(_) -> true
 
 let set = 
     fun (compare) -> 
@@ -112,11 +98,10 @@ let set =
 
 let insert = set
 
-let rec size = 
-    fun (map) -> 
-        match map with
-            | Empty -> 0
-            | Node(_height, left, _key, _value, right) -> 1 + size(left) + size(right)
+let rec size map = 
+    match map with
+        | Empty -> 0
+        | Node(_height, left, _key, _value, right) -> 1 + size(left) + size(right)
 
 let foldLeft = 
     fun (folder) -> 

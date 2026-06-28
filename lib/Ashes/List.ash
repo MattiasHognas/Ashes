@@ -34,15 +34,13 @@ let map =
                 | head :: tail -> f(head) :: mapGo(tail)
         in mapGo
 
-let rec filter = 
-    fun (predicate) -> 
-        fun (xs) -> 
-            match xs with
-                | [] -> []
-                | head :: tail -> 
-                    if predicate(head)
-                    then head :: filter(predicate)(tail)
-                    else filter(predicate)(tail)
+let rec filter predicate xs = 
+    match xs with
+        | [] -> []
+        | head :: tail -> 
+            if predicate(head)
+            then head :: filter(predicate)(tail)
+            else filter(predicate)(tail)
 
 let append = 
     fun (left) -> 
@@ -53,20 +51,17 @@ let append =
                     | head :: tail -> head :: go(tail)
             in go(left)
 
-let isEmpty = 
-    fun (xs) -> 
-        match xs with
-            | [] -> true
-            | _ :: _ -> false
+let isEmpty xs = 
+    match xs with
+        | [] -> true
+        | _ :: _ -> false
 
-let head = 
-    fun (xs) -> 
-        match xs with
-            | [] -> None
-            | item :: _ -> Some(item)
+let head xs = 
+    match xs with
+        | [] -> None
+        | item :: _ -> Some(item)
 
-let tail = 
-    fun (xs) -> 
-        match xs with
-            | [] -> None
-            | _ :: rest -> Some(rest)
+let tail xs = 
+    match xs with
+        | [] -> None
+        | _ :: rest -> Some(rest)
