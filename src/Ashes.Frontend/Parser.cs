@@ -609,7 +609,14 @@ public sealed class Parser
         // makes the whole construct a nested `let ... in ...` expression that requires an outer
         // `in`; it is never a flat top-level declaration (see ParseProgram). Parenthesizing the
         // value escapes this — `let x = (let y = 2 in y)` is a flat declaration.
-        var valueLeadsWithLet = _current.Kind is TokenKind.Let or TokenKind.LetBang or TokenKind.LetQuestion;
+        //
+        // ML-style parameter sugar also escapes it: `let f x = let g = ... in g` has sugar params,
+        // so the desugared value is a `fun (x) -> (let ... in ...)` Lambda, not a bare `let`. The
+        // function's body merely *happens* to lead with `let..in`, which is unambiguous (the `in`
+        // belongs to the body) — it is a flat function declaration, never a pyramid head awaiting an
+        // outer `in`. Only a paramless binding leading with `let` is the ambiguous pyramid case.
+        var valueLeadsWithLet = sugarParams.Count == 0
+            && _current.Kind is TokenKind.Let or TokenKind.LetBang or TokenKind.LetQuestion;
 
         var previousSuppression = _suppressLetWhitespaceArgument;
         var previousDeclColumn = _topLevelDeclColumn;
