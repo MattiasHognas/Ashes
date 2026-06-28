@@ -377,12 +377,16 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Copies a heap object to a fresh allocation starting at the arena watermark.
-    /// Called AFTER <see cref="EmitRestoreArenaState"/> but BEFORE
-    /// <see cref="EmitReclaimArenaChunks"/>: the cursor is at the watermark W, and
-    /// OS chunks have not yet been freed, so the source bytes at
-    /// <paramref name="srcTemp"/> are still physically readable. Because dest ≤ src,
-    /// a forward memcpy is always safe with no destructive overlap.
+    /// Copies a heap object to a fresh allocation at the current arena cursor.
+    /// Used by the two-pass TCO back-edge copy-out (see the curried self-call path
+    /// in <c>Lowering.cs</c>): in the up-pass it runs before <see cref="EmitRestoreArenaState"/>
+    /// with the cursor above all sources; in the down-pass it runs after the reset
+    /// (cursor at the watermark W) but before <see cref="EmitReclaimArenaChunks"/>,
+    /// so OS chunks are not yet freed and the source bytes at <paramref name="srcTemp"/>
+    /// remain physically readable. The two-pass caller guarantees the destination
+    /// block never overlaps any not-yet-read source, so the forward memcpy is always
+    /// safe. (A single round of down-copies is NOT safe with two or more fresh heap
+    /// args: compacting the first arg to W can clobber a later arg's source.)
     ///
     /// <para>
     /// For strings (<paramref name="staticSizeBytes"/> == -1): reads the length field

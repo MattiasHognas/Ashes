@@ -412,6 +412,34 @@ public sealed partial class Lowering
     /// </list>
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Emits the copy-out instruction for a single TCO back-edge heap argument,
+    /// dispatching on the <see cref="CopyOutKind"/> classified by
+    /// <see cref="GetTcoCopyOutKind"/>. Used by both phases of the two-pass
+    /// back-edge copy-out (up to scratch above the cursor, then down to the
+    /// watermark). <paramref name="kind"/> must not be <see cref="CopyOutKind.None"/>.
+    /// </summary>
+    private void EmitTcoCopyOut(CopyOutKind kind, int destTemp, int srcTemp, int staticSizeBytes, IrInst.ListHeadCopyKind listHeadCopy)
+    {
+        switch (kind)
+        {
+            case CopyOutKind.Shallow:
+                Emit(new IrInst.CopyOutArena(destTemp, srcTemp, staticSizeBytes));
+                break;
+            case CopyOutKind.List:
+                Emit(new IrInst.CopyOutList(destTemp, srcTemp, listHeadCopy));
+                break;
+            case CopyOutKind.Closure:
+                Emit(new IrInst.CopyOutClosure(destTemp, srcTemp));
+                break;
+            case CopyOutKind.TcoListCell:
+                Emit(new IrInst.CopyOutTcoListCell(destTemp, srcTemp, listHeadCopy));
+                break;
+            default:
+                throw new System.InvalidOperationException($"EmitTcoCopyOut called with non-copyable kind {kind}.");
+        }
+    }
+
     private CopyOutKind GetTcoCopyOutKind(TypeRef type, out int staticSizeBytes, out IrInst.ListHeadCopyKind listHeadCopy)
     {
         var pruned = Prune(type);
