@@ -973,7 +973,40 @@ public static class ProjectSupport
             referencedNames,
             exportedNames);
 
-        return ApplyAliases(entryShape.RawExpressionSource, aliases);
+        // A flat top-level entry parses as a flat-declaration block (`decl decl ... trailingExpr`,
+        // folded into nested lets by the parser inside the stitched parentheses). Wrapping it in the
+        // ordinary `let alias = value in <body>` prelude would make the alias body an ordinary
+        // expression, so the following flat declarations would no longer be folded and parsing fails.
+        // Emit the alias prelude as flat declarations instead so the whole entry stays one flat block.
+        return entryShape.IsFlat
+            ? ApplyAliasesAsFlatDeclarations(entryShape.RawExpressionSource, aliases)
+            : ApplyAliases(entryShape.RawExpressionSource, aliases);
+    }
+
+    /// <summary>
+    /// Prepends the alias prelude as flat top-level declarations (no <c>in</c>) rather than wrapping
+    /// the source in nested <c>let ... in</c> bindings. Used for the flat top-level entry, whose body
+    /// is itself a flat-declaration block: the synthetic alias bindings join that block so the parser
+    /// folds them together with the entry's own declarations and trailing expression.
+    /// </summary>
+    private static string ApplyAliasesAsFlatDeclarations(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> aliases)
+    {
+        var trimmed = source.Trim();
+        if (aliases.Count == 0)
+        {
+            return trimmed;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var alias in aliases)
+        {
+            builder.Append("let ").Append(alias.Key).Append(" = ").Append(alias.Value).Append('\n');
+        }
+
+        builder.Append(trimmed);
+        return builder.ToString();
     }
 
     private static string BuildModuleBindingPrefix(
@@ -1834,7 +1867,36 @@ public static class ProjectSupport
 
         var names = new HashSet<string>(StringComparer.Ordinal);
         var qualifiedReferences = new HashSet<QualifiedReference>();
-        Visit(program.Body);
+
+        // A flat top-level entry parses as a sequence of declarations (Items) followed by an
+        // optional trailing expression (Body). Short qualified references can live inside a flat
+        // decl's value (e.g. `let n = List.length(xs)`), so the alias prelude must cover those
+        // values in addition to the trailing expression — otherwise they reach lowering as an
+        // unresolved QualifiedVar and fail with 'Unknown module'.
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    Visit(letDecl.Value);
+                    break;
+                case TopLevelItem.RecGroup recGroup:
+                    foreach (var binding in recGroup.Bindings)
+                    {
+                        Visit(binding.Value);
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (program.Body is not null)
+        {
+            Visit(program.Body);
+        }
+
         return new ReferencedNames(names, qualifiedReferences);
 
         void Visit(Expr expr)

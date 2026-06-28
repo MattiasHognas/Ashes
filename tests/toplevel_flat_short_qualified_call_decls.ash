@@ -1,3 +1,4 @@
+// expect: 14
 import Ashes.IO
 import Ashes.List
 import Ashes.Maybe
@@ -14,20 +15,14 @@ let count = List.length(large)
 
 let maybeTop = List.head(List.reverse(large))
 
-let maybeAdjusted = 
+let adjusted = 
     Maybe.map(fun (x) -> x + count)(maybeTop)
 
-let safeValue = 
-    if Maybe.isSome(maybeAdjusted)
-    then Maybe.getOrElse(0)(maybeAdjusted)
-    else 0
+let safeValue = Maybe.getOrElse(0)(adjusted)
 
 let resultValue = 
     Result.map(fun (x) -> x + 1)(Ok(safeValue))
 
-if Result.isOk(resultValue)
-then 
-    match resultValue with
-        | Ok(value) -> print(value)
-        | Error(_) -> print(0)
-else print(0)
+let final = Result.getOrElse(0)(resultValue)
+
+print(final)
