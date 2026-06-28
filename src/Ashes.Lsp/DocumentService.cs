@@ -27,9 +27,16 @@ public static partial class DocumentService
 
     public readonly record struct SemanticTokenItem(int Line, int Character, int Length, int TokenType, int TokenModifiers);
 
-    private readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Alias);
+    private readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Selector, string? Alias)
+    {
+        /// <summary>
+        /// The unqualified name this import binds: the alias when present, otherwise the selected
+        /// binding/type. Only meaningful for selector imports (<see cref="Selector"/> is non-null).
+        /// </summary>
+        public string LocalName => Alias ?? Selector ?? ModuleName;
+    }
 
-    private readonly record struct HeaderLineItem(string Text, string? ModuleName, string? Alias);
+    private readonly record struct HeaderLineItem(string Text, string? ModuleName, string? Selector, string? Alias);
 
     private readonly record struct LineAnchor(string Signature, int Occurrence);
 
@@ -59,6 +66,9 @@ public static partial class DocumentService
         IReadOnlySet<string> ImportedStdModules);
 
     private readonly record struct DefinitionLocation(string? FilePath, TextSpan Span);
+
+    // Diagnostic code for conflicting unqualified import selectors (mirrors the compiler's ASH016).
+    private const string ConflictingImportSelectorsCode = "ASH016";
 
     // Token type indices matching SemanticTokenTypes legend order
     public const int TokenTypeType = 0;
@@ -104,9 +114,12 @@ public static partial class DocumentService
             var match = ImportLineRegex.Match(lineContent);
             if (match.Success)
             {
-                var alias = match.Groups[2].Success ? match.Groups[2].Value : null;
-                imports.Add(new ImportItem(TextSpan.FromBounds(lineStart, lineStart + lineContent.Length), match.Groups[1].Value, alias));
-                headerLines.Add(new HeaderLineItem(lineContent, match.Groups[1].Value, alias));
+                // Group 1 is the module path, group 2 an optional lowercase binding selector, group 3
+                // an optional alias (matching ProjectSupport.ImportModulePattern).
+                var selector = match.Groups[2].Success ? match.Groups[2].Value : null;
+                var alias = match.Groups[3].Success ? match.Groups[3].Value : null;
+                imports.Add(new ImportItem(TextSpan.FromBounds(lineStart, lineStart + lineContent.Length), match.Groups[1].Value, selector, alias));
+                headerLines.Add(new HeaderLineItem(lineContent, match.Groups[1].Value, selector, alias));
                 pos = nextPos;
                 continue;
             }
@@ -123,7 +136,7 @@ public static partial class DocumentService
 
             if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal))
             {
-                headerLines.Add(new HeaderLineItem(lineContent, null, null));
+                headerLines.Add(new HeaderLineItem(lineContent, null, null, null));
                 pos = nextPos;
                 continue;
             }
@@ -137,6 +150,45 @@ public static partial class DocumentService
         }
 
         return new ImportHeaderInfo(source[pos..], pos, headerLines, imports, diagnostics);
+    }
+
+    private static string FormatImportLine(string moduleName, string? selector, string? alias)
+    {
+        var target = selector is null ? moduleName : $"{moduleName}.{selector}";
+        return alias is null ? $"import {target}" : $"import {target} as {alias}";
+    }
+
+    /// <summary>
+    /// Detects the <c>ASH016</c> condition for the standalone (non-project) path: two unqualified
+    /// import selectors that bind the same local name to different exports. Mirrors the compiler's
+    /// <c>ProjectSupport.ValidateSelectorConflicts</c> — importing the same export twice is allowed.
+    /// </summary>
+    private static DiagnosticItem? DetectSelectorConflict(IReadOnlyList<ImportItem> imports)
+    {
+        var byLocalName = new Dictionary<string, ImportItem>(StringComparer.Ordinal);
+        foreach (var import in imports)
+        {
+            if (import.Selector is null)
+            {
+                continue;
+            }
+
+            var localName = import.LocalName;
+            if (byLocalName.TryGetValue(localName, out var existing)
+                && (!string.Equals(existing.ModuleName, import.ModuleName, StringComparison.Ordinal)
+                    || !string.Equals(existing.Selector, import.Selector, StringComparison.Ordinal)))
+            {
+                return new DiagnosticItem(
+                    import.Span.Start,
+                    import.Span.End,
+                    $"Conflicting unqualified import selectors for '{localName}'.",
+                    ConflictingImportSelectorsCode);
+            }
+
+            byLocalName[localName] = import;
+        }
+
+        return null;
     }
 
     private static string ReinsertStandaloneCommentLines(string originalSource, string formattedSource, string lineEnding)
@@ -474,6 +526,19 @@ public static partial class DocumentService
         }
 
         var standaloneImportDiagnostics = ValidateStandaloneImports(header.Imports);
+        if (standaloneImportDiagnostics.Count == 0 && DetectSelectorConflict(header.Imports) is { } selectorConflict)
+        {
+            return new AnalysisContext(
+                header.StrippedSource,
+                header.StrippedSource,
+                header.HeaderOffset,
+                0,
+                0,
+                null,
+                null,
+                [selectorConflict]);
+        }
+
         var importedStdModules = standaloneImportDiagnostics.Count == 0
             ? BuildImportedStdModules(header.Imports)
             : null;
@@ -507,7 +572,9 @@ public static partial class DocumentService
         Dictionary<string, string>? aliases = null;
         foreach (var import in imports)
         {
-            if (import.Alias is not null)
+            // Only whole-module imports introduce a module alias; on a selector import the alias
+            // renames the imported binding/type, not the module qualifier.
+            if (import.Selector is null && import.Alias is not null)
             {
                 aliases ??= new Dictionary<string, string>(StringComparer.Ordinal);
                 aliases[import.Alias] = import.ModuleName;
@@ -632,9 +699,7 @@ public static partial class DocumentService
             formattingOptions.NewLine,
             header.HeaderLines.Select(line => line.ModuleName is null
                 ? line.Text
-                : line.Alias is not null
-                    ? $"import {line.ModuleName} as {line.Alias}"
-                    : $"import {line.ModuleName}"));
+                : FormatImportLine(line.ModuleName, line.Selector, line.Alias)));
 
         return headerLines + formattingOptions.NewLine + formattedBody;
     }
@@ -736,14 +801,21 @@ public static partial class DocumentService
 
         var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
 
-        if (position is not null)
+        var strippedDiag = new Diagnostics();
+        var strippedProgram = new Parser(header.StrippedSource, strippedDiag).ParseProgram();
+        if (strippedDiag.StructuredErrors.Count == 0)
         {
-            var strippedPosition = position.Value - header.HeaderOffset;
-            if (strippedPosition >= 0 && strippedPosition <= header.StrippedSource.Length)
+            // Top-level let/type names are file-scope symbols (Model-A): expose them all regardless of
+            // the cursor position, since each is visible to everything that follows it.
+            foreach (var name in CollectTopLevelDeclNames(strippedProgram))
             {
-                var strippedDiag = new Diagnostics();
-                var strippedProgram = new Parser(header.StrippedSource, strippedDiag).ParseProgram();
-                if (strippedDiag.StructuredErrors.Count == 0)
+                completionNames.Add(name);
+            }
+
+            if (position is not null)
+            {
+                var strippedPosition = position.Value - header.HeaderOffset;
+                if (strippedPosition >= 0 && strippedPosition <= header.StrippedSource.Length)
                 {
                     foreach (var name in CollectVisibleBindingsInProgram(strippedProgram, strippedPosition))
                     {
@@ -758,9 +830,88 @@ public static partial class DocumentService
             .ToArray();
     }
 
+    /// <summary>
+    /// Enumerates the names a program's top-level declarations bind: <c>let</c>/<c>let rec</c>
+    /// bindings, every member of a mutual-recursion group, and <c>type</c> names.
+    /// </summary>
+    private static IEnumerable<string> CollectTopLevelDeclNames(Frontend.Program program)
+    {
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    yield return letDecl.Name;
+                    break;
+
+                case TopLevelItem.RecGroup group:
+                    foreach (var (name, _) in group.Bindings)
+                    {
+                        yield return name;
+                    }
+
+                    break;
+
+                case TopLevelItem.Type type:
+                    yield return type.Decl.Name;
+                    break;
+            }
+        }
+    }
+
     private static IReadOnlyCollection<string> CollectVisibleBindingsInProgram(Frontend.Program program, int position)
     {
-        return CollectVisibleBindingsInExpr(program.Body, position, new Dictionary<string, byte>(StringComparer.Ordinal));
+        // Walk the top-level items in source order (Model-A): each binding becomes visible to the
+        // values of subsequent declarations and to the trailing expression, never to earlier ones.
+        var scope = new Dictionary<string, byte>(StringComparer.Ordinal);
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    if (letDecl.IsRecursive)
+                    {
+                        scope[letDecl.Name] = 0;
+                    }
+
+                    var inLetValue = CollectVisibleBindingsInExpr(letDecl.Value, position, scope);
+                    if (inLetValue.Count > 0)
+                    {
+                        return inLetValue;
+                    }
+
+                    scope[letDecl.Name] = 0;
+                    break;
+
+                case TopLevelItem.RecGroup group:
+                    foreach (var (name, _) in group.Bindings)
+                    {
+                        scope[name] = 0;
+                    }
+
+                    foreach (var (_, value) in group.Bindings)
+                    {
+                        var inBinding = CollectVisibleBindingsInExpr(value, position, scope);
+                        if (inBinding.Count > 0)
+                        {
+                            return inBinding;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        // A flat top-level file may have no trailing expression (the parser folds a bare trailing
+        // expression into the preceding declaration's value), so the body can be absent.
+        Expr? body = program.Body;
+        if (body is null)
+        {
+            return scope.Keys.ToArray();
+        }
+
+        var inBody = CollectVisibleBindingsInExpr(body, position, scope);
+        return inBody.Count > 0 ? inBody : scope.Keys.ToArray();
     }
 
     private static IReadOnlyCollection<string> CollectVisibleBindingsInExpr(
@@ -1023,10 +1174,10 @@ public static partial class DocumentService
 
     private static string? ResolveCompletionModuleName(string qualifier, IReadOnlyList<ImportItem> imports)
     {
-        // Check alias matches first
+        // Check whole-module alias matches first (selector imports rename a binding, not a module).
         foreach (var import in imports)
         {
-            if (import.Alias is not null && string.Equals(import.Alias, qualifier, StringComparison.Ordinal))
+            if (import.Selector is null && import.Alias is not null && string.Equals(import.Alias, qualifier, StringComparison.Ordinal))
             {
                 return import.ModuleName;
             }
@@ -1228,7 +1379,51 @@ public static partial class DocumentService
         string? currentFilePath,
         IReadOnlyList<ImportItem> imports)
     {
-        return ResolveDefinitionInExpr(program.Body, position, currentFilePath, imports, new Dictionary<string, DefinitionLocation>(StringComparer.Ordinal));
+        // Resolve through the top-level items first (Model-A): a binding declared earlier is visible
+        // to the values of later declarations and to the trailing expression. Top-level binding names
+        // have no dedicated span, so a reference resolves to the bound value.
+        var scope = new Dictionary<string, DefinitionLocation>(StringComparer.Ordinal);
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    var letDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(letDecl.Value));
+                    if (letDecl.IsRecursive)
+                    {
+                        scope[letDecl.Name] = letDefinition;
+                    }
+
+                    var inLetValue = ResolveDefinitionInExpr(letDecl.Value, position, currentFilePath, imports, scope);
+                    if (inLetValue is not null)
+                    {
+                        return inLetValue;
+                    }
+
+                    scope[letDecl.Name] = letDefinition;
+                    break;
+
+                case TopLevelItem.RecGroup group:
+                    foreach (var (name, value) in group.Bindings)
+                    {
+                        scope[name] = new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(value));
+                    }
+
+                    foreach (var (_, value) in group.Bindings)
+                    {
+                        var inBinding = ResolveDefinitionInExpr(value, position, currentFilePath, imports, scope);
+                        if (inBinding is not null)
+                        {
+                            return inBinding;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        Expr? body = program.Body;
+        return body is null ? null : ResolveDefinitionInExpr(body, position, currentFilePath, imports, scope);
     }
 
     private static DefinitionLocation? ResolveDefinitionInExpr(
@@ -1580,10 +1775,10 @@ public static partial class DocumentService
         string? currentFilePath,
         IReadOnlyList<ImportItem> imports)
     {
-        // Check alias matches first
+        // Check whole-module alias matches first (selector imports rename a binding, not a module).
         foreach (var import in imports)
         {
-            if (import.Alias is not null && string.Equals(import.Alias, moduleName, StringComparison.Ordinal))
+            if (import.Selector is null && import.Alias is not null && string.Equals(import.Alias, moduleName, StringComparison.Ordinal))
             {
                 return ResolveModuleExportDefinition(import.ModuleName, exportName, currentFilePath);
             }
@@ -1688,18 +1883,58 @@ public static partial class DocumentService
             return null;
         }
 
-        if (TryFindBindingDefinition(program.Body, exportName, module.FilePath, out var bindingDefinition))
+        // A module's exports are its top-level let/type declarations; search those first.
+        if (TryFindTopLevelExport(program, exportName, module.FilePath, out var topLevelDefinition))
+        {
+            return new DefinitionLocation(module.FilePath, TextSpan.FromBounds(topLevelDefinition.Span.Start + header.HeaderOffset, topLevelDefinition.Span.End + header.HeaderOffset));
+        }
+
+        // Fall back to the nested let ... in (pyramid) style for modules that still use it.
+        Expr? body = program.Body;
+        if (body is not null && TryFindBindingDefinition(body, exportName, module.FilePath, out var bindingDefinition))
         {
             return new DefinitionLocation(module.FilePath, TextSpan.FromBounds(bindingDefinition.Span.Start + header.HeaderOffset, bindingDefinition.Span.End + header.HeaderOffset));
         }
 
-        if (string.Equals(exportName, module.ModuleName, StringComparison.Ordinal))
+        if (body is not null && string.Equals(exportName, module.ModuleName, StringComparison.Ordinal))
         {
-            var bodySpan = AstSpans.GetOrDefault(program.Body);
+            var bodySpan = AstSpans.GetOrDefault(body);
             return new DefinitionLocation(module.FilePath, TextSpan.FromBounds(bodySpan.Start + header.HeaderOffset, bodySpan.End + header.HeaderOffset));
         }
 
         return null;
+    }
+
+    private static bool TryFindTopLevelExport(Frontend.Program program, string exportName, string? filePath, out DefinitionLocation definition)
+    {
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl when string.Equals(letDecl.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(letDecl.Value));
+                    return true;
+
+                case TopLevelItem.RecGroup group:
+                    foreach (var (name, value) in group.Bindings)
+                    {
+                        if (string.Equals(name, exportName, StringComparison.Ordinal))
+                        {
+                            definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(value));
+                            return true;
+                        }
+                    }
+
+                    break;
+
+                case TopLevelItem.Type type when string.Equals(type.Decl.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(type.Decl));
+                    return true;
+            }
+        }
+
+        definition = default;
+        return false;
     }
 
     private static bool TryFindBindingDefinition(Expr expr, string name, string? filePath, out DefinitionLocation definition)
