@@ -1,19 +1,15 @@
 // Two polymorphic helpers as flat top-level `let`s, then a sequence of
 // top-level uses at different types, ending in a trailing expression.
 
-let firstOr = 
-    fun (xs) -> 
-        fun (def) -> 
-            match xs with
-                | [] -> def
-                | x :: _ -> x
+let firstOr xs def = 
+    match xs with
+        | [] -> def
+        | x :: _ -> x
 
-let unwrapOr = 
-    fun (opt) -> 
-        fun (def) -> 
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def = 
+    match opt with
+        | None -> def
+        | Some(x) -> x
 
 let _a = firstOr([1, 2, 3])(0)
 

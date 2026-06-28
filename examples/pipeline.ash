@@ -1,10 +1,8 @@
 // Flat top-level `let` declarations feeding a final pipeline expression.
 
-let inc = 
-    fun (x) -> x + 1
+let inc x = x + 1
 
-let double = 
-    fun (x) -> x + x
+let double x = x + x
 
 let result = 
     1
