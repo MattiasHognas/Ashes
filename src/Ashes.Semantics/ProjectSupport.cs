@@ -448,9 +448,10 @@ public static class ProjectSupport
             }
 
             var (imports, source, aliases, selectors) = ParseImports(fullPath);
-            (imports, selectors) = NormalizeTypeSelectors(imports, selectors, IsResolvableModule);
-            source = ApplyIntrinsicSelectorRenames(source, selectors);
-            var module = new ProjectModule(moduleName, fullPath, source, imports, aliases, selectors);
+            var aliasMap = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
+            (imports, selectors) = NormalizeTypeSelectors(imports, selectors, aliasMap, IsResolvableModule);
+            source = ApplySelectorRenames(source, selectors);
+            var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
             resolvedByPath[fullPath] = module;
             if (!resolvedByModuleName.ContainsKey(moduleName))
             {
@@ -488,6 +489,7 @@ public static class ProjectSupport
     private static (IReadOnlyList<string> Imports, IReadOnlyList<ImportSelector> Selectors) NormalizeTypeSelectors(
         IReadOnlyList<string> imports,
         IReadOnlyList<ImportSelector> selectors,
+        IDictionary<string, string> aliases,
         Func<string, bool> isResolvableModule)
     {
         var newImports = new List<string>();
@@ -502,13 +504,37 @@ public static class ProjectSupport
                 var leaf = import[(lastDot + 1)..];
                 if (isResolvableModule(parent))
                 {
-                    newSelectors.Add(new ImportSelector(parent, leaf, leaf));
-                    newImports.Add(parent);
+                    // An uppercase final segment the regex folded into the module path is a type selector
+                    // when the full path is not itself a resolvable module but its parent is. For the
+                    // aliased form (`import Parent.Type as T`) the parser could not tell selector from
+                    // module qualifier, so it tentatively recorded a whole-module alias `T -> Parent.Type`.
+                    // Claim that alias here as the selector's unqualified local name and drop it from the
+                    // module-qualifier set, so it drives the aliased-type rename rather than dangling as a
+                    // bogus qualifier (which never resolves).
+                    var localName = leaf;
+                    var aliasKey = aliases
+                        .FirstOrDefault(entry => string.Equals(entry.Value, import, StringComparison.Ordinal))
+                        .Key;
+                    if (aliasKey is not null)
+                    {
+                        localName = aliasKey;
+                        aliases.Remove(aliasKey);
+                    }
+
+                    newSelectors.Add(new ImportSelector(parent, leaf, localName));
+                    if (!newImports.Contains(parent, StringComparer.Ordinal))
+                    {
+                        newImports.Add(parent);
+                    }
+
                     continue;
                 }
             }
 
-            newImports.Add(import);
+            if (!newImports.Contains(import, StringComparer.Ordinal))
+            {
+                newImports.Add(import);
+            }
         }
 
         ValidateSelectorConflicts(newSelectors);
@@ -565,7 +591,7 @@ public static class ProjectSupport
         var entryModule = new ProjectModule(
             "Main",
             entryFilePath,
-            ApplyIntrinsicSelectorRenames(sourceWithoutImports, entrySelectors),
+            ApplySelectorRenames(sourceWithoutImports, entrySelectors),
             importNames.ToList(),
             new Dictionary<string, string>(),
             entrySelectors);
@@ -593,7 +619,10 @@ public static class ProjectSupport
                 $"Could not resolve module '{importName}'. User-defined module imports require project mode via ashes.json.");
         }
 
-        return BuildCompilationLayoutCore(orderedModules, entryModule, sourceWithoutImports);
+        // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
+        // realized by in-place renaming) rather than the raw imports-stripped source, so single-file
+        // selector imports take effect in the entry expression just as they do in project mode.
+        return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
 
         void Visit(ProjectModule module)
         {
@@ -838,12 +867,21 @@ public static class ProjectSupport
         BuiltinRegistry.TryGetModule(moduleName, out var module) && module.Members.ContainsKey(exportName);
 
     /// <summary>
-    /// Rewrites a module's source so each intrinsic selector's unqualified name (the alias, or the
-    /// export name) becomes the qualified reference <c>Module.member</c>, which the lowering resolves as
-    /// a direct intrinsic call. Non-intrinsic selectors are untouched (they are handled as value
-    /// aliases during stitching).
+    /// Rewrites a module's source to realize the selectors that are implemented by in-place identifier
+    /// renaming rather than by injected value aliases:
+    /// <list type="bullet">
+    /// <item>Intrinsic value selectors (e.g. <c>Ashes.IO.print</c>) — the unqualified name becomes the
+    /// qualified reference <c>Module.member</c>, which the lowering resolves as a direct intrinsic call
+    /// (an intrinsic cannot be bound as a first-class <c>let</c> value).</item>
+    /// <item>Type selectors with an alias (<c>import M.Type as T</c>) — type declarations are hoisted to
+    /// the top of the combined source under their <em>real</em> name, so the unqualified alias is
+    /// rewritten back to the real type name <c>Type</c>. The bare form (<c>import M.Type</c>) needs no
+    /// rewrite: the unqualified name already <em>is</em> the real name.</item>
+    /// </list>
+    /// Non-intrinsic value selectors are untouched here (they are handled as injected value aliases
+    /// during stitching by <see cref="BuildVisibleAliases"/>).
     /// </summary>
-    private static string ApplyIntrinsicSelectorRenames(string source, IReadOnlyList<ImportSelector> selectors)
+    private static string ApplySelectorRenames(string source, IReadOnlyList<ImportSelector> selectors)
     {
         var renames = new List<KeyValuePair<string, string>>();
         foreach (var selector in selectors)
@@ -853,6 +891,13 @@ public static class ProjectSupport
                 renames.Add(new KeyValuePair<string, string>(
                     selector.LocalName,
                     $"{selector.ModuleName}.{selector.ExportName}"));
+            }
+            else if (!IsValueExportName(selector.ExportName)
+                && !string.Equals(selector.LocalName, selector.ExportName, StringComparison.Ordinal))
+            {
+                renames.Add(new KeyValuePair<string, string>(
+                    selector.LocalName,
+                    selector.ExportName));
             }
         }
 
@@ -1670,7 +1715,7 @@ public static class ProjectSupport
         module = new ProjectModule(
             moduleName,
             $"<std:{moduleName}>",
-            ApplyIntrinsicSelectorRenames(parsed.SourceWithoutImports, parsed.ImportSelectors),
+            ApplySelectorRenames(parsed.SourceWithoutImports, parsed.ImportSelectors),
             parsed.ImportNames,
             parsed.ImportAliases,
             parsed.ImportSelectors);
