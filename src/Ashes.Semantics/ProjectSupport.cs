@@ -22,7 +22,21 @@ public sealed record ProjectModule(
     string FilePath,
     string Source,
     IReadOnlyList<string> Imports,
-    IReadOnlyDictionary<string, string> Aliases
+    IReadOnlyDictionary<string, string> Aliases,
+    IReadOnlyList<ImportSelector> Selectors
+);
+
+/// <summary>
+/// A selector import (<c>import M.name</c> / <c>import M.Type</c>, optionally <c>as alias</c>) that
+/// brings a single exported binding or type into the importing module's scope <em>unqualified</em>.
+/// <see cref="ModuleName"/> is the resolved source module, <see cref="ExportName"/> the selected
+/// export, and <see cref="LocalName"/> the unqualified name introduced (the alias, or the export
+/// name when no <c>as</c> clause is present).
+/// </summary>
+public readonly record struct ImportSelector(
+    string ModuleName,
+    string ExportName,
+    string LocalName
 );
 
 public sealed record ProjectCompilationPlan(
@@ -36,7 +50,8 @@ public sealed record ProjectCompilationPlan(
 public readonly record struct ParsedImportHeader(
     IReadOnlyList<string> ImportNames,
     string SourceWithoutImports,
-    IReadOnlyDictionary<string, string> ImportAliases
+    IReadOnlyDictionary<string, string> ImportAliases,
+    IReadOnlyList<ImportSelector> ImportSelectors
 );
 
 public readonly record struct CombinedCompilationLayout(
@@ -68,7 +83,11 @@ public static class ProjectSupport
         string? LegacyExportName,
         bool IsFlat);
 
-    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
+    public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\.([a-z_][A-Za-z0-9_]*))?(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
+
+    /// <summary>Message for <c>ASH016</c>: two unqualified selectors collide on the same name.</summary>
+    private static string ConflictingSelectorMessage(string name) =>
+        $"Conflicting unqualified import selectors for '{name}'.";
 
     private static readonly Regex ImportLine = new(
         ImportModulePattern,
@@ -177,6 +196,8 @@ public static class ProjectSupport
     {
         var imports = new List<string>();
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        var selectors = new List<ImportSelector>();
+        var selectorLocalNames = new Dictionary<string, ImportSelector>(StringComparer.Ordinal);
         var sourceLines = new List<string>();
         using var reader = new StringReader(source);
         string? line;
@@ -190,11 +211,44 @@ public static class ProjectSupport
             var match = ImportLine.Match(line);
             if (inHeader && match.Success)
             {
-                var moduleName = match.Groups[1].Value;
-                imports.Add(moduleName);
-                if (match.Groups[2].Success)
+                var modulePath = match.Groups[1].Value;
+                var hasSelectorGroup = match.Groups[2].Success;
+                var aliasGroup = match.Groups[3].Success ? match.Groups[3].Value : null;
+
+                // A lowercase trailing segment (`import M.name`) is unambiguously a binding selector;
+                // the module-path group only matches uppercase segments, so the parser leaves it here.
+                // An uppercase trailing segment is consumed into the module path and is split into a
+                // type selector later, against the known built-in/user module set (longest-path-wins).
+                var selector = hasSelectorGroup
+                    ? new ImportSelector(modulePath, match.Groups[2].Value, aliasGroup ?? match.Groups[2].Value)
+                    : TrySplitBuiltinTypeSelector(modulePath, aliasGroup);
+
+                if (selector is { } sel)
                 {
-                    var alias = match.Groups[2].Value;
+                    var local = sel.LocalName;
+                    if (ReservedKeywords.Contains(local))
+                    {
+                        throw new InvalidOperationException(
+                            $"Invalid alias '{local}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
+                    }
+
+                    if (selectorLocalNames.TryGetValue(local, out var existing)
+                        && (!string.Equals(existing.ModuleName, sel.ModuleName, StringComparison.Ordinal)
+                            || !string.Equals(existing.ExportName, sel.ExportName, StringComparison.Ordinal)))
+                    {
+                        throw new InvalidOperationException(ConflictingSelectorMessage(local));
+                    }
+
+                    selectorLocalNames[local] = sel;
+                    selectors.Add(sel);
+                    imports.Add(sel.ModuleName);
+                    continue;
+                }
+
+                imports.Add(modulePath);
+                if (aliasGroup is not null)
+                {
+                    var alias = aliasGroup;
                     if (ReservedKeywords.Contains(alias))
                     {
                         throw new InvalidOperationException(
@@ -207,7 +261,7 @@ public static class ProjectSupport
                             $"Duplicate alias '{alias}' in {displayPath}:{lineIndex}. The alias '{alias}' is already mapped to '{aliases[alias]}'.");
                     }
 
-                    aliases[alias] = moduleName;
+                    aliases[alias] = modulePath;
                 }
                 continue;
             }
@@ -215,7 +269,7 @@ public static class ProjectSupport
             if (inHeader && trimmed.StartsWith("import ", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.");
+                    $"Invalid import syntax in {displayPath}:{lineIndex}. Expected 'import Foo', 'import Foo.Bar', 'import Foo.name [as alias]', or 'import Foo.Bar as Alias'.");
             }
 
             if (inHeader && (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal)))
@@ -227,7 +281,32 @@ public static class ProjectSupport
             sourceLines.Add(line);
         }
 
-        return new ParsedImportHeader(imports, string.Join('\n', sourceLines), aliases);
+        return new ParsedImportHeader(imports, string.Join('\n', sourceLines), aliases, selectors);
+    }
+
+    /// <summary>
+    /// Splits an uppercase-final import path (e.g. <c>Ashes.Some.Type</c>) into a built-in type
+    /// selector when the path itself is not a built-in module but its parent is and exports the final
+    /// segment. Returns <see langword="null"/> when the path should stay a whole-module import (it is a
+    /// built-in module, or its parent is not a known built-in — the user-module case is split later in
+    /// <see cref="BuildCompilationPlan"/> where user modules are resolvable).
+    /// </summary>
+    private static ImportSelector? TrySplitBuiltinTypeSelector(string modulePath, string? alias)
+    {
+        var lastDot = modulePath.LastIndexOf('.');
+        if (lastDot < 0 || BuiltinRegistry.IsBuiltinModule(modulePath))
+        {
+            return null;
+        }
+
+        var parent = modulePath[..lastDot];
+        var leaf = modulePath[(lastDot + 1)..];
+        if (BuiltinRegistry.TryGetModuleExports(parent, out var exports) && exports.Contains(leaf))
+        {
+            return new ImportSelector(parent, leaf, alias ?? leaf);
+        }
+
+        return null;
     }
 
     public static ProjectCompilationPlan BuildCompilationPlan(AshesProject project)
@@ -368,8 +447,10 @@ public static class ProjectSupport
                 return existing;
             }
 
-            var (imports, source, aliases) = ParseImports(fullPath);
-            var module = new ProjectModule(moduleName, fullPath, source, imports, aliases);
+            var (imports, source, aliases, selectors) = ParseImports(fullPath);
+            (imports, selectors) = NormalizeTypeSelectors(imports, selectors, IsResolvableModule);
+            source = ApplyIntrinsicSelectorRenames(source, selectors);
+            var module = new ProjectModule(moduleName, fullPath, source, imports, aliases, selectors);
             resolvedByPath[fullPath] = module;
             if (!resolvedByModuleName.ContainsKey(moduleName))
             {
@@ -377,6 +458,80 @@ public static class ProjectSupport
             }
 
             return module;
+        }
+
+        bool IsResolvableModule(string name)
+        {
+            if (IsStdModule(name) || BuiltinRegistry.IsBuiltinModule(name))
+            {
+                return true;
+            }
+
+            if (BuiltinRegistry.IsReservedModuleNamespace(name))
+            {
+                return false;
+            }
+
+            var relativePath = GetModuleRelativePath(name);
+            return GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
+                || GetShippedLibraryModulePath(relativePath) is not null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the module-path-vs-type-selector ambiguity for uppercase-final imports that the regex
+    /// folded into the module path (e.g. <c>import M.Type</c>). Using the longest-matching-module rule:
+    /// a whole-module import whose path is not itself a resolvable module but whose parent is becomes a
+    /// type selector of that parent. Lowercase binding selectors were already split during parsing.
+    /// Re-validates the combined selector set for unqualified-name conflicts (ASH016).
+    /// </summary>
+    private static (IReadOnlyList<string> Imports, IReadOnlyList<ImportSelector> Selectors) NormalizeTypeSelectors(
+        IReadOnlyList<string> imports,
+        IReadOnlyList<ImportSelector> selectors,
+        Func<string, bool> isResolvableModule)
+    {
+        var newImports = new List<string>();
+        var newSelectors = new List<ImportSelector>(selectors);
+
+        foreach (var import in imports)
+        {
+            var lastDot = import.LastIndexOf('.');
+            if (lastDot > 0 && !isResolvableModule(import))
+            {
+                var parent = import[..lastDot];
+                var leaf = import[(lastDot + 1)..];
+                if (isResolvableModule(parent))
+                {
+                    newSelectors.Add(new ImportSelector(parent, leaf, leaf));
+                    newImports.Add(parent);
+                    continue;
+                }
+            }
+
+            newImports.Add(import);
+        }
+
+        ValidateSelectorConflicts(newSelectors);
+        return (newImports, newSelectors);
+    }
+
+    /// <summary>
+    /// Emits the <c>ASH016</c> diagnostic when two selectors bring different exports into scope under
+    /// the same unqualified name. Importing the same export twice is harmless and allowed.
+    /// </summary>
+    private static void ValidateSelectorConflicts(IReadOnlyList<ImportSelector> selectors)
+    {
+        var byLocalName = new Dictionary<string, ImportSelector>(StringComparer.Ordinal);
+        foreach (var selector in selectors)
+        {
+            if (byLocalName.TryGetValue(selector.LocalName, out var existing)
+                && (!string.Equals(existing.ModuleName, selector.ModuleName, StringComparison.Ordinal)
+                    || !string.Equals(existing.ExportName, selector.ExportName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(ConflictingSelectorMessage(selector.LocalName));
+            }
+
+            byLocalName[selector.LocalName] = selector;
         }
     }
 
@@ -398,14 +553,22 @@ public static class ProjectSupport
     public static CombinedCompilationLayout BuildStandaloneCompilationLayout(
         string sourceWithoutImports,
         IReadOnlyList<string> importNames,
-        string entryFilePath = "<memory>")
+        string entryFilePath = "<memory>",
+        IReadOnlyList<ImportSelector>? selectors = null)
     {
         var orderedModules = new List<ProjectModule>();
         var seenModules = new HashSet<string>(StringComparer.Ordinal);
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var traversal = new Stack<ProjectModule>();
 
-        var entryModule = new ProjectModule("Main", entryFilePath, sourceWithoutImports, importNames.ToList(), new Dictionary<string, string>());
+        var entrySelectors = selectors ?? [];
+        var entryModule = new ProjectModule(
+            "Main",
+            entryFilePath,
+            ApplyIntrinsicSelectorRenames(sourceWithoutImports, entrySelectors),
+            importNames.ToList(),
+            new Dictionary<string, string>(),
+            entrySelectors);
         orderedModules.Add(entryModule);
 
         foreach (var importName in importNames)
@@ -518,6 +681,8 @@ public static class ProjectSupport
             module => GetExportNames(shapes[module.ModuleName]),
             StringComparer.Ordinal);
 
+        ValidateSelectorExports(orderedModules, exportedNames);
+
         var entryShape = shapes[entryModule.ModuleName];
         var nonEntryModules = orderedModules
             .Where(module => !string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase))
@@ -607,6 +772,147 @@ public static class ProjectSupport
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
         return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets);
+    }
+
+    /// <summary>
+    /// Verifies every selector import names an export the target module actually provides, resolving
+    /// built-in modules (via the built-in export tables) and user/std modules (via the flat export set
+    /// computed from the real parser) through the same check. A selector to an unknown export is a
+    /// clear compile error rather than a silent dangling reference at lowering time.
+    /// </summary>
+    private static void ValidateSelectorExports(
+        IReadOnlyList<ProjectModule> orderedModules,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
+    {
+        var modulesByName = new Dictionary<string, ProjectModule>(StringComparer.Ordinal);
+        foreach (var module in orderedModules)
+        {
+            modulesByName.TryAdd(module.ModuleName, module);
+        }
+
+        // The flat export set used by the value stitcher (`exportedNames`) covers `let` bindings only;
+        // type exports are validated against the full export set (lets + types) computed per module.
+        var fullExports = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var module in orderedModules)
+        {
+            foreach (var selector in module.Selectors)
+            {
+                if (BuiltinRegistry.TryGetModuleExports(selector.ModuleName, out var builtinExports)
+                    && builtinExports.Contains(selector.ExportName))
+                {
+                    continue;
+                }
+
+                if (!fullExports.TryGetValue(selector.ModuleName, out var moduleExports))
+                {
+                    moduleExports = modulesByName.TryGetValue(selector.ModuleName, out var target)
+                        ? CollectAllExportNames(target.Source)
+                        : new HashSet<string>(StringComparer.Ordinal);
+                    fullExports[selector.ModuleName] = moduleExports;
+                }
+
+                if (!moduleExports.Contains(selector.ExportName))
+                {
+                    throw new InvalidOperationException(
+                        $"Import selector 'import {selector.ModuleName}.{selector.ExportName}' refers to an unknown export; module '{selector.ModuleName}' does not export '{selector.ExportName}'.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether an export name is a value binding (lowercase or underscore lead) as opposed to a type
+    /// or constructor (uppercase). Drives whether a selector needs a value-level alias.
+    /// </summary>
+    private static bool IsValueExportName(string name) =>
+        name.Length > 0 && (char.IsLower(name[0]) || name[0] == '_');
+
+    /// <summary>
+    /// Whether a selector targets a built-in <em>intrinsic</em> member (e.g. <c>Ashes.IO.print</c>).
+    /// Intrinsics must be called directly and cannot be bound as first-class values, so an intrinsic
+    /// selector is realized by renaming its unqualified occurrences to the qualified call form rather
+    /// than by injecting a <c>let</c> alias (which the lowering would reject).
+    /// </summary>
+    private static bool IsBuiltinIntrinsicMember(string moduleName, string exportName) =>
+        BuiltinRegistry.TryGetModule(moduleName, out var module) && module.Members.ContainsKey(exportName);
+
+    /// <summary>
+    /// Rewrites a module's source so each intrinsic selector's unqualified name (the alias, or the
+    /// export name) becomes the qualified reference <c>Module.member</c>, which the lowering resolves as
+    /// a direct intrinsic call. Non-intrinsic selectors are untouched (they are handled as value
+    /// aliases during stitching).
+    /// </summary>
+    private static string ApplyIntrinsicSelectorRenames(string source, IReadOnlyList<ImportSelector> selectors)
+    {
+        var renames = new List<KeyValuePair<string, string>>();
+        foreach (var selector in selectors)
+        {
+            if (IsBuiltinIntrinsicMember(selector.ModuleName, selector.ExportName))
+            {
+                renames.Add(new KeyValuePair<string, string>(
+                    selector.LocalName,
+                    $"{selector.ModuleName}.{selector.ExportName}"));
+            }
+        }
+
+        return renames.Count == 0 ? source : ApplyAliasesByRenaming(source, renames);
+    }
+
+    /// <summary>
+    /// The full export set of a module — top-level <c>let</c>/<c>let rec</c> bindings <em>and</em>
+    /// <c>type</c> declarations, plus legacy pyramid bindings — used to validate selector imports
+    /// (mirrors the built-in export tables). Returns an empty set for sources the parser rejects.
+    /// </summary>
+    private static IReadOnlySet<string> CollectAllExportNames(string source)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var diag = new Diagnostics();
+        var program = new Parser(source, diag).ParseProgram();
+        if (diag.StructuredErrors.Count > 0)
+        {
+            return names;
+        }
+
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    names.Add(letDecl.Name);
+                    break;
+                case TopLevelItem.RecGroup recGroup:
+                    foreach (var (name, _) in recGroup.Bindings)
+                    {
+                        names.Add(name);
+                    }
+
+                    break;
+                case TopLevelItem.Type typeDecl:
+                    names.Add(typeDecl.Decl.Name);
+                    break;
+            }
+        }
+
+        for (var expr = program.Body; expr is not null;)
+        {
+            switch (expr)
+            {
+                case Expr.Let letExpr:
+                    names.Add(letExpr.Name);
+                    expr = letExpr.Body;
+                    break;
+                case Expr.LetRec letRecExpr:
+                    names.Add(letRecExpr.Name);
+                    expr = letRecExpr.Body;
+                    break;
+                default:
+                    expr = null;
+                    break;
+            }
+        }
+
+        return names;
     }
 
     private static string BuildEntryExpression(
@@ -768,6 +1074,28 @@ public static class ProjectSupport
             aliases.Add(new KeyValuePair<string, string>(
                 bindingName,
                 $"{SanitizeModuleBindingName(module.ModuleName)}_{bindingName}"));
+        }
+
+        // Binding selectors (`import M.name [as x]`) introduce the selected value export unqualified.
+        // They are resolved before whole-module imports so an explicitly selected name wins over the
+        // same name being brought in by a whole-module import. The alias target is the qualified
+        // reference `Module.name`, which the lowering resolves uniformly for built-in members and
+        // stitched user-module bindings (`Ashes_Module_name`) alike — so no implicit re-export occurs:
+        // the alias lives only in this module's stitched source. Type selectors (`import M.Type`) need
+        // no value alias: type declarations are hoisted to the top of the combined source and are
+        // already globally visible, so an unqualified type reference resolves with nothing to inject.
+        foreach (var selector in module.Selectors)
+        {
+            if (!IsValueExportName(selector.ExportName)
+                || !referencedVariables.Contains(selector.LocalName)
+                || !localNames.Add(selector.LocalName))
+            {
+                continue;
+            }
+
+            aliases.Add(new KeyValuePair<string, string>(
+                selector.LocalName,
+                $"{selector.ModuleName}.{selector.ExportName}"));
         }
 
         var importedOwners = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1339,7 +1667,13 @@ public static class ProjectSupport
         }
 
         var parsed = ParseImportHeader(source, moduleName);
-        module = new ProjectModule(moduleName, $"<std:{moduleName}>", parsed.SourceWithoutImports, parsed.ImportNames, parsed.ImportAliases);
+        module = new ProjectModule(
+            moduleName,
+            $"<std:{moduleName}>",
+            ApplyIntrinsicSelectorRenames(parsed.SourceWithoutImports, parsed.ImportSelectors),
+            parsed.ImportNames,
+            parsed.ImportAliases,
+            parsed.ImportSelectors);
         return true;
     }
 
@@ -1617,10 +1951,10 @@ public static class ProjectSupport
         }
     }
 
-    private static (IReadOnlyList<string> Imports, string SourceWithoutImports, IReadOnlyDictionary<string, string> Aliases) ParseImports(string filePath)
+    private static (IReadOnlyList<string> Imports, string SourceWithoutImports, IReadOnlyDictionary<string, string> Aliases, IReadOnlyList<ImportSelector> Selectors) ParseImports(string filePath)
     {
         var parsed = ParseImportHeader(File.ReadAllText(filePath), filePath);
-        return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases);
+        return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases, parsed.ImportSelectors);
     }
 
     private static string? ReadString(JsonElement root, string name)
