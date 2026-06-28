@@ -1282,7 +1282,7 @@ public sealed class Parser
         _matchCasePipeSuppressionDepth = 0;
         try
         {
-            var e = ParseExpressionCore();
+            var e = ParseParenthesizedBody();
             if (_current.Kind == TokenKind.Comma)
             {
                 var elements = new List<Expr> { e };
@@ -1301,6 +1301,53 @@ public sealed class Parser
         {
             _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
         }
+    }
+
+    /// <summary>
+    /// Parses the body of a parenthesized expression, which may be a flat-declaration block: a
+    /// sequence of <c>let [rec] name = value</c> declarations (no <c>in</c>) followed by a trailing
+    /// expression, folded into nested <c>let</c> expressions. The combined-source stitcher emits the
+    /// flat top-level entry expression in exactly this form (<c>(decl decl ... trailingExpr)</c>) when
+    /// the program imports a flat module, so parentheses must accept it just as the file top level
+    /// does. A binding terminated by <c>in</c> remains the ordinary nested <c>let ... in</c>
+    /// expression; one terminated by the next declaration or the trailing expression (the same
+    /// column-based boundary rule as the top level, via <see cref="StartsNextTopLevelItem"/>) is a
+    /// flat declaration whose body is the remainder of the block. Non-<c>let</c> content falls
+    /// straight through to the ordinary expression parser, so this is a superset of the previous
+    /// behavior.
+    /// </summary>
+    private Expr ParseParenthesizedBody()
+    {
+        // Only a plain `let` declaration can begin a flat block. A let-pattern binding
+        // (`let (a, b) = e in body`) is always an ordinary expression, as is any non-`let` content.
+        if (_current.Kind != TokenKind.Let || IsLetPatternBinding())
+        {
+            return ParseExpressionCore();
+        }
+
+        // Parse the binding's header and value with the flat-declaration boundary active so a value
+        // that is a (possibly qualified) application does not absorb the next declaration.
+        var header = ParseLetHeaderAndValue(topLevel: true);
+
+        // `let ... in ...` (and a `let rec ... and ...` group, which has no nested-expression form and
+        // must report the missing `in`) is the ordinary nested-let expression.
+        if (_current.Kind is TokenKind.In or TokenKind.And)
+        {
+            return FinishLetExpression(header);
+        }
+
+        // A flat declaration: its body is the remainder of the block.
+        var body = ParseParenthesizedBody();
+        if (header.IsRecursive)
+        {
+            var letRec = RegisterExpr(new Expr.LetRec(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            AstSpans.SetLetRecName(letRec, header.NameToken.Span);
+            return letRec;
+        }
+
+        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+        AstSpans.SetLetName(letExpr, header.NameToken.Span);
+        return letExpr;
     }
 
     private Expr ParseList()
