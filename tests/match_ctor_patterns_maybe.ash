@@ -1,10 +1,8 @@
 // expect: 12
-let unwrapOr = 
-    fun (opt) -> 
-        fun (def) -> 
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def = 
+    match opt with
+        | None -> def
+        | Some(x) -> x
 in 
     let zero = 
         match Some(0) with

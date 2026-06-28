@@ -1,17 +1,13 @@
 // expect: ok
-let unwrapOr = 
-    fun (opt) -> 
-        fun (def) -> 
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def = 
+    match opt with
+        | None -> def
+        | Some(x) -> x
 in 
-    let getOrDefault = 
-        fun (res) -> 
-            fun (def) -> 
-                match res with
-                    | Ok(x) -> x
-                    | Error(_) -> def
+    let getOrDefault res def = 
+        match res with
+            | Ok(x) -> x
+            | Error(_) -> def
     in 
         let _a = unwrapOr(Some(1))(0)
         in 

@@ -1,9 +1,7 @@
 // expect: bad
-let fail = 
-    fun (x) -> Error("bad")
+let fail x = Error("bad")
 in 
-    let parse = 
-        fun (x) -> Ok(42)
+    let parse x = Ok(42)
     in 
         let y = 
             Ok("42")

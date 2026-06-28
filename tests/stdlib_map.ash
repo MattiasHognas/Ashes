@@ -2,15 +2,13 @@
 import Ashes.Map
 import Ashes.IO
 import Ashes.Text
-let compareInt = 
-    fun (left) -> 
-        fun (right) -> 
-            if left == right
-            then 0
-            else 
-                if left <= right
-                then -1
-                else 1
+let compareInt left right = 
+    if left == right
+    then 0
+    else 
+        if left <= right
+        then -1
+        else 1
 in 
     let map = Ashes.Map.set(compareInt)(3)("three")(Ashes.Map.set(compareInt)(1)("one")(Ashes.Map.set(compareInt)(2)("two updated")(Ashes.Map.empty)))
     in 
