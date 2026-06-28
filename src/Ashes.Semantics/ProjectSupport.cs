@@ -1654,9 +1654,28 @@ public static class ProjectSupport
 
         var name = next.Text;
         var equals = lexer.Next();
-        while (equals.Kind != TokenKind.Equals && equals.Kind != TokenKind.EOF)
+
+        // ML-style function sugar: `let f x y = body` binds `f` to nested lambdas over `x`, `y`.
+        // The parameters appear as bare identifiers between the name and `=` (a `let f : T = ...`
+        // type annotation uses a leading colon and never carries sugar params), so collect them
+        // here and re-wrap the value as explicit `fun` lambdas — otherwise the binding would keep
+        // only the body and drop the parameters (binding `f` to an open expression referencing the
+        // undefined parameter names).
+        var sugarParams = new List<string>();
+        if (equals.Kind == TokenKind.Ident)
         {
-            equals = lexer.Next();
+            while (equals.Kind == TokenKind.Ident)
+            {
+                sugarParams.Add(equals.Text);
+                equals = lexer.Next();
+            }
+        }
+        else
+        {
+            while (equals.Kind != TokenKind.Equals && equals.Kind != TokenKind.EOF)
+            {
+                equals = lexer.Next();
+            }
         }
 
         if (equals.Kind != TokenKind.Equals)
@@ -1679,6 +1698,11 @@ public static class ProjectSupport
                     break;
                 case TokenKind.In when nestedLetDepth == 0:
                     var valueSource = source[valueStart..current.Position].Trim();
+                    for (var i = sugarParams.Count - 1; i >= 0; i--)
+                    {
+                        valueSource = $"fun ({sugarParams[i]}) -> {valueSource}";
+                    }
+
                     remaining = source[(current.Position + current.Text.Length)..].TrimStart();
                     binding = new ModuleBindingFragment(name, valueSource, isRecursive);
                     return true;
