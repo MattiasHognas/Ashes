@@ -181,6 +181,47 @@ public sealed class TopLevelParserTests
     }
 
     [Test]
+    public void ParseProgram_should_treat_a_complete_bare_let_in_value_followed_by_a_declaration_as_a_flat_declaration()
+    {
+        // `let f = let rec go = ... in go` is a complete `let..in` expression; followed by another
+        // top-level declaration it is a flat decl, not the nested pyramid (which needs an outer `in`).
+        var diag = new Diagnostics();
+        var program = new Parser(
+            "let f = let rec go = fun (x) -> x in go\nlet g = 1",
+            diag).ParseProgram();
+
+        diag.Errors.ShouldBeEmpty();
+        program.Items.Count.ShouldBe(2);
+
+        var fItem = program.Items[0].ShouldBeOfType<TopLevelItem.LetDecl>();
+        fItem.Name.ShouldBe("f");
+        fItem.Value.ShouldBeOfType<Expr.LetRec>().Name.ShouldBe("go");
+
+        var gItem = program.Items[1].ShouldBeOfType<TopLevelItem.LetDecl>();
+        gItem.Name.ShouldBe("g");
+        gItem.Value.ShouldBe(new Expr.IntLit(1));
+
+        program.Body.ShouldBeNull();
+    }
+
+    [Test]
+    public void ParseProgram_should_treat_a_complete_bare_let_in_value_followed_by_a_trailing_expr_as_a_flat_declaration()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            "let f = let rec go = fun (x) -> x in go\nf(5)",
+            diag).ParseProgram();
+
+        diag.Errors.ShouldBeEmpty();
+
+        var fItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        fItem.Name.ShouldBe("f");
+        fItem.Value.ShouldBeOfType<Expr.LetRec>().Name.ShouldBe("go");
+
+        program.Body.ShouldNotBeNull();
+    }
+
+    [Test]
     public void ParseProgram_should_parse_single_let_rec_as_a_recursive_declaration()
     {
         var program = ParseProgram("let rec loop x = loop x\n0");
