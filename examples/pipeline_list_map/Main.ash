@@ -1,10 +1,7 @@
 import Ashes.List
-let inc = 
-    fun (x) -> x + 1
+let inc x = x + 1
 in 
-    let add = 
-        fun (acc) -> 
-            fun (x) -> acc + x
+    let add acc x = acc + x
     in 
         [1, 2, 3]
         |> List.map(inc)

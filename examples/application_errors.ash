@@ -1,6 +1,4 @@
-let add = 
-    fun (x) -> 
-        fun (y) -> x + y
+let add x y = x + y
 in 
     let add1 = add(1)
     in 

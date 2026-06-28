@@ -4,17 +4,15 @@
 type ParseError =
     | NotAnInt(String)
 
-let trim = 
-    fun (x) -> 
-        if x == " 42 "
-        then "42"
-        else x
+let trim x = 
+    if x == " 42 "
+    then "42"
+    else x
 
-let parse = 
-    fun (x) -> 
-        if x == "42"
-        then Ok(42)
-        else Error(NotAnInt(x))
+let parse x = 
+    if x == "42"
+    then Ok(42)
+    else Error(NotAnInt(x))
 
 let x = 
     Ok(" 42 ")

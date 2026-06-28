@@ -1,9 +1,7 @@
-let unwrapOr = 
-    fun (opt) -> 
-        fun (def) -> 
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def = 
+    match opt with
+        | None -> def
+        | Some(x) -> x
 in 
     let r = Ok(42)
     in 

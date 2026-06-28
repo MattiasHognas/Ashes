@@ -3,9 +3,7 @@
 // in a single trailing expression. Compare the nested `let ... in` pyramid this
 // program used to be -- the bindings now read top to bottom instead of nesting.
 
-let add = 
-    fun (x) -> 
-        fun (y) -> x + y
+let add x y = x + y
 
 let addTen = add(10)
 

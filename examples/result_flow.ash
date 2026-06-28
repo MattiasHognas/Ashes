@@ -1,9 +1,8 @@
 import Ashes.Result
-let parseOr = 
-    fun (text) -> 
-        if text == "42"
-        then Ok(42)
-        else Error("not-42")
+let parseOr text = 
+    if text == "42"
+    then Ok(42)
+    else Error("not-42")
 in 
     "42"
     |> parseOr
