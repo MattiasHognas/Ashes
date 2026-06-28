@@ -26,6 +26,11 @@ Top-level declarations
 - The block of `import` lines at the top of the file is not blank-line separated
   internally; a single blank line separates the import block from the first
   declaration.
+- Each `import` is preserved in its written form, including its shape and any
+  alias. Whole-module imports render as `import M` (optionally `import M as X`);
+  selector imports keep the selected name as `import M.binding` (optionally
+  `import M.binding as x`). The selector's `.binding` is never rewritten into a
+  module alias, and an `as` alias is never dropped.
 - Top-level `let` / `let rec` declarations have no trailing `in`; they are formatted
   like a `let` binding without the `in` line.
 

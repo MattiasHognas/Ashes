@@ -1065,9 +1065,17 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
         var match = importLine.Match(line);
         if (match.Success)
         {
-            imports.Add(match.Groups[2].Success
-                ? $"import {match.Groups[1].Value} as {match.Groups[2].Value}"
-                : $"import {match.Groups[1].Value}");
+            // Groups: 1 = module path, 2 = lowercase selector binding (the `.name`),
+            // 3 = `as` alias. A selector keeps its `.name`; any form may carry an alias.
+            var rendered = match.Groups[2].Success
+                ? $"import {match.Groups[1].Value}.{match.Groups[2].Value}"
+                : $"import {match.Groups[1].Value}";
+            if (match.Groups[3].Success)
+            {
+                rendered += $" as {match.Groups[3].Value}";
+            }
+
+            imports.Add(rendered);
             continue;
         }
 
