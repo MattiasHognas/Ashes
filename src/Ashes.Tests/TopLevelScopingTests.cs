@@ -69,12 +69,11 @@ public sealed class TopLevelScopingTests
     }
 
     [Test]
-    public void Top_level_mutual_recursion_is_rejected_until_rec_and_groups_lands()
+    public void Top_level_mutual_recursion_type_checks_as_one_binding_group()
     {
-        // `let rec ... and ...` needs cross-binding visibility that this unit deliberately does not
-        // implement (owned by semantics-rec-and-groups). Until then it must fail with a clear
-        // diagnostic rather than silently miscompile with the wrong scoping. This expectation is
-        // expected to be replaced when mutual recursion is implemented.
+        // `let rec ... and ...` is now implemented (semantics-rec-and-groups): the group's members
+        // see one another, so this type-checks and lowers cleanly with no diagnostic. End-to-end
+        // behaviour (running the compiled program) is covered by MutualRecursionTests.
         var src = """
             let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)
             and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)
@@ -82,7 +81,7 @@ public sealed class TopLevelScopingTests
 
         var diag = LowerProgram(src);
 
-        diag.StructuredErrors.ShouldContain(x => x.Message.Contains("Mutual recursion", StringComparison.Ordinal));
+        diag.StructuredErrors.ShouldBeEmpty();
     }
 
     [Test]

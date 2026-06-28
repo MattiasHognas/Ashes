@@ -207,27 +207,146 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Seam for mutual-recursion groups (<c>let rec X = ... and Y = ...</c>), to be implemented by
-    /// semantics-rec-and-groups. The parser only emits a <see cref="TopLevelItem.RecGroup"/> for a
-    /// genuine multi-binding <c>and</c> group, whose bindings must all see one another — a property
-    /// that nesting independent <c>let rec</c> forms cannot express. Rather than silently miscompile
-    /// it with the wrong scoping, report a clear "not yet supported" diagnostic. The bindings are
-    /// still nested afterwards so the remainder of the program keeps lowering (build stays green)
-    /// until that unit lands.
+    /// Desugars a mutual-recursion group (<c>let rec X = ... and Y = ...</c>) into a marker node that
+    /// lowering handles directly. The parser only emits a <see cref="TopLevelItem.RecGroup"/> for a
+    /// genuine multi-binding <c>and</c> group (or a degenerate one-binding group), whose bindings must
+    /// all see one another — a property that nesting independent <c>let rec</c> forms cannot express.
+    /// The group's names are also in scope for the continuation (subsequent declarations and the
+    /// trailing expression) under Model-A scoping; <paramref name="body"/> carries that continuation.
     /// </summary>
     private Expr DesugarRecGroup(TopLevelItem.RecGroup group, Expr body)
-    {
-        var span = group.Bindings.Count > 0 ? GetSpan(group.Bindings[0].Value) : default;
-        ReportDiagnostic(span, "Mutual recursion ('let rec ... and ...') is not yet supported.");
+        => new RecGroupExpr(group.Bindings, body);
 
-        Expr result = body;
-        for (int i = group.Bindings.Count - 1; i >= 0; i--)
+    /// <summary>
+    /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only
+    /// ever appears at the top level (never inside a lambda/async body), so the free-variable and
+    /// other expression walkers never encounter it; only <see cref="LowerExpr"/> dispatches it.
+    /// </summary>
+    private sealed record RecGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body) : Expr;
+
+    /// <summary>
+    /// Shared lowering state for the members of a mutual-recursion group. Every member is compiled to
+    /// its own IR function but they all share one identical environment, so a member can rebuild any
+    /// sibling's closure from its own env pointer (see <see cref="LowerLambdaCore"/>).
+    /// </summary>
+    private sealed class RecGroupContext
+    {
+        public required IReadOnlyList<string> SharedCaptures { get; init; }
+        public required int SharedEnvPtrTemp { get; init; }
+        public required IReadOnlyList<(string Name, string Label, TypeRef Type, TextSpan Span)> Members { get; init; }
+    }
+
+    /// <summary>
+    /// Lowers a mutually-recursive binding group. All member names are introduced with fresh type
+    /// variables before any right-hand side is inferred (so each body sees every member), every body is
+    /// lowered against one shared environment, and the names then stay in scope — monomorphically, as
+    /// the single <c>let rec</c> form already does — for the continuation.
+    /// </summary>
+    private (int, TypeRef) LowerRecGroup(RecGroupExpr group)
+    {
+        var bindings = group.Bindings;
+        var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
+
+        // HM recursive-group rule, part 1: introduce a fresh type for every member up front. Function
+        // members get an arrow shape so call sites refine arg/return before the body is solved.
+        var recTypes = new TypeRef[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
         {
-            var (name, value) = group.Bindings[i];
-            result = new Expr.LetRec(name, value, result);
+            recTypes[i] = FindInnermostLambdaUnderLets(bindings[i].Value) is not null
+                ? new TypeRef.TFun(NewTypeVar(), NewTypeVar())
+                : NewTypeVar();
         }
 
-        return result;
+        // The shared environment is the union of each member body's free variables, minus the group
+        // names themselves (siblings are reached by symbol, never captured). Order is fixed here and
+        // reused for every member so the env layout is identical across the group.
+        var sharedCaptures = new List<string>();
+        var seenCaptures = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (_, value) in bindings)
+        {
+            foreach (var name in FreeVars(value, groupNames))
+            {
+                if (seenCaptures.Add(name)
+                    && Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme)
+                {
+                    sharedCaptures.Add(name);
+                }
+            }
+        }
+
+        // Build the shared env once, at the group site, where the captured names are still in scope.
+        int sharedEnvPtrTemp = NewTemp();
+        if (sharedCaptures.Count == 0)
+        {
+            Emit(new IrInst.LoadConstInt(sharedEnvPtrTemp, 0)); // null env
+        }
+        else
+        {
+            Emit(new IrInst.Alloc(sharedEnvPtrTemp, sharedCaptures.Count * 8));
+            for (int i = 0; i < sharedCaptures.Count; i++)
+            {
+                var (capTemp, _) = LowerVar(new Expr.Var(sharedCaptures[i]));
+                Emit(new IrInst.StoreMemOffset(sharedEnvPtrTemp, i * 8, capTemp));
+            }
+        }
+
+        var labels = new string[bindings.Count];
+        var members = new (string Name, string Label, TypeRef Type, TextSpan Span)[bindings.Count];
+        var slots = new int[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
+            members[i] = (bindings[i].Name, labels[i], recTypes[i], GetSpan(bindings[i].Value));
+            slots[i] = NewLocal();
+        }
+
+        var groupContext = new RecGroupContext
+        {
+            SharedCaptures = sharedCaptures,
+            SharedEnvPtrTemp = sharedEnvPtrTemp,
+            Members = members
+        };
+
+        // Mutual recursion is reached through closure calls, not the single-function tail-call loop, so
+        // disable TCO while lowering the group bodies.
+        var savedTcoCtx = _tcoCtx;
+        _tcoCtx = null;
+
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            var value = bindings[i].Value;
+            if (value is not Expr.Lambda lambda)
+            {
+                ReportDiagnostic(GetSpan(value), "let rec currently requires a function value.");
+                var (fallbackTemp, fallbackType) = LowerExpr(value);
+                Unify(recTypes[i], fallbackType);
+                Emit(new IrInst.StoreLocal(slots[i], fallbackTemp));
+                RecordLocalDebugInfo(slots[i], bindings[i].Name, recTypes[i]);
+                continue;
+            }
+
+            var (closureTemp, closureType) = LowerLambdaCore(lambda, selfName: null, selfType: null, stackAllocateClosure: false, recGroup: groupContext, forcedLabel: labels[i]);
+            Unify(recTypes[i], closureType);
+            RecordHoverType(members[i].Span, bindings[i].Name, recTypes[i]);
+            RecordLocalDebugInfo(slots[i], bindings[i].Name, recTypes[i]);
+            Emit(new IrInst.StoreLocal(slots[i], closureTemp));
+        }
+
+        _tcoCtx = savedTcoCtx;
+
+        // The members stay in scope for the continuation, bound to the slots holding their closures —
+        // monomorphic, matching the single let rec form.
+        var parent = _scopes.Peek();
+        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            child[bindings[i].Name] = new Binding.Local(slots[i], Prune(recTypes[i]), members[i].Span);
+        }
+
+        _scopes.Push(child);
+        var (bodyTemp, bodyType) = LowerExpr(group.Body);
+        _scopes.Pop();
+        return (bodyTemp, bodyType);
     }
 
 
@@ -303,6 +422,7 @@ public sealed partial class Lowering
             Expr.Let let => LowerLet(let),
             Expr.LetResult letResult => LowerLetResult(letResult),
             Expr.LetRec letRec => LowerLetRec(letRec),
+            RecGroupExpr group => LowerRecGroup(group),
             Expr.If iff => LowerIf(iff),
             Expr.Lambda lam => LowerLambda(lam),
             Expr.Call call => LowerCall(call),
@@ -1839,7 +1959,7 @@ public sealed partial class Lowering
         return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure, selfAliases);
     }
 
-    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null)
+    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null, RecGroupContext? recGroup = null, string? forcedLabel = null)
     {
         _usesClosures = true;
 
@@ -1857,12 +1977,22 @@ public sealed partial class Lowering
 
         var free = FreeVars(lam.Body, bound);
 
-        // Remove vars that are not in scope (should not happen if earlier checks)
-        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct().ToList();
+        // For a mutual-recursion group member, every member shares one identical environment so a
+        // sibling's closure can be reconstructed (via Binding.Self) using the current member's env.
+        // Otherwise compute this lambda's own captures and build its env. Remove vars that are not in
+        // scope (should not happen if earlier checks).
+        var captures = recGroup is not null
+            ? recGroup.SharedCaptures
+            : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct().ToList();
 
         // At lambda creation site: allocate env if needed
         int envPtrTemp;
-        if (captures.Count == 0)
+        if (recGroup is not null)
+        {
+            // The group's shared env was already allocated and filled once at the group site.
+            envPtrTemp = recGroup.SharedEnvPtrTemp;
+        }
+        else if (captures.Count == 0)
         {
             envPtrTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envPtrTemp, 0)); // null env
@@ -1890,7 +2020,7 @@ public sealed partial class Lowering
         }
 
         // Create lambda function label
-        string label = $"lambda_{_nextLambdaId++}";
+        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
 
         // Build function body IR in isolation
         var savedInst = new List<IrInst>(_inst);
@@ -1938,7 +2068,17 @@ public sealed partial class Lowering
                 scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
             }
         }
-        if (selfName is not null && selfType is not null)
+        if (recGroup is not null)
+        {
+            // Bind every group member (this one and its siblings) so each resolves to its own IR
+            // function. Reconstructing a sibling's closure uses this member's env (LoadLocal 0), which
+            // is correct precisely because the whole group shares one identical environment layout.
+            foreach (var member in recGroup.Members)
+            {
+                scope[member.Name] = new Binding.Self(member.Label, member.Type, captures.Count * 8, member.Span);
+            }
+        }
+        else if (selfName is not null && selfType is not null)
         {
             scope[selfName] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
             if (selfAliases is not null)
