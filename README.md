@@ -78,7 +78,7 @@ This repository contains the full toolchain:
 ```ash
 import Ashes.IO as io
 
-let double = fun (x) -> x + x
+let double x = x + x
 in io.print(double(21))
 ```
 
@@ -92,7 +92,7 @@ type Color =
     | Green
     | Blue
 
-let name = fun (c) ->
+let name c =
     match c with
         | Red   -> "red"
         | Green -> "green"
@@ -106,7 +106,7 @@ in io.print(name(Green))
 ```ash
 import Ashes.IO as io
 
-let rec sum = fun (lst) -> fun (acc) ->
+let rec sum lst acc =
     match lst with
         | []        -> acc
         | x :: rest -> sum(rest)(acc + x)
@@ -154,7 +154,7 @@ Hindley-Milner let-polymorphism - use the same function at different types:
 ```ash
 import Ashes.IO as io
 
-let id = fun (x) -> x
+let id x = x
 in
     let _ = id(42)
     in
@@ -261,7 +261,7 @@ End-to-end tests use `// expect:` directives:
 
 ```ash
 // expect: 15
-let rec sum = fun (lst) -> fun (acc) ->
+let rec sum lst acc =
     match lst with
         | []        -> acc
         | x :: rest -> sum(rest)(acc + x)

@@ -706,11 +706,10 @@ in body
 
 Example:
 
-let rec loop =
-    fun (i) ->
-        if i >= 10
-        then i
-        else loop(i + 1)
+let rec loop i =
+    if i >= 10
+    then i
+    else loop(i + 1)
 in Ashes.IO.print(loop(0))
 
 Without `rec`, a binding cannot reference itself.
@@ -854,6 +853,31 @@ whitespace arguments.
         then y
         else loop (x + 1) (y + 1)
     in Ashes.IO.print (loop 0 0)
+
+## 7.2 Parameter Sugar
+
+A binding may list its parameters directly to the left of `=`. This is pure
+syntax sugar for a binding whose value is a chain of nested `fun` lambdas — each
+parameter desugars to exactly one `fun` layer:
+
+let f a b = body
+
+is exactly equivalent to:
+
+let f = fun (a) -> fun (b) -> body
+
+So `let id x = x` is `let id = fun (x) -> x`, and a curried two-argument binding
+spells the nested-lambda form more compactly:
+
+let rec sum lst acc =
+    match lst with
+        | [] -> acc
+        | x :: rest -> sum(rest)(acc + x)
+in Ashes.IO.print(sum([1, 2, 3])(0))
+
+The sugar applies to plain `let`, `let rec`, and nested `let ... in` bindings
+alike. Parameter sugar is the idiomatic way to write a named function; the
+explicit `fun` form remains valid and is what the sugar expands to.
 
 ---
 
@@ -1032,12 +1056,10 @@ Example:
 
 import Ashes.Maybe
 
-let unwrapOr =
-    fun (opt) ->
-        fun (def) ->
-            match opt with
-                | None -> def
-                | Some(x) -> x
+let unwrapOr opt def =
+    match opt with
+        | None -> def
+        | Some(x) -> x
 in Ashes.IO.print(unwrapOr(Some(10))(0))
 
 Errors:
@@ -1229,28 +1251,23 @@ in first
 
 Example:
 
-let rec sum =
-    fun (lst) ->
-        fun (acc) ->
-            match lst with
-                | [] -> acc
-                | x :: rest -> sum(rest)(acc + x)
+let rec sum lst acc =
+    match lst with
+        | [] -> acc
+        | x :: rest -> sum(rest)(acc + x)
 in Ashes.IO.print(sum([1, 2, 3])(1))
 
 Default-value list utilities are written as regular user code, for example:
 
-let rec lastOr =
-    fun (xs) ->
-        fun (default) ->
-            let rec loop =
-                fun (ys) ->
-                    match ys with
-                        | [] -> default
-                        | x :: rest ->
-                            match rest with
-                                | [] -> x
-                                | _ -> loop(rest)
-            in loop(xs)
+let rec lastOr xs default =
+    let rec loop ys =
+        match ys with
+            | [] -> default
+            | x :: rest ->
+                match rest with
+                    | [] -> x
+                    | _ -> loop(rest)
+    in loop(xs)
 in Ashes.IO.print(lastOr([1, 2, 3])(0))
 
 ---
@@ -1486,11 +1503,10 @@ Idiomatic Result handling patterns are:
 
 Example:
 
-let describe =
-    fun (result) ->
-        match result with
-            | Ok(value) -> Ashes.IO.writeLine("ok")
-            | Error(message) -> Ashes.IO.writeLine(message)
+let describe result =
+    match result with
+        | Ok(value) -> Ashes.IO.writeLine("ok")
+        | Error(message) -> Ashes.IO.writeLine(message)
 in describe(Ok(1))
 
 `Ashes.IO.panic(message)` is reserved for unrecoverable failures.
@@ -1644,7 +1660,7 @@ with fresh type variables. This allows one binding to be reused at multiple type
 
 Example:
 
-    let id = fun (x) -> x
+    let id x = x
     in
     let _a = id(1)
     in
@@ -1887,7 +1903,7 @@ compiler. When the compiler detects that a recursive call is in tail
 position, it rewrites the call as a jump back to the function entry,
 reusing the current stack frame. This means recursive functions like:
 
-    let rec sum = fun (n) -> fun (acc) ->
+    let rec sum n acc =
         if n == 0 then acc
         else sum(n - 1)(acc + n)
     in sum(1000000)(0)
