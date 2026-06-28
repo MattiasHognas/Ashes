@@ -281,7 +281,14 @@ public static class ProjectSupport
             sourceLines.Add(line);
         }
 
-        return new ParsedImportHeader(imports, string.Join('\n', sourceLines), aliases, selectors);
+        // Realize the rename-based selectors (intrinsic value members like `Ashes.IO.print`, and
+        // aliased type selectors) directly in the imports-stripped source. Single-file consumers (the
+        // CLI/LSP standalone path) build their layout from `SourceWithoutImports` alone and do not
+        // thread the selector list through, so without this an aliased intrinsic selector
+        // (`import Ashes.IO.print as say`) would leave `say` undefined. Project mode and the
+        // explicit-selector standalone path re-apply the same rewrite downstream, where it is a no-op.
+        var sourceWithoutImports = ApplySelectorRenames(string.Join('\n', sourceLines), selectors);
+        return new ParsedImportHeader(imports, sourceWithoutImports, aliases, selectors);
     }
 
     /// <summary>
@@ -1279,6 +1286,7 @@ public static class ProjectSupport
         var lexer = new Lexer(trimmed, diag);
         var builder = new StringBuilder();
         var copiedUpTo = 0;
+        var previousKind = TokenKind.EOF;
 
         while (true)
         {
@@ -1288,11 +1296,19 @@ public static class ProjectSupport
                 break;
             }
 
-            if (token.Kind == TokenKind.Ident && renames.TryGetValue(token.Text, out var replacement))
+            // Only rewrite a bare unqualified occurrence of the alias. An identifier that follows a
+            // `.` is a qualified-member suffix (e.g. the `print` in an already-realized
+            // `Ashes.IO.print`), never the imported binding, so leaving it untouched keeps the rewrite
+            // idempotent when it is applied more than once over the same source.
+            if (token.Kind == TokenKind.Ident
+                && previousKind != TokenKind.Dot
+                && renames.TryGetValue(token.Text, out var replacement))
             {
                 builder.Append(trimmed[copiedUpTo..token.Position]).Append(replacement);
                 copiedUpTo = token.Position + token.Length;
             }
+
+            previousKind = token.Kind;
         }
 
         builder.Append(trimmed[copiedUpTo..]);
