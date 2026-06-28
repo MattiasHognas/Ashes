@@ -1530,6 +1530,18 @@ public static class ProjectSupport
             return false;
         }
 
+        // `fmt -w` parenthesizes a sugared binding whose folded body leads with `let..in`
+        // (`let f a b = (let..in ...)`). A parenthesized expression's AST span excludes the wrapping
+        // parentheses — `ParseParen` returns the inner expression carrying its own span — so the
+        // recorded value end stops before the closing `)`. Extending past the closing brackets that
+        // balance opens within the extracted value keeps the stitched binding syntactically complete;
+        // for an already-balanced value (the common case) this is a no-op.
+        valueEnd = ExtendToBalancedEnd(source, valueStart, valueEnd);
+        if (valueEnd > source.Length)
+        {
+            return false;
+        }
+
         var body = source[valueStart..valueEnd].Trim();
         for (var i = parameters.Count - 1; i >= 0; i--)
         {
@@ -1539,6 +1551,56 @@ public static class ProjectSupport
         valueSource = body;
         cursor = valueEnd;
         return true;
+    }
+
+    /// <summary>
+    /// Extends a value's AST-derived end position past any closing parens/brackets that balance opens
+    /// occurring within the extracted value text. A parenthesized expression's span excludes its
+    /// wrapping parentheses (the parser strips them), so the recorded end can fall short of the real
+    /// value end by the dropped closers; re-balancing recovers them. Returns <paramref name="astEnd"/>
+    /// unchanged when the value is already balanced.
+    /// </summary>
+    private static int ExtendToBalancedEnd(string source, int from, int astEnd)
+    {
+        var diag = new Diagnostics();
+        var lexer = new Lexer(source[from..], diag);
+        var depth = 0;
+        var reachedAstEnd = false;
+
+        while (true)
+        {
+            var token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                return astEnd;
+            }
+
+            switch (token.Kind)
+            {
+                case TokenKind.LParen:
+                case TokenKind.LBracket:
+                    depth++;
+                    break;
+                case TokenKind.RParen:
+                case TokenKind.RBracket:
+                    depth--;
+                    break;
+            }
+
+            var absoluteEnd = from + token.Position + token.Length;
+            if (absoluteEnd >= astEnd)
+            {
+                reachedAstEnd = true;
+            }
+
+            // Once the AST span is covered and every opened bracket is closed, the value is complete:
+            // its true end is whichever is later — the AST end (balanced case) or the closer that
+            // brought the depth back to zero (the dropped wrapping `)` case).
+            if (reachedAstEnd && depth <= 0)
+            {
+                return Math.Max(astEnd, absoluteEnd);
+            }
+        }
     }
 
     /// <summary>

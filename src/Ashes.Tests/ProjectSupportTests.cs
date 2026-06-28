@@ -452,6 +452,62 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public async Task BuildCompilationSource_should_stitch_flat_sugared_binding_with_parenthesized_letin_body()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import Calc\nAshes.IO.print(sum(3)(0))");
+
+            // The shape `fmt -w` emits for a sugared top-level binding whose folded body leads with
+            // `let..in`: the body is wrapped in parens. A parenthesized expression's AST span excludes
+            // the closing `)`, so the bundler must re-balance the extracted value or the stitched
+            // source comes out unbalanced (ASH003).
+            File.WriteAllText(
+                Path.Combine(root, "Calc.ash"),
+                "let sum a b = (let rec go n acc = if n == 0 then acc else go(n - 1)(acc + n) in go(a)(b))");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("6\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task BuildCompilationSource_should_stitch_flat_recursive_sugared_binding_with_parenthesized_letin_body()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import Calc\nAshes.IO.print(total(4))");
+
+            // Same parenthesized-letin shape (matching the sugared Json.parseValue / Regex.findAll
+            // form: a top-level `let rec` whose folded body leads with an inner `let rec ... in`), but
+            // for a `let rec` binding, which the stitcher renders via in-place renaming rather than
+            // nested `let..in` wrapping.
+            File.WriteAllText(
+                Path.Combine(root, "Calc.ash"),
+                "let rec total n = (let rec go acc m = if m == 0 then acc else go(acc + m)(m - 1) in go(0)(n))");
+
+            var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
+            var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("10\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task BuildCompilationSource_should_hoist_imported_type_declarations()
     {
         var root = CreateTempDirectory();
