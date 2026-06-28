@@ -52,6 +52,8 @@ public static class ProjectSupport
 
     private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive);
 
+    private sealed record ModuleBindingGroup(IReadOnlyList<ModuleBindingFragment> Bindings, bool IsRecursiveGroup);
+
     private readonly record struct QualifiedReference(string ModuleName, string ExportName);
 
     private readonly record struct ReferencedNames(
@@ -62,8 +64,9 @@ public static class ProjectSupport
         string TypeDeclarationsSource,
         string RawExpressionSource,
         string ExpressionBodySource,
-        IReadOnlyList<ModuleBindingFragment> TopLevelBindings,
-        string? LegacyExportName);
+        IReadOnlyList<ModuleBindingGroup> TopLevelBindings,
+        string? LegacyExportName,
+        bool IsFlat);
 
     public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
@@ -546,14 +549,40 @@ public static class ProjectSupport
         }
 
         var usedBindingNames = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var module in nonEntryModules)
+
+        // Flat modules contribute genuine top-level declarations, which must precede the legacy
+        // nested-let pyramid (everything after the first pyramid `let ... in` is the trailing body).
+        var flatDeclarationEmitted = false;
+        foreach (var module in nonEntryModules.Where(module => shapes[module.ModuleName].IsFlat))
+        {
+            var start = prefix.Length;
+            prefix.Append(BuildModuleBindingPrefix(module, shapes[module.ModuleName], exportedNames, usedBindingNames, flat: true));
+            if (prefix.Length > start)
+            {
+                moduleOffsets.Add((module.FilePath, start, prefix.Length));
+                flatDeclarationEmitted = true;
+            }
+        }
+
+        var legacyBindingEmitted = false;
+        foreach (var module in nonEntryModules.Where(module => !shapes[module.ModuleName].IsFlat))
         {
             var start = prefix.Length;
             prefix.Append(BuildModuleBindingPrefix(module, shapes[module.ModuleName], exportedNames, usedBindingNames));
             if (prefix.Length > start)
             {
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
+                legacyBindingEmitted = true;
             }
+        }
+
+        // A flat top-level declaration ends with a newline, not an `in`. Without a following legacy
+        // nested-let binding to open the trailing body, the entry expression would be absorbed as a
+        // whitespace/parenthesized-application argument of the last flat value, so introduce a boundary
+        // binding whose `in` makes the entry expression a proper let body.
+        if (flatDeclarationEmitted && !legacyBindingEmitted)
+        {
+            prefix.Append("let __ashes_module_boundary = 0 in ");
         }
 
         var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
@@ -589,7 +618,7 @@ public static class ProjectSupport
         var aliases = BuildVisibleAliases(
             entryModule,
             [],
-            null,
+            [],
             referencedNames,
             exportedNames);
 
@@ -600,7 +629,8 @@ public static class ProjectSupport
         ProjectModule module,
         ModuleSourceShape shape,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
-        IDictionary<string, string> usedBindingNames)
+        IDictionary<string, string> usedBindingNames,
+        bool flat = false)
     {
         var moduleBindingName = SanitizeModuleBindingName(module.ModuleName);
         if (usedBindingNames.TryGetValue(moduleBindingName, out var existingModuleName))
@@ -614,52 +644,94 @@ public static class ProjectSupport
         var prefix = new StringBuilder();
         var availableLocalBindings = new List<string>();
 
-        foreach (var binding in shape.TopLevelBindings)
+        foreach (var group in shape.TopLevelBindings)
         {
-            var generatedBindingName = $"{moduleBindingName}_{binding.Name}";
-            if (usedBindingNames.TryGetValue(generatedBindingName, out existingModuleName))
+            foreach (var binding in group.Bindings)
             {
-                throw new InvalidOperationException(
-                    $"Generated export binding collision for '{generatedBindingName}': '{existingModuleName}' and '{module.ModuleName}'.");
+                var generatedBindingName = $"{moduleBindingName}_{binding.Name}";
+                if (usedBindingNames.TryGetValue(generatedBindingName, out existingModuleName))
+                {
+                    throw new InvalidOperationException(
+                        $"Generated export binding collision for '{generatedBindingName}': '{existingModuleName}' and '{module.ModuleName}'.");
+                }
+
+                usedBindingNames[generatedBindingName] = module.ModuleName;
             }
 
-            usedBindingNames[generatedBindingName] = module.ModuleName;
-
-            var referencedNames = CollectReferencedNames(binding.ValueSource);
-            var aliases = BuildVisibleAliases(
-                module,
-                availableLocalBindings,
-                binding.IsRecursive ? binding.Name : null,
-                referencedNames,
-                exportedNames);
+            // Within a `let rec ... and ...` group every member is visible to the others, so each
+            // member value resolves sibling references to the group's generated names.
+            var recursiveBindings = group.IsRecursiveGroup
+                ? group.Bindings.Select(binding => binding.Name).ToArray()
+                : [];
 
             prefix.Append("let ");
-            if (binding.IsRecursive)
+            if (group.IsRecursiveGroup)
             {
                 prefix.Append("rec ");
             }
 
-            prefix.Append(generatedBindingName)
-                .Append(" = (")
-                .Append(ApplyAliases(binding.ValueSource, aliases))
-                .Append(") in ");
+            for (var i = 0; i < group.Bindings.Count; i++)
+            {
+                var binding = group.Bindings[i];
+                var referencedNames = CollectReferencedNames(binding.ValueSource);
+                var aliases = BuildVisibleAliases(
+                    module,
+                    availableLocalBindings,
+                    recursiveBindings,
+                    referencedNames,
+                    exportedNames);
 
-            availableLocalBindings.Add(binding.Name);
+                if (i > 0)
+                {
+                    prefix.Append(" and ");
+                }
+
+                // A flat `let rec ... and ...` group is stitched as a genuine top-level declaration, so
+                // each member value must stay a bare function literal; its aliases are resolved by
+                // renaming identifiers in place rather than wrapping them in `let ... in` (which would
+                // make the value a non-function expression and force eager sibling evaluation). The
+                // legacy nested form keeps the original wrapping path so its codegen is unchanged — in
+                // particular wrapping is what resolves synthetic cross-module/qualified alias names that
+                // never appear as bare identifier tokens.
+                var renderedValue = flat && group.IsRecursiveGroup
+                    ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
+                    : ApplyAliases(binding.ValueSource, aliases);
+
+                prefix.Append($"{moduleBindingName}_{binding.Name}")
+                    .Append(" = (")
+                    .Append(renderedValue)
+                    .Append(')');
+            }
+
+            // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
+            // ...` group cannot be expressed in the nested expression pyramid the legacy form uses, and
+            // top-level declarations keep mutual recursion intact while staying visible to the body.
+            prefix.Append(flat ? "\n" : " in ");
+
+            foreach (var binding in group.Bindings)
+            {
+                availableLocalBindings.Add(binding.Name);
+            }
         }
 
-        var bodyReferencedNames = CollectReferencedNames(shape.ExpressionBodySource);
-        var bodyAliases = BuildVisibleAliases(
-            module,
-            availableLocalBindings,
-            null,
-            bodyReferencedNames,
-            exportedNames);
+        // Flat modules drop their trailing expression and bind no whole-module value, so the
+        // module-value binding is emitted only when the legacy nested form left an expression body.
+        if (!string.IsNullOrWhiteSpace(shape.ExpressionBodySource))
+        {
+            var bodyReferencedNames = CollectReferencedNames(shape.ExpressionBodySource);
+            var bodyAliases = BuildVisibleAliases(
+                module,
+                availableLocalBindings,
+                [],
+                bodyReferencedNames,
+                exportedNames);
 
-        prefix.Append("let ")
-            .Append(moduleBindingName)
-            .Append(" = (")
-            .Append(ApplyAliases(shape.ExpressionBodySource, bodyAliases))
-            .Append(") in ");
+            prefix.Append("let ")
+                .Append(moduleBindingName)
+                .Append(" = (")
+                .Append(ApplyAliases(shape.ExpressionBodySource, bodyAliases))
+                .Append(") in ");
+        }
 
         return prefix.ToString();
     }
@@ -667,7 +739,7 @@ public static class ProjectSupport
     private static List<KeyValuePair<string, string>> BuildVisibleAliases(
         ProjectModule module,
         IReadOnlyList<string> availableLocalBindings,
-        string? currentRecursiveBinding,
+        IReadOnlyList<string> currentRecursiveBindings,
         ReferencedNames referencedNames,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
     {
@@ -676,12 +748,14 @@ public static class ProjectSupport
         var referencedVariables = referencedNames.Variables;
         var referencedQualifiedReferences = referencedNames.QualifiedReferences;
 
-        if (!string.IsNullOrWhiteSpace(currentRecursiveBinding) && referencedVariables.Contains(currentRecursiveBinding))
+        foreach (var recursiveBinding in currentRecursiveBindings)
         {
-            aliases.Add(new KeyValuePair<string, string>(
-                currentRecursiveBinding!,
-                $"{SanitizeModuleBindingName(module.ModuleName)}_{currentRecursiveBinding}"));
-            localNames.Add(currentRecursiveBinding!);
+            if (referencedVariables.Contains(recursiveBinding) && localNames.Add(recursiveBinding))
+            {
+                aliases.Add(new KeyValuePair<string, string>(
+                    recursiveBinding,
+                    $"{SanitizeModuleBindingName(module.ModuleName)}_{recursiveBinding}"));
+            }
         }
 
         foreach (var bindingName in availableLocalBindings.Reverse())
@@ -776,11 +850,57 @@ public static class ProjectSupport
         return wrapped;
     }
 
+    /// <summary>
+    /// Applies aliases by renaming matching identifier tokens in place rather than wrapping the
+    /// expression in <c>let ... in</c> bindings. Used for <c>let rec</c> values, which must remain
+    /// bare function literals so mutual/self references stay deferred to call time.
+    /// </summary>
+    private static string ApplyAliasesByRenaming(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
+    {
+        var trimmed = source.Trim();
+        if (aliases.Count == 0)
+        {
+            return trimmed;
+        }
+
+        var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var alias in aliases)
+        {
+            renames[alias.Key] = alias.Value;
+        }
+
+        var diag = new Diagnostics();
+        var lexer = new Lexer(trimmed, diag);
+        var builder = new StringBuilder();
+        var copiedUpTo = 0;
+
+        while (true)
+        {
+            var token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                break;
+            }
+
+            if (token.Kind == TokenKind.Ident && renames.TryGetValue(token.Text, out var replacement))
+            {
+                builder.Append(trimmed[copiedUpTo..token.Position]).Append(replacement);
+                copiedUpTo = token.Position + token.Length;
+            }
+        }
+
+        builder.Append(trimmed[copiedUpTo..]);
+        return builder.ToString();
+    }
+
     private static IReadOnlyList<string> GetExportNames(ModuleSourceShape shape)
     {
         if (shape.TopLevelBindings.Count > 0)
         {
-            return shape.TopLevelBindings.Select(binding => binding.Name).ToArray();
+            return shape.TopLevelBindings
+                .SelectMany(group => group.Bindings)
+                .Select(binding => binding.Name)
+                .ToArray();
         }
 
         return string.IsNullOrWhiteSpace(shape.LegacyExportName)
@@ -790,13 +910,291 @@ public static class ProjectSupport
 
     private static ModuleSourceShape ShapeModuleSource(string source)
     {
+        if (TryShapeFlatModule(source, out var flatShape))
+        {
+            return flatShape;
+        }
+
         var bodyStart = FindExpressionBodyStart(source);
         var typeDeclarationsSource = bodyStart > 0 ? source[..bodyStart] : string.Empty;
         var rawExpressionSource = bodyStart < source.Length ? source[bodyStart..].Trim() : string.Empty;
-        var topLevelBindings = ExtractTopLevelBindings(rawExpressionSource, out var remainingBody);
-        var legacyExportName = topLevelBindings.Count == 0 ? TryInferExportName(source) : null;
+        var fragments = ExtractTopLevelBindings(rawExpressionSource, out var remainingBody);
+        var topLevelBindings = fragments
+            .Select(fragment => new ModuleBindingGroup([fragment], fragment.IsRecursive))
+            .ToArray();
+        var legacyExportName = topLevelBindings.Length == 0 ? TryInferExportName(source) : null;
 
-        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName);
+        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false);
+    }
+
+    /// <summary>
+    /// Shapes a module written in the flat top-level declaration form (a sequence of
+    /// <c>let</c> / <c>let rec ... and ...</c> / <c>type</c> / <c>extern</c> declarations followed by
+    /// an optional trailing expression). The export set is exactly the top-level <c>let</c>/recgroup
+    /// names; <c>extern</c> declarations and the trailing expression are dropped. Returns
+    /// <see langword="false"/> for the legacy nested <c>let ... in</c> pyramid (no top-level items)
+    /// or any source the real parser rejects, so the caller falls back to text-based shaping.
+    /// </summary>
+    private static bool TryShapeFlatModule(string source, out ModuleSourceShape shape)
+    {
+        shape = null!;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        var diag = new Diagnostics();
+        var program = new Parser(source, diag).ParseProgram();
+
+        // A file with no top-level items is either a single expression or the legacy nested
+        // `let ... in` pyramid (its declarations form an expression chain, not Program.Items); both
+        // keep the legacy text-based shaping path.
+        if (diag.StructuredErrors.Count > 0 || program.Items.Count == 0)
+        {
+            return false;
+        }
+
+        var typeDeclarations = new StringBuilder();
+        var groups = new List<ModuleBindingGroup>();
+        // Spans of declarations hoisted out of the entry expression (type decls, which the stitcher
+        // emits up front, and `extern`, which is never part of the body). Removing exactly these from
+        // the source leaves the flat `let` declarations and the trailing expression for the entry path.
+        var hoistedSpans = new List<(int Start, int End)>();
+        var hasFlatBinding = false;
+        var cursor = 0;
+
+        foreach (var item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.Type typeItem:
+                    {
+                        var span = AstSpans.GetOrDefault(typeItem.Decl);
+                        if (span.End <= span.Start || span.End > source.Length)
+                        {
+                            return false;
+                        }
+
+                        // Each declaration carries a trailing newline so concatenated type sources (and the
+                        // bindings that follow them in the combined source) stay lexically separated.
+                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
+                        hoistedSpans.Add((span.Start, span.End));
+                        cursor = span.End;
+                        break;
+                    }
+
+                case TopLevelItem.Extern externItem:
+                    {
+                        // `extern` is never exported and carries no value the stitcher needs; skip it.
+                        var span = AstSpans.GetOrDefault(externItem.Decl);
+                        if (span.End <= span.Start || span.End > source.Length)
+                        {
+                            return false;
+                        }
+
+                        hoistedSpans.Add((span.Start, span.End));
+                        cursor = span.End;
+                        break;
+                    }
+
+                case TopLevelItem.LetDecl letDecl:
+                    {
+                        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource))
+                        {
+                            return false;
+                        }
+
+                        groups.Add(new ModuleBindingGroup(
+                            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive)],
+                            letDecl.IsRecursive));
+                        hasFlatBinding = true;
+                        break;
+                    }
+
+                case TopLevelItem.RecGroup recGroup:
+                    {
+                        var members = new List<ModuleBindingFragment>();
+                        foreach (var (name, value) in recGroup.Bindings)
+                        {
+                            if (!TryExtractFlatBindingValue(source, value, ref cursor, out var valueSource))
+                            {
+                                return false;
+                            }
+
+                            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true));
+                        }
+
+                        groups.Add(new ModuleBindingGroup(members, IsRecursiveGroup: true));
+                        hasFlatBinding = true;
+                        break;
+                    }
+
+                default:
+                    return false;
+            }
+        }
+
+        // Without a genuine top-level `let`/`let rec` declaration there is nothing flat to export: a
+        // module that is only type declarations followed by a nested `let ... in` pyramid (its bindings
+        // live in Program.Body, not Program.Items) must keep the legacy text-based shaping, which
+        // extracts those bindings and preserves the entry expression. Bailing here is what keeps the
+        // legacy `type T = ...` + `let f = ... in f` module form working.
+        if (!hasFlatBinding)
+        {
+            return false;
+        }
+
+        // For an imported (non-entry) module the trailing expression is dropped and the stitcher uses
+        // the binding groups, so RawExpressionSource is unused. For an entry module it is the program
+        // body, so preserve the flat `let` declarations and trailing expression here (with the hoisted
+        // type/extern declarations removed, since those are emitted up front) rather than discarding it.
+        shape = new ModuleSourceShape(
+            TypeDeclarationsSource: typeDeclarations.ToString(),
+            RawExpressionSource: RemoveSpans(source, hoistedSpans).Trim(),
+            ExpressionBodySource: string.Empty,
+            TopLevelBindings: groups,
+            LegacyExportName: null,
+            IsFlat: true);
+        return true;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="source"/> with the given (already source-ordered, non-overlapping)
+    /// spans removed, preserving everything in between. Used to strip hoisted type/extern declarations
+    /// out of the flat entry expression while keeping the flat <c>let</c> declarations and trailing
+    /// expression intact.
+    /// </summary>
+    private static string RemoveSpans(string source, IReadOnlyList<(int Start, int End)> spans)
+    {
+        if (spans.Count == 0)
+        {
+            return source;
+        }
+
+        var builder = new StringBuilder();
+        var copiedUpTo = 0;
+        foreach (var (start, end) in spans)
+        {
+            if (start > copiedUpTo)
+            {
+                builder.Append(source[copiedUpTo..start]);
+            }
+
+            copiedUpTo = Math.Max(copiedUpTo, end);
+        }
+
+        builder.Append(source[copiedUpTo..]);
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Extracts the source text of a flat top-level binding's value, advancing <paramref name="cursor"/>
+    /// past it. The value end comes from the parsed AST span (authoritative for arbitrarily nested
+    /// expressions); the value start is the position just after the binding's <c>=</c>. ML-style
+    /// function sugar (<c>let f x y = body</c>) is reconstructed into an explicit lambda chain so the
+    /// stitched binding stays a plain value expression.
+    /// </summary>
+    private static bool TryExtractFlatBindingValue(string source, Expr value, ref int cursor, out string valueSource)
+    {
+        valueSource = string.Empty;
+        if (!TryScanFlatLetHeader(source, cursor, out var parameters, out var valueStart))
+        {
+            return false;
+        }
+
+        var valueEnd = AstSpans.GetOrDefault(value).End;
+        if (valueEnd <= valueStart || valueEnd > source.Length)
+        {
+            return false;
+        }
+
+        var body = source[valueStart..valueEnd].Trim();
+        for (var i = parameters.Count - 1; i >= 0; i--)
+        {
+            body = $"fun ({parameters[i]}) -> {body}";
+        }
+
+        valueSource = body;
+        cursor = valueEnd;
+        return true;
+    }
+
+    /// <summary>
+    /// Scans a flat <c>let [rec] name [params] [: type] =</c> (or <c>and name [params] =</c>) header
+    /// starting at <paramref name="from"/>, returning any ML-style sugar parameters and the source
+    /// position immediately after the value-introducing <c>=</c>.
+    /// </summary>
+    private static bool TryScanFlatLetHeader(string source, int from, out IReadOnlyList<string> parameters, out int valueStart)
+    {
+        parameters = [];
+        valueStart = from;
+        if (from < 0 || from >= source.Length)
+        {
+            return false;
+        }
+
+        var diag = new Diagnostics();
+        var lexer = new Lexer(source[from..], diag);
+
+        var token = lexer.Next();
+        if (token.Kind is TokenKind.Let or TokenKind.And)
+        {
+            token = lexer.Next();
+        }
+
+        if (token.Kind == TokenKind.Rec)
+        {
+            token = lexer.Next();
+        }
+
+        if (token.Kind != TokenKind.Ident)
+        {
+            return false;
+        }
+
+        token = lexer.Next();
+
+        if (token.Kind == TokenKind.Colon)
+        {
+            // Annotated binding: skip the type expression up to the value-introducing `=`.
+            var depth = 0;
+            while (token.Kind != TokenKind.EOF)
+            {
+                token = lexer.Next();
+                switch (token.Kind)
+                {
+                    case TokenKind.LParen:
+                    case TokenKind.LBracket:
+                        depth++;
+                        break;
+                    case TokenKind.RParen:
+                    case TokenKind.RBracket:
+                        depth--;
+                        break;
+                    case TokenKind.Equals when depth == 0:
+                        valueStart = from + token.Position + token.Text.Length;
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        var collected = new List<string>();
+        while (token.Kind == TokenKind.Ident)
+        {
+            collected.Add(token.Text);
+            token = lexer.Next();
+        }
+
+        if (token.Kind != TokenKind.Equals)
+        {
+            return false;
+        }
+
+        parameters = collected;
+        valueStart = from + token.Position + token.Text.Length;
+        return true;
     }
 
     private static IReadOnlyList<ModuleBindingFragment> ExtractTopLevelBindings(string expressionSource, out string remainingBody)
