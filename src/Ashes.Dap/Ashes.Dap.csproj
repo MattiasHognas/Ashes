@@ -7,6 +7,8 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>ashes-dap</AssemblyName>
     <RootNamespace>Ashes.Dap</RootNamespace>
+    <!-- No backend reference: doesn't use libLLVM/rustls, so skip bundling them. -->
+    <BundleNativeRuntimes>false</BundleNativeRuntimes>
   </PropertyGroup>
 
   <ItemGroup>

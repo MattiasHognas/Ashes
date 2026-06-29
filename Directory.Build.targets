@@ -5,9 +5,15 @@
     This target runs after Publish to ensure the correct RID-specific native libraries
     are placed in the published output.
   -->
+  <!--
+    Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set
+    BundleNativeRuntimes=false to opt out of the copy below — they don't use
+    libLLVM/rustls, so copying them just bloats their publish output (libLLVM.so
+    alone is ~144 MB). Everything else keeps the copy by default.
+  -->
   <Target Name="_EnsureCorrectNativeLibForPublish"
     AfterTargets="Publish"
-    Condition="'$(RuntimeIdentifier)' != ''">
+    Condition="'$(RuntimeIdentifier)' != '' and '$(BundleNativeRuntimes)' != 'false'">
     <MakeDir Directories="$(PublishDir)runtimes/$(RuntimeIdentifier)"
       Condition="Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/librustls.so') or Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.dll') or Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.version')" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.so"
