@@ -145,15 +145,45 @@ stand-in for the disabled `.github/workflows/release.yml`. It:
 
 1. prompts for and validates a semver version (suggesting the next patch),
 2. cuts a `release/X.Y.Z` branch from `origin/main`,
-3. builds the 9 binary artifacts + `.vsix` into `artifacts/release/` with the version embedded,
-4. tags `vX.Y.Z`, pushes the branch and tag,
-5. publishes a GitHub Release with the same artifact set `release.yml` attaches
-   (release notes are left empty for now).
+3. stamps the version into `vscode-extension/package.json` and **commits** it on
+   the release branch ("Update version to X.Y.Z"), so the tag points at source
+   matching the released version,
+4. builds the 9 binary artifacts + `.vsix` into `artifacts/release/` with the version embedded,
+5. tags `vX.Y.Z`, pushes the branch and tag,
+6. publishes a GitHub Release with the same artifact set `release.yml` attaches
+   (release notes are left empty for now),
+7. **if `VSCE_PAT` is set**, publishes the just-built `.vsix` to the VS Code
+   Marketplace (publisher `mattiashognas`) as the final step.
 
-The branch and tag are created locally and only pushed after a successful build,
-so a failed build never leaves dangling `release/*` refs on the remote. Requires
-`gh` authenticated (`gh auth status`) and a provisioned build env (`just images
-&& just provision`).
+The version-bump commit lives on the `release/X.Y.Z` branch only; `main` picks it
+up when that branch is merged back (e.g. a PR). The branch, commit, and tag are
+created locally and only pushed after a successful build, so a failed build never
+leaves dangling `release/*` refs — or a premature version bump — on the remote.
+Requires `git`, `gh` (authenticated, `gh auth status`), `pnpm`, and a provisioned
+build env (`just images && just provision`).
+
+### Publishing to the VS Code Marketplace
+
+Marketplace publish is the last step and is **off unless `VSCE_PAT` is set**, so a
+publish failure can never strand the already-live tag/release (the run prints a
+retry command). It uploads the exact `.vsix` attached to the GitHub Release — no
+rebuild. The extension manifest's `publisher` (`mattiashognas`) must match your
+Marketplace publisher.
+
+Get a token from <https://dev.azure.com> → User settings → **Personal access
+tokens** → New token, scope **Marketplace ▸ Manage** (the org can be any; the
+token is org-agnostic for Marketplace). Then:
+
+```sh
+VSCE_PAT=xxxxxxxx just release-github 1.2.3
+```
+
+To publish an already-released `.vsix` after the fact:
+
+```sh
+VSCE_PAT=xxxxxxxx pnpm dlx @vscode/vsce@3.9.1 publish \
+  --packagePath artifacts/release/ashes-language-1.2.3.vsix --no-dependencies
+```
 
 ## Layout
 

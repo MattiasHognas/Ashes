@@ -363,8 +363,11 @@ release_build() {
     # Diagnostic: surface anything dirtying the tree (the build writes only to
     # ignored paths, so this should be empty). Remove once the release is green.
     echo '--- git status --porcelain (pre version bump) ---'; git status --porcelain; echo '--- end git status ---'
-    # 'pnpm version' refuses to run on an unclean tree; we only need to stamp the
-    # version field for vsce, so set it directly (no git guard).
+    # Stamp the version into package.json so vsce embeds it in the .vsix. For
+    # 'just release' (standalone) this is the only place the version is set; from
+    # release_github the bump is already committed on the release branch, so this
+    # just re-sets the same value (no diff). 'pnpm version' refuses on an unclean
+    # tree, so set the field directly (no git guard).
     pnpm pkg set version=\$VERSION
     pnpm run compile
     pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
@@ -411,9 +414,10 @@ release_github() {
   _step "Preflight checks"
   _have git || _die "git not found on PATH"
   _have gh || _die "gh (GitHub CLI) not found on PATH — install it and run 'gh auth login'"
+  _have pnpm || _die "pnpm not found on PATH — needed to stamp the extension version"
   gh auth status >/dev/null 2>&1 || _die "gh is not authenticated — run 'gh auth login'"
   [[ -z "$(git status --porcelain)" ]] || _die "working tree is not clean — commit or stash changes before releasing"
-  _ok "git, gh authenticated, working tree clean"
+  _ok "git, gh, pnpm present; gh authenticated; working tree clean"
 
   local orig_ref
   orig_ref="$(git rev-parse --abbrev-ref HEAD)"
@@ -460,6 +464,11 @@ release_github() {
   echo "  • tag     ${_B}${tag}${_N}"
   echo "  • build   CLI + LSP + DAP for linux-x64 / linux-arm64 / win-x64, plus the .vsix"
   echo "  • publish a GitHub Release with the artifacts attached"
+  if [[ -n "${VSCE_PAT:-}" ]]; then
+    echo "  • publish the .vsix to the VS Code Marketplace (publisher mattiashognas; VSCE_PAT set)"
+  else
+    echo "  • ${_Y}skip${_N} Marketplace publish (VSCE_PAT not set)"
+  fi
   echo
   _confirm "Proceed?" || _die "aborted"
 
@@ -478,6 +487,22 @@ release_github() {
     git tag -d "$tag" >/dev/null 2>&1 || true
   }
   trap _cleanup_on_fail ERR
+
+  # --- stamp version + commit on the release branch ---
+  # Commit the bump here (not as a throwaway dirty edit) so the vX.Y.Z tag points
+  # at source whose package.json matches the released version. The commit lives on
+  # the release branch only; main picks it up when the branch is merged back.
+  # release_build re-stamps to the same value, so that step is a no-op from here.
+  # On failure _cleanup_on_fail deletes the branch, which takes this commit with it.
+  _step "Stamping version $version into vscode-extension/package.json"
+  ( cd vscode-extension && pnpm pkg set version="$version" ) \
+    || _die "failed to set version in vscode-extension/package.json"
+  if [[ -n "$(git status --porcelain -- vscode-extension/package.json)" ]]; then
+    git commit -q vscode-extension/package.json -m "Update version to $version"
+    _ok "committed version bump"
+  else
+    _ok "package.json already at $version (no commit needed)"
+  fi
 
   # --- build artifacts ---
   local out="artifacts/release"
@@ -518,6 +543,25 @@ release_github() {
     --title "Ashes $tag" \
     --target "$branch" \
     --notes ""
+
+  # --- publish to the VS Code Marketplace (optional, last) ---
+  # Gated on VSCE_PAT so the release still works without it. Publishes the exact
+  # .vsix already built and attached to the GitHub Release — no rebuild. vsce reads
+  # the token from $VSCE_PAT (kept out of argv). Run after the Release exists and
+  # past the ERR trap, and tolerate failure: a Marketplace hiccup must not strand
+  # the live tag/release — it can be retried with the printed command.
+  local vsix="$out/ashes-language-$version.vsix"
+  if [[ -n "${VSCE_PAT:-}" ]]; then
+    _step "Publishing $vsix to the VS Code Marketplace"
+    if pnpm dlx @vscode/vsce@3.9.1 publish --packagePath "$vsix" --no-dependencies; then
+      _ok "published to Marketplace"
+    else
+      _warn "vsce publish failed — GitHub release $tag is live; retry: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.1 publish --packagePath $vsix --no-dependencies"
+    fi
+  else
+    _warn "VSCE_PAT not set — skipped Marketplace publish (GitHub release $tag is live)"
+    echo "  to publish later: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.1 publish --packagePath $vsix --no-dependencies"
+  fi
 
   _restore_branch
 
