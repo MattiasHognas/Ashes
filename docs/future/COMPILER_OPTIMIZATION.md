@@ -78,3 +78,30 @@ Extend tail-call optimization to mutually recursive groups (`f` tail-calls `g`,
 - [ ] Generalize `HasTailSelfCalls` (`Lowering.cs`) to recognize tail calls to any sibling in the group.
 - [ ] Compile the group to one shared loop with a dispatch tag selecting the active member's body per iteration (replacing the current TCO-disabled closure-call path).
 - [ ] Tests: a mutually recursive `even`/`odd` (or similar) `.ash` program that would overflow the stack without it.
+
+> **Design constraint (discovered).** Members of a mutually-tail-recursive group can legally
+> have **different parameter types** (`ping: Int → Str` tail-calls `pong: Str → Str` and back),
+> so a group cannot be merged into a single self-recursive `dispatch(tag, args)` function by
+> sharing one typed parameter list — that would unify incompatible parameter types and reject a
+> valid program. The implemented transform therefore gates on **same arity + identical parameter
+> types** (verified against each member's inferred type after the group is type-checked) and
+> falls back to the closure path otherwise; this keeps each merged parameter's type intact, so the
+> existing single-function TCO and arena copy-out apply unchanged. A future generalization to
+> heterogeneous parameter types needs distinct per-member slots (an IR-level slot-union loop) or
+> an opaque-coercion dispatch with wrappers re-typed from the inferred member signatures.
+
+### 4. Re-enable LLVM jump tables for `switch` (linker relocation support)
+
+Decision-tree matching (item 1) currently forces `"no-jump-tables"="true"` because the custom
+image linkers don't apply the relocations an LLVM switch jump table needs, so the indirect branch
+through the `.rodata` address table lands in garbage. Teaching the linkers to handle those
+relocations lets us drop the attribute and get LLVM's O(1) jump-table dispatch for free — the
+codegen side already produces it. The table is compile-time-constant, immutable, read-only
+`.rodata` (same category as the string-literal constants and `__imp_*` import tables the linkers
+already handle), so it is fully consistent with Ashes' invariants — no mutation, no runtime
+allocation, no GC, deterministic.
+
+- [ ] Identify the relocation kinds LLVM emits for switch jump tables on each target (absolute / PC-relative address-table entries) for ELF x64, ELF arm64, and PE.
+- [ ] Add handling for those relocation kinds in `LlvmImageLinkerElf.cs`, `LlvmImageLinkerElfArm64.cs`, and `LlvmImageLinkerPe.cs`.
+- [ ] Remove the `"no-jump-tables"="true"` attribute (`LlvmCodegen.cs`) once all three linkers apply the relocations.
+- [ ] Tests: the existing large-ADT dispatch tests plus a density level high enough to force a jump table on each target (run arm64/win-x64 under the emulation helpers).
