@@ -302,7 +302,7 @@ invoke_step "Packaging local VSIX" \
   "$pnpmCommand" dlx \
     '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' \
     '--config.ignoredBuiltDependencies[]=keytar' \
-    @vscode/vsce@3.9.1 \
+    @vscode/vsce@3.9.2 \
     package \
     --no-dependencies \
     --allow-missing-repository \

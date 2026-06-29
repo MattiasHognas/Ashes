@@ -370,7 +370,7 @@ release_build() {
     # tree, so set the field directly (no git guard).
     pnpm pkg set version=\$VERSION
     pnpm run compile
-    pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.1 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
+    pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.2 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
   "
 }
 
@@ -553,14 +553,14 @@ release_github() {
   local vsix="$out/ashes-language-$version.vsix"
   if [[ -n "${VSCE_PAT:-}" ]]; then
     _step "Publishing $vsix to the VS Code Marketplace"
-    if pnpm dlx @vscode/vsce@3.9.1 publish --packagePath "$vsix" --no-dependencies; then
+    if pnpm dlx @vscode/vsce@3.9.2 publish --packagePath "$vsix" --no-dependencies; then
       _ok "published to Marketplace"
     else
-      _warn "vsce publish failed — GitHub release $tag is live; retry: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.1 publish --packagePath $vsix --no-dependencies"
+      _warn "vsce publish failed — GitHub release $tag is live; retry: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.2 publish --packagePath $vsix --no-dependencies"
     fi
   else
     _warn "VSCE_PAT not set — skipped Marketplace publish (GitHub release $tag is live)"
-    echo "  to publish later: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.1 publish --packagePath $vsix --no-dependencies"
+    echo "  to publish later: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.2 publish --packagePath $vsix --no-dependencies"
   fi
 
   _restore_branch
