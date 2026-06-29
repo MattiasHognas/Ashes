@@ -2092,7 +2092,12 @@ of the first task to complete:
 
 ## 19.8 Diagnostics
 
-- `ASH011` — reserved.
+Async/await has no dedicated diagnostic codes. `async` is a builtin
+(`Ashes.Async.task`), not a block keyword, so there is no "outside `async`"
+state to police; misuse (for example combining tasks with mismatched error
+types, or consuming a `Task` without `await`/`Ashes.Async.run`) surfaces through
+ordinary type-inference diagnostics. See [DIAGNOSTICS.md](DIAGNOSTICS.md) for the
+full code table.
 
 ---
 

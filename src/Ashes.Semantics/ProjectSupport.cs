@@ -2139,9 +2139,6 @@ public static class ProjectSupport
                         Visit(matchCase.Body);
                     }
                     break;
-                case Expr.Async asyncExpr:
-                    Visit(asyncExpr.Body);
-                    break;
                 case Expr.Await awaitExpr:
                     Visit(awaitExpr.Task);
                     break;

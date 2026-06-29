@@ -54,32 +54,25 @@ public sealed class DiagnosticCodeTests
         diag.StructuredErrors.ShouldContain(x => x.Code == DiagnosticCodes.ListElementTypeMismatch);
     }
 
+    // `await` and the networking builtins are intentionally usable outside any `async` context:
+    // `async` is a builtin (Ashes.Async.task), not a block keyword, so there is nothing to be
+    // "outside" of. `await` runs its task wherever it appears, and async-only safety is enforced by
+    // the `Task` type. These guards lock in that permissive behaviour so the abandoned
+    // await-/networking-outside-async enforcement does not silently reappear.
+
     [Test]
-    public void Await_outside_async_should_not_emit_ash010()
+    public void Await_outside_async_compiles_without_error()
     {
         var diag = LowerExpression("await Ashes.Async.task(42)");
 
-        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
+        diag.StructuredErrors.ShouldBeEmpty();
     }
 
     [Test]
-    public void Await_on_task_should_not_emit_ash010()
+    public void Networking_builtin_outside_async_compiles_without_error()
     {
-        var diag = LowerExpression("await Ashes.Async.task(42)");
-
-        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AwaitOutsideAsync);
-    }
-
-    [Test]
-    public void Async_only_networking_api_should_not_emit_ash012_outside_async()
-    {
-        var diag = LowerExpression("Ashes.Http.get(\"http://example.com\")");
-
-        diag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
-
-        var httpsDiag = LowerExpression("Ashes.Http.get(\"https://example.com\")");
-
-        httpsDiag.StructuredErrors.ShouldNotContain(x => x.Code == DiagnosticCodes.AsyncOnlyNetworkingApi);
+        LowerExpression("Ashes.Http.get(\"http://example.com\")").StructuredErrors.ShouldBeEmpty();
+        LowerExpression("Ashes.Http.get(\"https://example.com\")").StructuredErrors.ShouldBeEmpty();
     }
 
     private static Diagnostics LowerExpression(string source)

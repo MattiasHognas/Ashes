@@ -8,25 +8,28 @@ CLI/TestRunner compile failures are still surfaced as uncoded compile errors.
 
 Current codes:
 
-| Code | Meaning |
-|------|---------|
-| `ASH001` | Unknown identifier |
-| `ASH002` | Generic type mismatch |
-| `ASH003` | Parse error |
-| `ASH004` | Match branch type mismatch |
-| `ASH005` | List element type mismatch |
-| `ASH006` | Use-after-drop (using a resource after it has been closed) |
+| Code     | Meaning                                                       |
+| -------- | ------------------------------------------------------------- |
+| `ASH001` | Unknown identifier                                            |
+| `ASH002` | Generic type mismatch                                         |
+| `ASH003` | Parse error                                                   |
+| `ASH004` | Match branch type mismatch                                    |
+| `ASH005` | List element type mismatch                                    |
+| `ASH006` | Use-after-drop (using a resource after it has been closed)    |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
-| `ASH010` | Reserved |
-| `ASH011` | Reserved |
-| `ASH012` | Reserved |
-| `ASH013` | Duplicate top-level binding name |
-| `ASH014` | Reference to a binding not yet declared (forward reference) |
-| `ASH015` | `and` used without a preceding `let rec` |
-| `ASH016` | Conflicting unqualified import selectors for the same name |
+| `ASH013` | Duplicate top-level binding name                              |
+| `ASH014` | Reference to a binding not yet declared (forward reference)   |
+| `ASH015` | `and` used without a preceding `let rec`                      |
+| `ASH016` | Conflicting unqualified import selectors for the same name    |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
+
+`ASH010`–`ASH012` were previously allocated for an `async`-block enforcement model
+(`await`/networking outside `async`, async error-type conflict). The language no
+longer has an `async` keyword — `async` is a builtin (`Ashes.Async.task`), and
+async-only safety is enforced by the `Task` type — so those codes were never
+emitted and have been retired. The numbers are unused and free for reuse.
 
 ## Top-level declaration and import diagnostics
 
@@ -50,7 +53,7 @@ and the binding/type import selectors. See
 - `ASH015` — **`and` without `let rec`.** An `and` clause appears without a preceding
   `let rec`. Mutual recursion is written `let rec X = ... and Y = ...`; a bare `and`
   (after a plain `let`, or with no preceding binding) is rejected.
-  Message: ``'and' requires a preceding 'let rec'.``
+  Message: `'and' requires a preceding 'let rec'.`
 
 - `ASH016` — **Conflicting unqualified import selectors.** Two unqualified selector
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate

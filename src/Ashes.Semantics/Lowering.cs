@@ -430,7 +430,6 @@ public sealed partial class Lowering
             Expr.ListLit list => LowerListLit(list),
             Expr.Cons cons => LowerCons(cons),
             Expr.Match match => LowerMatch(match),
-            Expr.Async asyncExpr => LowerAsync(asyncExpr),
             Expr.Await awaitExpr => LowerAwait(awaitExpr),
             Expr.RecordLit rl => LowerRecordLit(rl),
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
@@ -3005,189 +3004,6 @@ public sealed partial class Lowering
     }
 
 
-    private (int, TypeRef) LowerAsync(Expr.Async asyncExpr)
-    {
-        _usesAsync = true;
-
-        // Lift the async body into a separate coroutine function,
-        // then create a task struct pointing to the coroutine.
-
-        // Error type parameter used for the coroutine Task(E, A) return type.
-        var errorTypeVar = NewTypeVar();
-
-        // --- Capture computation (same as lambda lifting) ---
-        var bound = new HashSet<string>(StringComparer.Ordinal);
-        var free = FreeVars(asyncExpr.Body, bound);
-        var captures = free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme)
-                           .Distinct().ToList();
-
-        // Module-aliased qualified vars (e.g., list.map where list → Ashes.List)
-        // resolve to inlined bindings like Ashes_List_map. These must also be captured
-        // because the coroutine scope is isolated from the outer let-binding chain.
-        var qualifiedRefs = CollectQualifiedVars(asyncExpr.Body);
-        foreach (var qv in qualifiedRefs)
-        {
-            var resolvedModule = ResolveModuleAlias(qv.Module);
-            var isInlinedStdModule = BuiltinRegistry.TryGetModule(resolvedModule, out var bm)
-                && bm.ResourceName is not null
-                && !bm.Members.ContainsKey(qv.Name);
-            if (isInlinedStdModule)
-            {
-                var exportedBindingName = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{qv.Name}";
-                if (Lookup(exportedBindingName) is not null && !captures.Contains(exportedBindingName))
-                {
-                    captures.Add(exportedBindingName);
-                }
-            }
-        }
-
-        // --- Allocate environment for captured variables (in outer context) ---
-        int envPtrTemp;
-        if (captures.Count == 0)
-        {
-            envPtrTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(envPtrTemp, 0));
-        }
-        else
-        {
-            envPtrTemp = NewTemp();
-            Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
-            for (int i = 0; i < captures.Count; i++)
-            {
-                var (capTemp, _) = LowerVar(new Expr.Var(captures[i]));
-                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
-            }
-        }
-
-        // --- Generate coroutine function label ---
-        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
-
-        // --- Save outer lowering state ---
-        var savedInst = new List<IrInst>(_inst);
-        var savedTemp = _nextTempSlot;
-        var savedLocal = _nextLocalSlot;
-        var savedScopes = _scopes.ToArray();
-        var savedOwnershipScopes = _ownershipScopes.ToArray();
-        var savedArenaWatermarks = _arenaWatermarks.ToArray();
-        var savedTcoCtx = _tcoCtx;
-        var savedLocalNames = new Dictionary<int, string>(_localNames);
-        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
-        _tcoCtx = null;
-
-        // --- Reset state for coroutine function ---
-        _inst.Clear();
-        _nextTempSlot = 0;
-        _nextLocalSlot = 0;
-        _localNames.Clear();
-        _localTypes.Clear();
-
-        // Coroutine function prologue: local[0] = state struct pointer, local[1] = dummy arg
-        int stateStructSlot = NewLocal(); // → local 0
-        int dummyArgSlot = NewLocal();    // → local 1
-        System.Diagnostics.Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
-
-        // --- Set up scope for coroutine body ---
-        var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        if (_hasAshesIO) AddStdIOBindings(scope);
-
-        // Captured variables are accessed via env (state struct captures section)
-        for (int i = 0; i < captures.Count; i++)
-        {
-            var capBinding = Lookup(captures[i])!;
-            if (capBinding is Binding.Scheme capScheme)
-            {
-                scope[captures[i]] = new Binding.EnvScheme(i, capScheme.S, capScheme.DefinitionSpan);
-            }
-            else
-            {
-                scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
-            }
-        }
-
-        _scopes.Clear();
-        _scopes.Push(scope);
-        _ownershipScopes.Clear();
-        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
-        // Coroutine root scope: push sentinel arena watermark
-        _arenaWatermarks.Clear();
-        _arenaWatermarks.Push((-1, -1));
-
-        // --- Lower the async body ---
-        var (bodyTemp, bodyType) = LowerExpr(asyncExpr.Body);
-        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
-        {
-            return ReturnNeverWithDummyTemp();
-        }
-
-        int okResultTemp = LowerSingleFieldConstructorValue(okConstructor, bodyTemp);
-        Emit(new IrInst.Return(okResultTemp));
-
-        // --- Apply state machine transform ---
-        var transformResult = StateMachineTransform.Transform(_inst, captures.Count);
-
-        // --- Create coroutine IrFunction ---
-        var coroutineFunc = new IrFunction(
-            Label: coroutineLabel,
-            Instructions: new List<IrInst>(transformResult.Instructions),
-            LocalCount: _nextLocalSlot,
-            TempCount: Math.Max(_nextTempSlot, transformResult.MaxTemp + 1),
-            HasEnvAndArgParams: true,
-            Coroutine: new CoroutineInfo(
-                StateCount: transformResult.StateCount,
-                StateStructSize: transformResult.StateStructSize,
-                CaptureCount: captures.Count
-            ),
-            LocalNames: new Dictionary<int, string>(_localNames),
-            LocalTypes: SnapshotLocalTypes()
-        );
-        _funcs.Add(coroutineFunc);
-
-        // --- Restore outer state ---
-        _inst.Clear();
-        _inst.AddRange(savedInst);
-        _nextTempSlot = savedTemp;
-        _nextLocalSlot = savedLocal;
-        _localNames.Clear();
-        _localTypes.Clear();
-        foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
-        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
-        _scopes.Clear();
-        foreach (var s in savedScopes.Reverse())
-        {
-            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
-        }
-        _ownershipScopes.Clear();
-        foreach (var s in savedOwnershipScopes.Reverse())
-        {
-            _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(s, StringComparer.Ordinal));
-        }
-        _arenaWatermarks.Clear();
-        foreach (var w in savedArenaWatermarks.Reverse())
-        {
-            _arenaWatermarks.Push(w);
-        }
-        _tcoCtx = savedTcoCtx;
-
-        // --- Build Task(E, A) type ---
-        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
-        {
-            ReportDiagnostic(GetSpan(asyncExpr), "Internal error: Task type not registered.");
-            return ReturnNeverWithDummyTemp();
-        }
-
-        var taskType = new TypeRef.TNamedType(taskSymbol, [errorTypeVar, bodyType]);
-
-        // --- Emit CreateTask in outer context ---
-        // Build a closure pairing the coroutine function with its captured env,
-        // then wrap it in a task struct via CreateTask.
-        _usesClosures = true;
-        int closureTemp = NewTemp();
-        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captures.Count * 8));
-        int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captures.Count));
-        return (taskTemp, taskType);
-    }
-
     private (int, TypeRef) LowerAwait(Expr.Await awaitExpr)
     {
         var (taskTemp, taskType) = LowerExpr(awaitExpr.Task);
@@ -3476,9 +3292,6 @@ public sealed partial class Lowering
                     var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
                     Visit(lam.Body, boundWithParam);
                     return;
-                case Expr.Async asyncExpr:
-                    Visit(asyncExpr.Body, bnd);
-                    return;
                 case Expr.Await awaitExpr:
                     Visit(awaitExpr.Task, bnd);
                     return;
@@ -3489,153 +3302,6 @@ public sealed partial class Lowering
 
         Visit(e, bound);
         return res;
-    }
-
-    /// <summary>
-    /// Collects all <see cref="Expr.QualifiedVar"/> references from an expression tree.
-    /// Used by <see cref="LowerAsync"/> to discover module-aliased references
-    /// (e.g., <c>list.map</c>) that resolve to inlined std library bindings.
-    /// </summary>
-    private static List<Expr.QualifiedVar> CollectQualifiedVars(Expr e)
-    {
-        var result = new List<Expr.QualifiedVar>();
-        CollectQualifiedVarsVisit(e, result);
-        return result;
-    }
-
-    private static void CollectQualifiedVarsVisit(Expr e, List<Expr.QualifiedVar> result)
-    {
-        switch (e)
-        {
-            case Expr.QualifiedVar qv:
-                result.Add(qv);
-                break;
-            case Expr.Call c:
-                CollectQualifiedVarsVisit(c.Func, result);
-                CollectQualifiedVarsVisit(c.Arg, result);
-                break;
-            case Expr.Let l:
-                CollectQualifiedVarsVisit(l.Value, result);
-                CollectQualifiedVarsVisit(l.Body, result);
-                break;
-            case Expr.LetResult l:
-                CollectQualifiedVarsVisit(l.Value, result);
-                CollectQualifiedVarsVisit(l.Body, result);
-                break;
-            case Expr.LetRec l:
-                CollectQualifiedVarsVisit(l.Value, result);
-                CollectQualifiedVarsVisit(l.Body, result);
-                break;
-            case Expr.If iff:
-                CollectQualifiedVarsVisit(iff.Cond, result);
-                CollectQualifiedVarsVisit(iff.Then, result);
-                CollectQualifiedVarsVisit(iff.Else, result);
-                break;
-            case Expr.Lambda lam:
-                CollectQualifiedVarsVisit(lam.Body, result);
-                break;
-            case Expr.Match m:
-                CollectQualifiedVarsVisit(m.Value, result);
-                foreach (var mc in m.Cases)
-                {
-                    if (mc.Guard is not null)
-                        CollectQualifiedVarsVisit(mc.Guard, result);
-                    CollectQualifiedVarsVisit(mc.Body, result);
-                }
-                break;
-            case Expr.Add a:
-                CollectQualifiedVarsVisit(a.Left, result);
-                CollectQualifiedVarsVisit(a.Right, result);
-                break;
-            case Expr.Subtract s:
-                CollectQualifiedVarsVisit(s.Left, result);
-                CollectQualifiedVarsVisit(s.Right, result);
-                break;
-            case Expr.Multiply m:
-                CollectQualifiedVarsVisit(m.Left, result);
-                CollectQualifiedVarsVisit(m.Right, result);
-                break;
-            case Expr.Divide d:
-                CollectQualifiedVarsVisit(d.Left, result);
-                CollectQualifiedVarsVisit(d.Right, result);
-                break;
-            case Expr.BitwiseAnd bitAnd:
-                CollectQualifiedVarsVisit(bitAnd.Left, result);
-                CollectQualifiedVarsVisit(bitAnd.Right, result);
-                break;
-            case Expr.BitwiseOr bitOr:
-                CollectQualifiedVarsVisit(bitOr.Left, result);
-                CollectQualifiedVarsVisit(bitOr.Right, result);
-                break;
-            case Expr.BitwiseXor bitXor:
-                CollectQualifiedVarsVisit(bitXor.Left, result);
-                CollectQualifiedVarsVisit(bitXor.Right, result);
-                break;
-            case Expr.ShiftLeft shiftLeft:
-                CollectQualifiedVarsVisit(shiftLeft.Left, result);
-                CollectQualifiedVarsVisit(shiftLeft.Right, result);
-                break;
-            case Expr.ShiftRight shiftRight:
-                CollectQualifiedVarsVisit(shiftRight.Left, result);
-                CollectQualifiedVarsVisit(shiftRight.Right, result);
-                break;
-            case Expr.BitwiseNot bitwiseNot:
-                CollectQualifiedVarsVisit(bitwiseNot.Operand, result);
-                break;
-            case Expr.GreaterThan gt:
-                CollectQualifiedVarsVisit(gt.Left, result);
-                CollectQualifiedVarsVisit(gt.Right, result);
-                break;
-            case Expr.GreaterOrEqual ge:
-                CollectQualifiedVarsVisit(ge.Left, result);
-                CollectQualifiedVarsVisit(ge.Right, result);
-                break;
-            case Expr.LessThan lt:
-                CollectQualifiedVarsVisit(lt.Left, result);
-                CollectQualifiedVarsVisit(lt.Right, result);
-                break;
-            case Expr.LessOrEqual le:
-                CollectQualifiedVarsVisit(le.Left, result);
-                CollectQualifiedVarsVisit(le.Right, result);
-                break;
-            case Expr.Equal eq:
-                CollectQualifiedVarsVisit(eq.Left, result);
-                CollectQualifiedVarsVisit(eq.Right, result);
-                break;
-            case Expr.NotEqual ne:
-                CollectQualifiedVarsVisit(ne.Left, result);
-                CollectQualifiedVarsVisit(ne.Right, result);
-                break;
-            case Expr.ResultPipe pipe:
-                CollectQualifiedVarsVisit(pipe.Left, result);
-                CollectQualifiedVarsVisit(pipe.Right, result);
-                break;
-            case Expr.ResultMapErrorPipe pipe:
-                CollectQualifiedVarsVisit(pipe.Left, result);
-                CollectQualifiedVarsVisit(pipe.Right, result);
-                break;
-            case Expr.TupleLit tuple:
-                foreach (var elem in tuple.Elements)
-                    CollectQualifiedVarsVisit(elem, result);
-                break;
-            case Expr.ListLit list:
-                foreach (var elem in list.Elements)
-                    CollectQualifiedVarsVisit(elem, result);
-                break;
-            case Expr.Cons cons:
-                CollectQualifiedVarsVisit(cons.Head, result);
-                CollectQualifiedVarsVisit(cons.Tail, result);
-                break;
-            case Expr.Async asyncExpr:
-                CollectQualifiedVarsVisit(asyncExpr.Body, result);
-                break;
-            case Expr.Await awaitExpr:
-                CollectQualifiedVarsVisit(awaitExpr.Task, result);
-                break;
-            default:
-                // Literals, Var, etc. - no qualified vars to collect
-                break;
-        }
     }
 
     private bool TryLowerConstructorExpression(Expr expr, bool stackAllocate, out (int Temp, TypeRef Type) lowered)
@@ -3810,8 +3476,6 @@ public sealed partial class Lowering
                 }
 
                 return true;
-            case Expr.Async asyncExpr:
-                return UsesNameOnlyAsDirectCallee(asyncExpr.Body, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
             case Expr.RecordLit rl:
@@ -3918,8 +3582,6 @@ public sealed partial class Lowering
                 }
 
                 return false;
-            case Expr.Async asyncExpr:
-                return ExprReferencesName(asyncExpr.Body, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return ExprReferencesName(awaitExpr.Task, targetName, shadowed);
             case Expr.RecordLit rl:
