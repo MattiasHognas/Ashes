@@ -25,32 +25,37 @@ All original audit findings have been addressed:
 | **TCO** | IR-level tail recursion → loop. `LLVMSetTailCall` on tail-position calls. |
 | **Escape analysis** | Conservative stack allocation for proven non-escaping values. Added `AllocStack`, `AllocAdtStack`, and `MakeClosureStack` IR instructions plus LLVM `alloca` codegen. Closures are stack-allocated when used only as direct callees within scope (including captured-env closures), and ADTs are stack-allocated for immediate single-arm constructor destructuring (`match Box(42) with | Box(x) -> ...`) and let-bound values destructured immediately (`let box = Box(42) in match box with | Box(x) -> ...`). |
 | **Debug info** | `DW_TAG_auto_variable` for locals, `DW_TAG_formal_parameter` for lambda args. Custom DWARF language code `0x8001`. `isOptimized` wired to `-O` level. |
+| **Decision-tree matching** | Matches over >4 single-ADT constructor arms (distinct tags, trivial sub-patterns, no guards) lower to one `SwitchTag` IR instruction → LLVM `switch` (branch/bit-test tree; jump tables disabled pending linker relocation support). O(n) tag-comparison chain → O(log n). |
+| **String-literal interning** | Identical string-literal `.rodata` globals are content-addressed and emitted once per module (`LlvmTargetContext.GetOrAddStringLiteralGlobal`), shared across all functions and internal call sites. Compile-time, bounded, leak-free. |
+| **Mutual-recursion TCO** | Eligible `let rec … and …` groups (same arity, identical parameter types, a cross-member tail call) are merged into one self-recursive `dispatch` function with thin per-member wrappers, so the existing single-function TCO turns mutual recursion into a loop. Ineligible groups keep the closure path. |
 
 ------------------------------------------------------------------------
 
 ## Ordered Roadmap — Next Work Items
 
-Every remaining optimization task, as a tracked checklist. Items are ordered
-by recommended execution order; each builds on the previous ones. When all
-three are checked off this document moves from **Ongoing** to **Landed** in
-[FUTURE_FEATURES.md](FUTURE_FEATURES.md).
+Optimization tasks as a tracked checklist, in recommended execution order. The
+three original audit items (1–3) are **done**; item 4 is an optional follow-up
+enhancement that re-enables a faster codegen strategy once the linkers support
+it.
 
-### 1. Decision-tree pattern matching for large ADTs
+### 1. Decision-tree pattern matching for large ADTs — ✅ Done
 
 Replace the current linear chain of tag checks with a single tag switch
-(LLVM `switch` → jump table or balanced binary search) for matches over ADTs
-with many constructors.
+(LLVM `switch` → balanced binary / bit-test tree) for matches over ADTs with
+many constructors.
 
-- [ ] Add a `SwitchTag` IR instruction (`tag temp` + `(tag, label)` cases + default label).
-- [ ] Keep `RemapSourceTemps` / `CollectUsedTemps` / branch-ref counting in `IrOptimizer.cs` in sync with the new instruction.
-- [ ] Lower eligible matches to `SwitchTag` in `Lowering.Patterns.cs`; fall back to the linear chain otherwise.
+- [x] Add a `SwitchTag` IR instruction (`tag temp` + `(tag, label)` cases + default label).
+- [x] Keep `RemapSourceTemps` / `CollectUsedTemps` / branch-ref counting / terminator handling in `IrOptimizer.cs` in sync with the new instruction.
+- [x] Lower eligible matches to `SwitchTag` in `Lowering.Patterns.cs`; fall back to the linear chain otherwise.
   - Eligibility: every arm is a constructor pattern (incl. nullary) over one ADT, distinct tags, only trivial (`_` / variable) sub-patterns, no guards, arm count **> 4**.
-- [ ] Backend: add `LLVMBuildSwitch` / `LLVMAddCase` interop and emit the switch in `LlvmCodegen.cs` (`SwitchTag` is a block terminator).
-- [ ] Tests: C# unit test asserting `SwitchTag` is emitted above the threshold and the linear chain at/below it; end-to-end `.ash` test over a many-constructor ADT.
+- [x] Backend: add `LLVMBuildSwitch` / `LLVMAddCase` interop and emit the switch in `LlvmCodegen.cs` (`SwitchTag` is a block terminator).
+- [x] Tests: `DecisionTreeMatchTests` (asserts `SwitchTag` above the threshold / linear chain at-or-below, and ineligibility on nested sub-patterns); existing `pattern_large_adt_*` end-to-end tests now exercise the switch path.
 
-Reduces match dispatch from O(n) tag comparisons to O(log n)/O(1).
+Reduces match dispatch from O(n) tag comparisons to O(log n). **Note:** functions
+carry `"no-jump-tables"="true"` (see item 4) so LLVM lowers the switch to a
+branch/bit-test tree rather than an unrelocatable jump table.
 
-### 2. Compile-time string-literal interning
+### 2. Compile-time string-literal interning — ✅ Done
 
 Deduplicate identical string-literal `.rodata` globals at compile time so each
 distinct literal value is emitted once per module and shared by every use.
@@ -65,19 +70,19 @@ distinct literal value is emitted once per module and shared by every use.
 > forbids. We therefore intern only the compile-time-known literal set, which is
 > finite, static, and leak-free by construction.
 
-- [ ] `InternString` already dedups literals by value at the IR level; the gap is the backend, where `EmitHeapStringLiteral` emits a fresh global per call.
-- [ ] Add a module-level content-addressed cache (keyed by UTF-8 value) on `LlvmTargetContext`; share one global per distinct value across all functions and internal call sites (error messages, URL prefixes, …).
-- [ ] Tests: build a program that reuses the same literal in multiple places / functions and assert a single shared `.rodata` global.
+- [x] `InternString` already dedups literals by value at the IR level; the gap was the backend, where `EmitHeapStringLiteral` emitted a fresh global per call.
+- [x] Added a module-level content-addressed cache (`GetOrAddStringLiteralGlobal`, keyed by UTF-8 value) on `LlvmTargetContext`; one global per distinct value is now shared across all functions and internal call sites (error messages, URL prefixes, …).
+- [x] Tests: `tests/string_literal_reuse.ash` exercises the same literal reused across functions and uses; the pipeline snapshot (`SnapshotTests.Snapshot_pipeline_for_lambda_program`) and the full string-handling e2e suite guard the emitted-binary change.
 
-### 3. Mutual-recursion TCO
+### 3. Mutual-recursion TCO — ✅ Done
 
 Extend tail-call optimization to mutually recursive groups (`f` tail-calls `g`,
 `g` tail-calls `f`).
 
-- [ ] Call-graph analysis over a `let rec … and …` group to find members that only tail-call each other (and themselves) in tail position.
-- [ ] Generalize `HasTailSelfCalls` (`Lowering.cs`) to recognize tail calls to any sibling in the group.
-- [ ] Compile the group to one shared loop with a dispatch tag selecting the active member's body per iteration (replacing the current TCO-disabled closure-call path).
-- [ ] Tests: a mutually recursive `even`/`odd` (or similar) `.ash` program that would overflow the stack without it.
+- [x] Synthesize a single self-recursive `dispatch(tag, params)` from the group and rebind each member to a thin wrapper, so the **existing** single-function TCO collapses the group into one loop (`TryLowerMutualRecursionTco` in `Lowering.cs`).
+- [x] In-group tail calls are rewritten to `dispatch(tag, args)`; non-tail in-group calls keep targeting the member wrappers.
+- [x] Eligibility gate (`same arity + identical parameter types + a cross-member tail call`) keeps the transform type-safe and never breaks a valid program; ineligible groups fall back to the closure path.
+- [x] Tests: `MutualRecursionTcoTests` (dispatch synthesized only when eligible) and `tests/mutual_recursion_tco_even_odd.ash` / `tests/mutual_recursion_tco_three_cycle.ash` (deep recursion that would overflow the stack without it).
 
 > **Design constraint (discovered).** Members of a mutually-tail-recursive group can legally
 > have **different parameter types** (`ping: Int → Str` tail-calls `pong: Str → Str` and back),

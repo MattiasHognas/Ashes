@@ -334,19 +334,362 @@ public sealed partial class Lowering
 
         _tcoCtx = savedTcoCtx;
 
-        // The members stay in scope for the continuation, bound to the slots holding their closures —
-        // monomorphic, matching the single let rec form.
+        // Mutual-recursion TCO: when the group is eligible, synthesize a single self-recursive
+        // dispatch function and rebind each member to a thin wrapper so the existing single-function
+        // TCO collapses the whole group into one loop instead of growing the stack through closure
+        // calls. Ineligible groups keep the closures lowered above.
+        var tcoSlots = TryLowerMutualRecursionTco(bindings, recTypes, groupNames);
+
+        // The members stay in scope for the continuation, bound to the slots holding their closures
+        // (or their TCO wrappers) — monomorphic, matching the single let rec form.
         var parent = _scopes.Peek();
         var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
         for (int i = 0; i < bindings.Count; i++)
         {
-            child[bindings[i].Name] = new Binding.Local(slots[i], Prune(recTypes[i]), members[i].Span);
+            int memberSlot = tcoSlots?[i] ?? slots[i];
+            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recTypes[i]), members[i].Span);
         }
 
         _scopes.Push(child);
         var (bodyTemp, bodyType) = LowerExpr(group.Body);
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private const string DispatchWhichName = "__recgroup_which";
+
+    private static string DispatchArgName(int index) => $"__recgroup_arg{index}";
+
+    private static string WrapperArgName(int index) => $"__recgroup_w{index}";
+
+    /// <summary>
+    /// Attempts to compile a mutually-recursive group as a single self-recursive dispatch loop so
+    /// mutual tail calls stop growing the stack. Returns one wrapper slot per member when the
+    /// transform was applied, or <c>null</c> to keep the closure-based lowering produced above.
+    /// <para>
+    /// Eligible groups have at least two members, all function values of the same arity with
+    /// identical parameter types (checked against each member's inferred signature), and at least
+    /// one cross-member tail call. Identical parameter types mean every merged dispatch parameter
+    /// keeps a single well-defined type, so the existing single-function TCO — including its arena
+    /// copy-out — applies unchanged. Heterogeneous parameter types fall back to the closure path.
+    /// </para>
+    /// </summary>
+    private int[]? TryLowerMutualRecursionTco(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recTypes,
+        HashSet<string> groupNames)
+    {
+        if (bindings.Count < 2)
+        {
+            return null;
+        }
+
+        // All members must be lambdas of the same arity.
+        var lambdas = new Expr.Lambda[bindings.Count];
+        int arity = -1;
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            if (bindings[i].Value is not Expr.Lambda lam)
+            {
+                return null;
+            }
+
+            lambdas[i] = lam;
+            int memberArity = CountLambdaChain(lam);
+            if (arity == -1)
+            {
+                arity = memberArity;
+            }
+            else if (memberArity != arity)
+            {
+                return null;
+            }
+        }
+
+        if (arity < 1)
+        {
+            return null;
+        }
+
+        // Every member must expose the same parameter type at each position so the shared dispatch
+        // parameters are well-typed without coercion.
+        var paramTypes = new List<TypeRef>[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            if (!TryGetArrowParamTypes(recTypes[i], arity, out var memberParamTypes))
+            {
+                return null;
+            }
+
+            paramTypes[i] = memberParamTypes;
+        }
+
+        for (int j = 0; j < arity; j++)
+        {
+            for (int i = 1; i < bindings.Count; i++)
+            {
+                if (!TypesStructurallyEqual(paramTypes[0][j], paramTypes[i][j]))
+                {
+                    return null;
+                }
+            }
+        }
+
+        var tagOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            tagOf[bindings[i].Name] = i;
+        }
+
+        // At least one genuine cross-member tail call — otherwise single-function TCO already covers it.
+        bool hasCrossMemberTailCall = false;
+        for (int i = 0; i < bindings.Count && !hasCrossMemberTailCall; i++)
+        {
+            var called = new HashSet<string>(StringComparer.Ordinal);
+            CollectGroupTailCalls(GetInnermostBody(lambdas[i]), groupNames, arity, called);
+            hasCrossMemberTailCall = called.Any(name => !string.Equals(name, bindings[i].Name, StringComparison.Ordinal));
+        }
+
+        if (!hasCrossMemberTailCall)
+        {
+            return null;
+        }
+
+        // ── Synthesize and lower the dispatch function. ──
+        string dispatchName = $"__recgroup_dispatch_{_nextLambdaId++}";
+        var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, arity);
+
+        int dispatchSlot = NewLocal();
+        var dispatchRecType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
+        var dispatchScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
+        {
+            [dispatchName] = new Binding.Local(dispatchSlot, dispatchRecType)
+        };
+        _scopes.Push(dispatchScope);
+
+        int paramCount = arity + 1; // the dispatch tag plus the shared parameters
+        var savedTcoCtx = _tcoCtx;
+        _tcoCtx = HasTailSelfCalls(GetInnermostBody(dispatchLambda), dispatchName, paramCount)
+            ? new TcoContext
+            {
+                SelfName = dispatchName,
+                ParamCount = paramCount,
+                ParamNames = CollectLambdaParams(dispatchLambda),
+                InTailPosition = false
+            }
+            : null;
+        var (dispatchTemp, dispatchType) = LowerLambdaCore(
+            dispatchLambda, dispatchName, dispatchRecType, stackAllocateClosure: false, forcedLabel: dispatchName);
+        _tcoCtx = savedTcoCtx;
+        Unify(dispatchRecType, dispatchType);
+        Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
+
+        // ── Synthesize and lower one wrapper per member: fun p… -> dispatch(tag, p…). ──
+        var wrapperSlots = new int[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            var wrapperLambda = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
+            var (wrapperTemp, wrapperType) = LowerExpr(wrapperLambda);
+            Unify(recTypes[i], wrapperType);
+            int slot = NewLocal();
+            Emit(new IrInst.StoreLocal(slot, wrapperTemp));
+            RecordLocalDebugInfo(slot, bindings[i].Name, recTypes[i]);
+            wrapperSlots[i] = slot;
+        }
+
+        _scopes.Pop(); // dispatchScope — dispatchName must not leak into the continuation.
+        return wrapperSlots;
+    }
+
+    /// <summary>
+    /// Builds <c>fun which -> fun arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
+    /// where each arm is a member body with its parameters rebound to the shared dispatch arguments
+    /// and its in-group tail calls redirected to <paramref name="dispatchName"/>.
+    /// </summary>
+    private Expr.Lambda BuildDispatchLambda(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        Expr.Lambda[] lambdas,
+        HashSet<string> groupNames,
+        Dictionary<string, int> tagOf,
+        string dispatchName,
+        int arity)
+    {
+        var cases = new List<MatchCase>(bindings.Count);
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            var origParams = CollectLambdaParams(lambdas[i]);
+            var inner = GetInnermostBody(lambdas[i]);
+            Expr armBody = RewriteGroupTailCalls(inner, groupNames, tagOf, dispatchName, arity);
+            for (int j = arity - 1; j >= 0; j--)
+            {
+                armBody = new Expr.Let(origParams[j], new Expr.Var(DispatchArgName(j)), armBody);
+            }
+
+            // The final member is the wildcard arm so the integer dispatch match is exhaustive.
+            Pattern pattern = i == bindings.Count - 1 ? new Pattern.Wildcard() : new Pattern.IntLit(i);
+            cases.Add(new MatchCase(pattern, armBody));
+        }
+
+        Expr body = new Expr.Match(new Expr.Var(DispatchWhichName), cases);
+        for (int j = arity - 1; j >= 0; j--)
+        {
+            body = new Expr.Lambda(DispatchArgName(j), body);
+        }
+
+        return new Expr.Lambda(DispatchWhichName, body);
+    }
+
+    /// <summary>Builds <c>fun w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
+    private Expr.Lambda BuildDispatchWrapper(string dispatchName, int tag, int arity)
+    {
+        Expr body = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tag));
+        for (int j = 0; j < arity; j++)
+        {
+            body = new Expr.Call(body, new Expr.Var(WrapperArgName(j)));
+        }
+
+        for (int j = arity - 1; j >= 0; j--)
+        {
+            body = new Expr.Lambda(WrapperArgName(j), body);
+        }
+
+        return (Expr.Lambda)body;
+    }
+
+    /// <summary>
+    /// Rewrites fully-applied in-group member calls that sit in tail position into calls to the
+    /// dispatch function, leaving non-tail occurrences (which still target the member wrappers)
+    /// untouched. Only tail-position nodes are traversed.
+    /// </summary>
+    private Expr RewriteGroupTailCalls(Expr expr, HashSet<string> groupNames, Dictionary<string, int> tagOf, string dispatchName, int arity)
+    {
+        switch (expr)
+        {
+            case Expr.If iff:
+                return iff with
+                {
+                    Then = RewriteGroupTailCalls(iff.Then, groupNames, tagOf, dispatchName, arity),
+                    Else = RewriteGroupTailCalls(iff.Else, groupNames, tagOf, dispatchName, arity),
+                };
+            case Expr.Match m:
+                return m with
+                {
+                    Cases = m.Cases
+                        .Select(c => c with { Body = RewriteGroupTailCalls(c.Body, groupNames, tagOf, dispatchName, arity) })
+                        .ToList(),
+                };
+            case Expr.Let l:
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+            case Expr.LetRec l:
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+            case Expr.LetResult l:
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+            case Expr.Call call:
+                var args = new List<Expr>();
+                var root = CollectCallArgs(call, args);
+                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == arity)
+                {
+                    Expr redirected = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tagOf[v.Name]));
+                    foreach (var arg in args)
+                    {
+                        redirected = new Expr.Call(redirected, arg);
+                    }
+
+                    return redirected;
+                }
+
+                return expr;
+            default:
+                return expr;
+        }
+    }
+
+    /// <summary>Collects the names of group members tail-called (fully applied) within an expression.</summary>
+    private void CollectGroupTailCalls(Expr expr, HashSet<string> groupNames, int arity, HashSet<string> found)
+    {
+        switch (expr)
+        {
+            case Expr.If iff:
+                CollectGroupTailCalls(iff.Then, groupNames, arity, found);
+                CollectGroupTailCalls(iff.Else, groupNames, arity, found);
+                break;
+            case Expr.Match m:
+                foreach (var c in m.Cases)
+                {
+                    CollectGroupTailCalls(c.Body, groupNames, arity, found);
+                }
+
+                break;
+            case Expr.Let l:
+                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                break;
+            case Expr.LetRec l:
+                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                break;
+            case Expr.LetResult l:
+                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                break;
+            case Expr.Call call:
+                var args = new List<Expr>();
+                var root = CollectCallArgs(call, args);
+                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == arity)
+                {
+                    found.Add(v.Name);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>Unwraps the first <paramref name="arity"/> parameter types of a (curried) function type.</summary>
+    private bool TryGetArrowParamTypes(TypeRef type, int arity, out List<TypeRef> paramTypes)
+    {
+        paramTypes = new List<TypeRef>(arity);
+        var current = Prune(type);
+        for (int i = 0; i < arity; i++)
+        {
+            if (current is not TypeRef.TFun fn)
+            {
+                return false;
+            }
+
+            paramTypes.Add(Prune(fn.Arg));
+            current = Prune(fn.Ret);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Conservative read-only structural type equality (no unification). Unresolved type variables
+    /// only compare equal when they are the same variable, so anything uncertain is treated as
+    /// unequal — keeping the mutual-recursion TCO gate safe.
+    /// </summary>
+    private bool TypesStructurallyEqual(TypeRef a, TypeRef b)
+    {
+        a = Prune(a);
+        b = Prune(b);
+        return (a, b) switch
+        {
+            (TypeRef.TInt, TypeRef.TInt) => true,
+            (TypeRef.TFloat, TypeRef.TFloat) => true,
+            (TypeRef.TBool, TypeRef.TBool) => true,
+            (TypeRef.TStr, TypeRef.TStr) => true,
+            (TypeRef.TBytes, TypeRef.TBytes) => true,
+            (TypeRef.TNever, TypeRef.TNever) => true,
+            (TypeRef.TUInt ua, TypeRef.TUInt ub) => ua.Bits == ub.Bits,
+            (TypeRef.TOpaque oa, TypeRef.TOpaque ob) => string.Equals(oa.Name, ob.Name, StringComparison.Ordinal),
+            (TypeRef.TList la, TypeRef.TList lb) => TypesStructurallyEqual(la.Element, lb.Element),
+            (TypeRef.TPtr pa, TypeRef.TPtr pb) => TypesStructurallyEqual(pa.Pointee, pb.Pointee),
+            (TypeRef.TTuple ta, TypeRef.TTuple tb) => ta.Elements.Count == tb.Elements.Count
+                && ta.Elements.Zip(tb.Elements).All(pair => TypesStructurallyEqual(pair.First, pair.Second)),
+            (TypeRef.TFun fa, TypeRef.TFun fb) => TypesStructurallyEqual(fa.Arg, fb.Arg) && TypesStructurallyEqual(fa.Ret, fb.Ret),
+            (TypeRef.TNamedType na, TypeRef.TNamedType nb) => string.Equals(na.Symbol.Name, nb.Symbol.Name, StringComparison.Ordinal)
+                && na.TypeArgs.Count == nb.TypeArgs.Count
+                && na.TypeArgs.Zip(nb.TypeArgs).All(pair => TypesStructurallyEqual(pair.First, pair.Second)),
+            (TypeRef.TVar va, TypeRef.TVar vb) => va.Id == vb.Id,
+            _ => false,
+        };
     }
 
 
