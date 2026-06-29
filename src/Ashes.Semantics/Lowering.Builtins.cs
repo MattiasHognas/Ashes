@@ -133,6 +133,100 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
+    // Ashes.File.open : Str -> Result(Str, FileHandle)
+    private Binding.Intrinsic CreateFileOpenBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileOpen,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["FileHandle"])))
+        );
+    }
+
+    private (int, TypeRef) LowerFileOpen(Expr pathArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(pathArg);
+        var (pathTemp, pathType) = LowerExpr(pathArg);
+        var loweredType = Prune(pathType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (pathTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.open() expects Str but got {Pretty(loweredType)}.");
+            return (pathTemp, CreateStringResultType(_resolvedTypes["FileHandle"]));
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileOpen(target, pathTemp));
+        return (target, CreateStringResultType(_resolvedTypes["FileHandle"]));
+    }
+
+    // Ashes.File.readChunk : FileHandle -> Int -> Result(Str, Str)
+    private Binding.Intrinsic CreateFileReadChunkBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileReadChunk,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["FileHandle"], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr()))))
+        );
+    }
+
+    private (int, TypeRef) LowerFileReadChunk(Expr handleArg, Expr countArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        var (handleTemp, handleType) = LowerExpr(handleArg);
+        Unify(Prune(handleType), _resolvedTypes["FileHandle"]);
+        var (countTemp, countType) = LowerExpr(countArg);
+        var prunedCount = Prune(countType);
+        if (prunedCount is TypeRef.TVar)
+        {
+            Unify(prunedCount, new TypeRef.TInt());
+        }
+        else if (prunedCount is not TypeRef.TInt and not TypeRef.TNever)
+        {
+            ReportDiagnostic(GetSpan(countArg), $"Ashes.File.readChunk() expects Int but got {Pretty(prunedCount)}.");
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileReadChunk(target, handleTemp, countTemp));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
+    }
+
+    // Ashes.File.close : FileHandle -> Result(Str, Unit)
+    private Binding.Intrinsic CreateFileCloseBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileClose,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["FileHandle"], CreateStringResultType(_resolvedTypes["Unit"])))
+        );
+    }
+
+    private (int, TypeRef) LowerFileClose(Expr handleArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        var (handleTemp, handleType) = LowerExpr(handleArg);
+        Unify(Prune(handleType), _resolvedTypes["FileHandle"]);
+
+        // Mark the resource as dropped (explicitly closed) so it is not auto-dropped again at
+        // scope exit and a later use is reported as use-after-close.
+        if (handleArg is Expr.Var varExpr)
+        {
+            TryMarkDropped(varExpr.Name);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileClose(target, handleTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
+    }
+
     private (int, TypeRef) LowerFileWriteText(Expr pathArg, Expr textArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);

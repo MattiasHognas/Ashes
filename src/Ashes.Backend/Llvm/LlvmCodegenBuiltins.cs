@@ -5425,10 +5425,130 @@ internal static partial class LlvmCodegen
     /// actual deallocation is handled by arena-based memory reclamation.
     /// Returns false because Drop does not terminate the current basic block.
     /// </summary>
+    // FileHandle resource value is the OS fd (Linux) / HANDLE (Windows), carried as i64.
+
+    private static LlvmValueHandle EmitFileOpenForReading(LlvmCodegenState state, LlvmValueHandle pathRef, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle pathCstr = EmitStringToCString(state, pathRef, name + "_path");
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // open(path, O_RDONLY=0, 0); EmitLinuxSyscall maps this to openat on arm64.
+            return EmitLinuxSyscall(
+                state,
+                SyscallOpen,
+                LlvmApi.BuildPtrToInt(builder, pathCstr, state.I64, name + "_path_ptr"),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                name + "_open");
+        }
+
+        // GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING.
+        return EmitWindowsCreateFile(state, pathCstr, unchecked((int)0x80000000), 1, 3, name + "_create");
+    }
+
+    private static LlvmValueHandle EmitFileOpen(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "fopen_result");
+        LlvmValueHandle handle = EmitFileOpenForReading(state, pathRef, "fopen");
+
+        var errBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fopen_err");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fopen_ok");
+        var contBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fopen_cont");
+
+        // Linux open() returns a negative errno on failure; Windows CreateFile returns
+        // INVALID_HANDLE_VALUE (-1). Valid handles are non-negative, so `< 0` covers both.
+        LlvmValueHandle failed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, handle, LlvmApi.ConstInt(state.I64, 0, 0), "fopen_failed");
+        LlvmApi.BuildCondBr(builder, failed, errBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, handle), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, errBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.open: could not open file")), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fopen_result_value");
+    }
+
+    private static LlvmValueHandle EmitFileReadChunk(LlvmCodegenState state, LlvmValueHandle handleVal, LlvmValueHandle countVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "fchunk_result");
+
+        // Allocate a string with room for `count` bytes; the actual length is set after the read.
+        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, countVal, LlvmApi.ConstInt(state.I64, 8, 0), "fchunk_total"));
+        LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, "fchunk_dest");
+
+        LlvmValueHandle nRead;
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            nRead = EmitLinuxSyscall(state, SyscallRead, handleVal,
+                LlvmApi.BuildPtrToInt(builder, destPtr, state.I64, "fchunk_dest_int"), countVal, "fchunk_read");
+        }
+        else
+        {
+            LlvmValueHandle bytesReadSlot = LlvmApi.BuildAlloca(builder, state.I32, "fchunk_bytes_read");
+            LlvmValueHandle readOk = EmitWindowsReadFile(state, handleVal, destPtr,
+                LlvmApi.BuildTrunc(builder, countVal, state.I32, "fchunk_count_i32"), bytesReadSlot, "fchunk_read");
+            LlvmValueHandle bytesRead = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "fchunk_bytes_val"), state.I64, "fchunk_bytes_i64");
+            nRead = LlvmApi.BuildSelect(builder, readOk, bytesRead, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), "fchunk_n");
+        }
+
+        var errBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fchunk_err");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fchunk_ok");
+        var contBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fchunk_cont");
+
+        // n < 0 is an error; n == 0 is EOF and yields an empty-string Ok.
+        LlvmValueHandle failed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, nRead, LlvmApi.ConstInt(state.I64, 0, 0), "fchunk_failed");
+        LlvmApi.BuildCondBr(builder, failed, errBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        StoreMemory(state, stringRef, 0, nRead, "fchunk_len");
+        LlvmApi.BuildStore(builder, EmitResultOk(state, stringRef), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, errBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readChunk: read failed")), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fchunk_result_value");
+    }
+
+    private static LlvmValueHandle EmitFileClose(LlvmCodegenState state, LlvmValueHandle handleVal)
+    {
+        EmitFileHandleClose(state, handleVal);
+        return EmitResultOk(state, EmitUnitValue(state));
+    }
+
+    // Fire-and-forget close of the underlying fd/HANDLE. Used by both Ashes.File.close and the
+    // automatic resource Drop at scope exit.
+    private static void EmitFileHandleClose(LlvmCodegenState state, LlvmValueHandle handleVal)
+    {
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            EmitLinuxSyscall(state, SyscallClose, handleVal, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "fclose_call");
+        }
+        else
+        {
+            EmitWindowsCloseHandle(state, handleVal, "fclose_call");
+        }
+    }
+
     private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle value, string typeName)
     {
         switch (typeName)
         {
+            case "FileHandle":
+                // Auto-close the fd/HANDLE when the resource leaves scope. Fire-and-forget; a
+                // double-close (after an explicit Ashes.File.close) is harmless (EBADF ignored).
+                EmitFileHandleClose(state, value);
+                return false;
+
             case "Socket":
                 // Drop a socket by routing cleanup through the networking ABI.
                 // The result (Result[Unit, Str]) is discarded — Drop is

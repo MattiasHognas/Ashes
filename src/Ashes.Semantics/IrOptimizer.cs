@@ -207,6 +207,9 @@ public static class IrOptimizer
             IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.FileOpen f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.FileReadChunk f => f with { HandleTemp = R(f.HandleTemp), CountTemp = R(f.CountTemp) },
+            IrInst.FileClose f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
@@ -1079,6 +1082,9 @@ public static class IrOptimizer
             case IrInst.FileReadText f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.FileOpen f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.FileReadChunk f: usedTemps.Add(f.HandleTemp); usedTemps.Add(f.CountTemp); break;
+            case IrInst.FileClose f: usedTemps.Add(f.HandleTemp); break;
             case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;

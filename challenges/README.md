@@ -9,7 +9,7 @@ Format them manually with `dotnet run --project src/Ashes.Cli -- fmt <file> -w`.
 
 A faithful attempt at the [1BRC](https://github.com/gunnarmorling/1brc), written to
 **find the language's flaws**. It is correct for ASCII station names at a modest row
-count; it is *not* viable for the real 1e9-row input. The interesting output of this
+count; it is _not_ viable for the real 1e9-row input. The interesting output of this
 exercise is [`FLAWS.md`](FLAWS.md) — read that.
 
 ### Prerequisites
@@ -42,6 +42,14 @@ bash challenges/download.sh
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/brc.ash -o challenges/brc
 ./challenges/brc challenges/measurements.txt
+```
+
+We should probably run it under hyperfine to get actaul data as sonn as we see it actually working, see: https://hotforknowledge.com/2024/01/13/1brc-in-dotnet-among-fastest-on-linux-my-optimization-journey/'
+
+With something like this:
+
+```bash
+hyperfine --warmup 1 --runs 5 './challenge/brc challenge/measurements.txt'
 ```
 
 The file path is the program's first argument. (It does **not** stream stdin: a

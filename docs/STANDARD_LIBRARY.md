@@ -15,6 +15,7 @@ These types are always available without imports:
 - `Socket`
 - `TlsSocket`
 - `Process`
+- `FileHandle`
 
 ## Built-in Modules
 
@@ -34,6 +35,12 @@ These types are always available without imports:
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `writeBytes(path, bytes)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
+- `open(path)` returning `Result(Str, FileHandle)` — open a file for reading; the handle is a
+  resource type, automatically closed when it goes out of scope.
+- `readChunk(handle)(maxBytes)` returning `Result(Str, Str)` — read up to `maxBytes` bytes;
+  returns `Ok("")` at end of file. Lets a large file be streamed without loading it whole (cf.
+  `readText`, which allocates the entire file at once).
+- `close(handle)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
 
 ### `Ashes.Bytes`
 
