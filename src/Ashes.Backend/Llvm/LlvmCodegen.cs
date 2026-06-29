@@ -580,13 +580,6 @@ internal static partial class LlvmCodegen
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
         LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
 
-        // Disable jump-table lowering for `switch` (decision-tree pattern matching). The custom
-        // image linkers do not emit the relocations an indirect jump-table read requires, so LLVM
-        // must lower switches to comparison/bit-test trees (still O(log n)) using only direct
-        // branches. Without this, dense switches above LLVM's jump-table threshold branch through
-        // an unrelocated `.rodata` table and segfault at runtime.
-        LlvmAttributeHandle noJumpTablesAttr = LlvmApi.CreateStringAttribute(target.Context, "no-jump-tables", "true");
-
         if (usesNetworkingRuntimeAbi)
         {
             EmitNetworkingRuntimeAbi(
@@ -643,7 +636,6 @@ internal static partial class LlvmCodegen
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
-        LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, noJumpTablesAttr);
 
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
@@ -651,7 +643,6 @@ internal static partial class LlvmCodegen
             LlvmValueHandle llvmFunction = LlvmApi.AddFunction(target.Module, function.Label, closureFunctionType);
             LlvmApi.SetLinkage(llvmFunction, LlvmLinkage.Internal);
             LlvmApi.AddAttributeAtIndex(llvmFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
-            LlvmApi.AddAttributeAtIndex(llvmFunction, LlvmApi.AttributeIndexFunction, noJumpTablesAttr);
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 

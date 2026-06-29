@@ -66,6 +66,20 @@ internal static partial class LlvmImageLinker
             externalSymbolVas[payload.EndSymbolName] = payloadStartVa + (ulong)payload.Bytes.Length;
         }
 
+        // Patch relocations that live inside allocated data (e.g. a `switch` jump table in
+        // `.rodata` holding absolute `.text` block addresses). Done before the data bytes are
+        // sealed into the final segment so the patched bytes flow through.
+        ApplyElfArm64AllocatedSectionRelocations(
+            objectBytes,
+            laidOutData.DataBytes,
+            dataVa,
+            parsed.AllocatedRelocationSections,
+            parsed.SymbolTable,
+            parsed.TextSectionIndex,
+            objectTextVa,
+            laidOutData.SectionBaseVas,
+            externalSymbolVas);
+
         byte[] finalDataBytes = extraDataSegments.Count == 0
             ? laidOutData.DataBytes
             : BuildLinuxDataBytes(laidOutData.DataBytes, extraDataSegments);
@@ -288,6 +302,81 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(58, 2), sectionHeaderCount > 0 ? (ushort)ElfSectionHeaderSize : (ushort)0);  // e_shentsize
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(60, 2), checked((ushort)sectionHeaderCount));  // e_shnum
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(62, 2), checked((ushort)shstrtabIndex));  // e_shstrndx
+    }
+
+    /// <summary>
+    /// Applies AArch64 relocations whose target is an allocated data section — the jump-table case
+    /// is a <c>.rodata</c> array of absolute <c>.text</c> block addresses (<c>R_AARCH64_ABS64</c>).
+    /// Mirrors <see cref="ApplyElfArm64TextRelocations"/> but patches the laid-out data buffer at
+    /// the target section's offset. (LLVM currently lowers our switches to branch trees on AArch64,
+    /// so this is rarely exercised, but it keeps jump-table relocations safe across LLVM versions
+    /// and switch densities.)
+    /// </summary>
+    private static void ApplyElfArm64AllocatedSectionRelocations(
+        ReadOnlySpan<byte> objectBytes,
+        byte[] dataBytes,
+        ulong dataVa,
+        List<ElfSectionHeader> relocationSections,
+        ElfSectionHeader symtab,
+        int textSectionIndex,
+        ulong loadedTextVa,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> externalSymbolVas)
+    {
+        if (relocationSections.Count == 0)
+        {
+            return;
+        }
+
+        byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
+        var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
+
+        foreach (ElfSectionHeader relocationSection in relocationSections)
+        {
+            if (relocationSection.EntrySize == 0)
+            {
+                throw new InvalidOperationException("LLVM ELF relocation section is missing entry size metadata.");
+            }
+
+            int targetSectionIndex = checked((int)relocationSection.Info);
+            if (!sectionBaseVas.TryGetValue(targetSectionIndex, out ulong targetSectionVa))
+            {
+                continue;
+            }
+
+            int sectionOffsetInData = checked((int)(targetSectionVa - dataVa));
+            int count = checked((int)(relocationSection.Size / relocationSection.EntrySize));
+            for (int i = 0; i < count; i++)
+            {
+                int offset = checked((int)relocationSection.Offset + i * (int)relocationSection.EntrySize);
+                ulong relocOffset = BinaryPrimitives.ReadUInt64LittleEndian(objectBytes.Slice(offset, 8));
+                ulong info = BinaryPrimitives.ReadUInt64LittleEndian(objectBytes.Slice(offset + 8, 8));
+                long addend = relocationSection.Type == SectionTypeRela
+                    ? BinaryPrimitives.ReadInt64LittleEndian(objectBytes.Slice(offset + 16, 8))
+                    : 0;
+
+                int symbolIndex = checked((int)(info >> 32));
+                uint relocationType = unchecked((uint)info);
+                ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, externalSymbolVas) + addend);
+                int patchOffset = checked(sectionOffsetInData + (int)relocOffset);
+                long placeVa = checked((long)targetSectionVa + (long)relocOffset);
+                switch (relocationType)
+                {
+                    case ElfRelocAArch64Abs64:
+                        BinaryPrimitives.WriteInt64LittleEndian(dataBytes.AsSpan(patchOffset, 8), targetVa);
+                        break;
+                    case ElfRelocAArch64Abs32:
+                        BinaryPrimitives.WriteInt32LittleEndian(dataBytes.AsSpan(patchOffset, 4), checked((int)targetVa));
+                        break;
+                    case ElfRelocAArch64Prel32:
+                        BinaryPrimitives.WriteInt32LittleEndian(dataBytes.AsSpan(patchOffset, 4), checked((int)(targetVa - placeVa)));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"LLVM AArch64 emitted unsupported allocated-section relocation type {relocationType}.");
+                }
+            }
+        }
     }
 
     private static void ApplyElfArm64TextRelocations(

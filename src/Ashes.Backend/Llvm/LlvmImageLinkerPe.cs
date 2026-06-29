@@ -368,6 +368,20 @@ internal static partial class LlvmImageLinker
 
         byte[] rdataBytes = rdataStream.ToArray();
 
+        // Patch relocations that live inside data sections — most importantly a `switch` jump table
+        // in `.rdata`, whose 8-byte entries are absolute `.text` block addresses
+        // (IMAGE_REL_AMD64_ADDR64) that the static linker must fill in.
+        ApplyCoffDataRelocations(
+            objectBytes,
+            rdataBytes,
+            parsed.Sections,
+            parsed.TextSectionNumber,
+            extraSectionOffsets,
+            parsed.SymbolTableOffset,
+            parsed.SymbolCount,
+            sectionBaseVas,
+            externalSymbolVas);
+
         // Compute section count and file layout
         bool hasBss = bssTotalSize > 0;
         int sectionCount = hasBss ? 3 : 2; // .text, .rdata, optionally .bss
@@ -691,6 +705,62 @@ internal static partial class LlvmImageLinker
                     break;
                 default:
                     throw new InvalidOperationException($"LLVM COFF emitted unsupported .text relocation type 0x{relocationType:X4}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies relocations that live inside data sections (e.g. a <c>switch</c> jump table in
+    /// <c>.rdata</c>). Each entry is an absolute <c>.text</c> block address
+    /// (<see cref="CoffRelocAmd64Addr64"/>); COFF stores the addend in place, so the final value is
+    /// <c>S + A</c>. The patched bytes live in the concatenated data blob at the section's offset.
+    /// </summary>
+    private static void ApplyCoffDataRelocations(
+        ReadOnlySpan<byte> bytes,
+        byte[] rdataBytes,
+        CoffSectionHeader[] sections,
+        int textSectionNumber,
+        IReadOnlyDictionary<int, uint> dataSectionOffsets,
+        uint symbolTableOffset,
+        uint symbolCount,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
+    {
+        for (int sectionIndex = 0; sectionIndex < sections.Length; sectionIndex++)
+        {
+            CoffSectionHeader section = sections[sectionIndex];
+            int sectionNumber = sectionIndex + 1;
+            if (section.NumberOfRelocations == 0
+                || !dataSectionOffsets.TryGetValue(sectionNumber, out uint sectionOffsetInRdata))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < section.NumberOfRelocations; i++)
+            {
+                int offset = checked((int)section.PointerToRelocations + i * 10);
+                uint relocationOffset = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4));
+                int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
+                ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
+                CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
+                ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+                int patchOffset = checked((int)(sectionOffsetInRdata + relocationOffset));
+
+                switch (relocationType)
+                {
+                    case CoffRelocAmd64Addr64:
+                        Span<byte> patch64 = rdataBytes.AsSpan(patchOffset, 8);
+                        ulong addend64 = BinaryPrimitives.ReadUInt64LittleEndian(patch64);
+                        BinaryPrimitives.WriteUInt64LittleEndian(patch64, checked(targetVa + addend64));
+                        break;
+                    case CoffRelocAmd64Addr32:
+                        Span<byte> patch32 = rdataBytes.AsSpan(patchOffset, 4);
+                        int addend32 = BinaryPrimitives.ReadInt32LittleEndian(patch32);
+                        BinaryPrimitives.WriteUInt32LittleEndian(patch32, checked((uint)(checked((long)targetVa) + addend32)));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"LLVM COFF emitted unsupported data-section relocation type 0x{relocationType:X4}.");
+                }
             }
         }
     }

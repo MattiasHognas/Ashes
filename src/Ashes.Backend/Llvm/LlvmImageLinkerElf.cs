@@ -121,6 +121,20 @@ internal static partial class LlvmImageLinker
             sectionBaseVas,
             externalSymbolVas);
 
+        // Patch relocations that live inside allocated data (e.g. `.rela.rodata` jump-table entries
+        // holding absolute `.text` block addresses). These must run after the data layout assigns
+        // every allocated section its final VA.
+        ApplyElfAllocatedSectionRelocations(
+            objectBytes,
+            laidOutData.DataBytes,
+            dataVa,
+            parsed.AllocatedRelocationSections,
+            parsed.SymbolTable,
+            parsed.TextSectionIndex,
+            objectTextVa,
+            sectionBaseVas,
+            externalSymbolVas);
+
         byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
             .Concat(importLayout.StubBytes)
@@ -493,6 +507,14 @@ internal static partial class LlvmImageLinker
                 Alignment: section.AddressAlign));
         }
 
+        // Relocations that target an allocated non-text section — most importantly `.rela.rodata`,
+        // which carries the entries of a `switch` jump table (absolute `.text` block addresses).
+        var allocatedSectionIndices = new HashSet<int>(allocatedSections.Select(static s => s.SectionIndex));
+        var allocatedRelocationSections = sections
+            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
+            .Where(section => allocatedSectionIndices.Contains((int)section.Info))
+            .ToList();
+
         int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex, entrySymbolName);
         return new ParsedElfObject(
             TextBytes: textBytes,
@@ -502,7 +524,8 @@ internal static partial class LlvmImageLinker
             TextSectionIndex: textSectionIndex,
             AllocatedSections: allocatedSections,
             DebugSections: debugSections,
-            DebugRelocationSections: debugRelocationSections);
+            DebugRelocationSections: debugRelocationSections,
+            AllocatedRelocationSections: allocatedRelocationSections);
     }
 
     private static void ApplyElfTextRelocations(
@@ -590,6 +613,84 @@ internal static partial class LlvmImageLinker
                         break;
                     default:
                         throw new InvalidOperationException($"LLVM ELF emitted unsupported .text relocation type {relocationType}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies relocations whose target is an allocated data section (rather than <c>.text</c> or a
+    /// debug section). The canonical case is a <c>switch</c> jump table in <c>.rodata</c>: each
+    /// 8-byte entry is an absolute address of a <c>.text</c> basic block (<c>R_X86_64_64</c>) that
+    /// the static linker must fill in. The patched bytes live in the laid-out data buffer at the
+    /// target section's offset, which is known once the data layout has assigned section VAs.
+    /// </summary>
+    private static void ApplyElfAllocatedSectionRelocations(
+        ReadOnlySpan<byte> objectBytes,
+        byte[] dataBytes,
+        ulong dataVa,
+        List<ElfSectionHeader> relocationSections,
+        ElfSectionHeader symtab,
+        int textSectionIndex,
+        ulong loadedTextVa,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
+    {
+        if (relocationSections.Count == 0)
+        {
+            return;
+        }
+
+        byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
+        var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
+
+        foreach (ElfSectionHeader relocationSection in relocationSections)
+        {
+            if (relocationSection.EntrySize == 0)
+            {
+                throw new InvalidOperationException("LLVM ELF relocation section is missing entry size metadata.");
+            }
+
+            int targetSectionIndex = checked((int)relocationSection.Info);
+            if (!sectionBaseVas.TryGetValue(targetSectionIndex, out ulong targetSectionVa))
+            {
+                continue;
+            }
+
+            int sectionOffsetInData = checked((int)(targetSectionVa - dataVa));
+            int count = checked((int)(relocationSection.Size / relocationSection.EntrySize));
+            for (int i = 0; i < count; i++)
+            {
+                int offset = checked((int)relocationSection.Offset + i * (int)relocationSection.EntrySize);
+                ulong relocOffset = BinaryPrimitives.ReadUInt64LittleEndian(objectBytes.Slice(offset, 8));
+                ulong info = BinaryPrimitives.ReadUInt64LittleEndian(objectBytes.Slice(offset + 8, 8));
+                long addend = relocationSection.Type == SectionTypeRela
+                    ? BinaryPrimitives.ReadInt64LittleEndian(objectBytes.Slice(offset + 16, 8))
+                    : 0;
+
+                int symbolIndex = checked((int)(info >> 32));
+                uint relocationType = unchecked((uint)info);
+                ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
+                long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, importSymbolVas) + addend);
+                int patchOffset = checked(sectionOffsetInData + (int)relocOffset);
+                long placeVa = checked((long)targetSectionVa + (long)relocOffset);
+                switch (relocationType)
+                {
+                    case ElfRelocX86_64_64:
+                        BinaryPrimitives.WriteInt64LittleEndian(dataBytes.AsSpan(patchOffset, 8), targetVa);
+                        break;
+                    case ElfRelocX86_64_32:
+                        BinaryPrimitives.WriteUInt32LittleEndian(dataBytes.AsSpan(patchOffset, 4), checked((uint)targetVa));
+                        break;
+                    case ElfRelocX86_64_32S:
+                        BinaryPrimitives.WriteInt32LittleEndian(dataBytes.AsSpan(patchOffset, 4), checked((int)targetVa));
+                        break;
+                    case ElfRelocX86_64Pc32:
+                    case ElfRelocX86_64Plt32:
+                        BinaryPrimitives.WriteInt32LittleEndian(dataBytes.AsSpan(patchOffset, 4), checked((int)(targetVa - placeVa)));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"LLVM ELF emitted unsupported allocated-section relocation type {relocationType}.");
                 }
             }
         }
@@ -1304,7 +1405,8 @@ internal static partial class LlvmImageLinker
         int TextSectionIndex,
         List<ElfAllocatedSection> AllocatedSections,
         List<ElfDebugSection> DebugSections,
-        List<ElfSectionHeader> DebugRelocationSections);
+        List<ElfSectionHeader> DebugRelocationSections,
+        List<ElfSectionHeader> AllocatedRelocationSections);
 
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
