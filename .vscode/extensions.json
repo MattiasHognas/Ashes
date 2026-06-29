@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "redhat.vscode-xml"
+        "redhat.vscode-xml",
+        "esbenp.prettier-vscode"
     ]
 }
