@@ -119,127 +119,126 @@ let rec hasFloatMark text =
                     then true
                     else hasFloatMark(t)
 
-let rec parseValue = 
-    fun (text) -> 
-        let trimmed = skipWs(text)
-        in 
-            match Ashes.Text.uncons(trimmed) with
-                | None -> Error("unexpected end of input")
-                | Some((h, rest)) -> 
-                    if h == "n"
+let rec parseValue text = 
+    (let trimmed = skipWs(text)
+    in 
+        match Ashes.Text.uncons(trimmed) with
+            | None -> Error("unexpected end of input")
+            | Some((h, rest)) -> 
+                if h == "n"
+                then 
+                    match consumeExact("null")(trimmed) with
+                        | Ok(after) -> Ok((JsonNull, after))
+                        | Error(e) -> Error(e)
+                else 
+                    if h == "t"
                     then 
-                        match consumeExact("null")(trimmed) with
-                            | Ok(after) -> Ok((JsonNull, after))
+                        match consumeExact("true")(trimmed) with
+                            | Ok(after) -> Ok((JsonBool(true), after))
                             | Error(e) -> Error(e)
                     else 
-                        if h == "t"
+                        if h == "f"
                         then 
-                            match consumeExact("true")(trimmed) with
-                                | Ok(after) -> Ok((JsonBool(true), after))
+                            match consumeExact("false")(trimmed) with
+                                | Ok(after) -> Ok((JsonBool(false), after))
                                 | Error(e) -> Error(e)
                         else 
-                            if h == "f"
+                            if h == "\""
                             then 
-                                match consumeExact("false")(trimmed) with
-                                    | Ok(after) -> Ok((JsonBool(false), after))
+                                match parseQuotedStr(trimmed) with
                                     | Error(e) -> Error(e)
+                                    | Ok((s, after)) -> Ok((JsonStr(s), after))
                             else 
-                                if h == "\""
+                                if h == "["
                                 then 
-                                    match parseQuotedStr(trimmed) with
-                                        | Error(e) -> Error(e)
-                                        | Ok((s, after)) -> Ok((JsonStr(s), after))
+                                    let rec parseArr cur = 
+                                        let tc = skipWs(cur)
+                                        in 
+                                            match Ashes.Text.uncons(tc) with
+                                                | None -> Error("unterminated array")
+                                                | Some((c, ctail)) -> 
+                                                    if c == "]"
+                                                    then Ok((JsonArrayEnd, ctail))
+                                                    else 
+                                                        match parseValue(tc) with
+                                                            | Error(e) -> Error(e)
+                                                            | Ok((elem, afterElem)) -> 
+                                                                let ta = skipWs(afterElem)
+                                                                in 
+                                                                    match Ashes.Text.uncons(ta) with
+                                                                        | None -> Error("unterminated array")
+                                                                        | Some((sep, sepTail)) -> 
+                                                                            if sep == "]"
+                                                                            then Ok((JsonArray(elem)(JsonArrayEnd), sepTail))
+                                                                            else 
+                                                                                if sep == ","
+                                                                                then 
+                                                                                    match parseArr(sepTail) with
+                                                                                        | Error(e) -> Error(e)
+                                                                                        | Ok((rArr, rAfter)) -> Ok((JsonArray(elem)(rArr), rAfter))
+                                                                                else Error("expected ',' or ']' in array")
+                                    in parseArr(rest)
                                 else 
-                                    if h == "["
+                                    if h == "{"
                                     then 
-                                        let rec parseArr cur = 
+                                        let rec parseObj cur = 
                                             let tc = skipWs(cur)
                                             in 
                                                 match Ashes.Text.uncons(tc) with
-                                                    | None -> Error("unterminated array")
+                                                    | None -> Error("unterminated object")
                                                     | Some((c, ctail)) -> 
-                                                        if c == "]"
-                                                        then Ok((JsonArrayEnd, ctail))
+                                                        if c == "}"
+                                                        then Ok((JsonObjectEnd, ctail))
                                                         else 
-                                                            match parseValue(tc) with
-                                                                | Error(e) -> Error(e)
-                                                                | Ok((elem, afterElem)) -> 
-                                                                    let ta = skipWs(afterElem)
-                                                                    in 
-                                                                        match Ashes.Text.uncons(ta) with
-                                                                            | None -> Error("unterminated array")
-                                                                            | Some((sep, sepTail)) -> 
-                                                                                if sep == "]"
-                                                                                then Ok((JsonArray(elem)(JsonArrayEnd), sepTail))
-                                                                                else 
-                                                                                    if sep == ","
-                                                                                    then 
-                                                                                        match parseArr(sepTail) with
-                                                                                            | Error(e) -> Error(e)
-                                                                                            | Ok((rArr, rAfter)) -> Ok((JsonArray(elem)(rArr), rAfter))
-                                                                                    else Error("expected ',' or ']' in array")
-                                        in parseArr(rest)
-                                    else 
-                                        if h == "{"
-                                        then 
-                                            let rec parseObj cur = 
-                                                let tc = skipWs(cur)
-                                                in 
-                                                    match Ashes.Text.uncons(tc) with
-                                                        | None -> Error("unterminated object")
-                                                        | Some((c, ctail)) -> 
-                                                            if c == "}"
-                                                            then Ok((JsonObjectEnd, ctail))
-                                                            else 
-                                                                if c == "\""
-                                                                then 
-                                                                    match parseQuotedStr(tc) with
-                                                                        | Error(e) -> Error(e)
-                                                                        | Ok((key, afterKey)) -> 
-                                                                            let tak = skipWs(afterKey)
-                                                                            in 
-                                                                                match Ashes.Text.uncons(tak) with
-                                                                                    | None -> Error("expected ':' after key")
-                                                                                    | Some((colon, afterColon)) -> 
-                                                                                        if colon == ":"
-                                                                                        then 
-                                                                                            match parseValue(afterColon) with
-                                                                                                | Error(e) -> Error(e)
-                                                                                                | Ok((v, afterVal)) -> 
-                                                                                                    let tav = skipWs(afterVal)
-                                                                                                    in 
-                                                                                                        match Ashes.Text.uncons(tav) with
-                                                                                                            | None -> Error("unterminated object")
-                                                                                                            | Some((sep, sepTail)) -> 
-                                                                                                                if sep == "}"
-                                                                                                                then Ok((JsonObject(key)(v)(JsonObjectEnd), sepTail))
-                                                                                                                else 
-                                                                                                                    if sep == ","
-                                                                                                                    then 
-                                                                                                                        match parseObj(sepTail) with
-                                                                                                                            | Error(e) -> Error(e)
-                                                                                                                            | Ok((rObj, rAfter)) -> Ok((JsonObject(key)(v)(rObj), rAfter))
-                                                                                                                    else Error("expected ',' or '}' in object")
-                                                                                        else Error("expected ':' after key")
-                                                                else Error("expected '\"' for key or '}'")
-                                            in parseObj(rest)
-                                        else 
-                                            let numAndRest = takeNum("")(trimmed)
-                                            in 
-                                                match numAndRest with
-                                                    | (numStr, numRest) -> 
-                                                        if numStr == ""
-                                                        then Error("unexpected character: " + h)
-                                                        else 
-                                                            if hasFloatMark(numStr)
+                                                            if c == "\""
                                                             then 
-                                                                match Ashes.Text.parseFloat(numStr) with
-                                                                    | Ok(f) -> Ok((JsonFloat(f), numRest))
+                                                                match parseQuotedStr(tc) with
                                                                     | Error(e) -> Error(e)
-                                                            else 
-                                                                match Ashes.Text.parseInt(numStr) with
-                                                                    | Ok(n) -> Ok((JsonInt(n), numRest))
-                                                                    | Error(e) -> Error(e)
+                                                                    | Ok((key, afterKey)) -> 
+                                                                        let tak = skipWs(afterKey)
+                                                                        in 
+                                                                            match Ashes.Text.uncons(tak) with
+                                                                                | None -> Error("expected ':' after key")
+                                                                                | Some((colon, afterColon)) -> 
+                                                                                    if colon == ":"
+                                                                                    then 
+                                                                                        match parseValue(afterColon) with
+                                                                                            | Error(e) -> Error(e)
+                                                                                            | Ok((v, afterVal)) -> 
+                                                                                                let tav = skipWs(afterVal)
+                                                                                                in 
+                                                                                                    match Ashes.Text.uncons(tav) with
+                                                                                                        | None -> Error("unterminated object")
+                                                                                                        | Some((sep, sepTail)) -> 
+                                                                                                            if sep == "}"
+                                                                                                            then Ok((JsonObject(key)(v)(JsonObjectEnd), sepTail))
+                                                                                                            else 
+                                                                                                                if sep == ","
+                                                                                                                then 
+                                                                                                                    match parseObj(sepTail) with
+                                                                                                                        | Error(e) -> Error(e)
+                                                                                                                        | Ok((rObj, rAfter)) -> Ok((JsonObject(key)(v)(rObj), rAfter))
+                                                                                                                else Error("expected ',' or '}' in object")
+                                                                                    else Error("expected ':' after key")
+                                                            else Error("expected '\"' for key or '}'")
+                                        in parseObj(rest)
+                                    else 
+                                        let numAndRest = takeNum("")(trimmed)
+                                        in 
+                                            match numAndRest with
+                                                | (numStr, numRest) -> 
+                                                    if numStr == ""
+                                                    then Error("unexpected character: " + h)
+                                                    else 
+                                                        if hasFloatMark(numStr)
+                                                        then 
+                                                            match Ashes.Text.parseFloat(numStr) with
+                                                                | Ok(f) -> Ok((JsonFloat(f), numRest))
+                                                                | Error(e) -> Error(e)
+                                                        else 
+                                                            match Ashes.Text.parseInt(numStr) with
+                                                                | Ok(n) -> Ok((JsonInt(n), numRest))
+                                                                | Error(e) -> Error(e))
 
 let parse text = 
     match parseValue(text) with
@@ -269,48 +268,45 @@ let rec escStr acc text =
                             then escStr(acc + "\\t")(t)
                             else escStr(acc + h)(t)
 
-let rec stringify = 
-    fun (json) -> 
-        let rec strArr elem rest = 
-            let s = stringify(elem)
-            in 
-                match rest with
-                    | JsonArrayEnd -> s
-                    | JsonArray(ne, nr) -> s + "," + strArr(ne)(nr)
-                    | _ -> s
+let rec stringify json = 
+    (let rec strArr elem rest = 
+        let s = stringify(elem)
         in 
-            let rec strObj rest = 
-                match rest with
-                    | JsonObjectEnd -> ""
-                    | JsonObject(k, v, nr) -> ",\"" + escStr("")(k) + "\":" + stringify(v) + strObj(nr)
-                    | _ -> ""
-            in 
-                match json with
-                    | JsonNull -> "null"
-                    | JsonBool(b) -> 
-                        if b
-                        then "true"
-                        else "false"
-                    | JsonInt(n) -> Ashes.Text.fromInt(n)
-                    | JsonFloat(f) -> Ashes.Text.fromFloat(f)
-                    | JsonStr(s) -> "\"" + escStr("")(s) + "\""
-                    | JsonArrayEnd -> "[]"
-                    | JsonArray(elem, rest) -> "[" + strArr(elem)(rest) + "]"
-                    | JsonObjectEnd -> "{}"
-                    | JsonObject(key, v, rest) -> "{\"" + escStr("")(key) + "\":" + stringify(v) + strObj(rest) + "}"
+            match rest with
+                | JsonArrayEnd -> s
+                | JsonArray(ne, nr) -> s + "," + strArr(ne)(nr)
+                | _ -> s
+    in 
+        let rec strObj rest = 
+            match rest with
+                | JsonObjectEnd -> ""
+                | JsonObject(k, v, nr) -> ",\"" + escStr("")(k) + "\":" + stringify(v) + strObj(nr)
+                | _ -> ""
+        in 
+            match json with
+                | JsonNull -> "null"
+                | JsonBool(b) -> 
+                    if b
+                    then "true"
+                    else "false"
+                | JsonInt(n) -> Ashes.Text.fromInt(n)
+                | JsonFloat(f) -> Ashes.Text.fromFloat(f)
+                | JsonStr(s) -> "\"" + escStr("")(s) + "\""
+                | JsonArrayEnd -> "[]"
+                | JsonArray(elem, rest) -> "[" + strArr(elem)(rest) + "]"
+                | JsonObjectEnd -> "{}"
+                | JsonObject(key, v, rest) -> "{\"" + escStr("")(key) + "\":" + stringify(v) + strObj(rest) + "}")
 
-let get = 
-    fun (key) -> 
-        fun (json) -> 
-            let rec go cur = 
-                match cur with
-                    | JsonObjectEnd -> Error("key not found: " + key)
-                    | JsonObject(k, v, rest) -> 
-                        if k == key
-                        then Ok(v)
-                        else go(rest)
-                    | _ -> Error("not a JSON object")
-            in go(json)
+let get key json = 
+    (let rec go cur = 
+        match cur with
+            | JsonObjectEnd -> Error("key not found: " + key)
+            | JsonObject(k, v, rest) -> 
+                if k == key
+                then Ok(v)
+                else go(rest)
+            | _ -> Error("not a JSON object")
+    in go(json))
 
 let asStr json = 
     match json with
@@ -337,15 +333,13 @@ let isNull json =
         | JsonNull -> true
         | _ -> false
 
-let index = 
-    fun (i) -> 
-        fun (json) -> 
-            let rec go cur idx = 
-                match cur with
-                    | JsonArrayEnd -> Error("JSON array index out of bounds")
-                    | JsonArray(elem, rest) -> 
-                        if idx <= 0
-                        then Ok(elem)
-                        else go(rest)(idx - 1)
-                    | _ -> Error("not a JSON array")
-            in go(json)(i)
+let index i json = 
+    (let rec go cur idx = 
+        match cur with
+            | JsonArrayEnd -> Error("JSON array index out of bounds")
+            | JsonArray(elem, rest) -> 
+                if idx <= 0
+                then Ok(elem)
+                else go(rest)(idx - 1)
+            | _ -> Error("not a JSON array")
+    in go(json)(i))

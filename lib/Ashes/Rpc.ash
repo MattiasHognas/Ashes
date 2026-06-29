@@ -33,18 +33,17 @@ let rec rpcTrimStart text =
                 then rpcTrimStart(t)
                 else text
 
-let parseContentLength = 
-    fun (line) -> 
-        let prefix = "Content-Length: "
-        in 
-            if rpcStartsWith(line)(prefix)
-            then 
-                let valueStr = rpcDrop(line)(rpcStrLen(prefix))
-                in 
-                    match Ashes.Text.parseInt(rpcTrimStart(valueStr)) with
-                        | Ok(n) -> Some(n)
-                        | Error(_) -> None
-            else None
+let parseContentLength line = 
+    (let prefix = "Content-Length: "
+    in 
+        if rpcStartsWith(line)(prefix)
+        then 
+            let valueStr = rpcDrop(line)(rpcStrLen(prefix))
+            in 
+                match Ashes.Text.parseInt(rpcTrimStart(valueStr)) with
+                    | Ok(n) -> Some(n)
+                    | Error(_) -> None
+        else None)
 
 let rec readHeaders contentLength = 
     match Ashes.IO.readLine(Unit) with
@@ -68,11 +67,10 @@ let readMessage unit =
             then Error("invalid Content-Length")
             else Ashes.IO.readExact(n)
 
-let writeMessage = 
-    fun (msg) -> 
-        let len = Ashes.Text.byteLength(msg)
+let writeMessage msg = 
+    (let len = Ashes.Text.byteLength(msg)
+    in 
+        let header = "Content-Length: " + Ashes.Text.fromInt(len) + "\r\n\r\n"
         in 
-            let header = "Content-Length: " + Ashes.Text.fromInt(len) + "\r\n\r\n"
-            in 
-                let _h = Ashes.IO.write(header)
-                in Ashes.IO.write(msg)
+            let _h = Ashes.IO.write(header)
+            in Ashes.IO.write(msg))
