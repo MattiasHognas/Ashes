@@ -448,6 +448,16 @@ public abstract record IrInst
     public sealed record Jump(string Target) : IrInst;
     public sealed record JumpIfFalse(int CondTemp, string Target) : IrInst;
 
+    /// <summary>
+    /// Multi-way dispatch on an ADT tag value (decision-tree pattern matching).
+    /// Branches to the label paired with the case whose tag equals
+    /// <see cref="TagTemp"/>, or to <see cref="DefaultLabel"/> when none match.
+    /// Emitted by match lowering in place of a linear chain of tag comparisons when a
+    /// match is over many single-ADT constructor arms; lowers to an LLVM <c>switch</c>
+    /// (jump table or balanced binary search). A block terminator.
+    /// </summary>
+    public sealed record SwitchTag(int TagTemp, IReadOnlyList<(long Tag, string Label)> Cases, string DefaultLabel) : IrInst;
+
     public sealed record Return(int Source) : IrInst;
 }
 

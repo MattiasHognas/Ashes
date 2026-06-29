@@ -128,9 +128,31 @@ internal sealed record LlvmTargetContext(
 {
     private int _moduleConstantCounter;
 
+    private readonly Dictionary<string, LlvmValueHandle> _stringLiteralGlobals = new(StringComparer.Ordinal);
+
     /// <summary>Returns a module-unique integer for naming global constants.</summary>
     public int NextGlobalConstantId() =>
         System.Threading.Interlocked.Increment(ref _moduleConstantCounter);
+
+    /// <summary>
+    /// Content-addressed interning of string-literal globals. Returns the module-level
+    /// constant global for <paramref name="value"/>, creating it via <paramref name="create"/>
+    /// on first request and reusing it for every subsequent identical value. Compile-time only:
+    /// the literal set is finite and static, so this is leak-free by construction. Identical
+    /// literals — whether from user source or internal codegen call sites — share one
+    /// <c>.rodata</c> global instead of emitting a duplicate per use.
+    /// </summary>
+    public LlvmValueHandle GetOrAddStringLiteralGlobal(string value, Func<LlvmValueHandle> create)
+    {
+        if (_stringLiteralGlobals.TryGetValue(value, out var existing))
+        {
+            return existing;
+        }
+
+        var global = create();
+        _stringLiteralGlobals[value] = global;
+        return global;
+    }
 
     public void Dispose()
     {

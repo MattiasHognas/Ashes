@@ -30,31 +30,51 @@ All original audit findings have been addressed:
 
 ## Ordered Roadmap — Next Work Items
 
-Every remaining optimization task, in recommended execution order.
-Each item builds on the previous ones.
+Every remaining optimization task, as a tracked checklist. Items are ordered
+by recommended execution order; each builds on the previous ones. When all
+three are checked off this document moves from **Ongoing** to **Landed** in
+[FUTURE_FEATURES.md](FUTURE_FEATURES.md).
 
-### 1. Decision tree pattern matching for large ADTs
+### 1. Decision-tree pattern matching for large ADTs
 
-Replace the current linear chain of tag checks with a decision tree
-(jump table or balanced binary search) for ADTs with many constructors.
+Replace the current linear chain of tag checks with a single tag switch
+(LLVM `switch` → jump table or balanced binary search) for matches over ADTs
+with many constructors.
 
-- Threshold: use linear scan for ≤ 4 constructors; decision tree above.
-- Reduces match complexity from O(n) to O(log n) or O(1) for dense tags.
+- [ ] Add a `SwitchTag` IR instruction (`tag temp` + `(tag, label)` cases + default label).
+- [ ] Keep `RemapSourceTemps` / `CollectUsedTemps` / branch-ref counting in `IrOptimizer.cs` in sync with the new instruction.
+- [ ] Lower eligible matches to `SwitchTag` in `Lowering.Patterns.cs`; fall back to the linear chain otherwise.
+  - Eligibility: every arm is a constructor pattern (incl. nullary) over one ADT, distinct tags, only trivial (`_` / variable) sub-patterns, no guards, arm count **> 4**.
+- [ ] Backend: add `LLVMBuildSwitch` / `LLVMAddCase` interop and emit the switch in `LlvmCodegen.cs` (`SwitchTag` is a block terminator).
+- [ ] Tests: C# unit test asserting `SwitchTag` is emitted above the threshold and the linear chain at/below it; end-to-end `.ash` test over a many-constructor ADT.
 
-### 2. Runtime string interning
+Reduces match dispatch from O(n) tag comparisons to O(log n)/O(1).
 
-Add a runtime intern table for strings. `concat`, `substring`, and other
-string-producing operations check the table before allocating.
+### 2. Compile-time string-literal interning
 
-- Trade-off: hash + lookup overhead vs. deduplication savings.
-- Most valuable for programs that build many identical strings in loops.
-- Low priority — arena deallocation already handles most memory pressure.
+Deduplicate identical string-literal `.rodata` globals at compile time so each
+distinct literal value is emitted once per module and shared by every use.
 
-### 3. Mutual recursion TCO
+> **Scope decision.** *Runtime* interning of dynamically-produced strings
+> (`concat` / `substring` results) was considered and **rejected**: under the
+> arena memory model there is no sound, bounded implementation. A permanent
+> intern region never reclaims, so it grows monotonically (a leak that violates
+> the "No GC / deterministic reclamation" invariant); interning into the arena
+> instead dangles on the next arena reset (use-after-free). A bounded, reclaimed
+> table would require reference counting or GC, both of which the language
+> forbids. We therefore intern only the compile-time-known literal set, which is
+> finite, static, and leak-free by construction.
 
-Extend tail call optimization to detect mutual recursion (e.g. `f` calls
-`g` in tail position, `g` calls `f` in tail position).
+- [ ] `InternString` already dedups literals by value at the IR level; the gap is the backend, where `EmitHeapStringLiteral` emits a fresh global per call.
+- [ ] Add a module-level content-addressed cache (keyed by UTF-8 value) on `LlvmTargetContext`; share one global per distinct value across all functions and internal call sites (error messages, URL prefixes, …).
+- [ ] Tests: build a program that reuses the same literal in multiple places / functions and assert a single shared `.rodata` global.
 
-- Requires call graph analysis to identify mutually recursive groups.
-- Convert to a shared loop with a dispatch tag.
-- Low priority — single-function TCO covers the vast majority of cases.
+### 3. Mutual-recursion TCO
+
+Extend tail-call optimization to mutually recursive groups (`f` tail-calls `g`,
+`g` tail-calls `f`).
+
+- [ ] Call-graph analysis over a `let rec … and …` group to find members that only tail-call each other (and themselves) in tail position.
+- [ ] Generalize `HasTailSelfCalls` (`Lowering.cs`) to recognize tail calls to any sibling in the group.
+- [ ] Compile the group to one shared loop with a dispatch tag selecting the active member's body per iteration (replacing the current TCO-disabled closure-call path).
+- [ ] Tests: a mutually recursive `even`/`odd` (or similar) `.ash` program that would overflow the stack without it.

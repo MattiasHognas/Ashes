@@ -580,6 +580,13 @@ internal static partial class LlvmCodegen
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
         LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
 
+        // Disable jump-table lowering for `switch` (decision-tree pattern matching). The custom
+        // image linkers do not emit the relocations an indirect jump-table read requires, so LLVM
+        // must lower switches to comparison/bit-test trees (still O(log n)) using only direct
+        // branches. Without this, dense switches above LLVM's jump-table threshold branch through
+        // an unrelocated `.rodata` table and segfault at runtime.
+        LlvmAttributeHandle noJumpTablesAttr = LlvmApi.CreateStringAttribute(target.Context, "no-jump-tables", "true");
+
         if (usesNetworkingRuntimeAbi)
         {
             EmitNetworkingRuntimeAbi(
@@ -636,6 +643,7 @@ internal static partial class LlvmCodegen
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
+        LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, noJumpTablesAttr);
 
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
@@ -643,6 +651,7 @@ internal static partial class LlvmCodegen
             LlvmValueHandle llvmFunction = LlvmApi.AddFunction(target.Module, function.Label, closureFunctionType);
             LlvmApi.SetLinkage(llvmFunction, LlvmLinkage.Internal);
             LlvmApi.AddAttributeAtIndex(llvmFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
+            LlvmApi.AddAttributeAtIndex(llvmFunction, LlvmApi.AttributeIndexFunction, noJumpTablesAttr);
             liftedFunctions.Add(function.Label, llvmFunction);
         }
 
@@ -1218,6 +1227,7 @@ internal static partial class LlvmCodegen
             IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadMemory(state, LoadTemp(state, getAdtField.Ptr), 8 + (getAdtField.FieldIndex * 8), $"get_adt_field_{getAdtField.Target}")),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
+            IrInst.SwitchTag switchTag => EmitSwitchTag(state, LoadTemp(state, switchTag.TagTemp), switchTag.Cases, switchTag.DefaultLabel),
             IrInst.Return ret => EmitReturn(state, ret.Source),
             // Arena deallocation: save/restore heap cursor and end pointers
             IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot),

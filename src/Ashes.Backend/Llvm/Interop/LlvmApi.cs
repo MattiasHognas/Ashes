@@ -382,6 +382,13 @@ internal static partial class LlvmApi
     public static partial LlvmValueHandle BuildCondBr(
         LlvmBuilderHandle b, LlvmValueHandle cond, LlvmBasicBlockHandle thenBlock, LlvmBasicBlockHandle elseBlock);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildSwitch")]
+    public static partial LlvmValueHandle BuildSwitch(
+        LlvmBuilderHandle b, LlvmValueHandle value, LlvmBasicBlockHandle elseBlock, uint numCases);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMAddCase")]
+    public static partial void AddCase(LlvmValueHandle switchInst, LlvmValueHandle onValue, LlvmBasicBlockHandle dest);
+
     [LibraryImport(Lib, EntryPoint = "LLVMBuildRet")]
     public static partial LlvmValueHandle BuildRet(LlvmBuilderHandle b, LlvmValueHandle value);
 

@@ -184,6 +184,27 @@ internal static partial class LlvmCodegen
         return true;
     }
 
+    private static bool EmitSwitchTag(
+        LlvmCodegenState state,
+        LlvmValueHandle tagValue,
+        IReadOnlyList<(long Tag, string Label)> cases,
+        string defaultLabel)
+    {
+        LlvmValueHandle switchInst = LlvmApi.BuildSwitch(
+            state.Target.Builder,
+            tagValue,
+            state.GetLabelBlock(defaultLabel),
+            (uint)cases.Count);
+
+        foreach (var (tag, label) in cases)
+        {
+            LlvmValueHandle onValue = LlvmApi.ConstInt(state.I64, unchecked((ulong)tag), 1);
+            LlvmApi.AddCase(switchInst, onValue, state.GetLabelBlock(label));
+        }
+
+        return true;
+    }
+
     private static bool EmitJumpIfFalse(LlvmCodegenState state, LlvmValueHandle condValue, string targetLabel, int instructionIndex)
     {
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
