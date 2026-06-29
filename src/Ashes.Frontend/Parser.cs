@@ -9,6 +9,13 @@ public sealed class Parser
     private Token _previous;
     private int _matchCasePipeSuppressionDepth;
 
+    // While parsing a match scrutinee, the trailing `with` belongs to the match expression
+    // (`match value with | ...`), not to a record-update expression. This depth suppresses
+    // brace-free `with`-update parsing so the scrutinee stops before the match's `with`. A
+    // parenthesised sub-expression resets it (see ParseParen), so `match (p with x = 1) with ...`
+    // still reads the inner `with` as a record update.
+    private int _withSuppressionDepth;
+
     // While parsing the value of a flat top-level declaration, a following `let` starts the next
     // declaration rather than being absorbed as a whitespace-application argument (per LANGUAGE_SPEC:
     // a flat top-level `let` value is terminated by EOF or the start of the next `type`/`extern`/`let`).
@@ -235,18 +242,42 @@ public sealed class Parser
         }
         Consume(TokenKind.Equals);
 
-        // Record syntax: type Point = { x: Int, y: Int }
+        // The brace record form (`type Point = { x: Int, y: Int }`) has been removed in favour of
+        // brace-free field alternatives (`type Point = | x: Int | y: Int`).
         if (_current.Kind == TokenKind.LBrace)
         {
-            return ParseRecordTypeDecl(name, typeParameters, start);
+            _diag.Error(CurrentErrorSpan(), "Brace record declarations have been removed; use '| field: Type' alternatives.");
+            SkipBalancedBraces();
+            return RegisterTypeDecl(new TypeDecl(name, typeParameters, []), start, LastConsumedEnd);
         }
 
+        // A `type ... = | ...` declaration is either a record (all `| field: Type` branches) or an
+        // ordinary ADT (all `| Constructor(...)` branches). A branch is a record field when its name
+        // is immediately followed by `:`; otherwise it is a constructor.
         var constructors = new List<TypeConstructor>();
+        var fieldNames = new List<string>();
+        var fieldTypeNames = new List<string>();
+        var sawField = false;
+        var sawConstructor = false;
         while (_current.Kind == TokenKind.Pipe)
         {
             Consume(TokenKind.Pipe);
-            var ctorStart = _previous.Position;
-            var ctorName = Consume(TokenKind.Ident).Text;
+            var branchStart = _previous.Position;
+            var branchName = Consume(TokenKind.Ident).Text;
+
+            if (_current.Kind == TokenKind.Colon)
+            {
+                // Record field branch: | name: Type
+                sawField = true;
+                Consume(TokenKind.Colon);
+                var fieldType = ParseTypeExprAtomName();
+                fieldNames.Add(branchName);
+                fieldTypeNames.Add(fieldType);
+                continue;
+            }
+
+            // Constructor branch: | Name | Name(p1, p2, ...)
+            sawConstructor = true;
             var parameters = new List<string>();
             if (_current.Kind == TokenKind.LParen)
             {
@@ -262,7 +293,22 @@ public sealed class Parser
                 }
                 Consume(TokenKind.RParen);
             }
-            constructors.Add(RegisterTypeConstructor(new TypeConstructor(ctorName, parameters), ctorStart, LastConsumedEnd));
+            constructors.Add(RegisterTypeConstructor(new TypeConstructor(branchName, parameters), branchStart, LastConsumedEnd));
+        }
+
+        if (sawField && sawConstructor)
+        {
+            _diag.Error(CurrentErrorSpan(), "Record field alternatives cannot be mixed with constructor alternatives.");
+        }
+
+        if (sawField)
+        {
+            var recordCtor = RegisterTypeConstructor(
+                new TypeConstructor(name, fieldTypeNames) { FieldNames = fieldNames },
+                start, LastConsumedEnd);
+            return RegisterTypeDecl(
+                new TypeDecl(name, typeParameters, [recordCtor]) { IsRecord = true },
+                start, LastConsumedEnd);
         }
 
         if (constructors.Count == 0)
@@ -274,49 +320,24 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses a record type declaration: <c>{ fieldName: TypeExpr, ... }</c>.
-    /// Desugars to a single-constructor ADT with the same name as the type.
+    /// Best-effort recovery for the removed brace record forms: consumes a balanced <c>{ ... }</c>
+    /// block starting at the current <c>{</c> token so parsing can continue after the diagnostic.
     /// </summary>
-    private TypeDecl ParseRecordTypeDecl(string name, List<TypeParameter> typeParameters, int start)
+    private void SkipBalancedBraces()
     {
+        if (_current.Kind != TokenKind.LBrace)
+        {
+            return;
+        }
+
         Consume(TokenKind.LBrace);
-        var fieldNames = new List<string>();
-        var fieldTypeNames = new List<string>();
-
-        if (_current.Kind != TokenKind.RBrace)
+        var depth = 1;
+        while (depth > 0 && _current.Kind != TokenKind.EOF)
         {
-            var fieldName = Consume(TokenKind.Ident).Text;
-            Consume(TokenKind.Colon);
-            var fieldType = ParseTypeExprAtomName();
-            fieldNames.Add(fieldName);
-            fieldTypeNames.Add(fieldType);
-
-            while (_current.Kind == TokenKind.Comma)
-            {
-                Consume(TokenKind.Comma);
-                fieldName = Consume(TokenKind.Ident).Text;
-                Consume(TokenKind.Colon);
-                fieldType = ParseTypeExprAtomName();
-                fieldNames.Add(fieldName);
-                fieldTypeNames.Add(fieldType);
-            }
+            if (_current.Kind == TokenKind.LBrace) depth++;
+            else if (_current.Kind == TokenKind.RBrace) depth--;
+            Advance();
         }
-
-        Consume(TokenKind.RBrace);
-
-        if (fieldNames.Count == 0)
-        {
-            _diag.Error(CurrentErrorSpan(), $"Record type '{name}' must have at least one field.");
-        }
-
-        var ctorStart = start;
-        var ctor = RegisterTypeConstructor(
-            new TypeConstructor(name, fieldTypeNames) { FieldNames = fieldNames },
-            ctorStart, LastConsumedEnd);
-
-        return RegisterTypeDecl(
-            new TypeDecl(name, typeParameters, [ctor]) { IsRecord = true },
-            start, LastConsumedEnd);
     }
 
     /// <summary>
@@ -425,7 +446,16 @@ public sealed class Parser
 
         var matchPos = _current.Position;
         Consume(TokenKind.Match);
-        var value = ParseExpressionCore();
+        _withSuppressionDepth++;
+        Expr value;
+        try
+        {
+            value = ParseExpressionCore();
+        }
+        finally
+        {
+            _withSuppressionDepth--;
+        }
         Consume(TokenKind.With);
 
         var cases = new List<MatchCase>();
@@ -807,7 +837,44 @@ public sealed class Parser
             return outerLambda;
         }
 
-        return ParsePipe();
+        return ParseWith();
+    }
+
+    /// <summary>
+    /// Parses brace-free record updates: <c>target with field = value[, field = value]*</c>. The
+    /// target and each field value are parsed at pipe precedence, so <c>with</c> binds looser than
+    /// function application and the binary operators. Chained updates
+    /// (<c>p with x = 1 with y = 2</c>) are left-associative. Inside a match scrutinee the trailing
+    /// <c>with</c> is suppressed (it belongs to the match), unless re-enabled by parentheses.
+    /// </summary>
+    private Expr ParseWith()
+    {
+        var target = ParsePipe();
+
+        while (_current.Kind == TokenKind.With && _withSuppressionDepth == 0)
+        {
+            var start = AstSpans.GetOrDefault(target).Start;
+            Consume(TokenKind.With);
+
+            var updates = new List<(string Name, Expr Value)>();
+            var fieldName = Consume(TokenKind.Ident).Text;
+            Consume(TokenKind.Equals);
+            var fieldValue = ParsePipe();
+            updates.Add((fieldName, fieldValue));
+
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                fieldName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Equals);
+                fieldValue = ParsePipe();
+                updates.Add((fieldName, fieldValue));
+            }
+
+            target = RegisterExpr(new Expr.RecordUpdate(target, updates), start, LastConsumedEnd);
+        }
+
+        return target;
     }
 
     private Expr ParsePipe()
@@ -1019,6 +1086,15 @@ public sealed class Parser
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
                 Consume(TokenKind.LParen);
+
+                // Named-argument call syntax (`Name(field = value, ...)`) is record construction.
+                // It is recognised only when the first argument is `ident =` (a bare `=`, not `==`).
+                if (NamedArgumentFollows())
+                {
+                    expr = ParseRecordConstruction(expr, start);
+                    continue;
+                }
+
                 var args = new List<Expr>();
                 if (_current.Kind == TokenKind.RParen)
                 {
@@ -1056,6 +1132,68 @@ public sealed class Parser
         }
 
         return expr;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the current token begins a named call argument: an identifier
+    /// immediately followed by a single <c>=</c> (not <c>==</c>). Used to distinguish record
+    /// construction (<c>Point(x = 1)</c>) from a positional call whose argument happens to start
+    /// with an identifier (<c>Some(x)</c>, <c>Some(x == 1)</c>).
+    /// </summary>
+    private bool NamedArgumentFollows()
+    {
+        if (_current.Kind != TokenKind.Ident)
+        {
+            return false;
+        }
+
+        var savedCurrent = _current;
+        var savedPrevious = _previous;
+        var savedLexer = _lexer.SavePosition();
+        Advance(); // consume the identifier
+        var isNamed = _current.Kind == TokenKind.Equals;
+        _current = savedCurrent;
+        _previous = savedPrevious;
+        _lexer.RestorePosition(savedLexer);
+        return isNamed;
+    }
+
+    /// <summary>
+    /// Parses the named-argument list of a record construction (the opening <c>(</c> has already been
+    /// consumed) and produces a <see cref="Expr.RecordLit"/>. Named arguments are only valid for
+    /// record construction, so <paramref name="callee"/> must be a simple unqualified type-name
+    /// identifier; otherwise a diagnostic is reported and recovery continues.
+    /// </summary>
+    private Expr ParseRecordConstruction(Expr callee, int start)
+    {
+        string typeName;
+        if (callee is Expr.Var v && v.Name.Length > 0 && char.IsUpper(v.Name[0]))
+        {
+            typeName = v.Name;
+        }
+        else
+        {
+            _diag.Error(CurrentErrorSpan(), "Named arguments are only allowed in record construction.");
+            typeName = (callee as Expr.Var)?.Name ?? string.Empty;
+        }
+
+        var fields = new List<(string Name, Expr Value)>();
+        var fieldName = Consume(TokenKind.Ident).Text;
+        Consume(TokenKind.Equals);
+        var fieldValue = ParseExpressionCore();
+        fields.Add((fieldName, fieldValue));
+
+        while (_current.Kind == TokenKind.Comma)
+        {
+            Consume(TokenKind.Comma);
+            fieldName = Consume(TokenKind.Ident).Text;
+            Consume(TokenKind.Equals);
+            fieldValue = ParseExpressionCore();
+            fields.Add((fieldName, fieldValue));
+        }
+
+        Consume(TokenKind.RParen);
+        return RegisterExpr(new Expr.RecordLit(typeName, fields), start, LastConsumedEnd);
     }
 
     /// <summary>
@@ -1127,7 +1265,7 @@ public sealed class Parser
             TokenKind.Ident => ParseVar(),
             TokenKind.LParen => ParseParen(),
             TokenKind.LBracket => ParseList(),
-            TokenKind.LBrace => ParseRecordUpdate(),
+            TokenKind.LBrace => ParseRemovedBraceUpdate(),
             _ => BadPrimary(),
         };
     }
@@ -1211,74 +1349,28 @@ public sealed class Parser
             return RegisterExpr(new Expr.QualifiedVar(module, name), t.Position, LastConsumedEnd);
         }
 
-        // Record literal: TypeName { field = expr, ... }
-        // Only trigger when the identifier starts with an uppercase letter (type name convention).
+        // The brace record construction form (`TypeName { field = expr, ... }`) has been removed in
+        // favour of named-argument call syntax (`TypeName(field = expr, ...)`).
         if (_current.Kind == TokenKind.LBrace && t.Text.Length > 0 && char.IsUpper(t.Text[0]))
         {
-            return ParseRecordLit(t);
+            _diag.Error(CurrentErrorSpan(), "Brace record construction has been removed; use 'Name(field = value)'.");
+            SkipBalancedBraces();
+            return RegisterExpr(new Expr.Var(t.Text), t.Position, LastConsumedEnd);
         }
 
         return RegisterExpr(new Expr.Var(t.Text), t.Position, t.End);
     }
 
     /// <summary>
-    /// Parses a record literal: <c>TypeName { field1 = e1, field2 = e2 }</c>.
-    /// The identifier token for the type name has already been consumed.
+    /// Reports the removal of the brace record update form (<c>{ expr with field = e }</c>) and
+    /// recovers by skipping the balanced brace block. Use <c>expr with field = e</c> instead.
     /// </summary>
-    private Expr ParseRecordLit(Token typeNameToken)
-    {
-        var start = typeNameToken.Position;
-        Consume(TokenKind.LBrace);
-
-        var fields = new List<(string Name, Expr Value)>();
-        if (_current.Kind != TokenKind.RBrace)
-        {
-            var fieldName = Consume(TokenKind.Ident).Text;
-            Consume(TokenKind.Equals);
-            var fieldValue = ParseExpressionCore();
-            fields.Add((fieldName, fieldValue));
-
-            while (_current.Kind == TokenKind.Comma)
-            {
-                Consume(TokenKind.Comma);
-                fieldName = Consume(TokenKind.Ident).Text;
-                Consume(TokenKind.Equals);
-                fieldValue = ParseExpressionCore();
-                fields.Add((fieldName, fieldValue));
-            }
-        }
-
-        Consume(TokenKind.RBrace);
-        return RegisterExpr(new Expr.RecordLit(typeNameToken.Text, fields), start, LastConsumedEnd);
-    }
-
-    /// <summary>
-    /// Parses a record update expression: <c>{ expr with field1 = e1, field2 = e2 }</c>.
-    /// </summary>
-    private Expr ParseRecordUpdate()
+    private Expr ParseRemovedBraceUpdate()
     {
         var start = _current.Position;
-        Consume(TokenKind.LBrace);
-        var target = ParseExpressionCore();
-        Consume(TokenKind.With);
-
-        var updates = new List<(string Name, Expr Value)>();
-        var fieldName = Consume(TokenKind.Ident).Text;
-        Consume(TokenKind.Equals);
-        var fieldValue = ParseExpressionCore();
-        updates.Add((fieldName, fieldValue));
-
-        while (_current.Kind == TokenKind.Comma)
-        {
-            Consume(TokenKind.Comma);
-            fieldName = Consume(TokenKind.Ident).Text;
-            Consume(TokenKind.Equals);
-            fieldValue = ParseExpressionCore();
-            updates.Add((fieldName, fieldValue));
-        }
-
-        Consume(TokenKind.RBrace);
-        return RegisterExpr(new Expr.RecordUpdate(target, updates), start, LastConsumedEnd);
+        _diag.Error(CurrentErrorSpan(), "Brace record update has been removed; use 'base with field = value'.");
+        SkipBalancedBraces();
+        return RegisterExpr(new Expr.IntLit(0), start, LastConsumedEnd);
     }
 
     private Expr ParseParen()
@@ -1287,6 +1379,8 @@ public sealed class Parser
         Consume(TokenKind.LParen);
         var suppressedMatchCasePipeDepth = _matchCasePipeSuppressionDepth;
         _matchCasePipeSuppressionDepth = 0;
+        var suppressedWithDepth = _withSuppressionDepth;
+        _withSuppressionDepth = 0;
         try
         {
             var e = ParseParenthesizedBody();
@@ -1307,6 +1401,7 @@ public sealed class Parser
         finally
         {
             _matchCasePipeSuppressionDepth = suppressedMatchCasePipeDepth;
+            _withSuppressionDepth = suppressedWithDepth;
         }
     }
 

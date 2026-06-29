@@ -57,6 +57,33 @@ and the binding/type import selectors. See
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
 
+## Record diagnostics
+
+Records use the brace-free syntax described in
+[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §4.1. These diagnostics are currently
+surfaced as parse errors (`ASH003`) or uncoded semantic errors:
+
+- **Removed curly-brace record syntax.** The old `{ ... }` record declaration,
+  construction, and update forms are no longer accepted. Encountering a `{`
+  where a record declaration, literal, or update was previously written reports
+  a parse error directing the author to the brace-free forms
+  (`type T = | f: T`, `T(f = e)`, `e with f = e`).
+  Messages: `Brace record declarations have been removed; use '| field: Type' alternatives.`,
+  `Brace record construction has been removed; use 'Name(field = value)'.`,
+  `Brace record update has been removed; use 'base with field = value'.`
+
+- **Named arguments outside record construction.** Named-argument call syntax
+  (`f(x = 1)`) is only valid for record construction. Using it on an arbitrary
+  expression is a parse error.
+  Message: `Named arguments are only allowed in record construction.`
+
+- **Mixed record and constructor branches.** A `type` declaration mixes
+  `| field: Type` field branches with `| Constructor(...)` branches.
+  Message: `Record field alternatives cannot be mixed with constructor alternatives.`
+
+The semantic record diagnostics (unknown record type, missing/unknown/duplicate
+field) remain uncoded.
+
 Currently uncoded compile failures include examples such as:
 
 - `Non-exhaustive match expression. Missing case: ...`
