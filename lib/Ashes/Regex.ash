@@ -112,41 +112,37 @@ let matches regex text =
         | None -> false
         | Some(rest) -> rest == ""
 
-let find = 
-    fun (regex) -> 
-        fun (text) -> 
-            let rec search remaining = 
-                match tryMatchHere(regex)(remaining) with
-                    | Some(rest) -> 
-                        let matchLen = strLen(remaining) - strLen(rest)
-                        in Some(strTake(matchLen)(remaining))
-                    | None -> 
-                        match Ashes.Text.uncons(remaining) with
-                            | None -> None
-                            | Some((_h, t)) -> search(t)
-            in search(text)
+let find regex text = 
+    (let rec search remaining = 
+        match tryMatchHere(regex)(remaining) with
+            | Some(rest) -> 
+                let matchLen = strLen(remaining) - strLen(rest)
+                in Some(strTake(matchLen)(remaining))
+            | None -> 
+                match Ashes.Text.uncons(remaining) with
+                    | None -> None
+                    | Some((_h, t)) -> search(t)
+    in search(text))
 
-let rec findAll = 
-    fun (regex) -> 
-        fun (text) -> 
-            let rec go remaining = 
-                if remaining == ""
-                then []
-                else 
-                    match tryMatchHere(regex)(remaining) with
-                        | Some(rest) -> 
-                            if rest == remaining
-                            then 
-                                match Ashes.Text.uncons(remaining) with
-                                    | None -> []
-                                    | Some((_h, t)) -> go(t)
-                            else 
-                                let matchLen = strLen(remaining) - strLen(rest)
-                                in 
-                                    let matched = strTake(matchLen)(remaining)
-                                    in matched :: go(rest)
-                        | None -> 
-                            match Ashes.Text.uncons(remaining) with
-                                | None -> []
-                                | Some((_h, t)) -> go(t)
-            in go(text)
+let rec findAll regex text = 
+    (let rec go remaining = 
+        if remaining == ""
+        then []
+        else 
+            match tryMatchHere(regex)(remaining) with
+                | Some(rest) -> 
+                    if rest == remaining
+                    then 
+                        match Ashes.Text.uncons(remaining) with
+                            | None -> []
+                            | Some((_h, t)) -> go(t)
+                    else 
+                        let matchLen = strLen(remaining) - strLen(rest)
+                        in 
+                            let matched = strTake(matchLen)(remaining)
+                            in matched :: go(rest)
+                | None -> 
+                    match Ashes.Text.uncons(remaining) with
+                        | None -> []
+                        | Some((_h, t)) -> go(t)
+    in go(text))
