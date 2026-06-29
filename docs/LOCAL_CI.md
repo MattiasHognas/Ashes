@@ -51,22 +51,22 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 
 ## Everyday commands
 
-| Command            | What it does                                                        | Mirrors |
-|--------------------|---------------------------------------------------------------------|---------|
-| `just ci-quick`    | build + .NET/LSP tests (fast inner loop)                            | —       |
-| `just ci`          | build, format check, tests, deps, sast, VS Code ext + integration, publish, 3-arch matrix | `pull-request.yaml` |
-| `just build`       | `dotnet restore` + `build -c Release`                              | Restore/Build |
-| `just fmt-check`   | `dotnet format --verify-no-changes`                               | Verify formatting |
-| `just test`        | `Ashes.Tests` + `Ashes.Lsp.Tests`                                 | Run tests |
-| `just coverage`    | tests with cobertura coverage                                      | `push-to-main.yaml` |
-| `just deps-check`  | NuGet + pnpm vulnerability/outdated check (local Dependabot)       | — |
-| `just sast`        | Semgrep static analysis: C#, TS, secrets (local CodeQL)           | — |
-| `just ext`         | extension lint/format/compile + xvfb integration tests            | extension steps |
-| `just publish-cli` | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`    | Publish CLI |
-| `just matrix`      | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine) | `test-matrix` |
+| Command                  | What it does                                                                                     | Mirrors               |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | --------------------- |
+| `just ci-quick`          | build + .NET/LSP tests (fast inner loop)                                                         | —                     |
+| `just ci`                | build, format check, tests, deps, sast, VS Code ext + integration, publish, 3-arch matrix        | `pull-request.yaml`   |
+| `just build`             | `dotnet restore` + `build -c Release`                                                            | Restore/Build         |
+| `just fmt-check`         | `dotnet format --verify-no-changes`                                                              | Verify formatting     |
+| `just test`              | `Ashes.Tests` + `Ashes.Lsp.Tests`                                                                | Run tests             |
+| `just coverage`          | tests with cobertura coverage                                                                    | `push-to-main.yaml`   |
+| `just deps-check`        | NuGet + pnpm vulnerability/outdated check (local Dependabot)                                     | —                     |
+| `just sast`              | Semgrep static analysis: C#, TS, secrets (local CodeQL)                                          | —                     |
+| `just ext`               | extension lint/format/compile + xvfb integration tests                                           | extension steps       |
+| `just publish-cli`       | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`                                   | Publish CLI           |
+| `just matrix`            | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine)                               | `test-matrix`         |
 | `just matrix-one <arch>` | run the matrix for a single arch (`linux-x64`/`linux-arm64`/`win-x64`), publishing just that RID | one `test-matrix` leg |
-| `just release VER` | build release artifacts into `artifacts/release/` (local disk only) | `release.yml` build |
-| `just release-github` | interactive: branch + build + tag + GitHub Release            | `release.yml` |
+| `just release VER`       | build release artifacts into `artifacts/release/` (local disk only)                              | `release.yml` build   |
+| `just release-github`    | interactive: branch + build + tag + GitHub Release                                               | `release.yml`         |
 
 The matrix skips the network examples (`http_get`, `https_get`, `tcp_*`), same as
 GitHub. It is fail-fast:false — all three arches run, then it fails if any did.
@@ -181,7 +181,7 @@ VSCE_PAT=xxxxxxxx just release-github 1.2.3
 To publish an already-released `.vsix` after the fact:
 
 ```sh
-VSCE_PAT=xxxxxxxx pnpm dlx @vscode/vsce@3.9.1 publish \
+VSCE_PAT=xxxxxxxx pnpm dlx @vscode/vsce@3.9.2 publish \
   --packagePath artifacts/release/ashes-language-1.2.3.vsix --no-dependencies
 ```
 
@@ -207,11 +207,11 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 
 - `just deps-check` — the local **Dependabot** stand-in. **Gates** on
   known-vulnerable NuGet packages (`dotnet list package --vulnerable
-  --include-transitive`) and high/critical pnpm advisories (`pnpm audit
-  --audit-level high`). Outdated listings (`dotnet list package --outdated`,
+--include-transitive`) and high/critical pnpm advisories (`pnpm audit
+--audit-level high`). Outdated listings (`dotnet list package --outdated`,
   `pnpm outdated`) are printed for information only — they don't fail the build.
-  Dependabot is still useful on GitHub for *opening* update PRs; this only
-  *checks*. For local auto-PRs, self-hosted Renovate is the next step.
+  Dependabot is still useful on GitHub for _opening_ update PRs; this only
+  _checks_. For local auto-PRs, self-hosted Renovate is the next step.
 - `just sast` — the local **CodeQL** stand-in, via **Semgrep**. Scans C#, TS/JS,
   and for leaked secrets (registry packs `p/security-audit`, `p/csharp`,
   `p/typescript`, `p/secrets`) and **fails on findings** (`--error`). Build
@@ -239,4 +239,7 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - **Permission/ownership oddities in the repo** — Podman runs with
   `--userns=keep-id`; with Docker set `CI_ENGINE=docker` and expect root-owned
   build outputs, or run Docker rootless.
+
+```
+
 ```
