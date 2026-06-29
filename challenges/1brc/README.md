@@ -29,10 +29,10 @@ prebuilt file from a URL and can subset it so the program actually finishes.
 ```bash
 # Edit MEASUREMENTS_URL in download.sh (or pass the URL as the first argument),
 # then fetch a subset that completes:
-ROWS=1000000 bash challenges/download.sh
+ROWS=1000000 bash challenges/1brc/download.sh
 
 # Full file (will OOM — that's finding #2):
-bash challenges/download.sh
+bash challenges/1brc/download.sh
 ```
 
 `measurements.txt` and `measurements.full.txt` are git-ignored and never committed.
@@ -40,8 +40,8 @@ bash challenges/download.sh
 ### Build and run
 
 ```bash
-dotnet run --project src/Ashes.Cli -- compile challenges/brc.ash -o challenges/brc
-./challenges/brc challenges/measurements.txt
+dotnet run --project src/Ashes.Cli -- compile challenges/1brc/brc.ash -o challenges/1brc/brc
+./challenges/brc challenges/1brc/measurements.txt
 ```
 
 We should probably run it under hyperfine to get actaul data as sonn as we see it actually working, see: https://hotforknowledge.com/2024/01/13/1brc-in-dotnet-among-fastest-on-linux-my-optimization-journey/'
@@ -49,7 +49,7 @@ We should probably run it under hyperfine to get actaul data as sonn as we see i
 With something like this:
 
 ```bash
-hyperfine --warmup 1 --runs 5 './challenge/brc challenge/measurements.txt'
+hyperfine --warmup 1 --runs 5 './challenge/1brc/brc challenge/1brc/measurements.txt'
 ```
 
 The file path is the program's first argument. (It does **not** stream stdin: a
@@ -62,7 +62,7 @@ the whole file is read with `Ashes.File.readText`.) Output is the canonical
 ```bash
 printf 'Hamburg;12.0\nHamburg;14.0\nBulawayo;8.9\nHamburg;10.0\nPalembang;-5.3\n' \
   > /tmp/brc-fixture.txt
-./challenges/brc /tmp/brc-fixture.txt
+./challenges/1brc/brc /tmp/brc-fixture.txt
 # {Bulawayo=8.9/8.9/8.9, Hamburg=10.0/12.0/14.0, Palembang=-5.3/-5.3/-5.3}
 ```
 

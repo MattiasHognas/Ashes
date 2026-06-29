@@ -78,9 +78,8 @@ examples/*.exe
 
 # 1BRC challenge: downloaded data + compiled binary (the .ash source is tracked).
 # The root-anchored rules above do not reach into challenges/.
-challenges/measurements*.txt
-challenges/*.exe
-challenges/brc
+challenges/1brc/*.txt
+challenges/1brc/brc
 *.received.txt
 runtimes/*
 !runtimes/linux-x64/
