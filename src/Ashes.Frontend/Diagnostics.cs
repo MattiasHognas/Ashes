@@ -28,9 +28,11 @@ public static class DiagnosticCodes
     public const string ListElementTypeMismatch = "ASH005";
     public const string UseAfterDrop = "ASH006";
     public const string DoubleDrop = "ASH007";
-    public const string AwaitOutsideAsync = "ASH010";
-    public const string AsyncErrorTypeConflict = "ASH011";
-    public const string AsyncOnlyNetworkingApi = "ASH012";
+
+    // ASH010–ASH012 were allocated for an `async`-block enforcement model (await/networking outside
+    // `async`, async error-type conflict) that the language no longer has — `async` is now a builtin
+    // (Ashes.Async.task), not a keyword, and async-only safety is enforced by the Task type. They
+    // were never emitted, so the numbers are free for reuse by future diagnostics.
 }
 
 public sealed record DiagnosticEntry(TextSpan Span, string Message, string? Code = null)

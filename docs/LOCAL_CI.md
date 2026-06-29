@@ -64,11 +64,18 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 | `just ext`         | extension lint/format/compile + xvfb integration tests            | extension steps |
 | `just publish-cli` | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`    | Publish CLI |
 | `just matrix`      | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine) | `test-matrix` |
+| `just matrix-one <arch>` | run the matrix for a single arch (`linux-x64`/`linux-arm64`/`win-x64`), publishing just that RID | one `test-matrix` leg |
 | `just release VER` | build release artifacts into `artifacts/release/` (local disk only) | `release.yml` build |
 | `just release-github` | interactive: branch + build + tag + GitHub Release            | `release.yml` |
 
 The matrix skips the network examples (`http_get`, `https_get`, `tcp_*`), same as
 GitHub. It is fail-fast:false — all three arches run, then it fails if any did.
+
+To iterate on a single target, `just matrix-one <arch>` runs just that leg
+(`linux-x64`, `linux-arm64`, or `win-x64`) and publishes only that RID first. It
+runs the same per-leg body as the full matrix (including the arm64 emulation
+env); fmt stability is arch-independent and is only verified by the full
+`just matrix`.
 
 ### linux-arm64 runs the full suite under emulation
 

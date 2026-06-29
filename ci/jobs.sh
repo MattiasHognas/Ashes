@@ -251,6 +251,33 @@ matrix() {
   fi
 }
 
+# Run the example/test matrix for a SINGLE arch — the single-leg inner loop for
+# iterating on one target without paying for all three. $1 is the RID:
+# linux-x64 | linux-arm64 | win-x64. Publishes only that RID (the full `matrix`
+# relies on `publish_cli` for all three), then runs the same per-leg body as the
+# full matrix (`_matrix_one`), including the arm64 emulation env. fmt stability is
+# arch-independent, so it is verified only by the full `matrix`, not here.
+matrix_one() {
+  local rid="${1:?usage: jobs.sh matrix_one <linux-x64|linux-arm64|win-x64>}"
+  local runner cli
+  case "$rid" in
+    linux-x64)   runner=base;  cli="./artifacts/ashes/linux-x64/ashes" ;;
+    linux-arm64) runner=arm64; cli="./artifacts/ashes/linux-arm64/ashes" ;;
+    win-x64)     runner=win;   cli="wine ./artifacts/ashes/win-x64/ashes.exe" ;;
+    *)
+      echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64)" >&2
+      return 1
+      ;;
+  esac
+
+  run_in base "
+    set -e
+    dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime $rid --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/$rid
+  "
+
+  _matrix_one "$runner" "$cli"
+}
+
 # --- Composite pipelines ---------------------------------------------------
 
 # Fast inner loop for pre-commit.
@@ -505,7 +532,7 @@ release_github() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | matrix_one | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1
