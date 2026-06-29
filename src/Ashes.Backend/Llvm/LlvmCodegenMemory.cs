@@ -1059,31 +1059,38 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmValueHandle EmitHeapStringLiteral(LlvmCodegenState state, string value)
     {
-        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
-
-        // Build the constant initializer: { i64 len, [N x i8] data }
-        LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)utf8.Length);
-
-        var byteElements = new LlvmValueHandle[utf8.Length];
-        for (int i = 0; i < utf8.Length; i++)
+        // Compile-time string-literal interning: identical literal values share a single
+        // module-level `.rodata` global (built lazily on first use). The per-use ptrtoint is
+        // still emitted at the current builder position — it is a constant that folds away.
+        LlvmValueHandle global = state.Target.GetOrAddStringLiteralGlobal(value, () =>
         {
-            byteElements[i] = LlvmApi.ConstInt(state.I8, utf8[i], 0);
-        }
+            byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
 
-        LlvmValueHandle constLen = LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0);
-        LlvmValueHandle constData = LlvmApi.ConstArray2(state.I8, byteElements);
-        LlvmValueHandle constStruct = LlvmApi.ConstStructInContext(
-            state.Target.Context, [constLen, constData]);
+            // Build the constant initializer: { i64 len, [N x i8] data }
+            LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)utf8.Length);
 
-        LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
-            state.Target.Context, [state.I64, arrayType]);
+            var byteElements = new LlvmValueHandle[utf8.Length];
+            for (int i = 0; i < utf8.Length; i++)
+            {
+                byteElements[i] = LlvmApi.ConstInt(state.I8, utf8[i], 0);
+            }
 
-        int id = state.Target.NextGlobalConstantId();
-        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
-        LlvmApi.SetInitializer(global, constStruct);
-        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
-        LlvmApi.SetGlobalConstant(global, 1);
-        LlvmApi.SetUnnamedAddr(global, 1); // LocalUnnamedAddr — enable merging
+            LlvmValueHandle constLen = LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0);
+            LlvmValueHandle constData = LlvmApi.ConstArray2(state.I8, byteElements);
+            LlvmValueHandle constStruct = LlvmApi.ConstStructInContext(
+                state.Target.Context, [constLen, constData]);
+
+            LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
+                state.Target.Context, [state.I64, arrayType]);
+
+            int id = state.Target.NextGlobalConstantId();
+            LlvmValueHandle created = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
+            LlvmApi.SetInitializer(created, constStruct);
+            LlvmApi.SetLinkage(created, LlvmLinkage.Internal);
+            LlvmApi.SetGlobalConstant(created, 1);
+            LlvmApi.SetUnnamedAddr(created, 1); // LocalUnnamedAddr — enable merging
+            return created;
+        });
 
         return LlvmApi.BuildPtrToInt(state.Target.Builder, global, state.I64, "str_lit_ref");
     }

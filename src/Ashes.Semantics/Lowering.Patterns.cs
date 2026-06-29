@@ -26,6 +26,35 @@ public sealed partial class Lowering
         ValidateReachableMatchArms(match.Cases);
         var hasAnyTuplePattern = match.Cases.Any(c => c.Pattern is Pattern.Tuple);
 
+        if (TryPlanTagSwitch(match.Cases, out var switchPlan))
+        {
+            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos);
+        }
+        else
+        {
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos);
+        }
+
+        Emit(new IrInst.Label(noMatchLabel));
+        EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
+
+        int defaultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(defaultTemp, 0));
+        Emit(new IrInst.StoreLocal(resultSlot, defaultTemp));
+        Emit(new IrInst.Label(endLabel));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return (resultTemp, Prune(resultType));
+    }
+
+    /// <summary>
+    /// Lowers match arms as a linear chain of per-arm pattern tests, each falling through to the
+    /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
+    /// patterns, and nested refinements.
+    /// </summary>
+    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos)
+    {
         for (int i = 0; i < match.Cases.Count; i++)
         {
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
@@ -101,8 +130,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.Label(caseFailLabel));
             }
         }
+    }
 
-        Emit(new IrInst.Label(noMatchLabel));
+    /// <summary>
+    /// Emits the non-exhaustiveness diagnostics for a match. Runs regardless of whether the arms
+    /// were lowered linearly or as a tag switch — exhaustiveness checking is independent of the
+    /// dispatch strategy.
+    /// </summary>
+    private void EmitMatchExhaustivenessDiagnostics(Expr.Match match, TypeRef valueType, bool hasAnyTuplePattern)
+    {
         var prunedValueType = Prune(valueType);
         var missingAdtConstructors = GetMissingAdtConstructors(prunedValueType, match.Cases);
         var missingListCases = GetMissingListCases(prunedValueType, match.Cases);
@@ -145,15 +181,157 @@ public sealed partial class Lowering
         {
             _diag.Error(matchPos, $"Non-exhaustive match expression. Missing case: {FormatPattern(missingPattern)}.");
         }
+    }
 
-        int defaultTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(defaultTemp, 0));
-        Emit(new IrInst.StoreLocal(resultSlot, defaultTemp));
-        Emit(new IrInst.Label(endLabel));
+    /// <summary>
+    /// Determines whether a match can be lowered to a single tag switch (decision-tree dispatch)
+    /// instead of a linear chain of tag comparisons. Eligible when there are more than four arms,
+    /// every arm is a guard-free constructor pattern (including nullary constructors) over the same
+    /// ADT, all constructor tags are distinct, and every payload sub-pattern is trivial
+    /// (a wildcard or a plain variable binding) so field extraction can never fail.
+    /// </summary>
+    private bool TryPlanTagSwitch(IReadOnlyList<MatchCase> cases, out List<(ConstructorSymbol Ctor, long Tag)> plan)
+    {
+        const int LinearThreshold = 4;
+        plan = null!;
+        if (cases.Count <= LinearThreshold)
+        {
+            return false;
+        }
 
-        int resultTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        return (resultTemp, Prune(resultType));
+        var result = new List<(ConstructorSymbol, long)>(cases.Count);
+        var seenTags = new HashSet<int>();
+        string? adtName = null;
+
+        foreach (var matchCase in cases)
+        {
+            if (matchCase.Guard is not null)
+            {
+                return false;
+            }
+
+            if (!TryGetConstructorSymbol(matchCase.Pattern, out var ctor))
+            {
+                return false;
+            }
+
+            if (matchCase.Pattern is Pattern.Constructor ctorPattern)
+            {
+                if (ctorPattern.Patterns.Count != ctor.Arity || !ctorPattern.Patterns.All(IsTrivialSubPattern))
+                {
+                    return false;
+                }
+            }
+
+            adtName ??= ctor.ParentType;
+            if (!string.Equals(adtName, ctor.ParentType, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            int tag = GetConstructorTag(ctor);
+            if (!seenTags.Add(tag))
+            {
+                return false;
+            }
+
+            result.Add((ctor, tag));
+        }
+
+        plan = result;
+        return true;
+    }
+
+    /// <summary>
+    /// A sub-pattern that can never fail and binds at most one variable, so it is safe to extract
+    /// behind a tag switch without a fallback path. A variable that names a nullary constructor is
+    /// itself a constructor test and is therefore not trivial.
+    /// </summary>
+    private bool IsTrivialSubPattern(Pattern pattern)
+    {
+        if (pattern is Pattern.Wildcard)
+        {
+            return true;
+        }
+
+        return pattern is Pattern.Var v &&
+            !(_constructorSymbols.TryGetValue(v.Name, out var ctor) && ctor.Arity == 0);
+    }
+
+    /// <summary>
+    /// Lowers match arms as a single tag switch: read the ADT tag once, dispatch directly to the
+    /// matching arm, and bind that constructor's fields without re-testing the tag. Sub-patterns
+    /// are guaranteed trivial by <see cref="TryPlanTagSwitch"/>, so no per-arm failure path is
+    /// needed; the switch default handles the (diagnosed) non-exhaustive case.
+    /// </summary>
+    private void LowerMatchArmsViaTagSwitch(
+        IReadOnlyList<MatchCase> cases,
+        List<(ConstructorSymbol Ctor, long Tag)> plan,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos)
+    {
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+
+        var armLabels = new string[cases.Count];
+        var switchCases = new List<(long Tag, string Label)>(cases.Count);
+        for (int i = 0; i < cases.Count; i++)
+        {
+            armLabels[i] = NewLabel("match_arm");
+            switchCases.Add((plan[i].Tag, armLabels[i]));
+        }
+
+        Emit(new IrInst.SwitchTag(tagTemp, switchCases, noMatchLabel));
+
+        for (int i = 0; i < cases.Count; i++)
+        {
+            Emit(new IrInst.Label(armLabels[i]));
+
+            var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
+            _scopes.Push(caseScope);
+            EmitArenaWatermark();
+            PushOwnershipScope();
+
+            var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+            var patternType = InferPatternType(cases[i].Pattern, patternBindings);
+            Unify(valueType, patternType);
+
+            // The tag is already matched by the switch; only extract and bind payload fields.
+            if (cases[i].Pattern is Pattern.Constructor ctorPattern)
+            {
+                EmitConstructorFieldBindings(plan[i].Ctor, ctorPattern, valueTemp, noMatchLabel, patternBindings);
+            }
+
+            TrackOwnedBindingsInPattern(patternBindings);
+
+            // Each case body IS in tail position (if the match itself is).
+            if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+            var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
+            if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+            using (PushDiagnosticContext($"in match arm {i + 1}"))
+            {
+                using (PushDiagnosticCode(DiagnosticCodes.MatchBranchTypeMismatch))
+                {
+                    Unify(resultType, bodyType);
+                }
+            }
+
+            Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+            int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
+            if (armFinalTemp != bodyTemp)
+            {
+                Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
+            }
+
+            Emit(new IrInst.Jump(endLabel));
+            _scopes.Pop();
+        }
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -374,6 +552,16 @@ public sealed partial class Lowering
         EmitRequireNonZero(valueTemp, failLabel);
         EmitRequireTagMatch(valueTemp, GetConstructorTag(ctorSym), failLabel);
 
+        EmitConstructorFieldBindings(ctorSym, ctor, valueTemp, failLabel, bindingTypes);
+    }
+
+    /// <summary>
+    /// Extracts each constructor payload field and binds its sub-pattern, without emitting the
+    /// null/tag check. Shared by the linear pattern path (after its own tag check) and the
+    /// tag-switch path (where the switch has already dispatched on the tag).
+    /// </summary>
+    private void EmitConstructorFieldBindings(ConstructorSymbol ctorSym, Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    {
         for (int i = 0; i < ctorSym.Arity && i < ctor.Patterns.Count; i++)
         {
             // Extract payload at each field index and bind sub-patterns.

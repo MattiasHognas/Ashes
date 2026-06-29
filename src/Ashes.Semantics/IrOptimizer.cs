@@ -273,6 +273,7 @@ public static class IrOptimizer
             // Control flow.
             IrInst.PanicStr p => p with { Source = R(p.Source) },
             IrInst.JumpIfFalse j => j with { CondTemp = R(j.CondTemp) },
+            IrInst.SwitchTag s => s with { TagTemp = R(s.TagTemp) },
             IrInst.Return r => r with { Source = R(r.Source) },
 
             // Instructions with no source temps — pass through unchanged.
@@ -575,6 +576,15 @@ public static class IrOptimizer
                     prevIsTerminator = true; // Jump is an unconditional terminator
                     break;
 
+                case IrInst.SwitchTag:
+                    // Multi-way terminator. Do not save per-target constant state — each case
+                    // label is multi-predecessor by construction, so the Label handler clears
+                    // constant knowledge there. Marking it a terminator prevents the following
+                    // label from inheriting stale fall-through constants.
+                    result.Add(inst);
+                    prevIsTerminator = true;
+                    break;
+
                 default:
                     result.Add(inst);
                     prevIsTerminator = inst is IrInst.Return;
@@ -768,6 +778,12 @@ public static class IrOptimizer
                     prevIsTerminator = true;
                     break;
 
+                case IrInst.SwitchTag:
+                    // Multi-way terminator — see the matching note in the constant-folding pass.
+                    result.Add(inst);
+                    prevIsTerminator = true;
+                    break;
+
                 default:
                     result.Add(inst);
                     prevIsTerminator = inst is IrInst.Return;
@@ -807,9 +823,9 @@ public static class IrOptimizer
 
             result.Add(inst);
 
-            // Unconditional terminators: Jump and Return make subsequent code unreachable
-            // until the next label.
-            if (inst is IrInst.Jump or IrInst.Return)
+            // Unconditional terminators: Jump, Return, and SwitchTag make subsequent code
+            // unreachable until the next label.
+            if (inst is IrInst.Jump or IrInst.Return or IrInst.SwitchTag)
             {
                 unreachable = true;
             }
@@ -1122,6 +1138,7 @@ public static class IrOptimizer
                 break;
             case IrInst.PanicStr p: usedTemps.Add(p.Source); break;
             case IrInst.JumpIfFalse j: usedTemps.Add(j.CondTemp); break;
+            case IrInst.SwitchTag s: usedTemps.Add(s.TagTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;
                 // LoadConstInt, LoadConstFloat, LoadConstBool, LoadConstStr, LoadLocal,
                 // LoadEnv, LoadProgramArgs, ReadLine, Alloc, AllocAdt, Label, Jump:
@@ -1139,6 +1156,18 @@ public static class IrOptimizer
         var refs = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var inst in instructions)
         {
+            if (inst is IrInst.SwitchTag sw)
+            {
+                // Every case label plus the default label is a predecessor edge.
+                foreach (var (_, caseLabel) in sw.Cases)
+                {
+                    refs[caseLabel] = refs.GetValueOrDefault(caseLabel) + 1;
+                }
+
+                refs[sw.DefaultLabel] = refs.GetValueOrDefault(sw.DefaultLabel) + 1;
+                continue;
+            }
+
             string? target = inst switch
             {
                 IrInst.Jump j => j.Target,
