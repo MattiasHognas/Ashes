@@ -221,14 +221,14 @@
     "@typescript-eslint/parser": "^8.62.0",
     "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.28.1",
-    "eslint": "^10.5.0",
+    "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "mocha": "^11.7.6",
-    "prettier": "^3.8.5",
+    "prettier": "^3.9.3",
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.5.18",
     "vscode-languageclient": "^10.0.1"
   }
 }
