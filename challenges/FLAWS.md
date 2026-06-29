@@ -17,7 +17,7 @@ are structural limitations of the language / stdlib / memory model.
 
 | # | Flaw | Status |
 |---|------|--------|
-| #1 | No buffered/streaming file IO | **stdin half FIXED**; chunked file API open |
+| #1 | No buffered/streaming file IO | **FIXED** (buffered stdin + chunked file API) |
 | #1b | `readLine` loop segfaults at depth | **FIXED** |
 | #2 | Hot-loop arena leak (Map accumulator) | open — ownership milestone |
 | #3 | No hash/mutable O(1) accumulator | **hashing+HashMap FIXED**; O(1)/leak-free open |
@@ -30,17 +30,26 @@ each open section ends with an actionable **Task** breakdown.
 
 ---
 
-## #1 — No buffered or streaming file IO  — ⚙️ PARTIALLY FIXED
+## #1 — No buffered or streaming file IO  — ✅ FIXED
 
-**Fix (the stdin half):** `readLine`/`readExact` now read through a refillable 64 KB
+**Fix, part 1 (stdin):** `readLine`/`readExact` now read through a refillable 64 KB
 module-global buffer (`EmitReadLine`/`EmitReadExact`, `LlvmCodegenBuiltins.cs`;
 `EmitWindowsReadBlock`, `LlvmCodegenPlatform.cs`) instead of one `read()` syscall per
 byte. `readExact` drains the shared buffer first so `readLine`+`readExact` interleave
-correctly (`Ashes.Rpc` framing verified by `tests/stdlib_rpc.ash`). Combined with #1b,
-streaming a file through stdin is now crash-free *and* fast (1e6 lines in ~15 ms).
-**Still open:** the whole-file `readText` path (one big allocation) — a chunked file
-API (`open`/`readChunk`/`close`) is the remaining piece; see the Task below. Original
-finding follows.
+correctly (`Ashes.Rpc` framing — `tests/stdlib_rpc.ash`). With #1b, streaming a file
+through stdin is crash-free *and* fast (1e6 lines in ~15 ms).
+
+**Fix, part 2 (file):** new chunked file API — `Ashes.File.open(path) : Result(Str,
+FileHandle)`, `readChunk(handle)(maxBytes) : Result(Str, Str)`, `close(handle)`.
+`FileHandle` is a resource type (auto-closed on scope exit, like `Socket`/`Process`).
+A 13 GB file can now be streamed in fixed-size chunks instead of one `readText`
+allocation. Cross-platform (Linux x64/arm64 via `open`/`openat`, Windows via
+`CreateFileA`/`ReadFile`/`CloseHandle`). Test: `tests/file_chunked_read.ash`.
+
+(Minor follow-up: the *compile-time* use-after-close check only tracks `let`-bound
+resources, not match-arm-bound ones; a `FileHandle` always comes out of a `Result` via
+`match`, so reads after an explicit `close` aren't flagged at compile time — they fail
+gracefully at runtime with an `Error`.) Original finding follows.
 
 
 

@@ -20,6 +20,9 @@ public static class BuiltinRegistry
         FileReadText,
         FileWriteText,
         FileExists,
+        FileOpen,
+        FileReadChunk,
+        FileClose,
         TextUncons,
         TextParseInt,
         TextParseFloat,
@@ -150,7 +153,10 @@ public static class BuiltinRegistry
                     ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
-                    ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1)
+                    ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
+                    ["open"] = new("open", BuiltinValueKind.FileOpen, IsCallable: true, Arity: 1),
+                    ["readChunk"] = new("readChunk", BuiltinValueKind.FileReadChunk, IsCallable: true, Arity: 2),
+                    ["close"] = new("close", BuiltinValueKind.FileClose, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Text"] = new(
                 "Ashes.Text",
@@ -261,7 +267,8 @@ public static class BuiltinRegistry
     {
         "Socket",
         "TlsSocket",
-        "Process"
+        "Process",
+        "FileHandle"
     };
 
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
@@ -553,6 +560,12 @@ public static class BuiltinRegistry
             [],
             []);
 
+        var fileHandleTypeParameters = Array.Empty<TypeParameterSymbol>();
+        var fileHandleDecl = new TypeDecl(
+            "FileHandle",
+            [],
+            []);
+
         return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
         {
             ["Unit"] = new(
@@ -617,7 +630,12 @@ public static class BuiltinRegistry
                 "Process",
                 processTypeParameters,
                 [],
-                processDecl)
+                processDecl),
+            ["FileHandle"] = new(
+                "FileHandle",
+                fileHandleTypeParameters,
+                [],
+                fileHandleDecl)
         };
     }
 }

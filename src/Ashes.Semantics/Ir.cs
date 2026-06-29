@@ -115,6 +115,9 @@ public abstract record IrInst
     public sealed record FileReadText(int Target, int PathTemp) : IrInst;
     public sealed record FileWriteText(int Target, int PathTemp, int TextTemp) : IrInst;
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
+    public sealed record FileOpen(int Target, int PathTemp) : IrInst;
+    public sealed record FileReadChunk(int Target, int HandleTemp, int CountTemp) : IrInst;
+    public sealed record FileClose(int Target, int HandleTemp) : IrInst;
     public sealed record TextUncons(int Target, int TextTemp) : IrInst;
     public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
     public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;

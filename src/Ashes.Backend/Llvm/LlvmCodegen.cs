@@ -328,7 +328,11 @@ internal static partial class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program)
-                || ProgramUsesInstruction<IrInst.FileWriteBytes>(program));
+                || ProgramUsesInstruction<IrInst.FileWriteBytes>(program)
+                || ProgramUsesInstruction<IrInst.FileOpen>(program)
+                || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
+                || ProgramUsesInstruction<IrInst.FileClose>(program)
+                || ProgramUsesInstruction<IrInst.Drop>(program));
         bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
             || ProgramUsesInstruction<IrInst.HttpPost>(program)
             || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
@@ -1074,6 +1078,9 @@ internal static partial class LlvmCodegen
             IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, LlvmApi.BuildLoad2(builder, state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
+            IrInst.FileOpen fileOpen => StoreTemp(state, fileOpen.Target, EmitFileOpen(state, LoadTemp(state, fileOpen.PathTemp))),
+            IrInst.FileReadChunk fileReadChunk => StoreTemp(state, fileReadChunk.Target, EmitFileReadChunk(state, LoadTemp(state, fileReadChunk.HandleTemp), LoadTemp(state, fileReadChunk.CountTemp))),
+            IrInst.FileClose fileClose => StoreTemp(state, fileClose.Target, EmitFileClose(state, LoadTemp(state, fileClose.HandleTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
             IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp))),
