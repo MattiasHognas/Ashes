@@ -2003,6 +2003,83 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.Bytes.fromText : Str -> Bytes. Str and Bytes share the runtime layout
+    // ([length:i64][bytes...]) and are both immutable, so this is an identity reinterpret
+    // exposing a string's UTF-8 bytes. Byte-lexicographic order over the result equals Unicode
+    // codepoint order, which makes a correct total order over strings constructible in pure Ashes.
+    private Binding.Intrinsic CreateBytesFromTextBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesFromText,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TBytes()))
+        );
+    }
+
+    private (int, TypeRef) LowerBytesFromText(Expr textArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var prunedTextType = Prune(textType);
+
+        if (prunedTextType is TypeRef.TNever)
+        {
+            return (textTemp, prunedTextType);
+        }
+
+        if (prunedTextType is TypeRef.TVar)
+        {
+            Unify(prunedTextType, new TypeRef.TStr());
+            prunedTextType = new TypeRef.TStr();
+        }
+
+        if (prunedTextType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Bytes.fromText() expects Str but got {Pretty(prunedTextType)}.");
+            return (textTemp, new TypeRef.TBytes());
+        }
+
+        // Identity: the same heap value is a valid Bytes; only the static type changes.
+        return (textTemp, new TypeRef.TBytes());
+    }
+
+    // Ashes.Bytes.hash : Bytes -> Int. 64-bit FNV-1a over the bytes. With Ashes.Bytes.fromText
+    // this gives string hashing, the basis for hash-keyed maps (see lib/Ashes/HashMap.ash).
+    private Binding.Intrinsic CreateBytesHashBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesHash,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TInt()))
+        );
+    }
+
+    private (int, TypeRef) LowerBytesHash(Expr bytesArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(bytesArg);
+        var (bytesTemp, bytesType) = LowerExpr(bytesArg);
+        var prunedBytesType = Prune(bytesType);
+
+        if (prunedBytesType is TypeRef.TNever)
+        {
+            return (bytesTemp, prunedBytesType);
+        }
+
+        if (prunedBytesType is TypeRef.TVar)
+        {
+            Unify(prunedBytesType, new TypeRef.TBytes());
+            prunedBytesType = new TypeRef.TBytes();
+        }
+
+        if (prunedBytesType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.hash() expects Bytes but got {Pretty(prunedBytesType)}.");
+            return (bytesTemp, new TypeRef.TInt());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesHash(target, bytesTemp));
+        return (target, new TypeRef.TInt());
+    }
+
     private Binding.Intrinsic CreateBytesU16LeBinding()
     {
         return new Binding.Intrinsic(

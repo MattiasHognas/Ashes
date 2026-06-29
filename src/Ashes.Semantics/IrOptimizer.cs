@@ -226,6 +226,7 @@ public static class IrOptimizer
             IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
             IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
+            IrInst.BytesHash b => b with { BytesTemp = R(b.BytesTemp) },
             IrInst.BytesU16Le b => b with { ValueTemp = R(b.ValueTemp) },
             IrInst.BytesU32Le b => b with { ValueTemp = R(b.ValueTemp) },
             IrInst.BytesU64Le b => b with { ValueTemp = R(b.ValueTemp) },
@@ -1097,6 +1098,7 @@ public static class IrOptimizer
             case IrInst.BytesAppend b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
             case IrInst.BytesAppendByte b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;
+            case IrInst.BytesHash b: usedTemps.Add(b.BytesTemp); break;
             case IrInst.BytesU16Le b: usedTemps.Add(b.ValueTemp); break;
             case IrInst.BytesU32Le b: usedTemps.Add(b.ValueTemp); break;
             case IrInst.BytesU64Le b: usedTemps.Add(b.ValueTemp); break;

@@ -75,6 +75,12 @@ examples/*.exe
 /*.exe
 /*.txt
 /*.log
+
+# 1BRC challenge: downloaded data + compiled binary (the .ash source is tracked).
+# The root-anchored rules above do not reach into challenges/.
+challenges/measurements*.txt
+challenges/*.exe
+challenges/brc
 *.received.txt
 runtimes/*
 !runtimes/linux-x64/
@@ -99,6 +105,7 @@ _*.md
 /*.sh
 .orchestrator/
 backlog.json
+*.csv
 
 # Git
 .git/

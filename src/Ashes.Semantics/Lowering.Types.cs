@@ -90,6 +90,8 @@ public sealed partial class Lowering
         BytesAppend,
         BytesAppendByte,
         BytesFromList,
+        BytesFromText,
+        BytesHash,
         BytesU16Le,
         BytesU32Le,
         BytesU64Le,

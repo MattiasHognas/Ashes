@@ -1082,6 +1082,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendByteBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerQualifiedBuiltinFunctionReference(name, CreateBytesFromListBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerQualifiedBuiltinFunctionReference(name, CreateBytesFromTextBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesHash => LowerQualifiedBuiltinFunctionReference(name, CreateBytesHashBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU16LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU32LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesU64LeBinding().S.Body),
@@ -2844,6 +2846,8 @@ public sealed partial class Lowering
                 IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+                IntrinsicKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+                IntrinsicKind.BytesHash => LowerBytesHash(collectedArgs[0]),
                 IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
                 IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
                 IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
@@ -2925,6 +2929,8 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BytesHash => LowerBytesHash(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
@@ -3471,7 +3477,7 @@ public sealed partial class Lowering
         return label;
     }
 
-    private static HashSet<string> FreeVars(Expr e, HashSet<string> bound)
+    private HashSet<string> FreeVars(Expr e, HashSet<string> bound)
     {
         var res = new HashSet<string>(StringComparer.Ordinal);
 
@@ -3493,15 +3499,31 @@ public sealed partial class Lowering
 
                     return;
                 case Expr.QualifiedVar qv:
-                    // Ashes module references don't introduce free variables
-                    if (!string.Equals(qv.Module, "Ashes", StringComparison.Ordinal)
-                        && !qv.Module.StartsWith("Ashes.", StringComparison.Ordinal)
-                        && !bnd.Contains(qv.Module))
                     {
-                        res.Add(qv.Module);
-                    }
+                        var resolvedModule = ResolveModuleAlias(qv.Module);
 
-                    return;
+                        // An intrinsic member (Ashes.IO.print, Ashes.Text.uncons, ...) lowers directly
+                        // to a builtin and introduces no free variable. A SHIPPED-helper or user-module
+                        // member (Ashes.String.indexOf, Ashes.Map.get, ...) lowers to a stitched
+                        // top-level binding `Module_name`; when such a reference appears inside a lambda
+                        // body it IS a free variable that the closure must capture, otherwise the
+                        // synthesized binding is out of scope inside the lambda and resolution fails with
+                        // a spurious "Unknown module".
+                        if (BuiltinRegistry.TryGetModule(resolvedModule, out var qvModule)
+                            && qvModule.Members.ContainsKey(qv.Name))
+                        {
+                            return;
+                        }
+
+                        var synthesized = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
+                        if (!bnd.Contains(synthesized)
+                            && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
+                        {
+                            res.Add(synthesized);
+                        }
+
+                        return;
+                    }
                 case Expr.Add a:
                     Visit(a.Left, bnd);
                     Visit(a.Right, bnd);

@@ -130,6 +130,30 @@ internal sealed record LlvmTargetContext(
 
     private readonly Dictionary<string, LlvmValueHandle> _stringLiteralGlobals = new(StringComparer.Ordinal);
 
+    private readonly Dictionary<string, LlvmValueHandle> _namedGlobals = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Returns a module-level global identified by <paramref name="key"/>, creating it via
+    /// <paramref name="create"/> on first request and reusing it thereafter. Used for shared
+    /// per-call scratch buffers (e.g. the <c>readLine</c> line buffer) that must NOT be
+    /// stack-allocated: a fresh <c>alloca</c> per call leaks the stack when the call sits inside
+    /// a TCO loop (one stack frame that jumps backward instead of returning), so the scratch is
+    /// a single reused global instead. Safe because Ashes is single-threaded and these helpers
+    /// are non-reentrant — the buffer is fully consumed (copied to the heap) before the call
+    /// returns.
+    /// </summary>
+    public LlvmValueHandle GetOrAddNamedGlobal(string key, Func<LlvmValueHandle> create)
+    {
+        if (_namedGlobals.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        var global = create();
+        _namedGlobals[key] = global;
+        return global;
+    }
+
     /// <summary>Returns a module-unique integer for naming global constants.</summary>
     public int NextGlobalConstantId() =>
         System.Threading.Interlocked.Increment(ref _moduleConstantCounter);
