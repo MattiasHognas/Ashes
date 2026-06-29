@@ -46,6 +46,11 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `append(left, right)` returning `Bytes` — concatenate two sequences
 - `appendByte(bytes, byte)` returning `Bytes` — append one byte
 - `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
+- `fromText(text)` returning `Bytes` — expose a `Str`'s UTF-8 bytes (O(1); `Str` and `Bytes`
+  share an in-memory layout). Byte order over the result equals Unicode codepoint order, so this is
+  the basis for a correct string ordering (see `Ashes.String.compare`).
+- `hash(bytes)` returning `Int` — 64-bit FNV-1a hash of the byte payload. With `fromText` this
+  gives string hashing; it underlies `Ashes.HashMap`.
 - `u16Le(value)` returning `Bytes` — encode `u16` little-endian (2 bytes)
 - `u32Le(value)` returning `Bytes` — encode `u32` little-endian (4 bytes)
 - `u64Le(value)` returning `Bytes` — encode `u64` little-endian (8 bytes)
@@ -163,6 +168,21 @@ Immutable indexed array backed by a persistent balanced tree.
 have a built-in ordering abstraction, callers supply a total ordering function
 `(K -> K -> Int)` to lookup and update helpers.
 
+### `Ashes.HashMap`
+
+A persistent map keyed by `Str` that needs **no caller-supplied ordering**. Internally an
+AVL tree ordered by the composite key `(FNV-1a hash, key)`, so navigation is dominated by
+cheap 64-bit integer comparisons and only falls back to string comparison on a hash
+collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes per update).
+
+- `empty` — empty hash map
+- `get(key)(map)` returning `Maybe(V)`
+- `contains(key)(map)` returning `Bool`
+- `set(key)(value)(map)` returning a new map
+- `insert` — alias of `set`
+- `size(map)` returning `Int`
+- `foldLeft(folder)(state)(map)` returning the folded state (key order is by hash, not lexical)
+
 ### `Ashes.Maybe`
 
 - `default`
@@ -196,6 +216,9 @@ have a built-in ordering abstraction, callers supply a total ordering function
 - `isLetter`
 - `isDigit`
 - `isWhiteSpace`
+- `compare` — `Str -> Str -> Int` total order returning `-1`/`0`/`1`. Compares by UTF-8 bytes (via
+  `Ashes.Bytes.fromText`), which equals Unicode codepoint order, so it is a correct total order over
+  all strings — suitable directly as the ordering function for `Ashes.Map`/`Ashes.Array`.
 
 ### `Ashes.Json`
 

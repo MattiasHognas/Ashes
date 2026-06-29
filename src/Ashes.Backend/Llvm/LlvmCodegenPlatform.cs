@@ -792,7 +792,15 @@ internal static partial class LlvmCodegen
             name);
     }
 
-    private static LlvmValueHandle EmitWindowsReadByte(LlvmCodegenState state, LlvmValueHandle stdinHandle, LlvmValueHandle byteSlot, LlvmValueHandle bytesReadSlot)
+    private static LlvmValueHandle EmitWindowsReadByte(LlvmCodegenState state, LlvmValueHandle stdinHandle, LlvmValueHandle byteSlot, LlvmValueHandle bytesReadSlot) =>
+        EmitWindowsReadBlock(state, stdinHandle, byteSlot, LlvmApi.ConstInt(state.I32, 1, 0), bytesReadSlot);
+
+    /// <summary>
+    /// ReadFile of up to <paramref name="count"/> bytes from <paramref name="stdinHandle"/> into
+    /// <paramref name="bufPtr"/>; returns the byte count as i64 (0 at EOF). Used to refill the
+    /// buffered stdin reader so reads are block-sized rather than one byte per syscall.
+    /// </summary>
+    private static LlvmValueHandle EmitWindowsReadBlock(LlvmCodegenState state, LlvmValueHandle stdinHandle, LlvmValueHandle bufPtr, LlvmValueHandle count, LlvmValueHandle bytesReadSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle readFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
@@ -806,13 +814,13 @@ internal static partial class LlvmCodegen
             readFilePtr,
             [
                 stdinHandle,
-                byteSlot,
-                LlvmApi.ConstInt(state.I32, 1, 0),
+                bufPtr,
+                count,
                 bytesReadSlot,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
             ],
             "read_file");
-        return LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "read_line_bytes_read_value"), state.I64, "read_line_bytes_read_i64");
+        return LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "read_block_bytes_read_value"), state.I64, "read_block_bytes_read_i64");
     }
 
     private static void EmitWindowsWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)

@@ -10,6 +10,7 @@ internal static partial class LlvmCodegen
 {
     private const int HeapChunkBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
+    private const int StdinReadBufSize = 64 * 1024;
     private const int MaxFileReadBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
@@ -1094,6 +1095,7 @@ internal static partial class LlvmCodegen
             IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
             IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
             IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
+            IrInst.BytesHash bytesHash => StoreTemp(state, bytesHash.Target, EmitBytesHash(state, LoadTemp(state, bytesHash.BytesTemp))),
             IrInst.BytesU16Le bytesU16Le => StoreTemp(state, bytesU16Le.Target, EmitBytesU16Le(state, LoadTemp(state, bytesU16Le.ValueTemp))),
             IrInst.BytesU32Le bytesU32Le => StoreTemp(state, bytesU32Le.Target, EmitBytesU32Le(state, LoadTemp(state, bytesU32Le.ValueTemp))),
             IrInst.BytesU64Le bytesU64Le => StoreTemp(state, bytesU64Le.Target, EmitBytesU64Le(state, LoadTemp(state, bytesU64Le.ValueTemp))),

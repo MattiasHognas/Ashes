@@ -181,3 +181,34 @@ let rec trimEnd text =
             else text
 
 let trim text = trimEnd(trimStart(text))
+
+let compare left right = 
+    (let leftBytes = Ashes.Bytes.fromText(left)
+    in 
+        let rightBytes = Ashes.Bytes.fromText(right)
+        in 
+            let leftLen = Ashes.Bytes.length(leftBytes)
+            in 
+                let rightLen = Ashes.Bytes.length(rightBytes)
+                in 
+                    let rec go i = 
+                        if i >= leftLen
+                        then 
+                            if i >= rightLen
+                            then 0
+                            else -1
+                        else 
+                            if i >= rightLen
+                            then 1
+                            else 
+                                let leftByte = Ashes.Bytes.get(leftBytes)(i)
+                                in 
+                                    let rightByte = Ashes.Bytes.get(rightBytes)(i)
+                                    in 
+                                        if leftByte == rightByte
+                                        then go(i + 1)
+                                        else 
+                                            if leftByte < rightByte
+                                            then -1
+                                            else 1
+                    in go(0))

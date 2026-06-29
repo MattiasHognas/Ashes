@@ -136,6 +136,7 @@ public abstract record IrInst
     public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
     public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
     public sealed record BytesFromList(int Target, int ListTemp) : IrInst;
+    public sealed record BytesHash(int Target, int BytesTemp) : IrInst;
     public sealed record BytesU16Le(int Target, int ValueTemp) : IrInst;
     public sealed record BytesU32Le(int Target, int ValueTemp) : IrInst;
     public sealed record BytesU64Le(int Target, int ValueTemp) : IrInst;

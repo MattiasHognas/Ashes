@@ -49,6 +49,8 @@ public static class BuiltinRegistry
         BytesAppend,
         BytesAppendByte,
         BytesFromList,
+        BytesFromText,
+        BytesHash,
         BytesU16Le,
         BytesU32Le,
         BytesU64Le,
@@ -128,6 +130,10 @@ public static class BuiltinRegistry
                 "Ashes.Map",
                 "Ashes.Semantics.StdLib.Ashes.Map.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.HashMap"] = new(
+                "Ashes.HashMap",
+                "Ashes.Semantics.StdLib.Ashes.HashMap.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Maybe"] = new(
                 "Ashes.Maybe",
                 "Ashes.Semantics.StdLib.Ashes.Maybe.ash",
@@ -171,6 +177,8 @@ public static class BuiltinRegistry
                     ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2),
                     ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2),
                     ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1),
+                    ["fromText"] = new("fromText", BuiltinValueKind.BytesFromText, IsCallable: true, Arity: 1),
+                    ["hash"] = new("hash", BuiltinValueKind.BytesHash, IsCallable: true, Arity: 1),
                     ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1),
                     ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1),
                     ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1),
