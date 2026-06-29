@@ -10,3 +10,11 @@ node_modules/**
 .gitattributes
 .editorconfig
 out/test/**
+# Local-dev/offline binary bundles — never ship these. The extension downloads
+# the matching per-version, per-platform binaries from the GitHub Release on
+# demand (see src/toolAcquisition.ts). Bundling them bloats the vsix with stale,
+# single-arch binaries and duplicate copies of libLLVM (~144 MB each).
+compiler/**
+lsp-server/**
+dap-server/**
+**/*.pdb
