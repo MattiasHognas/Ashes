@@ -39,6 +39,11 @@ public sealed partial class Lowering
         public List<int> ParamSlots { get; init; } = [];
         public bool InTailPosition { get; set; }
 
+        // True only while we are still descending the recursive binding's curried lambda chain
+        // (fun a -> fun b -> body). The chain's innermost lambda owns the tail-call loop label; a
+        // nested let-bound lambda inside the body is a separate frame and must not be mistaken for it.
+        public bool DescendingChain { get; set; } = true;
+
         // Arena watermark for per-iteration reset in TCO loops.
         // Saved right after the loop body label; restored before jumping back
         // when all tail-call arguments are copy types (no heap pointers escape).

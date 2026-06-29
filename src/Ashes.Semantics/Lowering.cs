@@ -2103,7 +2103,14 @@ public sealed partial class Lowering
 
         // TCO: For the innermost lambda in a recursive chain, create local copies
         // of captured params and emit a loop start label so tail self-calls can jump back.
-        var isInnermostTco = _tcoCtx is not null && lam.Body is not Expr.Lambda;
+        // A lambda only belongs to the recursive chain while we are still descending the binding's
+        // curried lambda chain. A nested let-bound lambda inside the body (e.g.
+        // `let rec f n = let helper x = x + n in ...`) is a separate frame: if treated as the
+        // innermost chain lambda it would emit the loop label into its own frame while the outer
+        // self-call jumps to a label that frame never contains (KeyNotFoundException in codegen).
+        bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
+        bool isChainLambda = wasDescendingChain;
+        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
         if (isInnermostTco)
         {
             var tco = _tcoCtx!;
@@ -2161,12 +2168,35 @@ public sealed partial class Lowering
             tco.InTailPosition = true;
         }
 
-        var savedTcoCtx = isInnermostTco ? _tcoCtx : null;
+        // Decide what TCO context the body sees:
+        //  - a chain link whose body is the next curried lambda keeps descending,
+        //  - the chain's innermost lambda stops descending so nested lambdas in the body don't
+        //    re-trigger TCO,
+        //  - a non-chain nested lambda suspends the outer TCO entirely (it is a separate frame, and
+        //    tail-call back-edges can't cross frames).
+        var outerTcoCtx = _tcoCtx;
+        if (isChainLambda)
+        {
+            _tcoCtx!.DescendingChain = lam.Body is Expr.Lambda;
+        }
+        else if (_tcoCtx is not null)
+        {
+            _tcoCtx = null;
+        }
+
+        var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
         var (bodyTemp, bodyType) = LowerExpr(lam.Body);
         if (isInnermostTco && savedTcoCtx is not null)
         {
             savedTcoCtx.InTailPosition = false;
         }
+
+        _tcoCtx = outerTcoCtx;
+        if (isChainLambda)
+        {
+            _tcoCtx!.DescendingChain = wasDescendingChain;
+        }
+
         Unify(bodyType, retTy);
         Emit(new IrInst.Return(bodyTemp));
 
