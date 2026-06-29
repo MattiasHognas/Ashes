@@ -1,5 +1,16 @@
 # Brace-Free Records
 
+> **Status: implemented.** The brace-free syntax below is live and the old
+> curly-brace forms have been removed (all three rollout phases completed at
+> once: both forms were never shipped together — the parser now accepts only the
+> brace-free forms and reports a migration diagnostic on the old `{ ... }` forms).
+> The normative description lives in [LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md) §4.1,
+> [FORMATTER_SPEC.md](../FORMATTER_SPEC.md), and [DIAGNOSTICS.md](../DIAGNOSTICS.md).
+> Decisions taken on the open questions: named arguments are accepted for record
+> construction only (not arbitrary function calls); `with` supports a
+> comma-separated field list and left-associative chaining
+> (`p with x = 1 with y = 2`); record patterns remain positional for now.
+
 This document proposes a record syntax that avoids curly braces and aligns
 record declarations and usage with the existing ADT/call style.
 

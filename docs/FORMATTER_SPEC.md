@@ -142,6 +142,24 @@ type Color =
     | Blue
 ```
 
+Record types use the same one-field-per-line `|` layout, with each field
+rendered as `| name: Type`:
+
+```ash
+type Point =
+    | x: Int
+    | y: Int
+```
+
+Records
+
+- Record construction is rendered as a constructor call with named arguments:
+  `Point(x = 1, y = 2)`. Fields keep their source order.
+- Record update is rendered brace-free: `p with x = 5`, with comma-separated
+  fields for multiple updates: `p with x = 5, y = 6`. Parentheses are added only
+  where required by the surrounding precedence (`with` binds looser than
+  application and the binary operators).
+
 Spacing
 
 - Binary operators use spaces around the operator.

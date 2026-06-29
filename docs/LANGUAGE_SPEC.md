@@ -549,38 +549,70 @@ Rules:
 
 ## 4.1 Record Types
 
-Record types are single-constructor ADTs with named fields.
+Record types are single-constructor ADTs with named fields. Records use a
+brace-free syntax that mirrors ADT declarations and ordinary constructor calls;
+Ashes source never uses curly braces.
 
 Syntax:
 
-type TypeName = { field1: Type1, field2: Type2 }
+type TypeName =
+    | field1: Type1
+    | field2: Type2
 
 Example:
 
-type Point = { x: Int, y: Int }
+type Point =
+    | x: Int
+    | y: Int
 
-Record literals create a value of the record type using named field syntax:
+A record declaration is a `type ... = | ...` declaration whose alternatives are
+`| name: Type` field branches instead of `| Constructor(...)` constructor
+branches. A single declaration is either all field branches (a record) or all
+constructor branches (an ordinary ADT); the two forms cannot be mixed.
 
-let p = Point { x = 1, y = 2 }
+Record values are created with constructor-call syntax using named arguments:
 
-Field access uses the dot notation (same as module member access):
+let p = Point(x = 1, y = 2)
+
+Field access uses dot notation (same as module member access):
 
 let px = p.x
 
-Record update creates a new record with one or more fields replaced:
+Record update creates a new record with one or more fields replaced, using a
+brace-free `with` expression:
 
-let p2 = { p with x = 5 }
+let p2 = p with x = 5
+
+Multiple fields may be updated in one expression:
+
+let p3 = p with x = 5, y = 6
+
+A parenthesized form remains valid wherever an expression is expected:
+
+let p4 = (p with x = 5)
 
 The base expression is evaluated once; unchanged fields are copied from it.
 
 Rules:
 
-- Record type declarations use `{ field: Type, ... }` instead of constructor alternatives.
-- The single constructor has the same name as the type and cannot be written separately.
-- All fields must be provided in a record literal; field order in the literal does not matter.
-- Field access (`rec.field`) works on local bindings of record types.
-- Record update (`{ base with field = value }`) produces a fresh value; the original is unchanged.
-- Records may be used in pattern matching like any ADT: `| Point(x, y) -> ...`
+- Record type declarations use `| field: Type` alternatives. Field and
+  constructor branches cannot be mixed in a single declaration.
+- The single constructor has the same name as the type and cannot be written
+  separately.
+- Named-argument call syntax (`Name(field = value, ...)`) is only valid for
+  record construction. All fields must be provided; field order does not matter.
+- Named arguments are not accepted for ordinary (non-record) function calls.
+- Field access (`rec.field`) works on bindings of record types.
+- Record update (`base with field = value`) produces a fresh value; the original
+  is unchanged. `with` binds looser than function application and the binary
+  operators, so `f p with x = a + b` parses as `(f p) with x = (a + b)`.
+- Chained updates `base with x = 1 with y = 2` are left-associative and
+  equivalent to `(base with x = 1) with y = 2`.
+- Records may be used in pattern matching like any ADT: `| Point(x, y) -> ...`.
+
+> The earlier curly-brace record syntax (`type T = { f: T }`, `T { f = e }`,
+> `{ base with f = e }`) has been removed. Sources using it are rejected with a
+> diagnostic pointing to the brace-free forms above.
 
 # 5. Let Bindings
 
@@ -2060,7 +2092,12 @@ of the first task to complete:
 
 ## 19.8 Diagnostics
 
-- `ASH011` — reserved.
+Async/await has no dedicated diagnostic codes. `async` is a builtin
+(`Ashes.Async.task`), not a block keyword, so there is no "outside `async`"
+state to police; misuse (for example combining tasks with mismatched error
+types, or consuming a `Task` without `await`/`Ashes.Async.run`) surfaces through
+ordinary type-inference diagnostics. See [DIAGNOSTICS.md](DIAGNOSTICS.md) for the
+full code table.
 
 ---
 

@@ -8,6 +8,7 @@ public static class Formatter
 {
     // Precedence: larger = binds tighter
     private const int PrecLetIfLambda = 1;
+    private const int PrecWith = 2;  // record update `e with f = e` (looser than pipe)
     private const int PrecPipe = 3;
     private const int PrecCmp = 4;   // ==, !=, >=, <=  (lower than bitwise, + and ::)
     private const int PrecBitOr = 5;
@@ -104,20 +105,21 @@ public static class Formatter
 
         if (decl.IsRecord && decl.Constructors.Count == 1)
         {
-            // Record syntax: type T = { field1: Type1, field2: Type2 }
+            // Brace-free record syntax: one field per `|` line, mirroring ADT constructors.
+            //     type Point =
+            //         | x: Int
+            //         | y: Int
             var ctor = decl.Constructors[0];
-            sb.Append(" = { ");
+            sb.Append(" =\n");
             for (int i = 0; i < ctor.FieldNames.Count; i++)
             {
-                if (i > 0)
-                {
-                    sb.Append(", ");
-                }
+                WriteIndent(sb, options.IndentSize, options);
+                sb.Append("| ");
                 sb.Append(ctor.FieldNames[i]);
                 sb.Append(": ");
                 sb.Append(ctor.Parameters[i]);
+                sb.Append('\n');
             }
-            sb.Append(" }\n");
             return;
         }
 
@@ -1256,8 +1258,9 @@ public static class Formatter
 
             case Expr.RecordLit rl:
                 {
+                    // Brace-free construction: TypeName(field = value, ...)
                     sb.Append(rl.TypeName);
-                    sb.Append(" { ");
+                    sb.Append('(');
                     for (int i = 0; i < rl.Fields.Count; i++)
                     {
                         if (i > 0)
@@ -1268,14 +1271,24 @@ public static class Formatter
                         sb.Append(" = ");
                         WriteExprInline(sb, rl.Fields[i].Value, indent, 0, preferPipelines, options);
                     }
-                    sb.Append(" }");
+                    sb.Append(')');
                     return;
                 }
 
             case Expr.RecordUpdate ru:
                 {
-                    sb.Append("{ ");
-                    WriteExprInline(sb, ru.Target, indent, 0, preferPipelines, options);
+                    // Brace-free update: base with field = value, ...
+                    // `with` binds looser than application and the binary operators, so parenthesise
+                    // when the surrounding context binds tighter than a pipe.
+                    var needsParens = parentPrec > PrecWith;
+                    if (needsParens)
+                    {
+                        sb.Append('(');
+                    }
+                    // `with` is left-associative: a chained update in target position renders
+                    // without parentheses (PrecWith), while field values (right position) get
+                    // PrecWith + 1 so a nested update there is parenthesised.
+                    WriteExprInline(sb, ru.Target, indent, PrecWith, preferPipelines, options);
                     sb.Append(" with ");
                     for (int i = 0; i < ru.Updates.Count; i++)
                     {
@@ -1285,9 +1298,12 @@ public static class Formatter
                         }
                         sb.Append(ru.Updates[i].Name);
                         sb.Append(" = ");
-                        WriteExprInline(sb, ru.Updates[i].Value, indent, 0, preferPipelines, options);
+                        WriteExprInline(sb, ru.Updates[i].Value, indent, PrecWith + 1, preferPipelines, options);
                     }
-                    sb.Append(" }");
+                    if (needsParens)
+                    {
+                        sb.Append(')');
+                    }
                     return;
                 }
 

@@ -8,25 +8,28 @@ CLI/TestRunner compile failures are still surfaced as uncoded compile errors.
 
 Current codes:
 
-| Code | Meaning |
-|------|---------|
-| `ASH001` | Unknown identifier |
-| `ASH002` | Generic type mismatch |
-| `ASH003` | Parse error |
-| `ASH004` | Match branch type mismatch |
-| `ASH005` | List element type mismatch |
-| `ASH006` | Use-after-drop (using a resource after it has been closed) |
+| Code     | Meaning                                                       |
+| -------- | ------------------------------------------------------------- |
+| `ASH001` | Unknown identifier                                            |
+| `ASH002` | Generic type mismatch                                         |
+| `ASH003` | Parse error                                                   |
+| `ASH004` | Match branch type mismatch                                    |
+| `ASH005` | List element type mismatch                                    |
+| `ASH006` | Use-after-drop (using a resource after it has been closed)    |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
-| `ASH010` | Reserved |
-| `ASH011` | Reserved |
-| `ASH012` | Reserved |
-| `ASH013` | Duplicate top-level binding name |
-| `ASH014` | Reference to a binding not yet declared (forward reference) |
-| `ASH015` | `and` used without a preceding `let rec` |
-| `ASH016` | Conflicting unqualified import selectors for the same name |
+| `ASH013` | Duplicate top-level binding name                              |
+| `ASH014` | Reference to a binding not yet declared (forward reference)   |
+| `ASH015` | `and` used without a preceding `let rec`                      |
+| `ASH016` | Conflicting unqualified import selectors for the same name    |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
+
+`ASH010`–`ASH012` were previously allocated for an `async`-block enforcement model
+(`await`/networking outside `async`, async error-type conflict). The language no
+longer has an `async` keyword — `async` is a builtin (`Ashes.Async.task`), and
+async-only safety is enforced by the `Task` type — so those codes were never
+emitted and have been retired. The numbers are unused and free for reuse.
 
 ## Top-level declaration and import diagnostics
 
@@ -50,12 +53,39 @@ and the binding/type import selectors. See
 - `ASH015` — **`and` without `let rec`.** An `and` clause appears without a preceding
   `let rec`. Mutual recursion is written `let rec X = ... and Y = ...`; a bare `and`
   (after a plain `let`, or with no preceding binding) is rejected.
-  Message: ``'and' requires a preceding 'let rec'.``
+  Message: `'and' requires a preceding 'let rec'.`
 
 - `ASH016` — **Conflicting unqualified import selectors.** Two unqualified selector
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
+
+## Record diagnostics
+
+Records use the brace-free syntax described in
+[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §4.1. These diagnostics are currently
+surfaced as parse errors (`ASH003`) or uncoded semantic errors:
+
+- **Removed curly-brace record syntax.** The old `{ ... }` record declaration,
+  construction, and update forms are no longer accepted. Encountering a `{`
+  where a record declaration, literal, or update was previously written reports
+  a parse error directing the author to the brace-free forms
+  (`type T = | f: T`, `T(f = e)`, `e with f = e`).
+  Messages: `Brace record declarations have been removed; use '| field: Type' alternatives.`,
+  `Brace record construction has been removed; use 'Name(field = value)'.`,
+  `Brace record update has been removed; use 'base with field = value'.`
+
+- **Named arguments outside record construction.** Named-argument call syntax
+  (`f(x = 1)`) is only valid for record construction. Using it on an arbitrary
+  expression is a parse error.
+  Message: `Named arguments are only allowed in record construction.`
+
+- **Mixed record and constructor branches.** A `type` declaration mixes
+  `| field: Type` field branches with `| Constructor(...)` branches.
+  Message: `Record field alternatives cannot be mixed with constructor alternatives.`
+
+The semantic record diagnostics (unknown record type, missing/unknown/duplicate
+field) remain uncoded.
 
 Currently uncoded compile failures include examples such as:
 

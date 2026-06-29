@@ -74,6 +74,11 @@ publish-cli:
 matrix:
     ci/jobs.sh matrix
 
+# Run the matrix for a single arch only (linux-x64 | linux-arm64 | win-x64);
+# publishes just that RID first. Inner loop for iterating on one target.
+matrix-one arch:
+    ci/jobs.sh matrix_one {{arch}}
+
 # Fast inner loop (build + test); used by the pre-commit hook.
 ci-quick:
     ci/jobs.sh ci_quick
