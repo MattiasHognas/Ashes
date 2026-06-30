@@ -121,6 +121,34 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// If the scope's result is a closure that captures resources this scope owns, those resources
+    /// escape with the closure. Mark them as already-handled so <see cref="EmitDropsForCurrentScope"/>
+    /// does not close them here — closing a resource the escaping closure still references would be a
+    /// use-after-close (RESOURCE_SAFETY.md Gap B). The resource is then released at program exit;
+    /// closing it deterministically when the closure itself dies is future work. Conservative: only
+    /// the result-closure's direct captures are recognised (resources reached through nested
+    /// aggregates or a chain of closures are not yet tracked).
+    /// </summary>
+    private void SkipDropsForResourcesEscapingViaResult(int resultTemp)
+    {
+        if (resultTemp < 0
+            || _ownershipScopes.Count == 0
+            || !_closureResourceCaptures.TryGetValue(resultTemp, out var escaped))
+        {
+            return;
+        }
+
+        var scope = _ownershipScopes.Peek();
+        foreach (var resourceName in escaped)
+        {
+            if (scope.TryGetValue(resourceName, out var info) && info.IsResource && !info.IsDropped)
+            {
+                info.IsDropped = true;
+            }
+        }
+    }
+
+    /// <summary>
     /// Emits Drop instructions for all alive (not yet dropped) owned values in the current scope.
     /// Called at scope exit.
     /// </summary>
@@ -192,6 +220,7 @@ public sealed partial class Lowering
     ///   <paramref name="resultTemp"/>. Otherwise it equals <paramref name="resultTemp"/>.</returns>
     private int PopOwnershipScope(TypeRef? resultType = null, int resultTemp = -1)
     {
+        SkipDropsForResourcesEscapingViaResult(resultTemp);
         bool hadAliveOwned = HasAliveOwnedValuesInCurrentScope();
         EmitDropsForCurrentScope();
 

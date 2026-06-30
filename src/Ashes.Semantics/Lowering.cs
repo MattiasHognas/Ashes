@@ -66,6 +66,13 @@ public sealed partial class Lowering
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
 
+    // Closure temp → resolved names of resource bindings it captures. When such a closure is a
+    // scope's result the captured resources escape, so the scope must not close them (else the
+    // escaping closure would observe a closed resource — a use-after-close). See RESOURCE_SAFETY.md
+    // Gap B. The escaped resource is then released at program exit (deterministic close at the
+    // closure's own death is future work).
+    private readonly Dictionary<int, HashSet<string>> _closureResourceCaptures = new();
+
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
 
@@ -2587,6 +2594,24 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
         }
+
+        // Record any resource captured by this closure. Ownership scopes are separate from binding
+        // scopes, so the captured names still resolve to their owning bindings here.
+        var resourceCaptures = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var cap in captures)
+        {
+            var owned = LookupOwnedValue(cap);
+            if (owned is not null && owned.IsResource)
+            {
+                resourceCaptures.Add(ResolveOwnershipAlias(cap));
+            }
+        }
+
+        if (resourceCaptures.Count > 0)
+        {
+            _closureResourceCaptures[closureTemp] = resourceCaptures;
+        }
+
         return (closureTemp, funTy);
     }
 
