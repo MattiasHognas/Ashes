@@ -1,6 +1,48 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **Proposed (awaiting sign-off before implementation).**
+Status: **In progress — reuse primitive (`AllocReusing`) landed; the sound uniqueness analysis is the remaining (substantial) work. 2026-06-30.**
+
+> **What's done:** the `IrInst.AllocReusing(Target, Tag, FieldCount, TokenTemp)` primitive +
+> backend (`EmitAllocReusing`: overwrite the dead cell's tag, no bump alloc) + optimizer wiring.
+> This is the "write into the reuse token" half of Perceus. Unwired into lowering yet — it needs
+> the analysis below to know *when* a cell is a safe token.
+>
+> **The real blocker (worked out this session):** reuse is only sound if the matched cell is
+> **uniquely owned and dead**. Ashes forbids runtime refcounting (Ground Rule 6), so uniqueness
+> must be **compile-time**. The hard fact: in `loop(Map.set(…)(acc))`, `acc` is *not* provably
+> unique — the caller of `loop` may still hold the initial map (`let m = … in loop(m); use m`),
+> so iteration 1's `acc` can be shared. Reusing it would corrupt the caller's `m`. A purely local
+> "`acc` is dead after this call" check is unsound (it can't see the caller's sharing).
+>
+> **The sound design (the achievable path):**
+> 1. **Defensive copy at loop entry.** Deep-copy the initial accumulator *once* before the loop
+>    body label (O(K) once, via the existing `EmitDeepCopy`). Now the loop's accumulator region is
+>    unique regardless of the caller — this is what makes per-iteration reuse sound.
+> 2. **Reuse transformation.** In a function body, a `match v with Ctor(fields) -> arm` where `v`
+>    is dead in `arm` (not in `FreeVars(arm)`) and `arm` builds a same-arity constructor ⇒ emit
+>    `AllocReusing(v's cell)` for that construction (the token-availability dataflow). This makes
+>    `Map.set`'s `match map … makeNode(…)` reuse the node it just deconstructed.
+> 3. **Specialization (the substantial interprocedural part).** Because the transformed body
+>    *mutates* its input, it's only safe for unique callers. Clone the `Map.set`/`balance`/`rotate`/
+>    `makeNode`/`rotateLeft`/`rotateRight` group into `…$reuse` variants; the loop (whose accumulator
+>    is unique by step 1) calls `set$reuse`, the recursion/helpers call each other's `$reuse`
+>    variants, and ordinary callers keep calling the normal (allocating) versions. The reuse token
+>    must thread from `set$reuse`'s match into `makeNode$reuse`'s construction (it's passed in).
+> 4. **Accumulator uniqueness fixpoint.** The loop accumulator stays unique because it starts unique
+>    (step 1) and `set$reuse` returns unique — so no per-iteration copy is needed; result: O(K) once
+>    + O(1)/iteration. Bounded **and** fast.
+>
+> This is genuine Perceus-without-RC. Step 3 (linearity-driven specialization of a recursive
+> function group with reuse-token threading) is the large, corruption-prone piece and is the right
+> place to resume — gated behind a reuse-correctness + constant-memory + shared-accumulator-still-
+> -correct test trio. (The earlier naive deep-copy-in-the-two-pass fallback was tried and segfaults
+> — see RESUME_HERE.md §2 — so a deep-copy fallback would instead need a separate scratch arena.)
+>
+> ---
+>
+> Original design below.
+
+Status (original): **Proposed (awaiting sign-off before implementation).**
 
 Fixes FLAWS.md #2 (the hot-loop arena leak) and the O(1) half of #3, **without any new
 user-visible syntax** and without violating the Ground Rules: user code stays pure and

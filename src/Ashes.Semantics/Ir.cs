@@ -102,6 +102,15 @@ public abstract record IrInst
     // AllocAdt allocates (1 + FieldCount) * 8 bytes and stores Tag at offset 0.
     public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
+
+    /// <summary>
+    /// In-place reuse (REUSE_ANALYSIS.md / #2): writes <c>Tag</c> into the cell at
+    /// <c>TokenTemp</c>'s address and yields that address as <c>Target</c>, instead of
+    /// bump-allocating. Emitted only when the token is a provably-dead, uniquely-owned ADT cell of
+    /// the same size (1 + FieldCount words) — e.g. the node a linear TCO accumulator was just
+    /// deconstructed from. The fields are written afterwards exactly like <see cref="AllocAdt"/>.
+    /// </summary>
+    public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // GetAdtTag: Target = *(Ptr + 0)

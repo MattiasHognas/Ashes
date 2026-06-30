@@ -80,6 +80,18 @@ internal static partial class LlvmCodegen
         return ptr;
     }
 
+    /// <summary>
+    /// In-place reuse: overwrites the dead cell at <paramref name="tokenPtr"/> with the new
+    /// constructor tag and returns it as the new ADT, with no bump allocation. The token is a
+    /// uniquely-owned cell of the same size that was just deconstructed; its fields are rewritten by
+    /// the following StoreMemOffset/SetAdtField. See <see cref="IrInst.AllocReusing"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitAllocReusing(LlvmCodegenState state, LlvmValueHandle tokenPtr, int tag)
+    {
+        StoreMemory(state, tokenPtr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        return tokenPtr;
+    }
+
     private static bool StoreMemory(LlvmCodegenState state, LlvmValueHandle baseAddress, int offsetBytes, LlvmValueHandle value, string name)
     {
         LlvmValueHandle ptr = GetMemoryPointer(state, baseAddress, offsetBytes, name + "_ptr");
