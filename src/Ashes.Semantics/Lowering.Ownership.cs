@@ -440,6 +440,250 @@ public sealed partial class Lowering
         }
     }
 
+    /// <summary>
+    /// Emits IR producing a DEEP copy of <paramref name="temp"/> (a value of
+    /// <paramref name="type"/>) and returns the new temp. Scalars pass through; strings/bytes,
+    /// supported lists and closures use the existing copy-out primitives; tuples are rebuilt with
+    /// each element deep-copied. Recursive multi-constructor ADTs are step 1b (synthesized
+    /// recursive copiers) — for now they fall back to a shallow reference, which is still a valid
+    /// equal value for the (immutable) result and only matters once this is wired into an arena
+    /// reset. Shared foundation for in-place reuse (#2 fallback) and parallel result copy-out (#5).
+    /// </summary>
+    private int EmitDeepCopy(int temp, TypeRef type)
+    {
+        var pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TStr:
+            case TypeRef.TBytes:
+                {
+                    int dest = NewTemp();
+                    Emit(new IrInst.CopyOutArena(dest, temp, -1));
+                    return dest;
+                }
+
+            case TypeRef.TTuple tup:
+                {
+                    int dest = NewTemp();
+                    Emit(new IrInst.Alloc(dest, tup.Elements.Count * 8));
+                    for (int i = 0; i < tup.Elements.Count; i++)
+                    {
+                        int field = NewTemp();
+                        Emit(new IrInst.LoadMemOffset(field, temp, i * 8));
+                        int copied = EmitDeepCopy(field, tup.Elements[i]);
+                        Emit(new IrInst.StoreMemOffset(dest, i * 8, copied));
+                    }
+
+                    return dest;
+                }
+
+            case TypeRef.TList list:
+                {
+                    var elemPruned = Prune(list.Element);
+                    if (CanArenaReset(elemPruned))
+                    {
+                        int dest = NewTemp();
+                        Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.Inline));
+                        return dest;
+                    }
+
+                    if (elemPruned is TypeRef.TStr)
+                    {
+                        int dest = NewTemp();
+                        Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.String));
+                        return dest;
+                    }
+
+                    if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+                    {
+                        int dest = NewTemp();
+                        Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.InnerList));
+                        return dest;
+                    }
+
+                    return temp; // unsupported element type: shallow (step 1b)
+                }
+
+            case TypeRef.TFun:
+                {
+                    int dest = NewTemp();
+                    Emit(new IrInst.CopyOutClosure(dest, temp));
+                    return dest;
+                }
+
+            case TypeRef.TNamedType named when !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
+                {
+                    // Recursive multi-constructor ADTs (e.g. MapTree) are deep-copied by a synthesized
+                    // per-type recursive copier closure. Resource types (Socket/FileHandle/...) are
+                    // never copied — duplicating an fd/handle is wrong — so they fall through to shallow.
+                    var label = TrySynthesizeAdtCopier(named);
+                    if (label is null)
+                    {
+                        return temp; // unsupported (empty type / mutual-recursion cycle): shallow
+                    }
+
+                    // Build the copier closure at this site and tie its self-reference knot:
+                    // env[0] = the closure itself, so the function body can recurse via LoadEnv(0).
+                    int envPtr = NewTemp();
+                    Emit(new IrInst.Alloc(envPtr, 8));
+                    int copier = NewTemp();
+                    Emit(new IrInst.MakeClosure(copier, label, envPtr, 8));
+                    Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
+                    int result = NewTemp();
+                    Emit(new IrInst.CallClosure(result, copier, temp));
+                    return result;
+                }
+
+            default:
+                // Scalars (Int/Float/Bool/UInt) pass through inline; resource ADTs stay shallow.
+                return temp;
+        }
+    }
+
+    private readonly Dictionary<string, string> _adtCopierLabels = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _adtCopierInProgress = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Synthesizes (once per concrete type, cached) a recursive deep-copy function for an ADT and
+    /// returns its label. The function takes (env, value): it reads the constructor tag, allocates a
+    /// fresh node of the same constructor, and deep-copies each field — same-type fields via the
+    /// self-closure in env[0] (recursion), other fields via <see cref="EmitDeepCopy"/>. Returns null
+    /// for empty types or mutual-recursion cycles (caller falls back to a shallow reference).
+    /// Tag-level (no constructor names), so it works regardless of constructor scope at the call site.
+    /// </summary>
+    private string? TrySynthesizeAdtCopier(TypeRef.TNamedType named)
+    {
+        var key = Pretty(named);
+        if (_adtCopierLabels.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        if (_adtCopierInProgress.Contains(key))
+        {
+            return null; // mutual-recursion cycle between distinct ADT types — bail to shallow
+        }
+
+        var sym = named.Symbol;
+        if (sym.Constructors.Count == 0)
+        {
+            return null;
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        _adtCopierInProgress.Add(key);
+        string label = $"__deepcopy_{_nextLambdaId++}";
+        _adtCopierLabels[key] = label; // register before the body so self-type fields resolve to it
+
+        // Build the copier body in isolation (mirrors LowerLambdaCore's state save/restore).
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        _inst.Clear();
+        _nextTempSlot = 0;
+        _nextLocalSlot = 0;
+        _localNames.Clear();
+        _localTypes.Clear();
+
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: the value to copy (implicit)
+
+        int argTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(argTemp, argSlot));
+        int selfTemp = NewTemp();
+        Emit(new IrInst.LoadEnv(selfTemp, 0));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, argTemp));
+
+        var cases = new List<(long, string)>(sym.Constructors.Count);
+        var ctorLabels = new string[sym.Constructors.Count];
+        for (int i = 0; i < sym.Constructors.Count; i++)
+        {
+            ctorLabels[i] = $"{label}_c{i}";
+            cases.Add((GetConstructorTag(sym.Constructors[i]), ctorLabels[i]));
+        }
+
+        string defaultLabel = $"{label}_default";
+        Emit(new IrInst.SwitchTag(tagTemp, cases, defaultLabel));
+
+        for (int i = 0; i < sym.Constructors.Count; i++)
+        {
+            Emit(new IrInst.Label(ctorLabels[i]));
+            var ctor = sym.Constructors[i];
+            int newTemp = NewTemp();
+            Emit(new IrInst.AllocAdt(newTemp, GetConstructorTag(ctor), ctor.Arity));
+            for (int j = 0; j < ctor.Arity; j++)
+            {
+                int fieldTemp = NewTemp();
+                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, (j + 1) * 8));
+                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                int copied = CopyFieldInsideCopier(fieldTemp, fieldType, named, selfTemp);
+                Emit(new IrInst.StoreMemOffset(newTemp, (j + 1) * 8, copied));
+            }
+
+            Emit(new IrInst.Return(newTemp));
+        }
+
+        Emit(new IrInst.Label(defaultLabel));
+        Emit(new IrInst.Return(argTemp)); // unreachable fallback
+
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+
+        // Restore the enclosing function's state.
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
+        _localNames.Clear();
+        foreach (var kv in savedLocalNames)
+        {
+            _localNames[kv.Key] = kv.Value;
+        }
+
+        _localTypes.Clear();
+        foreach (var kv in savedLocalTypes)
+        {
+            _localTypes[kv.Key] = kv.Value;
+        }
+
+        _adtCopierInProgress.Remove(key);
+        return label;
+    }
+
+    /// <summary>
+    /// Copies one field inside a synthesized ADT copier: a field of the same recursive type uses the
+    /// self-closure (env[0]) for recursion; any other field type goes through <see cref="EmitDeepCopy"/>.
+    /// </summary>
+    private int CopyFieldInsideCopier(int fieldTemp, TypeRef fieldType, TypeRef.TNamedType selfType, int selfTemp)
+    {
+        var pruned = Prune(fieldType);
+        if (pruned is TypeRef.TNamedType fieldNamed
+            && string.Equals(Pretty(fieldNamed), Pretty(selfType), StringComparison.Ordinal))
+        {
+            int copied = NewTemp();
+            Emit(new IrInst.CallClosure(copied, selfTemp, fieldTemp));
+            return copied;
+        }
+
+        return EmitDeepCopy(fieldTemp, pruned);
+    }
+
     private CopyOutKind GetTcoCopyOutKind(TypeRef type, out int staticSizeBytes, out IrInst.ListHeadCopyKind listHeadCopy)
     {
         var pruned = Prune(type);

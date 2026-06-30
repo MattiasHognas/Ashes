@@ -227,6 +227,29 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
+    // Ashes.Internal.deepCopy : forall a. a -> a  (produces an independent deep copy)
+    private Binding.Intrinsic CreateInternalDeepCopyBinding()
+    {
+        var tv = (TypeRef.TVar)NewTypeVar();
+        return new Binding.Intrinsic(
+            IntrinsicKind.InternalDeepCopy,
+            new TypeScheme([new TypeVar(tv.Id, "a")], new TypeRef.TFun(tv, tv))
+        );
+    }
+
+    private (int, TypeRef) LowerInternalDeepCopy(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (temp, type) = LowerExpr(arg);
+        var pruned = Prune(type);
+        if (pruned is TypeRef.TNever)
+        {
+            return (temp, pruned);
+        }
+
+        return (EmitDeepCopy(temp, pruned), pruned);
+    }
+
     private (int, TypeRef) LowerFileWriteText(Expr pathArg, Expr textArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
