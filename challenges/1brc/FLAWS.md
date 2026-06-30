@@ -25,7 +25,7 @@ are structural limitations of the language / stdlib / memory model.
 | #5 | No data parallelism | open — design-level milestone |
 | #6 | Shipped-module ref unresolved in a function body | **FIXED** |
 | #7 | Char-by-char `uncons` is O(T²) (tail copied each step) | **FIXED** (zero-copy string views) |
-| #8 | Output fold is O(K²) (`acc + sep + entry` growing-string concat) | open — now unblocked by #9; needs a divide-and-conquer `join` |
+| #8 | Output fold is O(K²) (`acc + sep + entry` growing-string concat) | **FIXED** (tail-recursive divide-and-conquer `Ashes.String.join`) |
 | #9 | `+` with two unresolved operands eagerly defaults to Int | **FIXED** (deferred AddInt/ConcatStr + monomorphic `+`-vars) |
 
 Each section below records the original finding and, where fixed, what changed;
@@ -36,13 +36,15 @@ each open section ends with an actionable **Task** breakdown.
 Benchmarked `brc.ash` on subsets of `measurements.txt` (8700 unique stations in the
 first 10k rows; `hyperfine`, peak RSS from `/proc/<pid>/status`):
 
-| Rows | Baseline | After #7 (uncons views) |
-|------|----------|-------------------------|
-| 100 | 0.92 ms | 0.56 ms |
-| 1 000 | 57 ms | 18 ms |
-| 10 000 | 5.2 s / 15 GB | 1.57 s / 3.6 GB |
-| 20 000 | 56 s | 6 s |
-| 30 000 | >90 s | 12 s |
+| Rows | Baseline | After #7 (uncons views) | After #8 (`join`) |
+|------|----------|-------------------------|-------------------|
+| 100 | 0.92 ms | 0.56 ms | 0.43 ms |
+| 1 000 | 57 ms | 18 ms | 9.6 ms |
+| 10 000 | 5.2 s / 15 GB | 1.57 s / 3.6 GB | 0.79 s / 2.6 GB |
+| 20 000 | 56 s | 6 s | 4 s |
+| 30 000 | >90 s | 12 s | 7 s |
+
+Cumulative at 10k rows: **5.2 s / 15 GB → 0.79 s / 2.6 GB** (6.6× faster, 5.8× less memory).
 
 **Root causes, in order of impact:** (1) `Ashes.Text.uncons`'s tail was a full byte
 copy, so a char-by-char loop was O(T²) in file size *and* allocated O(T²) bytes — that
@@ -58,18 +60,17 @@ below-watermark view copy-out.
 it emits a provisional `AddInt` carrying the operand type var, keeps that var monomorphic (excluded
 from generalization, compared by union-find representative), and a post-inference pass patches it to
 `ConcatStr`/`AddFloat` or defaults it to Int. `acc + x` string/float reductions now compile and run
-with no `"" +` hint; oversaturated-call detection and REPL type display preserved.
+with no `"" +` hint; oversaturated-call detection and REPL type display preserved; **#8 the output
+`join`** — `Ashes.String.join` (tail-recursive divide-and-conquer, O(total·log K)) replaced the
+O(K²) growing-string render; `brc` now collects entries with `Map.foldLeft` + `List.reverse` + `join`.
+Halved the 10k-row runtime (was ~45 % of it).
 
 **Remaining 1BRC tasks:**
 
-1. **#8 output `join`** — now unblocked by #9: replace the `Ashes.Map.foldLeft(renderEntry)("")`
-   O(K²) render with a tail-recursive divide-and-conquer `Ashes.String.join` (O(total·log K)).
-   ~45 % of the 10k-row runtime. (A first attempt was reverted: it needed #9 and the helpers
-   must be tail-recursive — 8700 entries overflow a non-tail-recursive list walk.)
-2. **`substring`/`take` as views (#4-adjacent) + line-oriented scan** — `take` is O(count²)
+1. **`substring`/`take` as views (#4-adjacent) + line-oriented scan** — `take` is O(count²)
    (concatenates) and `substring = take(drop …)`; make `take` view-based so a per-line scan can
    avoid building `lineAcc` char by char. Marginal for `brc` but removes the last per-char concat.
-3. **#2 hot-loop arena reset** — the structural item, and the largest remaining. The per-char loop
+2. **#2 hot-loop arena reset** — the structural item, and the largest remaining. The per-char loop
    can't reset while the Map accumulator isn't copy-out-able, and a reset must keep below-watermark
    `remaining` views as views (not materialize them). Needs the stdlib `Map.set` reuse / to-space
    work whose design + remaining "insert path" step live in

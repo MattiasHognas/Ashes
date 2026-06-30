@@ -20,6 +20,7 @@
 
 import Ashes.IO
 import Ashes.File
+import Ashes.List
 import Ashes.Map
 import Ashes.Text
 import Ashes.String
@@ -109,14 +110,11 @@ let rec loop remaining lineAcc map =
             then loop(rest)("")(processLine(lineAcc)(map))
             else loop(rest)(lineAcc + c)(map)
 
-let renderEntry acc key value = 
+let collectEntry acc key value = 
     match value with
         | (mn, mx, sm, ct) -> 
             let entry = key + "=" + fmtTenths(mn) + "/" + fmtMean(sm)(ct) + "/" + fmtTenths(mx)
-            in 
-                if acc == ""
-                then entry
-                else acc + ", " + entry
+            in entry :: acc
 
 let body = 
     match Ashes.IO.args with
@@ -128,4 +126,6 @@ let body =
 
 let final = loop(body)("")(Ashes.Map.empty)
 
-Ashes.IO.writeLine("{" + Ashes.Map.foldLeft(renderEntry)("")(final) + "}")
+let entries = Ashes.List.reverse(Ashes.Map.foldLeft(collectEntry)([])(final))
+
+Ashes.IO.writeLine("{" + Ashes.String.join(", ")(entries) + "}")
