@@ -236,6 +236,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetNamedFunction", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle GetNamedFunction(LlvmModuleHandle module, string name);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetNamedGlobal", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle GetNamedGlobal(LlvmModuleHandle module, string name);
+
     [LibraryImport(Lib, EntryPoint = "LLVMAddGlobal", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle AddGlobal(LlvmModuleHandle module, LlvmTypeHandle type, string name);
 

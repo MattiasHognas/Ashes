@@ -3,16 +3,15 @@
 // IDENTICAL to its sequential equivalent — purity guarantees order-independence —
 // so code written with these combinators is always correct.
 //
-// EXECUTION IS CURRENTLY SEQUENTIAL. `both` is the single fork/join primitive;
-// today it simply evaluates both thunks in order. The threading runtime (per-thread
-// arenas + clone/futex + deep-copy-on-join — the deep-copy foundation already exists
-// as Ashes.Internal.deepCopy) will replace `both` with a parallel intrinsic, at which
-// point `map`/`reduce` parallelize transparently with no source changes.
+// `both` (the single fork/join primitive) is a compiler intrinsic registered in
+// BuiltinRegistry — it must be lowered at each call site so it can deep-copy a worker's
+// result at the concrete result type — so it is NOT defined here. At concrete result types
+// `both` runs its right thunk on a worker thread; polymorphic uses fall back to sequential
+// evaluation (always correct). `map`/`reduce` below are ordinary Ashes and are sequential
+// (they cannot route through the parallel `both` because their element type is abstract
+// inside the polymorphic body; see docs/future/STRUCTURED_PARALLELISM.md).
 //
 // Self-contained: uses only core language features.
-
-// Fork/join two pure thunks (Unit -> A) and (Unit -> B), returning both results.
-let both left right = (left(Unit), right(Unit))
 
 let rec plLength xs = 
     match xs with

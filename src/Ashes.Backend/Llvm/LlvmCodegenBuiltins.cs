@@ -5562,14 +5562,56 @@ internal static partial class LlvmCodegen
                 EmitTlsCloseAbiCall(state, value);
                 return false;
 
+            case "Process":
+                // Deterministic cleanup of an abandoned child: close the three pipe fds and reap
+                // it so it can't leak fds or linger as a zombie. Fire-and-forget; double-close
+                // (EBADF) and a no-child reap (ECHILD) are ignored, and the reap is non-blocking
+                // (WNOHANG) so dropping a still-running child never stalls the parent.
+                EmitProcessDrop(state, value);
+                return false;
+
+            case "Function":
+                // A closure may carry a dropper (closure+24) that closes resources moved into it
+                // when it captured-and-escaped them (deterministic close).
+                EmitClosureDrop(state, value);
+                return false;
+
             default:
-                // Owned heap types (String, List, ADTs, Closures, etc.):
+                // Owned heap types (String, List, ADTs, etc.):
                 // No-op per-object — bulk deallocation is handled by
                 // RestoreArenaState which resets the heap cursor at scope
                 // exit for copy-type scopes. The Drop instruction is kept
                 // in IR for semantic correctness and resource cleanup routing.
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Drops a closure: if it carries a resource dropper at offset 24 (non-zero), invoke it as
+    /// <c>dropper(0, env)</c> to close the resources the closure owns. Ordinary closures have a zero
+    /// dropper and this is a no-op.
+    /// </summary>
+    private static void EmitClosureDrop(LlvmCodegenState state, LlvmValueHandle closure)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle dropperCode = LoadMemory(state, closure, 24, "closure_dropper");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            dropperCode, LlvmApi.ConstInt(state.I64, 0, 0), "closure_dropper_is_null");
+
+        var callBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_call");
+        var endBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_end");
+        LlvmApi.BuildCondBr(builder, isNull, endBlock, callBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, callBlock);
+        LlvmValueHandle env = LoadMemory(state, closure, 8, "closure_dropper_env");
+        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(builder, dropperCode,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0), "closure_dropper_ptr");
+        LlvmApi.BuildCall2(builder, dropperType, dropperPtr,
+            [LlvmApi.ConstInt(state.I64, 0, 0), env], "closure_dropper_call");
+        LlvmApi.BuildBr(builder, endBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, endBlock);
     }
 
     private static LlvmValueHandle EmitHttpRequest(LlvmCodegenState state, LlvmValueHandle urlRef, LlvmValueHandle bodyRef, bool hasBody)
@@ -7311,6 +7353,34 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle LoadProcessField(LlvmCodegenState state, LlvmValueHandle processRef, int offset, string name)
     {
         return LoadMemory(state, processRef, offset, name);
+    }
+
+    /// <summary>
+    /// Releases the OS resources a <c>Process</c> owns when it is dropped: closes the three pipe
+    /// fds/handles and reaps the child. Linux uses a non-blocking <c>waitpid(WNOHANG)</c> so a
+    /// still-running child is not waited on (it detaches and is reaped by init on program exit);
+    /// already-exited children are reaped here so they don't linger as zombies.
+    /// </summary>
+    private static void EmitProcessDrop(LlvmCodegenState state, LlvmValueHandle processRef)
+    {
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 0, "proc_drop_stdin"));
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 8, "proc_drop_stdout"));
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 16, "proc_drop_stderr"));
+        LlvmValueHandle pid = LoadProcessField(state, processRef, 24, "proc_drop_pid");
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // waitpid(pid, NULL, WNOHANG=1, NULL) — non-blocking reap of an exited child.
+            EmitLinuxSyscall4(state, SyscallWaitpid, pid,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0), "proc_drop_reap");
+        }
+        else
+        {
+            // On Windows the pid field is the process HANDLE; closing it releases the kernel object.
+            EmitWindowsCloseHandle(state, pid, "proc_drop_handle");
+        }
     }
 
     private static LlvmValueHandle EmitAllocProcessStruct(LlvmCodegenState state)

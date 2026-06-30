@@ -80,6 +80,18 @@ internal static partial class LlvmCodegen
         return ptr;
     }
 
+    /// <summary>
+    /// In-place reuse: overwrites the dead cell at <paramref name="tokenPtr"/> with the new
+    /// constructor tag and returns it as the new ADT, with no bump allocation. The token is a
+    /// uniquely-owned cell of the same size that was just deconstructed; its fields are rewritten by
+    /// the following StoreMemOffset/SetAdtField. See <see cref="IrInst.AllocReusing"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitAllocReusing(LlvmCodegenState state, LlvmValueHandle tokenPtr, int tag)
+    {
+        StoreMemory(state, tokenPtr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        return tokenPtr;
+    }
+
     private static bool StoreMemory(LlvmCodegenState state, LlvmValueHandle baseAddress, int offsetBytes, LlvmValueHandle value, string name)
     {
         LlvmValueHandle ptr = GetMemoryPointer(state, baseAddress, offsetBytes, name + "_ptr");
@@ -862,6 +874,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle code = LoadMemory(state, srcPtr, 0, "copy_closure_code");
         LlvmValueHandle envPtr = LoadMemory(state, srcPtr, 8, "copy_closure_env");
         LlvmValueHandle envSize = LoadMemory(state, srcPtr, 16, "copy_closure_env_size");
+        LlvmValueHandle dropper = LoadMemory(state, srcPtr, 24, "copy_closure_dropper");
 
         // Alloca for the new env pointer (nil path: keep 0; non-nil path: new alloc)
         LlvmValueHandle newEnvSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_env_slot");
@@ -885,11 +898,12 @@ internal static partial class LlvmCodegen
         // Merge: allocate new closure struct
         LlvmApi.PositionBuilderAtEnd(builder, envMergeBlock);
         LlvmValueHandle newEnvPtr = LlvmApi.BuildLoad2(builder, state.I64, newEnvSlot, "copy_closure_new_env");
-        LlvmValueHandle closureSize = LlvmApi.ConstInt(state.I64, 24, 0);
+        LlvmValueHandle closureSize = LlvmApi.ConstInt(state.I64, ClosureSizeBytes, 0);
         LlvmValueHandle newClosure = EmitAllocDynamic(state, closureSize);
         StoreMemory(state, newClosure, 0, code, "copy_closure_store_code");
         StoreMemory(state, newClosure, 8, newEnvPtr, "copy_closure_store_env");
         StoreMemory(state, newClosure, 16, envSize, "copy_closure_store_env_size");
+        StoreMemory(state, newClosure, 24, dropper, "copy_closure_store_dropper");
 
         return newClosure;
     }

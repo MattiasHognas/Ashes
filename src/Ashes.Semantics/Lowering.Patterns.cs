@@ -15,6 +15,17 @@ public sealed partial class Lowering
             && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
                 ? loweredMatchValue
                 : LowerExpr(match.Value);
+
+        // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
+        // arm's pattern bindings, which take over its cleanup. Mark the binding moved so its own
+        // recursive drop is skipped — otherwise the same resource would be closed twice (once by
+        // the extracted binding, once by the aggregate's recursive Drop).
+        if (match.Value is Expr.Var scrutineeVar
+            && LookupOwnedValue(scrutineeVar.Name) is { IsDropped: false } scrutineeInfo
+            && (scrutineeInfo.IsResource || scrutineeInfo.IsResourceBearing))
+        {
+            scrutineeInfo.IsDropped = true;
+        }
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();
         var endLabel = NewLabel("match_end");
@@ -26,13 +37,20 @@ public sealed partial class Lowering
         ValidateReachableMatchArms(match.Cases);
         var hasAnyTuplePattern = match.Cases.Any(c => c.Pattern is Pattern.Tuple);
 
+        // In-place reuse (#2): if we're matching a linear (uniquely-owned, deep-copied-at-entry)
+        // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
+        // arms that don't reference the accumulator again (so its cell is dead).
+        string? reuseScrutineeName = match.Value is Expr.Var rv && _linearReuseNames.Contains(rv.Name)
+            ? rv.Name
+            : null;
+
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos);
+            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
         }
         else
         {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos);
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
         }
 
         Emit(new IrInst.Label(noMatchLabel));
@@ -53,7 +71,7 @@ public sealed partial class Lowering
     /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
     /// patterns, and nested refinements.
     /// </summary>
-    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos)
+    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null)
     {
         for (int i = 0; i < match.Cases.Count; i++)
         {
@@ -92,10 +110,28 @@ public sealed partial class Lowering
                 Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
             }
 
+            // In-place reuse (#2): publish the dead accumulator node as a reuse token for a same-arity
+            // constructor in this arm's body. Only when the body doesn't reference the accumulator
+            // again and there is no guard re-test below (payload fields are bound into temps above).
+            int reuseTokensBefore = _reuseTokens.Count;
+            if (reuseScrutineeName is not null
+                && match.Cases[i].Pattern is Pattern.Constructor reuseCtorPat
+                && reuseCtorPat.Patterns.Count > 0
+                && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
+            {
+                _reuseTokens.Add((valueTemp, reuseCtorPat.Patterns.Count));
+            }
+
             // Each case body IS in tail position (if the match itself is)
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
             var (bodyTemp, bodyType) = LowerExpr(match.Cases[i].Body);
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+            // Drop any reuse token this arm published that the body didn't consume.
+            if (_reuseTokens.Count > reuseTokensBefore)
+            {
+                _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
+            }
 
             using (PushDiagnosticContext($"in match arm {i + 1}"))
             {
@@ -273,7 +309,8 @@ public sealed partial class Lowering
         int resultSlot,
         string endLabel,
         string noMatchLabel,
-        bool savedTailPos)
+        bool savedTailPos,
+        string? reuseScrutineeName = null)
     {
         int tagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
@@ -309,10 +346,28 @@ public sealed partial class Lowering
 
             TrackOwnedBindingsInPattern(patternBindings);
 
+            // In-place reuse (#2): make this arm's dead accumulator node available as a reuse token
+            // for a same-arity constructor in the body. Only when the body doesn't reference the
+            // accumulator again (cell is dead) — payload fields are already bound into temps above.
+            int reuseTokensBefore = _reuseTokens.Count;
+            if (reuseScrutineeName is not null
+                && cases[i].Pattern is Pattern.Constructor
+                && plan[i].Ctor.Arity > 0
+                && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
+            {
+                _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
+            }
+
             // Each case body IS in tail position (if the match itself is).
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
             var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+            // Drop any reuse token this arm published that the body didn't consume.
+            if (_reuseTokens.Count > reuseTokensBefore)
+            {
+                _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
+            }
 
             using (PushDiagnosticContext($"in match arm {i + 1}"))
             {

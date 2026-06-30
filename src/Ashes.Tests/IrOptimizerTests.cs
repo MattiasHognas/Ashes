@@ -404,8 +404,33 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Drop_elision_removes_non_resource_function_drop()
+    public void Drop_elision_removes_plain_non_resource_drop()
     {
+        // String/List/Tuple/ADT drops are arena-reclaimed no-ops and are still elided.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.Drop(1, "String"),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Drop)
+            .ShouldBeFalse("String Drop should be elided — not a resource type, no cleanup behavior.");
+    }
+
+    [Test]
+    public void Drop_elision_preserves_function_drop()
+    {
+        // Closure (Function) drops must NOT be elided: a closure may carry a resource dropper at
+        // closure+24 (set when it captured-and-escaped a resource).
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 0),   // dummy closure ptr
@@ -421,8 +446,8 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
-            .ShouldBeFalse("Function Drop should be elided — not a resource type.");
+            .Any(i => i is IrInst.Drop { TypeName: "Function" })
+            .ShouldBeTrue("Function Drop must be preserved — a closure may carry a resource dropper.");
     }
 
     [Test]

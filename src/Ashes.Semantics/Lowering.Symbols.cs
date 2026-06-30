@@ -585,13 +585,21 @@ public sealed partial class Lowering
 
             var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
             Unify(parameterType, argType);
+            MarkResourceArgMoved(args[i]);
         }
 
         int tag = GetConstructorTag(ctor);
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
-        if (stackAllocate)
+        if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
+        {
+            // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
+            // deconstructed from) instead of bump-allocating. The args were already read into temps
+            // above, so overwriting the cell now is safe.
+            Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
+        }
+        else if (stackAllocate)
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
         }

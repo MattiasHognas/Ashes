@@ -1,6 +1,54 @@
 # Deterministic Resource Safety — Findings & Plan
 
-Status: **Proposed (analysis + plan; awaiting sign-off before implementation).**
+Status: **All known gaps (A, B, C, D) fixed & verified, including deterministic close of escaped resources (2026-06-30).**
+
+> **Deterministic close of escaped resources — DONE.** A closure now carries a dropper at
+> `closure+24` (32-byte closure layout). When a resource is captured by a closure that escapes its
+> defining scope (so the resource is solely the closure's — `SkipDropsForResourcesEscapingViaResult`
+> only fires there), the scope moves the resource into the closure and attaches a synthesized dropper
+> (`SynthesizeClosureResourceDropper` + `LoadFuncAddr`). When the closure is dropped — at its scope
+> exit or the TCO back-edge — `EmitDrop "Function"` invokes the dropper to close the resource. So an
+> escaped resource is closed deterministically at the closure's death rather than leaking to program
+> exit. Aggregates were already deterministic (recursive Drop fires when the resource-bearing binding
+> is dropped). Drop elision keeps `Function` drops (they may carry a dropper). Verified: an escaping
+> closure over a handle, recreated each loop iteration, stays fd-bounded under `ulimit -n 64`
+> (`closleak`); e2e `resource_closure_deterministic_close.ash`.
+
+> **Gap A (resource nested in an aggregate) is now FIXED too**, via an affine ownership model:
+> - **Recursive `Drop` for resource-bearing aggregates** (`EmitResourceBearingDrop` /
+>   `EmitAdtResourceDrop` / `EmitListResourceDrop` in Lowering.Ownership.cs, driven by
+>   `IsResourceBearing`): a still-owned `Result(_, FileHandle)`, `Some(Socket)`, tuple/list of
+>   resources, etc. is walked and its nested resources closed (also at the TCO back-edge).
+> - **Move-on-destructure** (`LowerMatch`): matching a resource-bearing binding consumes it (nested
+>   resource moves to the arm's pattern bindings), so its own recursive Drop is skipped — no
+>   double-close.
+> - **Move-on-construction** (`MarkResourceArgMoved` at constructor/tuple/cons sites): storing a
+>   resource into an aggregate moves ownership into it, so a returned `Some(handle)` keeps the
+>   handle open for its consumer (aggregate analog of Gap B) and an aggregate dropped later isn't a
+>   double-close. Tests: `resource_aggregate_escape.ash`; verified `let _r = open()` non-destructured
+>   stays bounded under `ulimit -n 64`, and `let r = open() in match r` is a single close.
+>
+> Remaining refinement: escaped resources (Gap B closures, aggregates returned past their scope) are
+> released at **program exit** rather than deterministically when their carrier dies — full
+> deterministic close needs carrier-drops-its-captured-resource lifetime tracking. Everything below
+> is the original audit + plan.
+
+> **Progress (the common/impactful patterns now work):**
+> - **Gap C (`Process` undropped) — FIXED** (Phase 0; `EmitProcessDrop`).
+> - **Gap D (resource bound in a TCO tail-call arm leaks) — FIXED.** The most impactful gap — the
+>   loop-over-files/connections pattern. Back-edge now closes iteration-local resources
+>   (`EmitTcoBackEdgeResourceDrops`); a resource passed as a self-call arg moves to the next
+>   iteration and is skipped. Test `tests/resource_tco_loop_cleanup.ash`.
+> - **Gap B (resource captured by an escaping closure → use-after-close) — FIXED.** The owning scope
+>   no longer closes a resource its result closure captures (`SkipDropsForResourcesEscapingViaResult`
+>   + `_closureResourceCaptures`); correct results, resource released at program exit. Test
+>   `tests/resource_capture_escape.ash`.
+> - **Gap A (resource nested in a non-destructured aggregate, e.g. `let _r = File.open(p)`) —
+>   REMAINING.** Rare (binding a resource result and ignoring it / collections of resources). Needs
+>   recursive `Drop` for resource-bearing aggregates **and** move-on-store/destructure to avoid a
+>   double-close (closing a reused fd is harmful), so it wants the careful flow-sensitive ownership
+>   analysis the rest of this plan describes — the same engine [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)
+>   (#2) needs. Deliberately not rushed.
 
 Ashes Ground Rule 6 promises *"all resource and memory management is deterministic and
 **compile-time verified**"* with *"no user-visible `Drop`"* (Ground Rule 4). This doc audits how
@@ -58,6 +106,14 @@ Reproduced: returns `read-err` instead of the file's first 5 bytes. **No diagnos
 `CheckUseAfterDrop` only inspects direct `Expr.Var` uses in the same scope, not captures/returns.
 This is an unsound use-after-close.
 
+### Gap D — a resource bound in a TCO tail-call arm leaks (found & fixed 2026-06-30)
+The per-arm `Drop` is emitted *after* the tail-call back-edge jump, so for a loop like
+`let rec loop n = … match File.open(p) with Ok(h) -> loop(n-1)` the close becomes dead code and
+the fd leaks every iteration (5000 opens exhaust a low `ulimit -n`). This is the common
+loop-over-files/connections pattern — the most impactful resource gap. **Fixed:** the back-edge now
+closes iteration-local resources before resetting the arena and jumping (a resource *passed* as a
+self-call argument moves to the next iteration and is skipped). See `EmitTcoBackEdgeResourceDrops`.
+
 ### Gap C — `Process` has no cleanup at all
 `EmitDrop` handles `FileHandle`/`Socket`/`TlsSocket` but **not `Process`** — it falls through to the
 no-op default. A spawned process that is never `waitForExit`'d is never reaped (zombie) and its
@@ -88,9 +144,12 @@ flow analysis [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md) (#2 in-place reuse) needs t
 Make resource ownership a **static, flow-sensitive, affine** property, verified at compile time;
 keep cleanup fully automatic (no surface `Drop`).
 
-**Phase 0 — close the trivial hole.** Add a `Process` case to `EmitDrop` (waitpid-reap + close the
-pipe fds), mirroring the socket cases. Add a `process_drop_reaps_zombie` test. *(Low risk, isolated;
-do first.)*
+**Phase 0 — close the trivial hole. ✅ DONE (2026-06-30).** `EmitDrop` now has a `Process` case
+(`EmitProcessDrop`): closes the three pipe fds and reaps the child (non-blocking `waitpid(WNOHANG)`
+on Linux so a still-running child never stalls the drop; `CloseHandle` on Windows). `Process` was
+already tracked as a resource type — only the backend cleanup was missing. Test:
+`tests/process_drop_releases_fds.ash` (drop-path smoke at scale); fd release verified directly under
+`ulimit -n 64`. Tree green.
 
 **Phase 1 — ownership-aware `Drop` for aggregates (fix Gap A).**
 - Mark any aggregate type (ADT/tuple/list/closure-env) that **transitively contains a resource type**

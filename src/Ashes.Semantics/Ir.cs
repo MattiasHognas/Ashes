@@ -87,8 +87,13 @@ public abstract record IrInst
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
 
-    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 24 bytes: {code, env, env_size}
-    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 24 bytes: {code, env, env_size}
+    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
+    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
+
+    /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
+    /// into an escaping closure's dropper slot, so a resource a closure captured is closed
+    /// deterministically when the closure is dropped.</summary>
+    public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
 
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
@@ -98,6 +103,15 @@ public abstract record IrInst
     // AllocAdt allocates (1 + FieldCount) * 8 bytes and stores Tag at offset 0.
     public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
+
+    /// <summary>
+    /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
+    /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
+    /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
+    /// a linear TCO accumulator was just deconstructed from. The fields are written afterwards exactly
+    /// like <see cref="AllocAdt"/>.
+    /// </summary>
+    public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // GetAdtTag: Target = *(Ptr + 0)
@@ -344,6 +358,30 @@ public abstract record IrInst
     /// Used by Ashes.Async.run to drive a coroutine outside an async context.
     /// </summary>
     public sealed record RunTask(int Target, int TaskTemp) : IrInst;
+
+    /// <summary>
+    /// Structured parallelism (Ashes.Parallel.both). Spawns a worker thread to evaluate the
+    /// <c>RightClosureTemp</c> thunk (applied to Unit) in its own per-thread arena, or — when
+    /// the worker budget is exhausted — evaluates it inline. <c>DescTarget</c> receives a
+    /// pointer to a heap-allocated task descriptor used by the matching <see cref="ParallelJoin"/>
+    /// and <see cref="ParallelCleanup"/>. Only emitted at concrete result types (see
+    /// LowerParallelBoth); polymorphic <c>both</c> lowers to a sequential pair instead.
+    /// </summary>
+    public sealed record ParallelFork(int DescTarget, int RightClosureTemp) : IrInst;
+
+    /// <summary>
+    /// Waits for the worker spawned by the matching <see cref="ParallelFork"/> to finish and
+    /// yields its raw result pointer (in the worker's arena). The caller deep-copies that
+    /// result into the parent arena before <see cref="ParallelCleanup"/> frees the worker arena.
+    /// </summary>
+    public sealed record ParallelJoin(int ResultTarget, int DescTemp) : IrInst;
+
+    /// <summary>
+    /// Releases the worker resources (stack, TCB, and arena chunks) for a finished
+    /// <see cref="ParallelFork"/>; a no-op for the inline (un-spawned) case. Must run after the
+    /// worker result has been deep-copied out.
+    /// </summary>
+    public sealed record ParallelCleanup(int DescTemp) : IrInst;
 
     /// <summary>
     /// State machine suspend point: saves live variables to the state struct,

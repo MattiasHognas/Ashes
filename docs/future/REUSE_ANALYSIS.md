@@ -1,6 +1,111 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **Proposed (awaiting sign-off before implementation).**
+Status: **In progress — direct-accumulator in-place reuse landed & verified; `Map.set`-group specialization (indirect reuse) is the remaining work. 2026-06-30.**
+
+> **DONE — direct-accumulator reuse.** When a TCO loop body directly `match`es a recursive-ADT
+> accumulator and rebuilds it with the same constructor, the deconstructed node is now overwritten
+> in place (`AllocReusing`) instead of reallocated. Soundness without runtime refcounting comes from
+> a one-time **defensive deep copy of the accumulator at loop entry** (makes the loop-local
+> accumulator uniquely owned regardless of caller sharing) + the reuse only firing in arms that
+> don't reference the accumulator again (cell is dead). Pieces:
+> - `IrInst.AllocReusing` + `EmitAllocReusing` (overwrite tag, no bump alloc).
+> - `_linearReuseNames` / `_reuseTokens` in `Lowering`; token produced in both match-arm lowering
+>   paths (`LowerMatchArmsLinear` / `LowerMatchArmsViaTagSwitch`) for a linear scrutinee, consumed by
+>   a same-arity constructor in `LowerConstructorApplication` (`TryConsumeReuseToken`).
+> - Eligibility (`CollectCtorMatchedScrutinees`) + deferred defensive copy spliced in at loop entry
+>   (emitted after the body so HM has resolved the accumulator type; type taken from the matched
+>   constructor). Restricted to non-copy-out-able (pointer-bearing/recursive) ADTs — copy-type ADTs
+>   are already bounded by the existing shallow copy-out. Per-frame save/restore in `LowerLambdaCore`.
+> - Verified: a `Node`-tree fold runs 50M iterations in ~4 MB constant memory (≈1.6 GB without
+>   reuse), correct results; a caller-shared initial accumulator is **not** corrupted
+>   (`tests/reuse_inplace_accumulator.ash`). Whole suite green: 1307 unit + 354 e2e.
+>
+> **DONE — reuse through non-recursive helper calls.** A rebuild via a top-level helper
+> (`let mk l v r = Node(l)(v)(r)` then `loop(n-1)(mk(l)(v+n)(r))`) now reuses too: inside a reuse arm
+> (a live token) a *saturated* call to a non-recursive top-level function is **inlined**, so its
+> constructor becomes local and consumes the token. That discriminator dropped from ~240 MB to ~7 MB
+> at 2M iters, correct, caller-shared accumulator uncorrupted (`tests/reuse_inplace_helper.ash`).
+> Pieces: `_inlinableFunctions` registry (non-recursive top-level `let` lambdas), `InlineCall`
+> (args evaluated in the caller scope, body lowered in place), gated on a live token; `_shadowedInlinables`
+> (skips a rebound name, but not a function's own definition) + an in-progress guard prevent
+> mis-inlining and inline cycles.
+>
+> **REMAINING — indirect reuse where the accumulator is matched inside a *recursive* callee (the
+> 1BRC `Map.set` fold).** `loop(…)(Map.set(…)(acc))`: `acc` is never matched in the loop body — it's
+> passed to `set`, whose nested `let rec go` matches it. `go` is recursive, so it can't be inlined;
+> it must be **specialized** into `go$reuse` where the `map` param (and the `left`/`right` subtrees it
+> destructures) are linear, recursive `go` calls are redirected to `go$reuse`, and the helper rebuilds
+> (`makeNode`/`balance`) reuse via the existing inlining. Plus a new trigger: defensive-copy an
+> accumulator that is *passed to* such a function (not just one matched directly), and
+> intermediate-value linearity so `balance`'s `normalized = makeNode(…)` reuses the node `makeNode`
+> just built (otherwise that node leaks on the new map's path and the arena still can't reset).
+> Obstacles: `go` is nested inside `set` (AST access), and recursion-aware linear specialization is
+> corruption-prone. The direct + helper machinery is the foundation.
+>
+> **Obstacles confirmed this session (why it's a multi-day effort, not an afternoon):**
+> 1. **No function-AST registry.** Top-level / stdlib function bodies are lowered and discarded;
+>    generating a `$reuse` variant means re-lowering the callee's AST, so a name→AST map of top-level
+>    `let`s (user + embedded stdlib) must be built and threaded into lowering first.
+> 2. **Curried closure-application calls.** `mk(l)(v)(r)` lowers to nested `CallClosure`s, not a
+>    direct call. Threading a reuse token into the callee means recognising the *saturated* call and
+>    emitting a direct call to the `$reuse` variant with the token as an extra argument — a new
+>    special-case call path, plus the variant generation, plus call rewiring.
+> 3. **Intermediate-value linearity (the real killer for bounded `Map.set`).** Each rebuild level is
+>    `balance(makeNode(go(left))(key)(value)(right))`: `makeNode` builds a node that `balance`
+>    immediately matches and supersedes with its own `normalized = makeNode(…)`. For *constant*
+>    memory both must reuse — the cell must flow old-node → `makeNode` → `normalized`. Reusing only
+>    the matched accumulator node (what the direct-case machinery does) still leaves the `normalized`
+>    + rotation nodes as fresh allocations on the new map's path, so the arena still can't reset →
+>    still O(log K)/set leaked. This needs tracking that a *freshly-built, used-once, then-matched*
+>    value is unique (local linearity), in addition to the accumulator linearity.
+> 4. **Recursive specialization through `balance`/`rotate`.** `set$reuse` → `makeNode$reuse`,
+>    `balance$reuse` → `rotateLeft$reuse`/`rotateRight$reuse`/`makeNode$reuse`, each threading tokens
+>    for the dead nodes they match. A single wrong token along a rebalancing path is silent
+>    use-after-reuse corruption that is hard to exhaustively stress-test.
+
+> **What's done:** the `IrInst.AllocReusing(Target, Tag, FieldCount, TokenTemp)` primitive +
+> backend (`EmitAllocReusing`: overwrite the dead cell's tag, no bump alloc) + optimizer wiring.
+> This is the "write into the reuse token" half of Perceus. Unwired into lowering yet — it needs
+> the analysis below to know *when* a cell is a safe token.
+>
+> **The real blocker (worked out this session):** reuse is only sound if the matched cell is
+> **uniquely owned and dead**. Ashes forbids runtime refcounting (Ground Rule 6), so uniqueness
+> must be **compile-time**. The hard fact: in `loop(Map.set(…)(acc))`, `acc` is *not* provably
+> unique — the caller of `loop` may still hold the initial map (`let m = … in loop(m); use m`),
+> so iteration 1's `acc` can be shared. Reusing it would corrupt the caller's `m`. A purely local
+> "`acc` is dead after this call" check is unsound (it can't see the caller's sharing).
+>
+> **The sound design (the achievable path):**
+> 1. **Defensive copy at loop entry.** Deep-copy the initial accumulator *once* before the loop
+>    body label (O(K) once, via the existing `EmitDeepCopy`). Now the loop's accumulator region is
+>    unique regardless of the caller — this is what makes per-iteration reuse sound.
+> 2. **Reuse transformation.** In a function body, a `match v with Ctor(fields) -> arm` where `v`
+>    is dead in `arm` (not in `FreeVars(arm)`) and `arm` builds a same-arity constructor ⇒ emit
+>    `AllocReusing(v's cell)` for that construction (the token-availability dataflow). This makes
+>    `Map.set`'s `match map … makeNode(…)` reuse the node it just deconstructed.
+> 3. **Specialization (the substantial interprocedural part).** Because the transformed body
+>    *mutates* its input, it's only safe for unique callers. Clone the `Map.set`/`balance`/`rotate`/
+>    `makeNode`/`rotateLeft`/`rotateRight` group into `…$reuse` variants; the loop (whose accumulator
+>    is unique by step 1) calls `set$reuse`, the recursion/helpers call each other's `$reuse`
+>    variants, and ordinary callers keep calling the normal (allocating) versions. The reuse token
+>    must thread from `set$reuse`'s match into `makeNode$reuse`'s construction (it's passed in).
+> 4. **Accumulator uniqueness fixpoint.** The loop accumulator stays unique because it starts unique
+>    (step 1) and `set$reuse` returns unique — so no per-iteration copy is needed; result: O(K) once
+>    + O(1)/iteration. Bounded **and** fast.
+>
+> This is genuine Perceus-without-RC. Step 3 (linearity-driven specialization of a recursive
+> function group with reuse-token threading) is the large, corruption-prone piece and is the right
+> place to resume — gated behind a reuse-correctness + constant-memory + shared-accumulator-still-
+> -correct test trio. (The earlier naive deep-copy-in-the-two-pass fallback was tried and segfaults:
+> the two-pass copies each arg up to `[C1, C1+K]` then down to `[W, W+K]`, but a `Map.set` iteration
+> allocates only O(log K) nodes so `C1 − W ≪ K` and the down-copy clobbers the up-copy mid-walk — so
+> a deep-copy fallback would instead need a separate scratch arena.)
+>
+> ---
+>
+> Original design below.
+
+Status (original): **Proposed (awaiting sign-off before implementation).**
 
 Fixes FLAWS.md #2 (the hot-loop arena leak) and the O(1) half of #3, **without any new
 user-visible syntax** and without violating the Ground Rules: user code stays pure and
