@@ -123,6 +123,12 @@ public sealed partial class Lowering
     // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
     private bool _inSpecialization;
 
+    // Temps holding a value built by in-place reuse (an AllocReusing result) — already below the
+    // watermark and used linearly. When such a value is the argument to an inlined helper, the
+    // helper's parameter is also linear, so a match-then-rebuild on it (e.g. balance's
+    // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
+    private readonly HashSet<int> _reuseResultTemps = new();
+
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -2563,10 +2569,12 @@ public sealed partial class Lowering
         var savedReuseTokens = new List<(int, int)>(_reuseTokens);
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
+        var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
+        _reuseResultTemps.Clear();
 
         // new function state
         _inst.Clear();
@@ -2869,6 +2877,8 @@ public sealed partial class Lowering
         foreach (var n in savedSpecAccumulators) _linearSpecializationAccumulators.Add(n);
         _resetSafeAccumulators.Clear();
         foreach (var n in savedResetSafe) _resetSafeAccumulators.Add(n);
+        _reuseResultTemps.Clear();
+        foreach (var t in savedReuseResultTemps) _reuseResultTemps.Add(t);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(savedReuseTokens);
 
@@ -4362,6 +4372,9 @@ public sealed partial class Lowering
     {
         var argSlots = new int[paramNames.Count];
         var argTypes = new TypeRef[paramNames.Count];
+        // Params whose argument was built by in-place reuse are themselves linear: a match-then-rebuild
+        // on them in the helper body reuses the same cell (intermediate-value linearity).
+        var linearParams = new List<string>();
         for (int i = 0; i < paramNames.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
@@ -4369,6 +4382,10 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(slot, argTemp));
             argSlots[i] = slot;
             argTypes[i] = argType;
+            if (_reuseResultTemps.Contains(argTemp) && !_linearReuseNames.Contains(paramNames[i]))
+            {
+                linearParams.Add(paramNames[i]);
+            }
         }
 
         var inlineScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
@@ -4379,7 +4396,9 @@ public sealed partial class Lowering
 
         _scopes.Push(inlineScope);
         _inliningInProgress.Add(fnName);
+        foreach (var p in linearParams) _linearReuseNames.Add(p);
         var result = LowerExpr(body);
+        foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
         return result;

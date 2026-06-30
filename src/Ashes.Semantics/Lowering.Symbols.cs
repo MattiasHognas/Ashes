@@ -532,6 +532,7 @@ public sealed partial class Lowering
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
             Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp));
+            _reuseResultTemps.Add(ptrTemp);
         }
         else if (stackAllocate)
         {
@@ -604,6 +605,7 @@ public sealed partial class Lowering
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // above, so overwriting the cell now is safe.
             Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
+            _reuseResultTemps.Add(ptrTemp);
         }
         else if (stackAllocate)
         {
