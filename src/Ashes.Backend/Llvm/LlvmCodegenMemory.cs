@@ -1697,28 +1697,9 @@ internal static partial class LlvmCodegen
         StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
 
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
-        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx");
-        LlvmApi.BuildStore(builder, zero, idxSlot);
-
-        var copyLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_loop");
-        var copyBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_body");
-        var copyDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_done");
-        LlvmApi.BuildBr(builder, copyLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyLoopBlock);
-        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_idx_value");
-        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, idx, normalizedLen, prefix + "_copy_done_check");
-        LlvmApi.BuildCondBr(builder, done, copyDoneBlock, copyBodyBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyBodyBlock);
-        LlvmValueHandle srcByte = LoadByteAt(state, bytesPtr, idx, prefix + "_src_byte");
-        LlvmValueHandle destBytePtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [idx], prefix + "_dest_byte_ptr");
-        LlvmApi.BuildStore(builder, srcByte, destBytePtr);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), idxSlot);
-        LlvmApi.BuildBr(builder, copyLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyDoneBlock);
+        // Bulk copy via llvm.memcpy (vectorized) rather than a byte-by-byte loop — this slice path is
+        // hot (uncons/substring) and the per-byte loop was a major cost.
+        EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
         return stringRef;
     }
 
