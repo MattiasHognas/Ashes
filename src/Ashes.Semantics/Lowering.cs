@@ -16,6 +16,31 @@ public sealed partial class Lowering
 
     private readonly List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
+
+    // '+' overload resolution. '+' is Int+Int / Float+Float / Str+Str, but the IR op (AddInt vs
+    // ConcatStr) must be chosen at lowering time. When both operands are still type variables we
+    // can't choose yet, so we emit a provisional AddInt, record it here keyed by object identity,
+    // and patch it to ConcatStr/AddFloat once inference resolves the operand type
+    // (ResolveDeferredAdds). The shared operand var is added to _addConstrainedTvars so it stays
+    // monomorphic (not generalized) — that is what lets a later use resolve it.
+    private bool _hasDeferredAdds;
+    private readonly List<TypeRef.TVar> _addConstrainedVars = new();
+
+    // Current representative ids of the '+'-constrained type vars (a var may have been unified since
+    // it was recorded, so resolve through the union-find each time).
+    private HashSet<int> ConstrainedAddVarRepIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var v in _addConstrainedVars)
+        {
+            if (Prune(v) is TypeRef.TVar rep)
+            {
+                ids.Add(rep.Id);
+            }
+        }
+
+        return ids;
+    }
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
@@ -872,8 +897,13 @@ public sealed partial class Lowering
     {
         // Entry function lowering (no env/arg params)
         var (resultTemp, resultType) = LowerExpr(expr);
-        LastLoweredType = Prune(resultType);
         Emit(new IrInst.Return(resultTemp));
+
+        ResolveDeferredAdds();
+
+        // After ResolveDeferredAdds, an unresolved '+' operand var has been defaulted to Int, so the
+        // reported result type (e.g. the REPL's `add : Int -> Int -> Int`) is concrete.
+        LastLoweredType = Prune(resultType);
 
         var entry = new IrFunction(
             Label: "_start_main",
@@ -898,6 +928,53 @@ public sealed partial class Lowering
             UsesClosures: _usesClosures,
             UsesAsync: _usesAsync
         );
+    }
+
+    // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
+    // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
+    // Int. Then each provisional add becomes ConcatStr (Str), AddFloat (Float), or stays AddInt.
+    private void ResolveDeferredAdds()
+    {
+        if (!_hasDeferredAdds)
+        {
+            return;
+        }
+
+        ResolveDeferredAddsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredAddsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredAddsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.AddInt { DeferredType: { } operandType } add)
+            {
+                continue;
+            }
+
+            // An operand var still unbound (e.g. an unused generic '+') defaults to Int.
+            if (Prune(operandType) is TypeRef.TVar)
+            {
+                Unify(operandType, new TypeRef.TInt());
+            }
+
+            instructions[i] = Prune(operandType) switch
+            {
+                TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
+                TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
+                _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
+            };
+        }
+    }
+
+    private IrInst SetUsesConcatStr(IrInst inst)
+    {
+        _usesConcatStr = true;
+        return inst;
     }
 
     private (int Temp, TypeRef Type) LowerExpr(Expr e)
@@ -1305,6 +1382,24 @@ public sealed partial class Lowering
 
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
+
+        // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
+        // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
+        // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
+        // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
+        // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
+        if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
+        {
+            Unify(leftPruned, rightPruned);
+            if (Prune(leftPruned) is TypeRef.TVar sharedVar)
+            {
+                _addConstrainedVars.Add(sharedVar);
+                _hasDeferredAdds = true;
+                int deferredTarget = NewTemp();
+                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar));
+                return (deferredTarget, sharedVar);
+            }
+        }
 
         // Resolve type variables: prefer the other side's concrete type, defaulting to Int
         if (leftPruned is TypeRef.TVar)
@@ -2941,8 +3036,16 @@ public sealed partial class Lowering
             current = Prune(fun.Ret);
         }
 
-        if (current is TypeRef.TVar)
+        if (current is TypeRef.TVar resultVar)
         {
+            // A '+'-constrained var is Int/Float/Str (a scalar, never a function), so the arity is
+            // exact even though it is not yet a concrete type. This keeps oversaturated-call
+            // detection working for functions like `add a b = a + b`.
+            if (ConstrainedAddVarRepIds().Contains(resultVar.Id))
+            {
+                return true;
+            }
+
             arity = 0;
             return false;
         }
