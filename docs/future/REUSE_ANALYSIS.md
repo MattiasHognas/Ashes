@@ -1,6 +1,38 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **In progress — direct-accumulator in-place reuse landed & verified; `Map.set`-group specialization (indirect reuse) is the remaining work. 2026-06-30.**
+Status: **In progress — direct + helper + recursive-specialization reuse mechanisms landed & sound; the per-iteration arena reset for linear accumulators (full constant-memory bounding) is the remaining phase-5 work. 2026-06-30.**
+
+> **DONE — recursive-function specialization (sound mechanism).** Indirect reuse where the
+> accumulator is matched inside a *recursive* callee. For `loop(…)(f(acc))` with a single-parameter
+> recursive top-level `f`: the accumulator is deep-copied once at loop entry, an `f__reuse` clone is
+> generated whose parameter is a linear reuse root (its match-then-rebuild emits `AllocReusing`) and
+> whose self-calls recurse into `f__reuse`, and the call is routed there. Pieces:
+> `_specializableFunctions` registry; `GetOrCreateReuseSpecialization` (re-lowers the body via
+> `LowerLambdaCore` with a forced label + `selfName` so recursion resolves to `Binding.Self(f__reuse)`,
+> and `_specializingLinearParam` injects the param into `_linearReuseNames`);
+> `CollectSpecializableCallArgs` + a loop-entry defensive-copy trigger for accumulators *passed to*
+> such functions; `LowerReuseSpecializedCall`. Verified sound: correct results, node rewrites are
+> in place (`AllocReusing` fires, recursion redirects), and a caller-shared accumulator is **not**
+> corrupted (`tests/reuse_recursive_specialization.ash`). Suite green.
+>
+> **REMAINING — the per-iteration arena reset (full constant-memory bounding).** The specialization
+> is semantically in-place but **not yet memory-bounded**: each loop iteration's recursion allocates
+> scaffolding (env `Alloc`s + reconstructed closures for the no-capture self-calls) and any nullary
+> (`Leaf`) cells, none reclaimed because the loop can't reset the arena for a pointer-bearing
+> accumulator. Making it bounded needs:
+> 1. **Nullary reuse** so `Leaf -> Leaf` reuses the matched cell (keeps the whole result below the
+>    watermark) — relax the `Arity > 0` gate on the token push.
+> 2. **A loop back-edge arena reset for a linear accumulator** — the accumulator is reused in place
+>    below the watermark, so a plain reset reclaims the iteration's scaffolding and keeps it.
+> 3. **The soundness gate (the hard part):** the reset is only safe if every value *returned* by
+>    `f__reuse` is below the watermark — i.e. an `AllocReusing` result, the scrutinee, or a recursive
+>    `f__reuse` result — and never a fresh `AllocAdt`/`Alloc`. This is a **return-value reuse
+>    analysis**, not a simple "no fresh allocation" check: the recursion's env `Alloc`s + closures are
+>    scaffolding (not returned, must be reclaimed) and must be excluded, so the all-allocations
+>    counting that would be easy is wrong. A wrong gate here resets the arena out from under a live
+>    result → silent corruption. (Optionally, eliminating the no-capture self-recursion's closure
+>    reconstruction — a static/hoisted closure — removes most of the scaffolding and shrinks the leak
+>    even before the reset.)
 
 > **DONE — direct-accumulator reuse.** When a TCO loop body directly `match`es a recursive-ADT
 > accumulator and rebuilds it with the same constructor, the deconstructed node is now overwritten
