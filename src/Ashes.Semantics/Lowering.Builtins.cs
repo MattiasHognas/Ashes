@@ -250,6 +250,53 @@ public sealed partial class Lowering
         return (EmitDeepCopy(temp, pruned), pruned);
     }
 
+    // Ashes.Parallel.both : forall a b. (Unit -> a) -> (Unit -> b) -> (a, b)
+    // Evaluates left(Unit) and right(Unit) and returns the pair. Purity makes the result
+    // order-independent, so it is identical to the sequential pair regardless of which thunk
+    // finishes first. At concrete result types `right` may run on a worker thread; abstract
+    // (polymorphic) result types always run sequentially (a correct fallback) — see
+    // LowerParallelBoth and docs/future/STRUCTURED_PARALLELISM.md.
+    private Binding.Intrinsic CreateParallelBothBinding()
+    {
+        var a = (TypeRef.TVar)NewTypeVar();
+        var b = (TypeRef.TVar)NewTypeVar();
+        var unit = _resolvedTypes["Unit"];
+        var leftFn = new TypeRef.TFun(unit, a);
+        var rightFn = new TypeRef.TFun(unit, b);
+        var resultTuple = new TypeRef.TTuple([a, b]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.ParallelBoth,
+            new TypeScheme(
+                [new TypeVar(a.Id, "a"), new TypeVar(b.Id, "b")],
+                new TypeRef.TFun(leftFn, new TypeRef.TFun(rightFn, resultTuple))));
+    }
+
+    private (int, TypeRef) LowerParallelBoth(Expr leftThunk, Expr rightThunk)
+    {
+        var savedTailPos = _tcoCtx?.InTailPosition ?? false;
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+        var (leftTemp, leftType) = LowerExpr(leftThunk);
+        var (rightTemp, rightType) = LowerExpr(rightThunk);
+        var aType = Prune(leftType) is TypeRef.TFun leftFn ? Prune(leftFn.Ret) : NewTypeVar();
+        var bType = Prune(rightType) is TypeRef.TFun rightFn ? Prune(rightFn.Ret) : NewTypeVar();
+
+        int aTemp = NewTemp();
+        int bTemp = NewTemp();
+        var (leftUnit, _) = LowerUnitValue();
+        Emit(new IrInst.CallClosure(aTemp, leftTemp, leftUnit));
+        var (rightUnit, _) = LowerUnitValue();
+        Emit(new IrInst.CallClosure(bTemp, rightTemp, rightUnit));
+
+        int tupleTemp = NewTemp();
+        Emit(new IrInst.Alloc(tupleTemp, 16));
+        Emit(new IrInst.StoreMemOffset(tupleTemp, 0, aTemp));
+        Emit(new IrInst.StoreMemOffset(tupleTemp, 8, bTemp));
+
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        return (tupleTemp, new TypeRef.TTuple([aType, bType]));
+    }
+
     private (int, TypeRef) LowerFileWriteText(Expr pathArg, Expr textArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
@@ -658,6 +705,7 @@ public sealed partial class Lowering
 
     private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
     {
+        IntrinsicKind.ParallelBoth => 2,
         IntrinsicKind.FileWriteText => 2,
         IntrinsicKind.FileWriteBytes => 2,
         IntrinsicKind.BytesGet => 2,

@@ -62,6 +62,7 @@ public sealed partial class Lowering
         FileReadChunk,
         FileClose,
         InternalDeepCopy,
+        ParallelBoth,
         FileWriteText,
         FileExists,
         TextUncons,

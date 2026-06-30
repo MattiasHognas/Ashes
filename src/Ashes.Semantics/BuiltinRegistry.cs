@@ -24,6 +24,7 @@ public static class BuiltinRegistry
         FileReadChunk,
         FileClose,
         InternalDeepCopy,
+        ParallelBoth,
         TextUncons,
         TextParseInt,
         TextParseFloat,
@@ -141,7 +142,13 @@ public static class BuiltinRegistry
             ["Ashes.Parallel"] = new(
                 "Ashes.Parallel",
                 "Ashes.Semantics.StdLib.Ashes.Parallel.ash",
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    // Hybrid module: `both` is a compiler intrinsic (lowered at each call site so it
+                    // can deep-copy a worker's result at the concrete result type — see
+                    // STRUCTURED_PARALLELISM.md); `map`/`reduce`/helpers come from the embedded source.
+                    ["both"] = new("both", BuiltinValueKind.ParallelBoth, IsCallable: true, Arity: 2)
+                }),
             ["Ashes.Maybe"] = new(
                 "Ashes.Maybe",
                 "Ashes.Semantics.StdLib.Ashes.Maybe.ash",
