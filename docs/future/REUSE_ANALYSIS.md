@@ -1,5 +1,46 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
+> **Session update (2026-06-30, ownership-milestone attempt on the real stdlib `Ashes.Map`).** The
+> reuse machinery below was developed/tested against *alias-free user-written* set-analogs. The **real
+> stdlib `Ashes.Map.set` never actually triggered any of it** — four distinct blockers were found and
+> the first three fixed (WIP preserved in `git stash` on `1brc-perf`: *"WIP: stdlib Map.set in-place
+> reuse …"*). End state: stdlib `Map.set` in a reuse loop now **compiles and is memory-bounded
+> (~7 MB constant)** but the rebuild **miscompiles** (`out=1`, segfault at scale) — so the WIP was
+> stashed and the tree kept green. The blockers, in the order hit:
+>
+> 1. **Registration never saw stdlib functions.** The import stitcher wraps every module function in an
+>    intra-module alias prefix — `let makeNode = Ashes_Map_makeNode in let balance = … in <lambda>` — so
+>    `RegisterInlinableFunctions` sees the value as an `Expr.Let` chain, not a `Lambda`, and registers
+>    nothing. Fix: `StripModuleAliasPrefix` peels the `let alias = Var(target)` prefix and substitutes
+>    `alias → target` throughout the body (a capture-avoiding `SubstituteVars` mirroring `FreeVars`), so
+>    the registry stores a clean lambda referencing top-level stitched names. (Verified: `Ashes_Map_set`
+>    becomes specializable, `makeNode`/`balance`/`rotate*` become inlinable.)
+> 2. **The call-site trigger only matched `Expr.Var`.** `loop(…)(Ashes.Map.set(…)(m))` uses a
+>    `QualifiedVar`. Fix: `ResolveSpecializableCalleeName` resolves `Var`/`QualifiedVar` → stitched name;
+>    used in `LowerCall`'s specialization trigger and `CollectSpecializableCallArgs`.
+> 3. **Every stdlib inlinable self-shadowed.** `isOwnDefinition` (LowerLet) required `let.Value is
+>    Expr.Lambda`, false for the alias-wrapped value, so the helper's own top-level decl marked it
+>    `_shadowedInlinables` for the whole program → inliner never fired. Fix: record the defining-let
+>    value object at registration (`_inlinableDefiningValues`) and match `isOwnDefinition` by reference
+>    identity. (After this, `makeNode`/`balance` inline correctly inside `set$reuse`.)
+> 4. **REMAINING — the rebuild corrupts.** With 1–3 fixed the spec fires, the `IsFullyReusing` gate
+>    returns true, and the loop resets the arena — but the map is **not** actually kept below the
+>    watermark: the output is `1` (only the last iteration survives, i.e. the whole map is reclaimed
+>    each iteration) and it segfaults at scale. This is the `balance`/`rotate` in-place rebuild +
+>    intermediate-value-linearity path (this doc's obstacles 3/4), now exercised for the first time by
+>    real `Map.set`; it produces `AllocAdt` (main-arena, above W) where it must produce `AllocReusing`
+>    (in place, below W) / `AllocAdtToSpace` (persistent), so the reset reclaims the live map. Needs the
+>    correctness debugging that obstacles 3/4 describe, gated behind the reuse-correct + constant-memory
+>    + shared-accumulator test trio. **Do not enable stdlib `Map.set` reuse until this is sound.**
+>
+> **The insert-path to-space (item below) was BUILT this session** and is sound infrastructure (it is
+> in the same stash): a second, never-reset bump arena (`IrInst.AllocAdtToSpace`, TCB offsets 24/32 on
+> linux-x64 / `__ashes_tospace_*` globals elsewhere, lazily initialized, parallel `EmitAlloc`/
+> `EmitHeapEnsureSpace`/`EmitHeapGrow` over a cursor/end pair) so a genuinely-new cell (no reuse token)
+> in a specialization survives the per-iteration reset. Validated *in isolation* on a synthetic
+> insert-or-update fold with a **custom** ADT map (constant ~5 MB, 1k→5M rows, correct) — it is the
+> blocker-4 rebuild path, not the to-space, that corrupts real `Map.set`.
+
 Status: **Largely complete. Direct + helper + recursive-specialization + the full `Map.set` _shape_ (multi-param / nested-`go` / helper-rebuilding / intermediate linearity) are landed, sound, and constant-memory bounded for pure-rewrite folds. The one remaining piece is the insert path of an insert-or-update `Map.set` (a fresh node for a new key lands above the watermark), which needs a to-space / persistent region. 2026-06-30.**
 
 > **Scoping update (2026-06-30, while attempting to bound `challenges/1brc/brc.ash`).** Bounding the
