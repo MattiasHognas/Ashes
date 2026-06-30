@@ -66,6 +66,36 @@ public sealed partial class Lowering
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
 
+    // Closure temp → the resource bindings it captures, with each one's env offset and type. When
+    // such a closure is a scope's result the captured resources escape with it; the scope moves them
+    // into the closure (a synthesized dropper stored at closure+24 closes them when the closure is
+    // dropped) instead of closing them at scope exit, which would be a use-after-close.
+    private readonly Dictionary<int, List<(int EnvOffset, string Name, TypeRef Type)>> _closureResourceCaptures = new();
+
+    // In-place reuse. Names of TCO accumulator params that have been made uniquely-owned (deep-copied
+    // once at loop entry) and are therefore safe to reuse in place.
+    private readonly HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
+
+    // Available reuse tokens (dead ADT cells from matching a linear value), innermost last. Each is
+    // the cell's address temp + its field count; a same-arity constructor in the arm consumes one,
+    // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
+    private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
+
+    // Non-recursive top-level functions, by name → (param names, body). When such a function is
+    // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
+    // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
+    // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecGroup) is excluded.
+    private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
+
+    // Inlinable-function names currently shadowed by a more-local binding (lambda param / let), so a
+    // call to that name is NOT the top-level helper and must not be inlined. Counter per name (a name
+    // can be shadowed at multiple nesting levels).
+    private readonly Dictionary<string, int> _shadowedInlinables = new(StringComparer.Ordinal);
+
+    // Inlinable functions currently being inlined, to break any unforeseen inline cycle (fall back to
+    // a normal call instead of looping). Non-recursive lets shouldn't form cycles, but this is cheap.
+    private readonly HashSet<string> _inliningInProgress = new(StringComparer.Ordinal);
+
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
 
@@ -144,12 +174,30 @@ public sealed partial class Lowering
             .ToList();
 
         CollectTopLevelBindingNames(valueItems);
+        RegisterInlinableFunctions(valueItems);
 
         // Desugar the ordered value declarations into the existing nested let / let rec forms so
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
         // name and all enclosing ones, never a later sibling.
         var body = DesugarTopLevel(valueItems, program.Body);
         return Lower(body);
+    }
+
+    /// <summary>
+    /// Records non-recursive top-level functions (a plain <c>let</c> whose value is a lambda chain)
+    /// so a saturated call to one inside a reuse arm can be inlined, letting the helper's constructor
+    /// reuse a dead cell. <c>let rec</c> / mutually-recursive groups are excluded — they can't be
+    /// inlined, and self-reference would loop.
+    /// </summary>
+    private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
+    {
+        foreach (var item in valueItems)
+        {
+            if (item is TopLevelItem.LetDecl { Value: Expr.Lambda lam, IsRecursive: false } let)
+            {
+                _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+            }
+        }
     }
 
     /// <summary>
@@ -1055,6 +1103,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadChunkBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileClose => LowerQualifiedBuiltinFunctionReference(name, CreateFileCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerQualifiedBuiltinFunctionReference(name, CreateInternalDeepCopyBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerQualifiedBuiltinFunctionReference(name, CreateParallelBothBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextUncons => LowerQualifiedBuiltinFunctionReference(name, CreateTextUnconsBinding().S.Body),
@@ -1880,7 +1929,14 @@ public sealed partial class Lowering
         TrackLetOwnership(let, slot, valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
+        // top-level definition itself (same lambda we registered) must stay inlinable in its own body.
+        bool isOwnDefinition = let.Value is Expr.Lambda defLam
+            && _inlinableFunctions.TryGetValue(let.Name, out var reg)
+            && ReferenceEquals(reg.Body, GetInnermostBody(defLam));
+        bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
+        if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
     }
@@ -1932,7 +1988,7 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
+                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let), prunedValueType);
             }
         }
     }
@@ -2377,6 +2433,12 @@ public sealed partial class Lowering
         var savedScopes = _scopes.ToArray();
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
+        // tokens (frame-local temps) or linear accumulators, and vice versa.
+        var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
+        var savedReuseTokens = new List<(int, int)>(_reuseTokens);
+        _linearReuseNames.Clear();
+        _reuseTokens.Clear();
 
         // new function state
         _inst.Clear();
@@ -2459,6 +2521,11 @@ public sealed partial class Lowering
         bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
         bool isChainLambda = wasDescendingChain;
         var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
+        // In-place reuse: accumulators to deep-copy once at loop entry. The copy IR is
+        // emitted only after the body is lowered (so HM has resolved the accumulator's type), then
+        // spliced in at reuseInsertIndex (before the loop body label). See below.
+        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
             var tco = _tcoCtx!;
@@ -2503,6 +2570,38 @@ public sealed partial class Lowering
             // The arg slot is also a TCO param (last in the chain)
             tco.ParamSlots.Add(argSlot);
 
+            // In-place reuse: mark accumulators that are deconstructed in the loop body as
+            // linear (so the body's match→construct lowering reuses their nodes in place) and record
+            // them for a one-time deep copy at loop entry. The copy makes the loop-local accumulator
+            // region uniquely owned regardless of whether the caller still holds the initial value —
+            // which is what makes the per-iteration in-place reuse sound (no runtime refcounting;
+            // Ground Rule 6). The copy IR is generated after the body (resolved types) and spliced in
+            // here. Type comes from the matched constructor — the param's own type var isn't unified
+            // until the body is lowered.
+            _linearReuseNames.Clear();
+            var reuseScan = new Dictionary<string, string>(StringComparer.Ordinal);
+            var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
+            CollectCtorMatchedScrutinees(lam.Body, reuseParamNames, reuseScan);
+            reuseInsertIndex = _inst.Count;
+            foreach (var (accName, ctorName) in reuseScan)
+            {
+                if (_scopes.Peek().TryGetValue(accName, out var accBinding)
+                    && accBinding is Binding.Local accLocal
+                    && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
+                    && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
+                    && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
+                    && !IsResourceBearing(accNamed)
+                    // Only pointer-bearing/recursive ADTs benefit: copy-type ADTs are already bounded
+                    // by the existing shallow copy-out, so reuse there is redundant and the entry deep
+                    // copy would be wasted.
+                    && !CanCopyOutAdt(accNamed, out _)
+                    && TrySynthesizeAdtCopier(accNamed) is not null)
+                {
+                    _linearReuseNames.Add(accName);
+                    reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+                }
+            }
+
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
@@ -2512,6 +2611,7 @@ public sealed partial class Lowering
             tco.ArenaCursorSlot = NewLocal();
             tco.ArenaEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+            tco.OwnershipDepthAtEntry = _ownershipScopes.Count;
 
             tco.InTailPosition = true;
         }
@@ -2533,10 +2633,33 @@ public sealed partial class Lowering
         }
 
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
+        bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
         var (bodyTemp, bodyType) = LowerExpr(lam.Body);
+        if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
         if (isInnermostTco && savedTcoCtx is not null)
         {
             savedTcoCtx.InTailPosition = false;
+        }
+
+        // In-place reuse: now that the body is lowered and the accumulators' types are
+        // resolved, generate the one-time defensive deep copies and splice them in at loop entry
+        // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
+        // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
+        if (reuseDefensiveCopy.Count > 0 && reuseInsertIndex >= 0)
+        {
+            int genStart = _inst.Count;
+            foreach (var (slot, typeRef) in reuseDefensiveCopy)
+            {
+                int loaded = NewTemp();
+                Emit(new IrInst.LoadLocal(loaded, slot));
+                int copied = EmitDeepCopy(loaded, Prune(typeRef));
+                Emit(new IrInst.StoreLocal(slot, copied));
+            }
+
+            int genCount = _inst.Count - genStart;
+            var generated = _inst.GetRange(genStart, genCount);
+            _inst.RemoveRange(genStart, genCount);
+            _inst.InsertRange(reuseInsertIndex, generated);
         }
 
         _tcoCtx = outerTcoCtx;
@@ -2575,6 +2698,11 @@ public sealed partial class Lowering
             _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
         }
 
+        _linearReuseNames.Clear();
+        foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
+        _reuseTokens.Clear();
+        _reuseTokens.AddRange(savedReuseTokens);
+
         // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
@@ -2586,6 +2714,25 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
         }
+
+        // Record any resource captured by this closure, with its env offset (capture i lives at
+        // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
+        // names still resolve to their owning bindings here.
+        var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
+        for (int ci = 0; ci < captures.Count; ci++)
+        {
+            var owned = LookupOwnedValue(captures[ci]);
+            if (owned is not null && owned.IsResource && owned.Type is not null)
+            {
+                resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
+            }
+        }
+
+        if (resourceCaptures.Count > 0)
+        {
+            _closureResourceCaptures[closureTemp] = resourceCaptures;
+        }
+
         return (closureTemp, funTy);
     }
 
@@ -2663,6 +2810,20 @@ public sealed partial class Lowering
             return LowerConstructorApplication(ctorSym, collectedArgs);
         }
 
+        // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
+        // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
+        // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
+        // Only when the callee name resolves to that top-level function (not shadowed by a local).
+        if (_reuseTokens.Count > 0
+            && rootExpr is Expr.Var fnVar
+            && !_shadowedInlinables.ContainsKey(fnVar.Name)
+            && !_inliningInProgress.Contains(fnVar.Name)
+            && _inlinableFunctions.TryGetValue(fnVar.Name, out var inlinable)
+            && inlinable.Params.Count == collectedArgs.Count)
+        {
+            return InlineCall(fnVar.Name, inlinable.Params, inlinable.Body, collectedArgs);
+        }
+
         // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
         if (_tcoCtx is { InTailPosition: true } tco
             && rootExpr is Expr.Var selfVar
@@ -2695,6 +2856,23 @@ public sealed partial class Lowering
             {
                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
             }
+
+            // An owned value passed by name as a self-call argument moves to the next iteration —
+            // it must not be dropped at this back-edge (a resource would be closed, a closure with a
+            // dropper would close its captured resource). Mark it consumed so
+            // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
+            foreach (var arg in collectedArgs)
+            {
+                if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
+                {
+                    movedOwned.IsDropped = true;
+                }
+            }
+
+            // Close iteration-local resources (open files/sockets/processes bound this iteration)
+            // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
+            // after the jump as dead code and the resource leaks every iteration.
+            EmitTcoBackEdgeResourceDrops(tco);
 
             // Arena reset: restore heap state to loop-iteration watermark before
             // jumping back.
@@ -2822,6 +3000,7 @@ public sealed partial class Lowering
                 IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
                 IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+                IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
                 IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
@@ -2910,6 +3089,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
@@ -3336,6 +3516,7 @@ public sealed partial class Lowering
             var (temp, type) = LowerExpr(tuple.Elements[i]);
             elementTemps.Add(temp);
             elementTypes.Add(type);
+            MarkResourceArgMoved(tuple.Elements[i]);
         }
 
         int tupleTemp = NewTemp();
@@ -3358,6 +3539,8 @@ public sealed partial class Lowering
 
         var (headTemp, headType) = LowerExpr(cons.Head);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        MarkResourceArgMoved(cons.Head);
+        MarkResourceArgMoved(cons.Tail);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
@@ -3862,6 +4045,132 @@ public sealed partial class Lowering
                     && ru.Updates.All(u => UsesNameOnlyAsDirectCallee(u.Value, targetName, shadowed));
             default:
                 throw new NotSupportedException(expr.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// In-place reuse: collects the subset of <paramref name="paramNames"/> that appear as the
+    /// scrutinee of a <c>match … with Ctor(…)</c> in <paramref name="e"/> (walking the if/let/match
+    /// spine — enough for the common fold shapes). These are the accumulators worth deep-copying once
+    /// at loop entry so their nodes can be reused in place. Conservative: missing one only forgoes an
+    /// optimization, never correctness.
+    /// </summary>
+    private static void CollectCtorMatchedScrutinees(Expr e, HashSet<string> paramNames, Dictionary<string, string> result)
+    {
+        switch (e)
+        {
+            case Expr.If i:
+                CollectCtorMatchedScrutinees(i.Then, paramNames, result);
+                CollectCtorMatchedScrutinees(i.Else, paramNames, result);
+                break;
+            case Expr.Let l:
+                CollectCtorMatchedScrutinees(l.Body, paramNames, result);
+                break;
+            case Expr.LetRec lr:
+                CollectCtorMatchedScrutinees(lr.Body, paramNames, result);
+                break;
+            case Expr.Match m:
+                if (m.Value is Expr.Var v && paramNames.Contains(v.Name))
+                {
+                    foreach (var mc in m.Cases)
+                    {
+                        if (mc.Pattern is Pattern.Constructor ctorPattern)
+                        {
+                            result[v.Name] = ctorPattern.Name;
+                            break;
+                        }
+                    }
+                }
+
+                foreach (var c in m.Cases)
+                {
+                    CollectCtorMatchedScrutinees(c.Body, paramNames, result);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// In-place reuse: consumes an available reuse token whose cell has exactly
+    /// <paramref name="fieldCount"/> fields (so it is the same size as the constructor being built).
+    /// Returns the dead cell's address temp to overwrite, or false if no matching token is available.
+    /// </summary>
+    private bool TryConsumeReuseToken(int fieldCount, out int tokenTemp)
+    {
+        for (int i = _reuseTokens.Count - 1; i >= 0; i--)
+        {
+            if (_reuseTokens[i].FieldCount == fieldCount)
+            {
+                tokenTemp = _reuseTokens[i].Temp;
+                _reuseTokens.RemoveAt(i);
+                return true;
+            }
+        }
+
+        tokenTemp = -1;
+        return false;
+    }
+
+    /// <summary>
+    /// Inlines a saturated call to a non-recursive top-level helper: evaluates the arguments in the
+    /// current scope (so they can't be captured by the helper's own parameter names), binds the
+    /// parameters to those values, and lowers the helper body in place. Lowering it here means any
+    /// constructor in the body can consume a live reuse token from the enclosing arm.
+    /// </summary>
+    private (int, TypeRef) InlineCall(string fnName, IReadOnlyList<string> paramNames, Expr body, List<Expr> args)
+    {
+        var argSlots = new int[paramNames.Count];
+        var argTypes = new TypeRef[paramNames.Count];
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            int slot = NewLocal();
+            Emit(new IrInst.StoreLocal(slot, argTemp));
+            argSlots[i] = slot;
+            argTypes[i] = argType;
+        }
+
+        var inlineScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            inlineScope[paramNames[i]] = new Binding.Local(argSlots[i], argTypes[i]);
+        }
+
+        _scopes.Push(inlineScope);
+        _inliningInProgress.Add(fnName);
+        var result = LowerExpr(body);
+        _inliningInProgress.Remove(fnName);
+        _scopes.Pop();
+        return result;
+    }
+
+    /// <summary>
+    /// Marks/unmarks an inlinable-function name as shadowed by a more-local binding so a call to it
+    /// is not mistaken for the top-level helper. No-op unless the name is actually a registered
+    /// inlinable function. Returns whether a mark was added (so the caller can balance the unmark).
+    /// </summary>
+    private bool PushInlinableShadow(string name)
+    {
+        if (!_inlinableFunctions.ContainsKey(name))
+        {
+            return false;
+        }
+
+        _shadowedInlinables[name] = _shadowedInlinables.GetValueOrDefault(name) + 1;
+        return true;
+    }
+
+    private void PopInlinableShadow(string name)
+    {
+        int remaining = _shadowedInlinables.GetValueOrDefault(name) - 1;
+        if (remaining <= 0)
+        {
+            _shadowedInlinables.Remove(name);
+        }
+        else
+        {
+            _shadowedInlinables[name] = remaining;
         }
     }
 

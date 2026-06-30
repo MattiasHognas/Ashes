@@ -5,7 +5,7 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
-    // Top-level scoping diagnostic codes (see docs/DIAGNOSTICS.md). Defined locally because the
+    // Top-level scoping diagnostic codes. Defined locally because the
     // shared DiagnosticCodes table lives in Ashes.Frontend.
     private const string DuplicateTopLevelBindingCode = "ASH013";
     private const string ForwardReferenceCode = "ASH014";

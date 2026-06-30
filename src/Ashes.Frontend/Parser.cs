@@ -787,7 +787,7 @@ public sealed class Parser
     /// <summary>
     /// Returns <c>true</c> when <paramref name="pattern"/> is irrefutable —
     /// that is, it will always match regardless of the value.
-    /// Per LANGUAGE_SPEC.md §11.8 the irrefutable patterns are:
+    /// The irrefutable patterns are:
     /// <list type="bullet">
     ///   <item><see cref="Pattern.Var"/> — always matches and binds.</item>
     ///   <item><see cref="Pattern.Wildcard"/> — always matches.</item>

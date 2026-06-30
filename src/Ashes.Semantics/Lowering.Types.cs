@@ -49,6 +49,11 @@ public sealed partial class Lowering
         // when all tail-call arguments are copy types (no heap pointers escape).
         public int ArenaCursorSlot { get; set; } = -1;
         public int ArenaEndSlot { get; set; } = -1;
+
+        // Ownership-scope stack depth at the loop body start. Scopes pushed above this during the
+        // iteration hold iteration-local resources that must be closed at the back-edge (else the
+        // per-arm Drop becomes dead code after the jump and the resource leaks each iteration).
+        public int OwnershipDepthAtEntry { get; set; } = -1;
     }
 
     private enum IntrinsicKind
@@ -62,6 +67,7 @@ public sealed partial class Lowering
         FileReadChunk,
         FileClose,
         InternalDeepCopy,
+        ParallelBoth,
         FileWriteText,
         FileExists,
         TextUncons,
@@ -158,12 +164,22 @@ public sealed partial class Lowering
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
     // Owned types (String, List, ADTs, Closures, resource types) are tracked.
-    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan)
+    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null, bool isResourceBearing = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
         public bool IsResource { get; } = isResource;
         public TextSpan? DefinitionSpan { get; } = definitionSpan;
+
+        /// <summary>The binding's pruned type, used for type-directed recursive resource drop.</summary>
+        public TypeRef? Type { get; } = type;
+
+        /// <summary>
+        /// True if the type is, or transitively contains, a resource type (e.g. Result(_, FileHandle)).
+        /// Such an aggregate, if still owned at scope exit, is dropped by walking it for nested resources.
+        /// </summary>
+        public bool IsResourceBearing { get; } = isResourceBearing;
+
         public bool IsDropped { get; set; }
         /// <summary>
         /// Number of live borrows of this value. The compiler infers borrows when

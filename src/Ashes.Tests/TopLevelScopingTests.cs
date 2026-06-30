@@ -14,7 +14,7 @@ namespace Ashes.Tests;
 /// </summary>
 public sealed class TopLevelScopingTests
 {
-    // ASH013/ASH014 live in docs/DIAGNOSTICS.md; the shared DiagnosticCodes table is in
+    // ASH013/ASH014: the shared DiagnosticCodes table is in
     // Ashes.Frontend and does not surface these yet, so reference the codes by literal here.
     private const string DuplicateTopLevelBinding = "ASH013";
     private const string ForwardReference = "ASH014";
