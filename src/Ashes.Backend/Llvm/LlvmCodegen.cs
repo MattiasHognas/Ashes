@@ -1180,6 +1180,13 @@ internal static partial class LlvmCodegen
             // RunTask: drive task to completion via event loop.
             IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
                 EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
+            // Structured parallelism (Ashes.Parallel.both).
+            IrInst.ParallelFork parallelFork => StoreTemp(state, parallelFork.DescTarget,
+                EmitParallelFork(state, LoadTemp(state, parallelFork.RightClosureTemp))),
+            IrInst.ParallelJoin parallelJoin => StoreTemp(state, parallelJoin.ResultTarget,
+                EmitParallelJoin(state, LoadTemp(state, parallelJoin.DescTemp))),
+            IrInst.ParallelCleanup parallelCleanup =>
+                EmitParallelCleanup(state, LoadTemp(state, parallelCleanup.DescTemp)),
             // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),

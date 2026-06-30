@@ -282,11 +282,32 @@ public sealed partial class Lowering
         var bType = Prune(rightType) is TypeRef.TFun rightFn ? Prune(rightFn.Ret) : NewTypeVar();
 
         int aTemp = NewTemp();
-        int bTemp = NewTemp();
+        int bTemp;
         var (leftUnit, _) = LowerUnitValue();
-        Emit(new IrInst.CallClosure(aTemp, leftTemp, leftUnit));
-        var (rightUnit, _) = LowerUnitValue();
-        Emit(new IrInst.CallClosure(bTemp, rightTemp, rightUnit));
+
+        // The right thunk may run on a worker thread with its own arena, so its result must be
+        // a value we can safely lift back into the parent arena: a scalar (self-contained) or a
+        // type EmitDeepCopy fully duplicates. Otherwise (polymorphic/abstract result, or a type
+        // whose deep copy would alias the worker arena) fall back to sequential evaluation — same
+        // result, just not parallel. The deep-copy needs the concrete type, which is unavailable
+        // for an abstract result, so abstract always degrades here.
+        if (CanRunRightOnWorker(bType))
+        {
+            int descTemp = NewTemp();
+            Emit(new IrInst.ParallelFork(descTemp, rightTemp));
+            Emit(new IrInst.CallClosure(aTemp, leftTemp, leftUnit));
+            int bRawTemp = NewTemp();
+            Emit(new IrInst.ParallelJoin(bRawTemp, descTemp));
+            bTemp = EmitDeepCopy(bRawTemp, bType);
+            Emit(new IrInst.ParallelCleanup(descTemp));
+        }
+        else
+        {
+            Emit(new IrInst.CallClosure(aTemp, leftTemp, leftUnit));
+            var (rightUnit, _) = LowerUnitValue();
+            bTemp = NewTemp();
+            Emit(new IrInst.CallClosure(bTemp, rightTemp, rightUnit));
+        }
 
         int tupleTemp = NewTemp();
         Emit(new IrInst.Alloc(tupleTemp, 16));
@@ -295,6 +316,30 @@ public sealed partial class Lowering
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         return (tupleTemp, new TypeRef.TTuple([aType, bType]));
+    }
+
+    /// <summary>
+    /// True when a worker thread's result of type <paramref name="type"/> can be safely lifted
+    /// into the parent arena: scalars carry no arena pointers, and the other admitted types are
+    /// exactly those <see cref="EmitDeepCopy"/> duplicates fully (no aliasing into the worker
+    /// arena). Conservative: abstract types, closures, and partially-copied containers fall back
+    /// to sequential evaluation.
+    /// </summary>
+    private bool CanRunRightOnWorker(TypeRef type)
+    {
+        var pruned = Prune(type);
+        return pruned switch
+        {
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TStr or TypeRef.TBytes => true,
+            TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                || Prune(list.Element) is TypeRef.TStr
+                || (Prune(list.Element) is TypeRef.TList inner && CanArenaReset(Prune(inner.Element))),
+            TypeRef.TTuple tuple => tuple.Elements.All(CanRunRightOnWorker),
+            TypeRef.TNamedType named when !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                => TrySynthesizeAdtCopier(named) is not null,
+            _ => false,
+        };
     }
 
     private (int, TypeRef) LowerFileWriteText(Expr pathArg, Expr textArg)
