@@ -24,7 +24,7 @@ Planned features and future work for the Ashes language and ecosystem.
 | [Effects](EFFECTS.md) | Planned | Algebraic effect handlers — typed effect rows (`uses { ... }`), lexical handlers, optional `perform`, inferred operation/handler types, one-shot/tail-resumptive continuations. Basis for capabilities, DI/testability, typed errors, and async. Multi-shot deferred (no-GC) |
 | Inline Modules | Planned | Inline module declarations |
 | Ashes.String | Landed | Standard library string utilities (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`, `isLetter`, `isDigit`, `isWhiteSpace`) |
-| [Ashes.Math](ASHES_MATH.md) | Planned | Two layers: a hermetic core (Int helpers, `sqrt`, Float arithmetic, constants — no library) plus native transcendentals (`sin`/`cos`/`exp`/`log`/…) from a **vendored, statically-embedded `libm`** (the rustls model — compile-time only, no runtime dependency) |
+| [Ashes.Math](ASHES_MATH.md) | Planned | Two layers: a hermetic core (Int helpers, `sqrt`, Float arithmetic, constants — no library) plus native transcendentals (`sin`/`cos`/`exp`/`log`/…) from a **vendored `libm` (openlibm), statically linked and dead-stripped** per binary — compile-time only, no runtime dependency |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ------------------------------------------------------------------------

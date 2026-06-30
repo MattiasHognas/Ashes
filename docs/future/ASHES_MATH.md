@@ -4,9 +4,15 @@
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point
-transcendentals provided by a **vendored `libm`**. It reuses rustls's no-runtime-dependency
-*principle* (vendor compile-time, ship nothing extra to the end-user) but **not** rustls's embedding
-*mechanism* — see "Embedding mechanism" below. No layer introduces a runtime dependency.
+transcendentals provided by a **vendored `libm` implementation — openlibm** (the recommended choice;
+see step 2). It reuses rustls's no-runtime-dependency *principle* (vendor compile-time, ship nothing
+extra to the end-user) but **not** rustls's embedding *mechanism* — see "Embedding mechanism" below.
+No layer introduces a runtime dependency.
+
+> **Terminology:** *`libm`* is the generic name for the C math-library interface (the symbols
+> `sin`, `cos`, `exp`, …), not a specific product. **openlibm** is the concrete implementation of
+> that interface this proposal vendors. Below, "`libm`" refers to the interface/symbols and
+> "openlibm" to the payload we ship.
 
 ## The "no runtime dependencies" invariant
 
@@ -18,28 +24,28 @@ the output. Compare the three native dependencies the project already manages:
 |---|---|---|---|
 | LLVM | Build-time, compiler-internal | No — runs on the compiler's machine only | No |
 | rustls | Vendored; whole `.so`/`.dll` embedded, extracted + `dlopen`'d at startup | Yes, baked in | **No** |
-| `libm` (this proposal) | Vendored; **static archive linked with section-GC**, only into programs that use transcendentals | Yes, baked in | **No** |
+| openlibm (this proposal) | Vendored; **static archive linked with section-GC**, only into programs that use transcendentals | Yes, baked in | **No** |
 
-`libm` shares rustls's *outcome* — a vendored payload, baked in by `LlvmImageLinker` only when a
+openlibm shares rustls's *outcome* — a vendored payload, baked in by `LlvmImageLinker` only when a
 transcendental is actually used, with the end-user running a self-contained binary and never a
 dynamic link against a system `libm.so`. (A dynamically-linked option was rejected: the image linker
 emits static images and a runtime dependency would violate Ground Rule 6.) But it uses a **different
 embedding mechanism**, deliberately, to meet the size requirement.
 
-### Embedding mechanism — why `libm` differs from rustls
+### Embedding mechanism — why openlibm differs from rustls
 
 rustls is consumed as a **prebuilt shared library**: `HermeticTlsRuntimeAssets` embeds the entire
 `librustls.so` / `rustls.dll` blob, and at startup the program extracts it to a file and `dlopen`s
 it. The whole library ships — there is **no dead-stripping** (it can't be: a finished `.so` is not
 relinkable, and a TLS handshake exercises most of it anyway).
 
-`libm` must not copy that. Transcendental users typically need only a handful of functions, so the
-whole-library approach would bloat every binary. Instead, `libm` is vendored as a **static archive
+openlibm must not copy that. Transcendental users typically need only a handful of functions, so the
+whole-library approach would bloat every binary. Instead, openlibm is vendored as a **static archive
 (or LLVM bitcode)** and **statically linked into the image with section-level garbage collection**
 (`--gc-sections` / LTO `internalize` + `GlobalDCE`), so only the functions actually referenced are
-emitted, and there is no runtime extract-and-`dlopen` step. This is the concrete reason the candidate
-must be buildable as a static archive (see implementation step 2), not just available as a shared
-library.
+emitted, and there is no runtime extract-and-`dlopen` step. This is the concrete reason the chosen
+implementation must be buildable as a static archive (see implementation step 2), not just available
+as a shared library.
 
 (Retrofitting the same static-archive + dead-strip treatment onto rustls is possible but out of
 scope here — it would mean building rustls from source as a static lib and is a much larger change
@@ -79,9 +85,9 @@ introduces:
 
 (These may instead live in the language core; see open questions.)
 
-## Layer 2 — native-backed transcendentals (vendored `libm`)
+## Layer 2 — native-backed transcendentals (vendored openlibm)
 
-Provided by the embedded `libm`. Bit-accurate, full-range, the standard C99 surface:
+Provided by the embedded openlibm. Bit-accurate, full-range, the standard C99 surface:
 
 - Powers / roots: `powF(x, y)`, `cbrt(x)`, `hypot(x, y)`
 - Exponential / logarithmic: `exp(x)`, `expm1(x)`, `ln(x)`, `log2(x)`, `log10(x)`, `log1p(x)`
@@ -91,9 +97,8 @@ Provided by the embedded `libm`. Bit-accurate, full-range, the standard C99 surf
 
 ## Accuracy and semantics
 
-- Layer 2 inherits the vendored `libm`'s accuracy (typically `< 1 ulp`); this is documented per
-  function rather than guaranteed bit-identical across targets unless the same `libm` source builds
-  for all three.
+- Layer 2 inherits openlibm's accuracy (typically `< 1 ulp`); this is documented per function rather
+  than guaranteed bit-identical across targets unless the same openlibm source builds for all three.
 - Domain errors (`sqrt(-1.0)`, `ln(0.0)`) follow IEEE-754: return `NaN`/`-inf`, **not** a panic, so
   the functions stay total. (Whether to also expose `isNaN`/`isInf` classification is an open
   question.)
@@ -110,7 +115,8 @@ are updated before implementation.
    (frontend registration → `BuiltinRegistry` → lowering → backend codegen → diagnostics → tests).
    This layer ships with no native payload and no `runtimes/` work.
 
-2. **Vendor `libm`.** Add a vendored `libm` per target (`linux-x64`, `linux-arm64`, `win-x64`) under
+2. **Vendor the `libm` implementation (openlibm).** Add the vendored archive per target
+   (`linux-x64`, `linux-arm64`, `win-x64`) under
    `runtimes/`, mirroring the rustls provisioning (`scripts/download-rustls-ffi.sh`,
    `Directory.Build.props` version pin). The candidate must satisfy three hard requirements:
 
@@ -135,14 +141,14 @@ are updated before implementation.
    `memcpy`, `abort`) from the Ashes runtime rather than a real libc.
 
 3. **Link on demand, dead-stripped.** Register the Layer-2 functions as intrinsics that resolve to
-   `libm` symbols, and extend `LlvmImageLinker` to **statically link the vendored `libm` archive and
+   `libm` symbols, and extend `LlvmImageLinker` to **statically link the vendored openlibm archive and
    run section-GC** so only referenced functions are emitted — and only when a transcendental
    intrinsic is referenced at all (the conditional trigger mirrors the rustls TLS gate, even though
    the link mechanism is static-archive rather than whole-`.so` embedding). Hermetic-only programs
    link nothing extra.
 
 4. **Tests + examples** per Ground Rule 3: numeric-accuracy tests with tolerance bounds, NaN/inf
-   edge cases, a binary-size check confirming hermetic-only programs pull in no `libm`, and an
+   edge cases, a binary-size check confirming hermetic-only programs pull in no openlibm, and an
    example exercising both layers.
 
 ## Open questions
@@ -158,12 +164,12 @@ are updated before implementation.
 - **Naming for Float vs Int overloads** — suffix style (`absF`, `minF`) as proposed, vs a single
   overloaded name resolved by type (depends on how far operator/overload resolution is taken).
 - **Cross-target bit-reproducibility** — whether to guarantee identical results on all targets by
-  building one `libm` source everywhere, or document per-target ulp bounds.
+  building one openlibm source everywhere, or document per-target ulp bounds.
 
 ## Ground rules touched
 
 - **Rule 1 (spec first):** the module surface lands in `STANDARD_LIBRARY.md`, and the new conversion
   primitives in `LANGUAGE_SPEC.md`, before implementation.
-- **Rule 6 (no GC / no runtime deps):** preserved. `libm` is a **compile-time vendored asset
-  statically embedded** into the executable (the rustls model), never a dynamic runtime dependency;
-  programs that don't use transcendentals embed nothing.
+- **Rule 6 (no GC / no runtime deps):** preserved. openlibm is a **compile-time vendored asset
+  statically linked and dead-stripped** into the executable, never a dynamic runtime dependency;
+  programs that don't use transcendentals link nothing.
