@@ -175,6 +175,27 @@ Immutable indexed array backed by a persistent balanced tree.
 have a built-in ordering abstraction, callers supply a total ordering function
 `(K -> K -> Int)` to lookup and update helpers.
 
+### `Ashes.Parallel`
+
+Structured, deterministic parallelism over **pure** functions (design:
+`docs/future/STRUCTURED_PARALLELISM.md`). Every result is identical to the sequential
+equivalent. **Execution is currently sequential** — `both` is the fork/join primitive that
+the threading runtime (per-thread arenas + clone/futex + deep-copy-on-join) will make
+genuinely parallel; `map`/`reduce` then parallelize with no source changes.
+
+- `both(left)(right)` returning `(A, B)` — fork/join two pure thunks `(Unit -> A)`, `(Unit -> B)`
+- `map(f)(list)` returning `List(B)` — order-preserving map, split-and-fork shaped
+- `reduce(combine)(identity)(f)(list)` returning `B` — parallel map-then-fold for associative
+  `combine` (the shard-and-merge shape for data-parallel aggregation)
+
+### `Ashes.Internal`
+
+Compiler-foundation primitives (not intended for everyday use).
+
+- `deepCopy(value)` returning the same type — an independent deep copy of any value (strings,
+  tuples, lists, closures, and recursive ADTs such as `Map`/`HashMap`). Semantically the identity
+  for immutable values; it underlies arena reclamation (FLAWS #2) and parallel result copy-out (#5).
+
 ### `Ashes.HashMap`
 
 A persistent map keyed by `Str` that needs **no caller-supplied ordering**. Internally an

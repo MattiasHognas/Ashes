@@ -23,6 +23,7 @@ public static class BuiltinRegistry
         FileOpen,
         FileReadChunk,
         FileClose,
+        InternalDeepCopy,
         TextUncons,
         TextParseInt,
         TextParseFloat,
@@ -137,6 +138,10 @@ public static class BuiltinRegistry
                 "Ashes.HashMap",
                 "Ashes.Semantics.StdLib.Ashes.HashMap.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Parallel"] = new(
+                "Ashes.Parallel",
+                "Ashes.Semantics.StdLib.Ashes.Parallel.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Maybe"] = new(
                 "Ashes.Maybe",
                 "Ashes.Semantics.StdLib.Ashes.Maybe.ash",
@@ -145,6 +150,15 @@ public static class BuiltinRegistry
                 "Ashes.Test",
                 "Ashes.Semantics.StdLib.Ashes.Test.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Internal"] = new(
+                "Ashes.Internal",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    // Foundation primitive for in-place reuse (#2) and parallel result copy-out (#5):
+                    // produces an independent deep copy. Semantically identity for immutable values.
+                    ["deepCopy"] = new("deepCopy", BuiltinValueKind.InternalDeepCopy, IsCallable: true, Arity: 1)
+                }),
             ["Ashes.File"] = new(
                 "Ashes.File",
                 null,
