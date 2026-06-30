@@ -1,6 +1,14 @@
 # Deterministic Resource Safety — Findings & Plan
 
-Status: **Proposed (analysis + plan; awaiting sign-off before implementation).**
+Status: **Phase 0 implemented (2026-06-30); Phases 1–2 designed, pending the shared move/linearity analysis.**
+
+> **Progress:** Phase 0 (the `Process` drop) is **done & verified** — see §4. Phases 1 (recursive
+> drop for resource-bearing aggregates, Gap A) and 2 (move/escape analysis, Gap B) both hinge on a
+> flow-sensitive ownership/move analysis — the **same engine [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)
+> (#2 in-place reuse) needs**. That engine is the gating, correctness-critical next step: a wrong
+> inference here is a double-close (Gap A) or an incorrectly-rejected valid program (Gap B), so it
+> wants the same careful, test-gated build the rest of this plan describes — it was deliberately not
+> rushed. Build it once; it serves both resource safety and in-place reuse.
 
 Ashes Ground Rule 6 promises *"all resource and memory management is deterministic and
 **compile-time verified**"* with *"no user-visible `Drop`"* (Ground Rule 4). This doc audits how
@@ -88,9 +96,12 @@ flow analysis [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md) (#2 in-place reuse) needs t
 Make resource ownership a **static, flow-sensitive, affine** property, verified at compile time;
 keep cleanup fully automatic (no surface `Drop`).
 
-**Phase 0 — close the trivial hole.** Add a `Process` case to `EmitDrop` (waitpid-reap + close the
-pipe fds), mirroring the socket cases. Add a `process_drop_reaps_zombie` test. *(Low risk, isolated;
-do first.)*
+**Phase 0 — close the trivial hole. ✅ DONE (2026-06-30).** `EmitDrop` now has a `Process` case
+(`EmitProcessDrop`): closes the three pipe fds and reaps the child (non-blocking `waitpid(WNOHANG)`
+on Linux so a still-running child never stalls the drop; `CloseHandle` on Windows). `Process` was
+already tracked as a resource type — only the backend cleanup was missing. Test:
+`tests/process_drop_releases_fds.ash` (drop-path smoke at scale); fd release verified directly under
+`ulimit -n 64`. Tree green.
 
 **Phase 1 — ownership-aware `Drop` for aggregates (fix Gap A).**
 - Mark any aggregate type (ADT/tuple/list/closure-env) that **transitively contains a resource type**
