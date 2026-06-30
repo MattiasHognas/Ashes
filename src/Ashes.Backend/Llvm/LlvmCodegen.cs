@@ -667,6 +667,11 @@ internal static partial class LlvmCodegen
                 nounwindAttr);
         }
 
+        if (ProgramUsesInstruction<IrInst.ParallelFork>(program))
+        {
+            EmitParallelRuntime(target, flavor, nounwindAttr);
+        }
+
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             IsLinuxFlavor(flavor)
