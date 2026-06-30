@@ -21,11 +21,11 @@ These types are always available without imports:
 
 ### `Ashes.IO`
 
-- `print(value)`
-- `panic(message)`
-- `args`
-- `write(text)`
-- `writeLine(text)`
+- `print(value)` returning `Unit` — write a printable scalar (`Int`, `Str`, or `Bool`) to stdout, followed by a newline
+- `panic(message)` returning `a` — print `message` and abort the program; never returns, so it is usable at any type
+- `args` returning `List(Str)` — the command-line arguments passed to the program
+- `write(text)` returning `Unit` — write `text` to stdout with no trailing newline
+- `writeLine(text)` returning `Unit` — write `text` to stdout followed by a newline
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
 
@@ -134,16 +134,16 @@ namespace. They are not overridable by project-local modules.
 
 ### `Ashes.List`
 
-- `append`
-- `filter`
-- `fold`
-- `foldLeft`
-- `head`
-- `isEmpty`
-- `length`
-- `map`
-- `reverse`
-- `tail`
+- `append` — `List(a) -> List(a) -> List(a)`, the elements of `left` followed by those of `right`
+- `filter` — `(a -> Bool) -> List(a) -> List(a)`, the elements satisfying `predicate`, in order
+- `foldLeft` — `(b -> a -> b) -> b -> List(a) -> b`, left fold from `initial` over the list
+- `fold` — alias for `foldLeft`
+- `head` — `List(a) -> Maybe(a)`, the first element, or `None` if empty
+- `isEmpty` — `List(a) -> Bool`, whether the list has no elements
+- `length` — `List(a) -> Int`, number of elements
+- `map` — `(a -> b) -> List(a) -> List(b)`, apply `f` to each element
+- `reverse` — `List(a) -> List(a)`, the elements in reverse order
+- `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
 
 ### `Ashes.Array`
 
@@ -161,7 +161,7 @@ Immutable indexed array backed by a persistent balanced tree.
 ### `Ashes.Map`
 
 - `empty` — empty immutable map
-- `isEmpty`
+- `isEmpty(map)` returning `Bool` — whether the map has no entries
 - `get(compare)(key)(map)` returning `Maybe(V)`
 - `contains(compare)(key)(map)` returning `Bool`
 - `set(compare)(key)(value)(map)` returning a new map value
@@ -213,37 +213,42 @@ collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes p
 
 ### `Ashes.Maybe`
 
-- `default`
-- `flatMap`
-- `getOrElse`
-- `isNone`
-- `isSome`
-- `map`
-- `unwrapOr`
+- `map` — `(a -> b) -> Maybe(a) -> Maybe(b)`, apply `f` to the contained value if `Some`
+- `flatMap` — `(a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`, apply `f` to the contained value, flattening
+- `getOrElse` — `a -> Maybe(a) -> a`, the contained value, or `fallback` if `None`
+- `default` — alias for `getOrElse`
+- `unwrapOr` — alias for `getOrElse`
+- `isSome` — `Maybe(a) -> Bool`, whether the value is `Some`
+- `isNone` — `Maybe(a) -> Bool`, whether the value is `None`
 
 ### `Ashes.Result`
 
-- `default`
-- `bind`
-- `map`
-- `flatMap`
-- `getOrElse`
-- `isOk`
-- `isError`
-- `mapError`
+- `map` — `(a -> b) -> Result(e, a) -> Result(e, b)`, apply `f` to the `Ok` value
+- `flatMap` — `(a -> Result(e, b)) -> Result(e, a) -> Result(e, b)`, apply `f` to the `Ok` value, flattening
+- `bind` — alias for `flatMap`
+- `mapError` — `(e -> f) -> Result(e, a) -> Result(f, a)`, apply `f` to the `Error` value
+- `getOrElse` — `a -> Result(e, a) -> a`, the `Ok` value, or `fallback` if `Error`
+- `default` — alias for `getOrElse`
+- `isOk` — `Result(e, a) -> Bool`, whether the value is `Ok`
+- `isError` — `Result(e, a) -> Bool`, whether the value is `Error`
 
 ### `Ashes.String`
 
-- `substring`
-- `length`
-- `indexOf`
-- `startsWith`
-- `contains`
-- `split`
-- `trim`
-- `isLetter`
-- `isDigit`
-- `isWhiteSpace`
+- `length` — `Str -> Int`, number of characters
+- `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`
+- `take` — `Str -> Int -> Str`, the first `count` characters
+- `drop` — `Str -> Int -> Str`, all but the first `count` characters
+- `indexOf` — `Str -> Str -> Int`, index of the first occurrence of `needle`, or `-1` if absent
+- `startsWith` — `Str -> Str -> Bool`, whether `text` begins with `prefix`
+- `contains` — `Str -> Str -> Bool`, whether `needle` occurs anywhere in `text`
+- `split` — `Str -> Str -> List(Str)`, split `text` on each occurrence of `separator`
+- `join` — `Str -> List(Str) -> Str`, concatenate `parts` with `separator` between them
+- `trim` — `Str -> Str`, strip leading and trailing whitespace
+- `trimStart` — `Str -> Str`, strip leading whitespace
+- `trimEnd` — `Str -> Str`, strip trailing whitespace
+- `isLetter` — `Str -> Bool`, whether the single character `text` is an ASCII letter (`a`–`z`, `A`–`Z`)
+- `isDigit` — `Str -> Bool`, whether the single character `text` is a decimal digit (`0`–`9`)
+- `isWhiteSpace` — `Str -> Bool`, whether the single character `text` is space, tab, newline, or carriage return
 - `compare` — `Str -> Str -> Int` total order returning `-1`/`0`/`1`. Compares by UTF-8 bytes (via
   `Ashes.Bytes.fromText`), which equals Unicode codepoint order, so it is a correct total order over
   all strings — suitable directly as the ordering function for `Ashes.Map`/`Ashes.Array`.
@@ -277,8 +282,8 @@ Backtracking regular-expression engine with a combinator API.
 
 ### `Ashes.Test`
 
-- `assertEqual(expected, actual)`
-- `fail(message)`
+- `assertEqual(expected, actual)` returning `Unit` — panic with an assertion failure unless `expected == actual`
+- `fail(message)` returning `a` — abort with `message`; never returns, so it is usable at any type
 
 `assertEqual(expected, actual)` is the preferred surface form. Like other
 multi-argument calls in Ashes, it is syntax sugar for curried application.
