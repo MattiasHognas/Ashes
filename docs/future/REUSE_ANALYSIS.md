@@ -87,8 +87,10 @@ Status: **In progress — direct-accumulator in-place reuse landed & verified; `
 > This is genuine Perceus-without-RC. Step 3 (linearity-driven specialization of a recursive
 > function group with reuse-token threading) is the large, corruption-prone piece and is the right
 > place to resume — gated behind a reuse-correctness + constant-memory + shared-accumulator-still-
-> -correct test trio. (The earlier naive deep-copy-in-the-two-pass fallback was tried and segfaults
-> — see RESUME_HERE.md §2 — so a deep-copy fallback would instead need a separate scratch arena.)
+> -correct test trio. (The earlier naive deep-copy-in-the-two-pass fallback was tried and segfaults:
+> the two-pass copies each arg up to `[C1, C1+K]` then down to `[W, W+K]`, but a `Map.set` iteration
+> allocates only O(log K) nodes so `C1 − W ≪ K` and the down-copy clobbers the up-copy mid-walk — so
+> a deep-copy fallback would instead need a separate scratch arena.)
 >
 > ---
 >

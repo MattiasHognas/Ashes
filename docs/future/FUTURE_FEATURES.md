@@ -2,9 +2,12 @@
 
 Planned features and future work for the Ashes language and ecosystem.
 
-> 🔧 **In-progress work with a clear handoff:** Structured Parallelism (#5) and In-Place
-> Reuse (#2) are partly built (shared deep-copy foundation done). To resume, read
-> **[RESUME_HERE.md](RESUME_HERE.md)** — it has what's done, what's left, and the next step.
+> 🔧 **In-progress work:** In-Place Reuse (#2). The shared deep-copy foundation, the reuse
+> primitive, and the **direct-accumulator** in-place reuse are landed and verified; the remaining
+> piece is the `Map.set`-group **specialization** for indirect reuse (the 1BRC fold). Full design,
+> the concrete leak discriminator, and the four confirmed obstacles are in
+> **[REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)**. (Structured Parallelism #5 and Resource Safety are
+> done.)
 
 | Feature | Status | Description |
 |---------|--------|-------------|
@@ -15,8 +18,8 @@ Planned features and future work for the Ashes language and ecosystem.
 | [HTTPS/TLS](HTTPS_TLS.md) | Landed | Transparent `https://` in `Ashes.Http` and the public `Ashes.Net.Tls` surface now ride on the hermetic `rustls` runtime across `linux-x64`, `linux-arm64`, and `win-x64` |
 | [Brace-Free Records](BRACE_FREE_RECORDS.md) | Landed | Curly-brace record declaration/construction/update forms replaced with pipe-style declarations, named constructor calls, and bare `with` updates; old `{ ... }` forms now report a migration diagnostic |
 | [Structured Parallelism](STRUCTURED_PARALLELISM.md) | Landed (linux-x64) | `Ashes.Parallel.both` is **genuinely parallel on linux-x64** — GS-segment per-thread arenas + `clone`/`futex` worker threads + deep-copy-on-join, deterministic, memory-bounded, ~2x speedup. Concrete result types fork to a worker; abstract/polymorphic uses (and `map`/`reduce`, whose element type is abstract inside the polymorphic body) run sequentially — full data-parallel `map`/`reduce` would need monomorphization. arm64/win-x64 run `both` inline |
-| [In-Place Reuse Analysis](REUSE_ANALYSIS.md) | In progress | Shared deep-copy foundation done (recursive ADT copiers via `Ashes.Internal.deepCopy`). Remaining: interprocedural linearity analysis + reuse tokens + TCO arena-reset integration (the in-place fast path) |
-| [Resource Safety](RESOURCE_SAFETY.md) | Proposed | Audit of file/socket/process cleanup vs Ground Rule 6 (compile-time-verified, deterministic). Current scope-drop is sound only for directly-bound, non-escaping, non-nested resources; gaps found (nested-in-aggregate leaks, escape-via-capture use-after-close, `Process` undropped). Plan: affine ownership + move analysis (shares the #2 linearity engine) + recursive `Drop` |
+| [In-Place Reuse Analysis](REUSE_ANALYSIS.md) | In progress | Shared deep-copy foundation + `AllocReusing` primitive done. **Direct-accumulator** in-place reuse landed & verified (a loop that directly matches-and-rebuilds a recursive-ADT accumulator reuses its nodes in place; 50M iters in ~4 MB; defensive entry copy keeps it sound without refcounting). **Remaining:** the `Map.set`-group **specialization** for indirect reuse (`loop(Map.set(…)(acc))`) — function-AST registry, saturated-call token threading, intermediate-value linearity, and `balance`/`rotate` specialization (obstacles detailed in the doc) |
+| [Resource Safety](RESOURCE_SAFETY.md) | Landed | Deterministic file/socket/process cleanup vs Ground Rule 6. All gaps fixed & verified: affine ownership + recursive `Drop` for resource-bearing aggregates, move-on-destructure/construction, TCO back-edge resource drops, `Process` reaping, and deterministic close of resources captured by escaping closures (dropper at `closure+24`) |
 | Pattern Guards | Planned | Pattern matching enhancements |
 | Type Annotations | Planned | User-written type annotations |
 | Selective Imports | Planned | `import Ashes.IO (print)` |
