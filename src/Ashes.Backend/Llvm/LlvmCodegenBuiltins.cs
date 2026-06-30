@@ -5562,6 +5562,14 @@ internal static partial class LlvmCodegen
                 EmitTlsCloseAbiCall(state, value);
                 return false;
 
+            case "Process":
+                // Deterministic cleanup of an abandoned child: close the three pipe fds and reap
+                // it so it can't leak fds or linger as a zombie. Fire-and-forget; double-close
+                // (EBADF) and a no-child reap (ECHILD) are ignored, and the reap is non-blocking
+                // (WNOHANG) so dropping a still-running child never stalls the parent.
+                EmitProcessDrop(state, value);
+                return false;
+
             default:
                 // Owned heap types (String, List, ADTs, Closures, etc.):
                 // No-op per-object — bulk deallocation is handled by
@@ -7311,6 +7319,34 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle LoadProcessField(LlvmCodegenState state, LlvmValueHandle processRef, int offset, string name)
     {
         return LoadMemory(state, processRef, offset, name);
+    }
+
+    /// <summary>
+    /// Releases the OS resources a <c>Process</c> owns when it is dropped: closes the three pipe
+    /// fds/handles and reaps the child. Linux uses a non-blocking <c>waitpid(WNOHANG)</c> so a
+    /// still-running child is not waited on (it detaches and is reaped by init on program exit);
+    /// already-exited children are reaped here so they don't linger as zombies.
+    /// </summary>
+    private static void EmitProcessDrop(LlvmCodegenState state, LlvmValueHandle processRef)
+    {
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 0, "proc_drop_stdin"));
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 8, "proc_drop_stdout"));
+        EmitFileHandleClose(state, LoadProcessField(state, processRef, 16, "proc_drop_stderr"));
+        LlvmValueHandle pid = LoadProcessField(state, processRef, 24, "proc_drop_pid");
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // waitpid(pid, NULL, WNOHANG=1, NULL) — non-blocking reap of an exited child.
+            EmitLinuxSyscall4(state, SyscallWaitpid, pid,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0), "proc_drop_reap");
+        }
+        else
+        {
+            // On Windows the pid field is the process HANDLE; closing it releases the kernel object.
+            EmitWindowsCloseHandle(state, pid, "proc_drop_handle");
+        }
     }
 
     private static LlvmValueHandle EmitAllocProcessStruct(LlvmCodegenState state)
