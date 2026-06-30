@@ -6,6 +6,9 @@ says what's done, what's left, and exactly where to start. Point me at this file
 > **Fastest way to resume:** "Read docs/future/RESUME_HERE.md and continue with the
 > next step." The next concrete step is in **§3**.
 
+> **STATUS 2026-06-30:** #5 (`both` parallelism) is **DONE & verified on linux-x64** — see
+> §1. The only milestone left here is **#2 (in-place reuse)**; jump to §2 → §3.
+
 Full designs (already signed off): `STRUCTURED_PARALLELISM.md` (#5),
 `REUSE_ANALYSIS.md` (#2). User-facing flaw context: `../../challenges/FLAWS.md`.
 
@@ -56,38 +59,25 @@ Both were left unbuilt because they're unsafe to write unattended (silent memory
 corruption / data races, single-platform-testable). Each now sits on the finished
 deep-copy foundation.
 
-### #5 — threading runtime (make `both` actually parallel)
+### #5 — threading runtime — ✅ DONE & verified (linux-x64), 2026-06-30
 
-Make `Ashes.Parallel.both` run its two thunks on real threads. Remaining steps:
+`Ashes.Parallel.both` is genuinely parallel. Steps 1–4 below are done; step 5 is moot.
+See §1 for the arena foundation and `LlvmCodegenParallel.cs` for the worker runtime
+(clone/futex, deep-copy-on-join, `lock xadd` worker cap = 8). Verified: real ~2x speedup
+(198% CPU), deterministic, memory-bounded (9.4 MB over 3000 iters), stable across thousands
+of runs incl. nested divide-and-conquer; full suite green (1306 unit + 349 e2e).
 
-1. ✅ **Freestanding per-thread arena — DONE** (see §1; GS-segment TCB, not the original
-   `thread_local`/`PT_TLS` plan). Single-thread suite green end to end.
-2. `clone(2)` + `futex` spawn/join (Linux x64 first), `CreateThread`/`WaitForSingleObject`
-   (Windows) — add to the syscall/import layer like the existing file/socket ops. **The hard
-   freestanding part:** after a raw `clone`, the child runs the *next instruction* on the new
-   stack — branch immediately to a worker trampoline that (a) `arch_prctl(ARCH_SET_GS,
-   worker_tcb)` + stores the worker TCB self-pointer, (b) inits a fresh heap chunk
-   (`EmitHeapChunkInit`-equivalent on the worker arena), (c) calls the `right` thunk closure,
-   (d) writes the result pointer into a shared descriptor, (e) `futex` wake on a done-word,
-   (f) `exit` — never returns up the (parent's) stack. Pass the task descriptor through a
-   register the clone asm doesn't clobber.
-3. A `both` **intrinsic** (replace the pure-Ashes `both`) — new IR inst (e.g.
-   `ParallelBoth`) — that forks `right` to a worker, runs `left` inline, `futex`-waits the
-   done-word, then **deep-copies the worker's result into the parent arena via the existing
-   `EmitDeepCopy`** (emit the copy in lowering, after the join), then `munmap`s the worker
-   arena chunks. Ordering is the delicate part: copy must run after the worker is done and
-   before the worker arena is freed.
-4. Bounded workers: a shared atomic active-worker counter capped at CPU count; when at the
-   cap `both` runs inline (graceful degradation — already correct, since the pure-Ashes
-   fallback is sequential). A real pool is an optimization on top.
-5. Rewrite `map`/`reduce` in `Parallel.ash` to fork through the `both` intrinsic.
+- `both` is a hybrid-module intrinsic (`BuiltinValueKind.ParallelBoth`) lowered per call site;
+  concrete result type → `ParallelFork`/`CallClosure(left)`/`ParallelJoin`/`EmitDeepCopy`/
+  `ParallelCleanup`/tuple; abstract/closure result → sequential fallback (`CanRunRightOnWorker`).
+- **Step 5 (data-parallel `map`/`reduce`) is NOT possible without monomorphization:** their
+  element type is an abstract type variable inside the polymorphic body, and deep-copy-on-join
+  needs the concrete type. They stay sequential; parallelism is via direct concrete `both`
+  (e.g. shard-and-merge with explicit `both` at `Map`/list/scalar result types).
+- Known minor gap: worker `mmap`s are unchecked (crash under an artificial `ulimit -v`, same
+  assumption as the main arena) — could fall back to inline on `MAP_FAILED`. Deferred.
 
-> ⚠️ Risk note (why this is still deferred): a freestanding child-on-new-stack thread runtime
-> with per-worker arena bring-up and deep-copy-on-join is exactly the silent-corruption-prone
-> core the original plan flagged. Build it behind the inline fallback and verify a
-> parallel-==-sequential determinism test at scale before trusting it.
-
-### #2 — in-place reuse fast path (fix the hot-loop arena leak, fast)
+### #2 — in-place reuse fast path (fix the hot-loop arena leak, fast) — ⭐ the remaining work
 
 The user chose _automatic in-place reuse, no new syntax_ (not the slow deep-copy stopgap).
 Needs:
@@ -103,18 +93,11 @@ Needs:
 
 ## 3. ⭐ NEXT STEP (start here)
 
-Step 1 (the gating TLS-arena blocker) is **done and verified**. The next concrete step is
-**#5 step 2 — `clone`/`futex` spawn+join on linux-x64**, then step 3 (the `both` intrinsic +
-deep-copy-on-join). Build behind the inline/sequential fallback and gate progress on a
-parallel-`==`-sequential determinism test (`tests/stdlib_parallel.ash` already checks
-`map`/`reduce` results; add a larger-scale variant once `both` actually forks).
+#5 is **done and verified**. The only remaining milestone here is **#2 — in-place reuse**
+(§2). Start with the **linearity analysis as a read-only pass** that just *reports* which TCO
+accumulators are provably consumed-exactly-once (the `loop(newAcc)` accumulator pattern),
+before touching any codegen — verify the analysis on `tests/` folds first, then layer reuse
+tokens (`AllocReusing`) and the TCO arena-reset integration. Keep each sub-step green.
 
-Alternative if you'd rather de-risk: do **#2** first — start with the linearity analysis as
-a read-only pass that just *reports* which TCO accumulators are provably linear, before
-touching any codegen.
-
-Keep each sub-step green before the next. The deep-copy-on-join (#5 step 3) is already in
-hand via `EmitDeepCopy`.
-
-_(Alternative if you'd rather do #2 first: start with the linearity analysis as a read-only
-pass and dump which TCO accumulators are provably linear, before touching any codegen.)_
+This is the **same move/linearity engine** that `RESOURCE_SAFETY.md` needs — building it once
+serves both #2 and deterministic resource safety.

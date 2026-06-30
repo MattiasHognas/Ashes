@@ -1,6 +1,17 @@
 # Structured Deterministic Parallelism — Design
 
-Status: **Proposed (awaiting sign-off before implementation).**
+Status: **Implemented on linux-x64 (2026-06-30).** `Ashes.Parallel.both` forks its right thunk
+to a `clone`/`futex` worker thread with its own GS-segment per-thread arena and deep-copies the
+result back on join; deterministic, memory-bounded, ~2x measured speedup. Implementation:
+`src/Ashes.Backend/Llvm/LlvmCodegenParallel.cs` + `LowerParallelBoth`. **Deviations from this
+design:** (1) `both` is parallel only at a *concrete* result type — under uniform value
+representation, deep-copy-on-join needs the concrete type, which is unavailable for an abstract
+result; abstract/polymorphic uses run sequentially (a correct fallback). (2) For the same reason
+`map`/`reduce` (§1) stay **sequential** — their element type is abstract inside the polymorphic
+body, so they can't route through the parallel `both`; data parallelism is via direct concrete
+`both` (shard-and-merge). Full data-parallel `map`/`reduce` would need monomorphization.
+(3) arm64/win-x64 run `both` inline. (4) Bounded by a `lock xadd` worker counter (cap 8) rather
+than a persistent pool.
 
 This specs CPU-bound parallelism for Ashes that stays inside the language's Ground
 Rules: values are immutable, all APIs are pure, there is no GC, and cleanup is
