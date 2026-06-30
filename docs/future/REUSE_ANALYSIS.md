@@ -20,18 +20,27 @@ Status: **In progress — direct-accumulator in-place reuse landed & verified; `
 >   reuse), correct results; a caller-shared initial accumulator is **not** corrupted
 >   (`tests/reuse_inplace_accumulator.ash`). Whole suite green: 1307 unit + 354 e2e.
 >
-> **REMAINING — indirect reuse (the 1BRC `Map.set` fold).** When the accumulator is updated by a
-> *called* function (`loop(Map.set(…)(acc))`) the reuse must happen inside `Map.set`. That needs the
-> linearity-driven **specialization** below: a `…$reuse` clone of the `Map.set`/`balance`/`rotate`/
-> `makeNode` group (the loop's accumulator is unique by the same entry deep copy) with the reuse
-> token threaded from `set$reuse`'s match into `makeNode$reuse`'s construction. The direct-case
-> machinery above (`AllocReusing`, token plumbing, defensive copy, eligibility) is the foundation it
-> builds on.
+> **DONE — reuse through non-recursive helper calls.** A rebuild via a top-level helper
+> (`let mk l v r = Node(l)(v)(r)` then `loop(n-1)(mk(l)(v+n)(r))`) now reuses too: inside a reuse arm
+> (a live token) a *saturated* call to a non-recursive top-level function is **inlined**, so its
+> constructor becomes local and consumes the token. That discriminator dropped from ~240 MB to ~7 MB
+> at 2M iters, correct, caller-shared accumulator uncorrupted (`tests/reuse_inplace_helper.ash`).
+> Pieces: `_inlinableFunctions` registry (non-recursive top-level `let` lambdas), `InlineCall`
+> (args evaluated in the caller scope, body lowered in place), gated on a live token; `_shadowedInlinables`
+> (skips a rebound name, but not a function's own definition) + an in-progress guard prevent
+> mis-inlining and inline cycles.
 >
-> **Concrete target / discriminator:** the minimal indirect case is a rebuild via a non-recursive
-> helper — `let mk l v r = Node(l)(v)(r)` then `loop(n-1)(mk(l)(v+n)(r))`. Today that **leaks
-> ~240 MB** at 2M iters where the direct `Node(l)(v+n)(r)` form reuses to ~4 MB. Drive that helper
-> case to ~4 MB first; `Map.set` is the same shape with more helpers.
+> **REMAINING — indirect reuse where the accumulator is matched inside a *recursive* callee (the
+> 1BRC `Map.set` fold).** `loop(…)(Map.set(…)(acc))`: `acc` is never matched in the loop body — it's
+> passed to `set`, whose nested `let rec go` matches it. `go` is recursive, so it can't be inlined;
+> it must be **specialized** into `go$reuse` where the `map` param (and the `left`/`right` subtrees it
+> destructures) are linear, recursive `go` calls are redirected to `go$reuse`, and the helper rebuilds
+> (`makeNode`/`balance`) reuse via the existing inlining. Plus a new trigger: defensive-copy an
+> accumulator that is *passed to* such a function (not just one matched directly), and
+> intermediate-value linearity so `balance`'s `normalized = makeNode(…)` reuses the node `makeNode`
+> just built (otherwise that node leaks on the new map's path and the arena still can't reset).
+> Obstacles: `go` is nested inside `set` (AST access), and recursion-aware linear specialization is
+> corruption-prone. The direct + helper machinery is the foundation.
 >
 > **Obstacles confirmed this session (why it's a multi-day effort, not an afternoon):**
 > 1. **No function-AST registry.** Top-level / stdlib function bodies are lowered and discarded;
