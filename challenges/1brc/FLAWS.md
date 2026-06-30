@@ -46,10 +46,12 @@ first 10k rows; `hyperfine`, peak RSS from `/proc/<pid>/status`):
 | 50 000 | (OOM ~46 GB) | — | — | **1 s / 508 MB** |
 | 100 000 | (OOM) | — | — | **1 s / 1.0 GB** (37 191 stations) |
 | 1 000 000 | (OOM) | — | — | **4 s / 9.3 GB** (41 343 stations) |
+| 10 000 000 | (OOM) | — | — | OOM at ~50 GB after ~86 s (residual #2 leak; machine has 60 GB) |
 
 Cumulative at 10k rows: **5.2 s / 15 GB → ~0.1 s / 105 MB** (≈25× less memory; quadratic → linear).
-brc no longer OOMs at scale. Memory is **linear** in rows (≈9 GB at 1M) — that is the residual #2
-leak (per-row `Map.set` garbage the loop never reclaims), not the file: input is now **streamed** in
+brc now runs to ~1M rows in seconds (was OOM past ~22k). Memory is **linear** in rows (≈9 GB at 1M,
+≈9 KB/row), so 10M still OOMs on a 60 GB machine — that is the residual #2 leak (per-row `Map.set`
+garbage the loop never reclaims), not the file: input is now **streamed** in
 64 KiB chunks (`Ashes.File.open`/`readChunk`/`close`, **#1**), so file memory is constant and brc
 reads any size (whole-file `readText` capped at 1 MiB and OOM'd past ~50k). Output verified correct at
 1M (41 343 entries == unique stations; md5-stable vs whole-file on 30k). The remaining limiter for
