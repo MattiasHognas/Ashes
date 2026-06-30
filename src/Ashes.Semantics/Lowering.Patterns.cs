@@ -114,12 +114,19 @@ public sealed partial class Lowering
             // constructor in this arm's body. Only when the body doesn't reference the accumulator
             // again and there is no guard re-test below (payload fields are bound into temps above).
             int reuseTokensBefore = _reuseTokens.Count;
+            // A constructor pattern's matched cell is a reuse token. Includes nullary cells (e.g.
+            // Leaf), whose bare pattern parses as Pattern.Var of a known nullary constructor.
+            int? reuseArity = match.Cases[i].Pattern switch
+            {
+                Pattern.Constructor reuseCtorPat => reuseCtorPat.Patterns.Count,
+                Pattern.Var pv when _constructorSymbols.TryGetValue(pv.Name, out var nc) && nc.Arity == 0 => 0,
+                _ => null,
+            };
             if (reuseScrutineeName is not null
-                && match.Cases[i].Pattern is Pattern.Constructor reuseCtorPat
-                && reuseCtorPat.Patterns.Count > 0
+                && reuseArity is int reuseArityVal
                 && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
             {
-                _reuseTokens.Add((valueTemp, reuseCtorPat.Patterns.Count));
+                _reuseTokens.Add((valueTemp, reuseArityVal));
             }
 
             // Each case body IS in tail position (if the match itself is)
@@ -350,9 +357,11 @@ public sealed partial class Lowering
             // for a same-arity constructor in the body. Only when the body doesn't reference the
             // accumulator again (cell is dead) — payload fields are already bound into temps above.
             int reuseTokensBefore = _reuseTokens.Count;
+            // Every arm here matched a constructor by tag (plan[i].Ctor is authoritative — a bare
+            // nullary pattern like `Leaf` parses as Pattern.Var, so don't gate on Pattern.Constructor).
+            // Nullary cells (Arity 0, e.g. Leaf) are reusable too, which keeps a recursive rebuild's
+            // whole result below the watermark.
             if (reuseScrutineeName is not null
-                && cases[i].Pattern is Pattern.Constructor
-                && plan[i].Ctor.Arity > 0
                 && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
             {
                 _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));

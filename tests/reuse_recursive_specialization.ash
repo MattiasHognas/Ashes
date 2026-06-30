@@ -4,8 +4,9 @@
 // uniquely owned) and the call is routed to a generated incAll$reuse whose parameter is linear, so
 // its match-then-rebuild overwrites each node in place and its self-calls recurse into incAll$reuse.
 // Verifies correctness + that a caller-shared initial accumulator is not corrupted (initial stays
-// 5 after loop(3) rewrites its own copy to 8). (Full constant-memory bounding additionally needs the
-// per-iteration arena reset for linear accumulators; the rewrite here is semantically in-place.)
+// 5 after loop(3) rewrites its own copy to 8). Because incAll$reuse fully reuses (every node + Leaf
+// is rewritten in place), the loop also resets the arena each iteration: 50M iterations run in ~7 MB
+// constant memory (a separate memory probe), versus an unbounded leak without reuse.
 type Tree(A) =
     | Leaf
     | Node(Tree, A, Tree)

@@ -527,7 +527,13 @@ public sealed partial class Lowering
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        if (stackAllocate)
+        if (!stackAllocate && TryConsumeReuseToken(0, out int reuseTokenTemp))
+        {
+            // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
+            // below the watermark so the enclosing loop can reset the arena.
+            Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp));
+        }
+        else if (stackAllocate)
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
         }

@@ -96,6 +96,16 @@ public sealed partial class Lowering
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
 
+    // f$reuse labels that are "fully reusing": every value they return is below the loop watermark
+    // (an AllocReusing result, the scrutinee, or a recursive f$reuse result), with only self-recursion
+    // scaffolding (env allocs + self-closures) freshly allocated. Only these allow the loop arena
+    // reset — anything else could leave a fresh, above-watermark cell in the result.
+    private readonly HashSet<string> _fullyReusingLabels = new(StringComparer.Ordinal);
+
+    // Accumulator names whose specialization is fully reusing, so the loop back-edge may reset the
+    // arena: the new accumulator is rewritten in place below the watermark and survives the reset.
+    private readonly HashSet<string> _resetSafeAccumulators = new(StringComparer.Ordinal);
+
     // When generating an f$reuse specialization, the parameter name to treat as a linear
     // (uniquely-owned) reuse root inside the lowered body. Null outside specialization.
     private string? _specializingLinearParam;
@@ -2468,9 +2478,11 @@ public sealed partial class Lowering
         var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
         var savedReuseTokens = new List<(int, int)>(_reuseTokens);
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
+        var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
+        _resetSafeAccumulators.Clear();
 
         // new function state
         _inst.Clear();
@@ -2770,6 +2782,8 @@ public sealed partial class Lowering
         foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
         _linearSpecializationAccumulators.Clear();
         foreach (var n in savedSpecAccumulators) _linearSpecializationAccumulators.Add(n);
+        _resetSafeAccumulators.Clear();
+        foreach (var n in savedResetSafe) _resetSafeAccumulators.Add(n);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(savedReuseTokens);
 
@@ -2972,9 +2986,15 @@ public sealed partial class Lowering
             {
                 int tcoPreRestoreEndSlot = NewLocal();
 
-                if (newArgTypes.All(CanArenaReset))
+                // An arg needs no copy-out at the reset if it's a copy type (inline) OR it's a
+                // fully-reusing specialized accumulator — rewritten in place below the watermark, it
+                // already survives a plain reset, which then reclaims the iteration's scaffolding.
+                bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
+                    || (i < tco.ParamNames.Count && _resetSafeAccumulators.Contains(tco.ParamNames[i]));
+
+                if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
                 {
-                    // All copy types.
+                    // All copy types and/or in-place-reused accumulators: plain reset.
                     Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                 }
@@ -4306,7 +4326,83 @@ public sealed partial class Lowering
         }
 
         _specializingLinearParam = savedLinear;
+
+        var generated = _funcs.LastOrDefault(f => f.Label == label);
+        if (generated is not null && IsFullyReusing(generated, label))
+        {
+            _fullyReusingLabels.Add(label);
+        }
+
         return label;
+    }
+
+    /// <summary>
+    /// Conservative soundness check for the loop arena reset: returns true only if every value
+    /// <paramref name="f"/> returns is guaranteed to lie below the loop watermark. Sufficient
+    /// condition: no fresh result-heap allocation at all (no <c>AllocAdt</c>/<c>ConcatStr</c>/copy-out
+    /// — every constructor must be an in-place <c>AllocReusing</c>), every raw <c>Alloc</c> is only an
+    /// environment for a closure (recursion scaffolding), and every closure is a self-closure
+    /// (label = <paramref name="selfLabel"/>) used only as a call target. Under those constraints the
+    /// result is built solely from reused cells, scrutinee fields, and recursive self-results — all
+    /// below the watermark — while the env/closure scaffolding is dead after the call and reclaimable.
+    /// </summary>
+    private static bool IsFullyReusing(IrFunction f, string selfLabel)
+    {
+        foreach (var inst in f.Instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.AllocAdt:
+                case IrInst.AllocAdtStack:
+                case IrInst.AllocStack:
+                case IrInst.ConcatStr:
+                case IrInst.CopyOutArena:
+                case IrInst.CopyOutList:
+                case IrInst.CopyOutClosure:
+                case IrInst.CopyOutTcoListCell:
+                    return false;
+                case IrInst.MakeClosure mk when mk.FuncLabel != selfLabel:
+                case IrInst.MakeClosureStack mks when mks.FuncLabel != selfLabel:
+                    return false;
+            }
+        }
+
+        // Build temp → reading instructions, then require every Alloc to feed only a MakeClosure env
+        // and every MakeClosure to feed only a CallClosure callee.
+        var readers = new Dictionary<int, List<IrInst>>();
+        var buf = new HashSet<int>();
+        foreach (var inst in f.Instructions)
+        {
+            buf.Clear();
+            IrOptimizer.CollectUsedTemps(inst, buf);
+            foreach (var t in buf)
+            {
+                if (!readers.TryGetValue(t, out var list))
+                {
+                    readers[t] = list = new List<IrInst>();
+                }
+
+                list.Add(inst);
+            }
+        }
+
+        foreach (var inst in f.Instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.Alloc alloc when readers.TryGetValue(alloc.Target, out var rs)
+                    && rs.Any(r => r is not (IrInst.MakeClosure or IrInst.MakeClosureStack)):
+                    return false;
+                case IrInst.MakeClosure mk when readers.TryGetValue(mk.Target, out var rs)
+                    && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mk.Target):
+                    return false;
+                case IrInst.MakeClosureStack mks when readers.TryGetValue(mks.Target, out var rs)
+                    && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mks.Target):
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -4317,6 +4413,14 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, Expr argExpr)
     {
         string label = GetOrCreateReuseSpecialization(name, funcType);
+        // If the specialization fully reuses, its result is the accumulator rewritten in place below
+        // the watermark, so the loop back-edge may reset the arena (reclaiming this call's recursion
+        // scaffolding) and keep the accumulator.
+        if (_fullyReusingLabels.Contains(label) && argExpr is Expr.Var accVar)
+        {
+            _resetSafeAccumulators.Add(accVar.Name);
+        }
+
         var (argTemp, argType) = LowerExpr(argExpr);
         if (funcType is TypeRef.TFun tfun)
         {

@@ -1038,7 +1038,7 @@ public static class IrOptimizer
     /// Collects all temp indices that are read (used as operands) by an instruction.
     /// This does NOT include target/destination temps — only sources.
     /// </summary>
-    private static void CollectUsedTemps(IrInst inst, HashSet<int> usedTemps)
+    internal static void CollectUsedTemps(IrInst inst, HashSet<int> usedTemps)
     {
         switch (inst)
         {
