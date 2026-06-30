@@ -20,15 +20,11 @@ Planned features and future work for the Ashes language and ecosystem.
 | [Structured Parallelism](STRUCTURED_PARALLELISM.md) | Landed (linux-x64) | `Ashes.Parallel.both` is **genuinely parallel on linux-x64** — GS-segment per-thread arenas + `clone`/`futex` worker threads + deep-copy-on-join, deterministic, memory-bounded, ~2x speedup. Concrete result types fork to a worker; abstract/polymorphic uses (and `map`/`reduce`, whose element type is abstract inside the polymorphic body) run sequentially — full data-parallel `map`/`reduce` would need monomorphization. arm64/win-x64 run `both` inline |
 | [In-Place Reuse Analysis](REUSE_ANALYSIS.md) | Largely landed | Perceus-style in-place reuse without runtime refcounting. Landed, sound, and constant-memory bounded for **pure-rewrite folds**: direct-accumulator reuse, helper-rebuild inlining, recursive-function specialization, and the full **`Map.set` shape** (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). A defensive entry deep-copy makes the accumulator uniquely owned; a conservative `IsFullyReusing` gate guards the per-iteration arena reset. **Remaining:** the insert path of an insert-or-update `Map.set` — a fresh node for a new key lands above the watermark and blocks the reset; needs a to-space / persistent region for genuinely-new cells (detailed in the doc) |
 | [Resource Safety](RESOURCE_SAFETY.md) | Landed | Deterministic file/socket/process cleanup vs Ground Rule 6. All gaps fixed & verified: affine ownership + recursive `Drop` for resource-bearing aggregates, move-on-destructure/construction, TCO back-edge resource drops, `Process` reaping, and deterministic close of resources captured by escaping closures (dropper at `closure+24`) |
-| Pattern Guards | Planned | Pattern matching enhancements |
-| Type Annotations | Planned | User-written type annotations |
-| Selective Imports | Planned | `import Ashes.IO (print)` |
-| Effects / IO Types | Planned | Effect system or IO types |
+| Selective Imports | Partial | Single-binding form `import M.binding [as x]` is landed; only the grouped multi-name form `import Ashes.IO (print, ...)` remains |
+| [Effects](EFFECTS.md) | Planned | Algebraic effect handlers — typed effect rows (`uses { ... }`), lexical handlers, optional `perform`, inferred operation/handler types, one-shot/tail-resumptive continuations. Basis for capabilities, DI/testability, typed errors, and async. Multi-shot deferred (no-GC) |
 | Inline Modules | Planned | Inline module declarations |
 | Ashes.String | Landed | Standard library string utilities (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`, `isLetter`, `isDigit`, `isWhiteSpace`) |
-| Ashes.Bytes | Planned | Standard library byte utilities |
-| Ashes.Net.Http | Planned | Standard library HTTP module |
-| Ashes.Math | Planned | Standard library math utilities |
+| [Ashes.Math](ASHES_MATH.md) | Planned | Two layers: a hermetic core (Int helpers, `sqrt`, Float arithmetic, constants — no library) plus native transcendentals (`sin`/`cos`/`exp`/`log`/…) from a **vendored, statically-embedded `libm`** (the rustls model — compile-time only, no runtime dependency) |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ------------------------------------------------------------------------

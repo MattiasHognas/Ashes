@@ -19,7 +19,7 @@ are structural limitations of the language / stdlib / memory model.
 |---|------|--------|
 | #1 | No buffered/streaming file IO | **FIXED** (buffered stdin + chunked file API) |
 | #1b | `readLine` loop segfaults at depth | **FIXED** |
-| #2 | Hot-loop arena leak (Map accumulator) | open — ownership milestone |
+| #2 | Hot-loop arena leak (Map accumulator) | **quadratic part FIXED** (lookup defensive-copy bug); residual linear leak (no arena reset) open |
 | #3 | No hash/mutable O(1) accumulator | **hashing+HashMap FIXED**; O(1)/leak-free open |
 | #4 | No constructible String ordering | **FIXED** |
 | #5 | No data parallelism | open — design-level milestone |
@@ -36,15 +36,32 @@ each open section ends with an actionable **Task** breakdown.
 Benchmarked `brc.ash` on subsets of `measurements.txt` (8700 unique stations in the
 first 10k rows; `hyperfine`, peak RSS from `/proc/<pid>/status`):
 
-| Rows | Baseline | After #7 (uncons views) | After #8 (`join`) |
-|------|----------|-------------------------|-------------------|
-| 100 | 0.92 ms | 0.56 ms | 0.43 ms |
-| 1 000 | 57 ms | 18 ms | 9.6 ms |
-| 10 000 | 5.2 s / 15 GB | 1.57 s / 3.6 GB | 0.79 s / 2.6 GB |
-| 20 000 | 56 s | 6 s | 4 s |
-| 30 000 | >90 s | 12 s | 7 s |
+| Rows | Baseline | After #7 (uncons views) | After #8 (`join`) | After #2a (lookup-copy fix) |
+|------|----------|-------------------------|-------------------|------------------------------|
+| 100 | 0.92 ms | 0.56 ms | 0.43 ms | 0.4 ms |
+| 1 000 | 57 ms | 18 ms | 9.6 ms | <10 ms |
+| 10 000 | 5.2 s / 15 GB | 1.57 s / 3.6 GB | 0.79 s / 2.6 GB | **~0.1 s / 105 MB** |
+| 20 000 | 56 s | 6 s | 4 s | <1 s |
+| 30 000 | >90 s | 12 s | 7 s | <1 s |
+| 50 000 | (OOM ~46 GB) | — | — | **1 s / 508 MB** |
 
-Cumulative at 10k rows: **5.2 s / 15 GB → 0.79 s / 2.6 GB** (6.6× faster, 5.8× less memory).
+Cumulative at 10k rows: **5.2 s / 15 GB → ~0.1 s / 105 MB** (≈25× less memory; quadratic → linear).
+brc no longer OOMs at scale; it now stops accumulating around ~50–65k rows because
+`Ashes.File.readText` returns empty past ~1 MB (that is **#1**, the whole-file read, not memory).
+
+### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
+
+The design assumed the O(N²) blowup was `Map.set` superseded-node sharing. Empirically it was not:
+the tree stays balanced (height 15 at 8700 keys), `compare` is cheap, and a *set-only* fold is
+linear. The blowup came from the **`Map.get` (lookup) before each `set`**. A tail-recursive lookup
+that `match`es the accumulator was (incorrectly) given the in-place-reuse **defensive deep copy** of
+its recursive subtree argument at every recursion level — even though it never rebuilds the
+accumulator (it returns `Maybe`, and at most reuses a dead nullary leaf, `Empty -> None`). That made
+each lookup O(size) and the whole fold O(N·K). Fix (`Lowering.cs`): keep the defensive copy only when
+in-place reuse rebuilds **non-nullary structure** (a field-bearing `AllocReusing`); otherwise skip it
+and revert the trivial nullary reuses to fresh allocations (sound — no copy backs them). General fix
+(any immutable recursive structure with a lookup-then-update fold), regression-tested in
+`tests/reuse_lookup_then_update_bounded.ash`.
 
 **Root causes, in order of impact:** (1) `Ashes.Text.uncons`'s tail was a full byte
 copy, so a char-by-char loop was O(T²) in file size *and* allocated O(T²) bytes — that
@@ -67,14 +84,19 @@ Halved the 10k-row runtime (was ~45 % of it).
 
 **Remaining 1BRC tasks:**
 
-1. **`substring`/`take` as views (#4-adjacent) + line-oriented scan** — `take` is O(count²)
+1. **#1 whole-file read is now the scaling cap.** With memory linear, `brc` stops accumulating
+   around ~50–65k rows because `Ashes.File.readText` returns empty past ~1 MB. Streaming/chunked
+   reading (or a larger read) is now what blocks higher row counts — see #1 below.
+2. **#2 residual linear leak — the hot-loop arena reset.** The O(N²) blowup is fixed (#2a above);
+   what remains is the *linear* per-row garbage (superseded `Map.set` path nodes + per-line scratch)
+   that the loop never reclaims because the Map accumulator isn't copy-out-able and the per-char loop
+   would re-materialize the `remaining` view on reset. Bounding it fully needs the stdlib `Map.set`
+   reuse / to-space work whose design + "insert path" step live in
+   [docs/future/REUSE_ANALYSIS.md](../../docs/future/REUSE_ANALYSIS.md) — now lower priority since the
+   leak is linear, not quadratic.
+3. **`substring`/`take` as views (#4-adjacent) + line-oriented scan** — `take` is O(count²)
    (concatenates) and `substring = take(drop …)`; make `take` view-based so a per-line scan can
-   avoid building `lineAcc` char by char. Marginal for `brc` but removes the last per-char concat.
-2. **#2 hot-loop arena reset** — the structural item, and the largest remaining. The per-char loop
-   can't reset while the Map accumulator isn't copy-out-able, and a reset must keep below-watermark
-   `remaining` views as views (not materialize them). Needs the stdlib `Map.set` reuse / to-space
-   work whose design + remaining "insert path" step live in
-   [docs/future/REUSE_ANALYSIS.md](../../docs/future/REUSE_ANALYSIS.md).
+   avoid building `lineAcc` char by char. Marginal for `brc`.
 
 ---
 

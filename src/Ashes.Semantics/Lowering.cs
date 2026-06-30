@@ -2765,6 +2765,12 @@ public sealed partial class Lowering
         // emitted only after the body is lowered (so HM has resolved the accumulator's type), then
         // spliced in at reuseInsertIndex (before the loop body label). See below.
         var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        // Slots whose defensive copy is for DIRECT in-place reuse (the body itself rebuilds the
+        // accumulator). These are only needed if reuse actually fired (an AllocReusing was emitted);
+        // a pure traversal that matches but never rebuilds (e.g. a tree lookup) must NOT copy, or every
+        // call becomes O(size) instead of O(depth). Specialization copies (the reuse is in a $reuse
+        // clone) are not gated this way.
+        var directReuseSlots = new HashSet<int>();
         int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
@@ -2839,6 +2845,7 @@ public sealed partial class Lowering
                 {
                     _linearReuseNames.Add(accName);
                     reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+                    directReuseSlots.Add(accLocal.Slot);
                 }
             }
 
@@ -2915,9 +2922,45 @@ public sealed partial class Lowering
         // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
         if (reuseDefensiveCopy.Count > 0 && reuseInsertIndex >= 0)
         {
+            // A direct-reuse defensive copy (O(size)) is only worth it if reuse rebuilds the
+            // accumulator's recursive *structure* — i.e. an AllocReusing with fields. A function that
+            // matches the accumulator but only reads it — a tree lookup like Map.get, whose arms
+            // return a different type (None/Some) — at most reuses a dead nullary leaf (Lf -> None),
+            // an O(1) saving that does not justify the O(size) copy. Without a non-nullary rebuild,
+            // copying the recursive argument turns an O(depth) traversal into an O(size) deep copy per
+            // call (the 1BRC get/set O(N·K) leak). So: keep the copy only when a field-bearing
+            // AllocReusing fired; otherwise skip the direct-reuse copies AND revert this body's
+            // (now unbacked-by-a-copy, hence unsound) nullary reuses to fresh allocations.
+            // Specialization copies (reuse lives in a $reuse clone) are unaffected.
+            bool structuralReuse = false;
+            for (int i = reuseInsertIndex; i < _inst.Count; i++)
+            {
+                if (_inst[i] is IrInst.AllocReusing { FieldCount: > 0 })
+                {
+                    structuralReuse = true;
+                    break;
+                }
+            }
+
+            if (!structuralReuse)
+            {
+                for (int i = reuseInsertIndex; i < _inst.Count; i++)
+                {
+                    if (_inst[i] is IrInst.AllocReusing ar)
+                    {
+                        _inst[i] = new IrInst.AllocAdt(ar.Target, ar.Tag, ar.FieldCount) { Location = ar.Location };
+                    }
+                }
+            }
+
             int genStart = _inst.Count;
             foreach (var (slot, typeRef) in reuseDefensiveCopy)
             {
+                if (directReuseSlots.Contains(slot) && !structuralReuse)
+                {
+                    continue;
+                }
+
                 int loaded = NewTemp();
                 Emit(new IrInst.LoadLocal(loaded, slot));
                 int copied = EmitDeepCopy(loaded, Prune(typeRef));

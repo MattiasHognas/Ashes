@@ -2,6 +2,38 @@
 
 Status: **Largely complete. Direct + helper + recursive-specialization + the full `Map.set` _shape_ (multi-param / nested-`go` / helper-rebuilding / intermediate linearity) are landed, sound, and constant-memory bounded for pure-rewrite folds. The one remaining piece is the insert path of an insert-or-update `Map.set` (a fresh node for a new key lands above the watermark), which needs a to-space / persistent region. 2026-06-30.**
 
+> **Scoping update (2026-06-30, while attempting to bound `challenges/1brc/brc.ash`).** Bounding the
+> *actual* 1BRC program needs more than the documented insert-path; three obstacles surfaced:
+>
+> 1. **brc doesn't trigger the `Map.set` specialization.** The trigger is `loop(…)(Map.set(…)(acc))`
+>    — the accumulator threaded *directly* through `Map.set`. brc's loop is
+>    `loop(rest)("")(processLine(lineAcc)(map))`: the map flows through `processLine`, which *conditionally*
+>    (`sep <= -1` / `"#"` / valid) calls `Map.set`. So the indirection + the conditional update both need
+>    handling (inline `processLine` into the loop and recognise the conditional `Map.set(acc)`), or brc
+>    must be restructured to a direct `loop(Map.set(acc))` shape.
+> 2. **brc's loop is per-character, not per-row.** A reset fires on the TCO back-edge = every character,
+>    so any per-reset cost (e.g. a map deep-copy, or `remaining` view materialization) is paid O(T) times
+>    → O(T²). Bounding brc realistically means restructuring to a per-row (or per-chunk) loop first.
+> 3. **The "below-watermark view" check is chunk-unsafe.** Keeping `remaining` as a view across a reset
+>    (instead of the O(T) materialize the copy-out does today) needs "is the backing below the reset
+>    watermark W". The arena is chunk-based and chunks are **not** address-ordered (mmap), so a numeric
+>    `backingPtr < W` is unsound. It needs a chunk-membership test (walk the chunk list / compare to chunk
+>    bounds), not a pointer compare.
+>
+> **Two mechanisms, with the tradeoff:** (a) the documented **in-place reuse + to-space** gives
+> bounded-*and*-fast (O(1)/row) — the real 1BRC answer — but is the corruption-prone multi-day piece and
+> brc doesn't trigger it; (b) a **scratch-arena deep-copy fallback** (deep-copy the map to a *separate*
+> region, reset main, copy back — the naive single-arena two-pass segfaults because the iteration's
+> own allocation `C1 − W ≪ K` so the down-copy clobbers the up-copy) is copy-semantics (safer) but
+> O(K)/reset, so it only bounds memory if the loop is per-chunk (not per-row, certainly not per-char).
+>
+> **Recommended order for a dedicated session:** (i) `substring`/`take` as views + a per-row line scan
+> (FLAWS #4) to get brc off the per-character loop; (ii) the scratch-arena deep-copy fallback to bound
+> memory per row/chunk (correct, safe, slower) and prove brc runs without OOM at scale; (iii) the
+> insert-path to-space + routing `processLine`'s conditional `Map.set` through `set$reuse` to get
+> bounded-*and*-fast. Each step is independently testable; (iii) is the corruption-prone part and must
+> be gated behind the reuse-correct + constant-memory + shared-accumulator test trio.
+
 > **DONE — the `Map.set` shape.** A non-recursive multi-parameter function that returns a nested
 > recursive single-param function — `let f a b = (let rec go m = … in go)` — applied to a unique
 > accumulator is specialized into `f$reuse` whose nested `go` has a linear parameter. Pieces:
