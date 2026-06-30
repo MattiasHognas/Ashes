@@ -864,6 +864,15 @@ public static class Runner
                 psi.StandardInputEncoding = utf8NoBom;
             }
 
+            // Win-x64 PE images run via Wine (binfmt_misc) on Linux. Ashes binaries are standalone
+            // native PE — they never load the .NET (mscoree) or Gecko (mshtml) runtimes — so suppress
+            // Wine's first-run installer dialogs, which would otherwise block the run on a GUI popup.
+            if (targetId == TargetIds.WindowsX64 && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
+            {
+                psi.Environment["WINEDEBUG"] = "-all";
+                psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
+            }
+
             if (environmentVariables is not null)
             {
                 foreach (var (key, value) in environmentVariables)

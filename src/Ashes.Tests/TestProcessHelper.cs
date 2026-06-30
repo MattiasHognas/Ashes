@@ -81,6 +81,10 @@ internal static class TestProcessHelper
         var psi = new ProcessStartInfo(environment.RunnerPath);
         psi.ArgumentList.Add(exePath);
         psi.Environment["WINEDEBUG"] = "-all";
+        // Ashes emits standalone native PE binaries — they never load the .NET (mscoree) or
+        // Gecko (mshtml) runtimes — so suppress Wine's first-run installer dialogs for them.
+        // Without this, a fresh Wine prefix blocks the test run on an interactive popup.
+        psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
         return psi;
     }
 
