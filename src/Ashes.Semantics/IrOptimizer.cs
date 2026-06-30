@@ -976,7 +976,7 @@ public static class IrOptimizer
             if (BuiltinRegistry.IsResourceTypeName(drop.TypeName)) continue;
 
             // Never elide closure drops: a closure may carry a resource dropper at closure+24 (set
-            // when it captured-and-escaped a resource — RESOURCE_SAFETY.md Gap B). The drop is a
+            // when it captured-and-escaped a resource). The drop is a
             // cheap runtime no-op when there is no dropper, but eliding it would leak the resource.
             if (drop.TypeName == "Function") continue;
 

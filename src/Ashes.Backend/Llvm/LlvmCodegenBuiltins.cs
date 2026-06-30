@@ -5572,7 +5572,7 @@ internal static partial class LlvmCodegen
 
             case "Function":
                 // A closure may carry a dropper (closure+24) that closes resources moved into it
-                // when it captured-and-escaped them (RESOURCE_SAFETY.md Gap B deterministic close).
+                // when it captured-and-escaped them (deterministic close).
                 EmitClosureDrop(state, value);
                 return false;
 

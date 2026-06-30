@@ -1,6 +1,32 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **In progress — reuse primitive (`AllocReusing`) landed; the sound uniqueness analysis is the remaining (substantial) work. 2026-06-30.**
+Status: **In progress — direct-accumulator in-place reuse landed & verified; `Map.set`-group specialization (indirect reuse) is the remaining work. 2026-06-30.**
+
+> **DONE — direct-accumulator reuse.** When a TCO loop body directly `match`es a recursive-ADT
+> accumulator and rebuilds it with the same constructor, the deconstructed node is now overwritten
+> in place (`AllocReusing`) instead of reallocated. Soundness without runtime refcounting comes from
+> a one-time **defensive deep copy of the accumulator at loop entry** (makes the loop-local
+> accumulator uniquely owned regardless of caller sharing) + the reuse only firing in arms that
+> don't reference the accumulator again (cell is dead). Pieces:
+> - `IrInst.AllocReusing` + `EmitAllocReusing` (overwrite tag, no bump alloc).
+> - `_linearReuseNames` / `_reuseTokens` in `Lowering`; token produced in both match-arm lowering
+>   paths (`LowerMatchArmsLinear` / `LowerMatchArmsViaTagSwitch`) for a linear scrutinee, consumed by
+>   a same-arity constructor in `LowerConstructorApplication` (`TryConsumeReuseToken`).
+> - Eligibility (`CollectCtorMatchedScrutinees`) + deferred defensive copy spliced in at loop entry
+>   (emitted after the body so HM has resolved the accumulator type; type taken from the matched
+>   constructor). Restricted to non-copy-out-able (pointer-bearing/recursive) ADTs — copy-type ADTs
+>   are already bounded by the existing shallow copy-out. Per-frame save/restore in `LowerLambdaCore`.
+> - Verified: a `Node`-tree fold runs 50M iterations in ~4 MB constant memory (≈1.6 GB without
+>   reuse), correct results; a caller-shared initial accumulator is **not** corrupted
+>   (`tests/reuse_inplace_accumulator.ash`). Whole suite green: 1307 unit + 354 e2e.
+>
+> **REMAINING — indirect reuse (the 1BRC `Map.set` fold).** When the accumulator is updated by a
+> *called* function (`loop(Map.set(…)(acc))`) the reuse must happen inside `Map.set`. That needs the
+> linearity-driven **specialization** below: a `…$reuse` clone of the `Map.set`/`balance`/`rotate`/
+> `makeNode` group (the loop's accumulator is unique by the same entry deep copy) with the reuse
+> token threaded from `set$reuse`'s match into `makeNode$reuse`'s construction. The direct-case
+> machinery above (`AllocReusing`, token plumbing, defensive copy, eligibility) is the foundation it
+> builds on.
 
 > **What's done:** the `IrInst.AllocReusing(Target, Tag, FieldCount, TokenTemp)` primitive +
 > backend (`EmitAllocReusing`: overwrite the dead cell's tag, no bump alloc) + optimizer wiring.

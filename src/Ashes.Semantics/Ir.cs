@@ -91,7 +91,8 @@ public abstract record IrInst
     public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
-    /// into an escaping closure's dropper slot (see RESOURCE_SAFETY.md Gap B deterministic close).</summary>
+    /// into an escaping closure's dropper slot, so a resource a closure captured is closed
+    /// deterministically when the closure is dropped.</summary>
     public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
 
@@ -104,11 +105,11 @@ public abstract record IrInst
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
-    /// In-place reuse (REUSE_ANALYSIS.md / #2): writes <c>Tag</c> into the cell at
-    /// <c>TokenTemp</c>'s address and yields that address as <c>Target</c>, instead of
-    /// bump-allocating. Emitted only when the token is a provably-dead, uniquely-owned ADT cell of
-    /// the same size (1 + FieldCount words) — e.g. the node a linear TCO accumulator was just
-    /// deconstructed from. The fields are written afterwards exactly like <see cref="AllocAdt"/>.
+    /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
+    /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
+    /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
+    /// a linear TCO accumulator was just deconstructed from. The fields are written afterwards exactly
+    /// like <see cref="AllocAdt"/>.
     /// </summary>
     public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source

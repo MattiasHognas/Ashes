@@ -69,9 +69,17 @@ public sealed partial class Lowering
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
     // into the closure (a synthesized dropper stored at closure+24 closes them when the closure is
-    // dropped) instead of closing them at scope exit, which would be a use-after-close. See
-    // RESOURCE_SAFETY.md Gap B.
+    // dropped) instead of closing them at scope exit, which would be a use-after-close.
     private readonly Dictionary<int, List<(int EnvOffset, string Name, TypeRef Type)>> _closureResourceCaptures = new();
+
+    // In-place reuse. Names of TCO accumulator params that have been made uniquely-owned (deep-copied
+    // once at loop entry) and are therefore safe to reuse in place.
+    private readonly HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
+
+    // Available reuse tokens (dead ADT cells from matching a linear value), innermost last. Each is
+    // the cell's address temp + its field count; a same-arity constructor in the arm consumes one,
+    // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
+    private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
 
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
@@ -2385,6 +2393,12 @@ public sealed partial class Lowering
         var savedScopes = _scopes.ToArray();
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
+        // tokens (frame-local temps) or linear accumulators, and vice versa.
+        var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
+        var savedReuseTokens = new List<(int, int)>(_reuseTokens);
+        _linearReuseNames.Clear();
+        _reuseTokens.Clear();
 
         // new function state
         _inst.Clear();
@@ -2467,6 +2481,11 @@ public sealed partial class Lowering
         bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
         bool isChainLambda = wasDescendingChain;
         var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
+        // In-place reuse: accumulators to deep-copy once at loop entry. The copy IR is
+        // emitted only after the body is lowered (so HM has resolved the accumulator's type), then
+        // spliced in at reuseInsertIndex (before the loop body label). See below.
+        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
             var tco = _tcoCtx!;
@@ -2511,6 +2530,38 @@ public sealed partial class Lowering
             // The arg slot is also a TCO param (last in the chain)
             tco.ParamSlots.Add(argSlot);
 
+            // In-place reuse: mark accumulators that are deconstructed in the loop body as
+            // linear (so the body's match→construct lowering reuses their nodes in place) and record
+            // them for a one-time deep copy at loop entry. The copy makes the loop-local accumulator
+            // region uniquely owned regardless of whether the caller still holds the initial value —
+            // which is what makes the per-iteration in-place reuse sound (no runtime refcounting;
+            // Ground Rule 6). The copy IR is generated after the body (resolved types) and spliced in
+            // here. Type comes from the matched constructor — the param's own type var isn't unified
+            // until the body is lowered.
+            _linearReuseNames.Clear();
+            var reuseScan = new Dictionary<string, string>(StringComparer.Ordinal);
+            var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
+            CollectCtorMatchedScrutinees(lam.Body, reuseParamNames, reuseScan);
+            reuseInsertIndex = _inst.Count;
+            foreach (var (accName, ctorName) in reuseScan)
+            {
+                if (_scopes.Peek().TryGetValue(accName, out var accBinding)
+                    && accBinding is Binding.Local accLocal
+                    && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
+                    && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
+                    && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
+                    && !IsResourceBearing(accNamed)
+                    // Only pointer-bearing/recursive ADTs benefit: copy-type ADTs are already bounded
+                    // by the existing shallow copy-out, so reuse there is redundant and the entry deep
+                    // copy would be wasted.
+                    && !CanCopyOutAdt(accNamed, out _)
+                    && TrySynthesizeAdtCopier(accNamed) is not null)
+                {
+                    _linearReuseNames.Add(accName);
+                    reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+                }
+            }
+
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
@@ -2548,6 +2599,27 @@ public sealed partial class Lowering
             savedTcoCtx.InTailPosition = false;
         }
 
+        // In-place reuse: now that the body is lowered and the accumulators' types are
+        // resolved, generate the one-time defensive deep copies and splice them in at loop entry
+        // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
+        // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
+        if (reuseDefensiveCopy.Count > 0 && reuseInsertIndex >= 0)
+        {
+            int genStart = _inst.Count;
+            foreach (var (slot, typeRef) in reuseDefensiveCopy)
+            {
+                int loaded = NewTemp();
+                Emit(new IrInst.LoadLocal(loaded, slot));
+                int copied = EmitDeepCopy(loaded, Prune(typeRef));
+                Emit(new IrInst.StoreLocal(slot, copied));
+            }
+
+            int genCount = _inst.Count - genStart;
+            var generated = _inst.GetRange(genStart, genCount);
+            _inst.RemoveRange(genStart, genCount);
+            _inst.InsertRange(reuseInsertIndex, generated);
+        }
+
         _tcoCtx = outerTcoCtx;
         if (isChainLambda)
         {
@@ -2583,6 +2655,11 @@ public sealed partial class Lowering
         {
             _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
         }
+
+        _linearReuseNames.Clear();
+        foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
+        _reuseTokens.Clear();
+        _reuseTokens.AddRange(savedReuseTokens);
 
         // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
@@ -3913,6 +3990,70 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(expr.GetType().Name);
         }
+    }
+
+    /// <summary>
+    /// In-place reuse: collects the subset of <paramref name="paramNames"/> that appear as the
+    /// scrutinee of a <c>match … with Ctor(…)</c> in <paramref name="e"/> (walking the if/let/match
+    /// spine — enough for the common fold shapes). These are the accumulators worth deep-copying once
+    /// at loop entry so their nodes can be reused in place. Conservative: missing one only forgoes an
+    /// optimization, never correctness.
+    /// </summary>
+    private static void CollectCtorMatchedScrutinees(Expr e, HashSet<string> paramNames, Dictionary<string, string> result)
+    {
+        switch (e)
+        {
+            case Expr.If i:
+                CollectCtorMatchedScrutinees(i.Then, paramNames, result);
+                CollectCtorMatchedScrutinees(i.Else, paramNames, result);
+                break;
+            case Expr.Let l:
+                CollectCtorMatchedScrutinees(l.Body, paramNames, result);
+                break;
+            case Expr.LetRec lr:
+                CollectCtorMatchedScrutinees(lr.Body, paramNames, result);
+                break;
+            case Expr.Match m:
+                if (m.Value is Expr.Var v && paramNames.Contains(v.Name))
+                {
+                    foreach (var mc in m.Cases)
+                    {
+                        if (mc.Pattern is Pattern.Constructor ctorPattern)
+                        {
+                            result[v.Name] = ctorPattern.Name;
+                            break;
+                        }
+                    }
+                }
+
+                foreach (var c in m.Cases)
+                {
+                    CollectCtorMatchedScrutinees(c.Body, paramNames, result);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// In-place reuse: consumes an available reuse token whose cell has exactly
+    /// <paramref name="fieldCount"/> fields (so it is the same size as the constructor being built).
+    /// Returns the dead cell's address temp to overwrite, or false if no matching token is available.
+    /// </summary>
+    private bool TryConsumeReuseToken(int fieldCount, out int tokenTemp)
+    {
+        for (int i = _reuseTokens.Count - 1; i >= 0; i--)
+        {
+            if (_reuseTokens[i].FieldCount == fieldCount)
+            {
+                tokenTemp = _reuseTokens[i].Temp;
+                _reuseTokens.RemoveAt(i);
+                return true;
+            }
+        }
+
+        tokenTemp = -1;
+        return false;
     }
 
     private static bool ExprReferencesName(Expr expr, string targetName, bool shadowed = false)

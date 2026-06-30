@@ -430,7 +430,7 @@ public sealed class IrOptimizerTests
     public void Drop_elision_preserves_function_drop()
     {
         // Closure (Function) drops must NOT be elided: a closure may carry a resource dropper at
-        // closure+24 (set when it captured-and-escaped a resource — RESOURCE_SAFETY.md Gap B).
+        // closure+24 (set when it captured-and-escaped a resource).
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 0),   // dummy closure ptr

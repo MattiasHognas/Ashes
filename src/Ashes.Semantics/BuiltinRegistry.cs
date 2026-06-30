@@ -145,8 +145,8 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     // Hybrid module: `both` is a compiler intrinsic (lowered at each call site so it
-                    // can deep-copy a worker's result at the concrete result type — see
-                    // STRUCTURED_PARALLELISM.md); `map`/`reduce`/helpers come from the embedded source.
+                    // can deep-copy a worker's result at the concrete result type); `map`/`reduce`/
+                    // helpers come from the embedded source.
                     ["both"] = new("both", BuiltinValueKind.ParallelBoth, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Maybe"] = new(

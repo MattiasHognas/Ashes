@@ -255,7 +255,7 @@ public sealed partial class Lowering
     // order-independent, so it is identical to the sequential pair regardless of which thunk
     // finishes first. At concrete result types `right` may run on a worker thread; abstract
     // (polymorphic) result types always run sequentially (a correct fallback) — see
-    // LowerParallelBoth and docs/future/STRUCTURED_PARALLELISM.md.
+    // LowerParallelBoth (in this file).
     private Binding.Intrinsic CreateParallelBothBinding()
     {
         var a = (TypeRef.TVar)NewTypeVar();

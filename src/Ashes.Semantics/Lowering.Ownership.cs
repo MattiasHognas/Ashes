@@ -208,7 +208,7 @@ public sealed partial class Lowering
     /// If the scope's result is a closure that captures resources this scope owns, those resources
     /// escape with the closure. Mark them as already-handled so <see cref="EmitDropsForCurrentScope"/>
     /// does not close them here — closing a resource the escaping closure still references would be a
-    /// use-after-close (RESOURCE_SAFETY.md Gap B). The resource is then released at program exit;
+    /// use-after-close at scope exit. The resource is then released at program exit;
     /// closing it deterministically when the closure itself dies is future work. Conservative: only
     /// the result-closure's direct captures are recognised (resources reached through nested
     /// aggregates or a chain of closures are not yet tracked).
