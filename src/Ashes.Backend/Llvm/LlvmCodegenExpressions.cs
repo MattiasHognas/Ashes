@@ -31,23 +31,31 @@ internal static partial class LlvmCodegen
             : LlvmApi.BuildLShr(builder, value, maskedAmount, name);
     }
 
+    // Closure layout: {code@0, env@8, env_size@16, dropper@24}. The dropper is a code pointer that
+    // closes resources moved into the closure's env (set only when a captured resource escapes with
+    // the closure — see SetClosureDropper); 0 for ordinary closures. Invoked when the closure is
+    // dropped (EmitDrop "Function").
+    private const int ClosureSizeBytes = 32;
+
     private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
     {
-        LlvmValueHandle closurePtr = EmitAlloc(state, 24); // {code, env, env_size}
+        LlvmValueHandle closurePtr = EmitAlloc(state, ClosureSizeBytes);
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_env_size_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
     }
 
     private static LlvmValueHandle EmitMakeClosureStack(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
     {
-        LlvmValueHandle closurePtr = EmitStackAlloc(state, 24, $"closure_stack_{funcLabel}");
+        LlvmValueHandle closurePtr = EmitStackAlloc(state, ClosureSizeBytes, $"closure_stack_{funcLabel}");
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_stack_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_stack_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_stack_env_store_{funcLabel}");
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_stack_env_size_store_{funcLabel}");
+        StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_stack_dropper_store_{funcLabel}");
         return closurePtr;
     }
 

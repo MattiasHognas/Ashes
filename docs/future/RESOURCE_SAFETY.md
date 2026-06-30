@@ -1,6 +1,18 @@
 # Deterministic Resource Safety — Findings & Plan
 
-Status: **All known gaps (A, B, C, D) fixed & verified (2026-06-30); deterministic close of escaped resources is the remaining refinement.**
+Status: **All known gaps (A, B, C, D) fixed & verified, including deterministic close of escaped resources (2026-06-30).**
+
+> **Deterministic close of escaped resources — DONE.** A closure now carries a dropper at
+> `closure+24` (32-byte closure layout). When a resource is captured by a closure that escapes its
+> defining scope (so the resource is solely the closure's — `SkipDropsForResourcesEscapingViaResult`
+> only fires there), the scope moves the resource into the closure and attaches a synthesized dropper
+> (`SynthesizeClosureResourceDropper` + `LoadFuncAddr`). When the closure is dropped — at its scope
+> exit or the TCO back-edge — `EmitDrop "Function"` invokes the dropper to close the resource. So an
+> escaped resource is closed deterministically at the closure's death rather than leaking to program
+> exit. Aggregates were already deterministic (recursive Drop fires when the resource-bearing binding
+> is dropped). Drop elision keeps `Function` drops (they may carry a dropper). Verified: an escaping
+> closure over a handle, recreated each loop iteration, stays fd-bounded under `ulimit -n 64`
+> (`closleak`); e2e `resource_closure_deterministic_close.ash`.
 
 > **Gap A (resource nested in an aggregate) is now FIXED too**, via an affine ownership model:
 > - **Recursive `Drop` for resource-bearing aggregates** (`EmitResourceBearingDrop` /

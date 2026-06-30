@@ -87,8 +87,12 @@ public abstract record IrInst
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
 
-    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 24 bytes: {code, env, env_size}
-    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 24 bytes: {code, env, env_size}
+    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
+    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
+
+    /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
+    /// into an escaping closure's dropper slot (see RESOURCE_SAFETY.md Gap B deterministic close).</summary>
+    public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
 
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;

@@ -5570,14 +5570,48 @@ internal static partial class LlvmCodegen
                 EmitProcessDrop(state, value);
                 return false;
 
+            case "Function":
+                // A closure may carry a dropper (closure+24) that closes resources moved into it
+                // when it captured-and-escaped them (RESOURCE_SAFETY.md Gap B deterministic close).
+                EmitClosureDrop(state, value);
+                return false;
+
             default:
-                // Owned heap types (String, List, ADTs, Closures, etc.):
+                // Owned heap types (String, List, ADTs, etc.):
                 // No-op per-object — bulk deallocation is handled by
                 // RestoreArenaState which resets the heap cursor at scope
                 // exit for copy-type scopes. The Drop instruction is kept
                 // in IR for semantic correctness and resource cleanup routing.
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Drops a closure: if it carries a resource dropper at offset 24 (non-zero), invoke it as
+    /// <c>dropper(0, env)</c> to close the resources the closure owns. Ordinary closures have a zero
+    /// dropper and this is a no-op.
+    /// </summary>
+    private static void EmitClosureDrop(LlvmCodegenState state, LlvmValueHandle closure)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle dropperCode = LoadMemory(state, closure, 24, "closure_dropper");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            dropperCode, LlvmApi.ConstInt(state.I64, 0, 0), "closure_dropper_is_null");
+
+        var callBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_call");
+        var endBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_end");
+        LlvmApi.BuildCondBr(builder, isNull, endBlock, callBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, callBlock);
+        LlvmValueHandle env = LoadMemory(state, closure, 8, "closure_dropper_env");
+        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(builder, dropperCode,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0), "closure_dropper_ptr");
+        LlvmApi.BuildCall2(builder, dropperType, dropperPtr,
+            [LlvmApi.ConstInt(state.I64, 0, 0), env], "closure_dropper_call");
+        LlvmApi.BuildBr(builder, endBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, endBlock);
     }
 
     private static LlvmValueHandle EmitHttpRequest(LlvmCodegenState state, LlvmValueHandle urlRef, LlvmValueHandle bodyRef, bool hasBody)

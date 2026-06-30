@@ -66,12 +66,12 @@ public sealed partial class Lowering
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
 
-    // Closure temp → resolved names of resource bindings it captures. When such a closure is a
-    // scope's result the captured resources escape, so the scope must not close them (else the
-    // escaping closure would observe a closed resource — a use-after-close). See RESOURCE_SAFETY.md
-    // Gap B. The escaped resource is then released at program exit (deterministic close at the
-    // closure's own death is future work).
-    private readonly Dictionary<int, HashSet<string>> _closureResourceCaptures = new();
+    // Closure temp → the resource bindings it captures, with each one's env offset and type. When
+    // such a closure is a scope's result the captured resources escape with it; the scope moves them
+    // into the closure (a synthesized dropper stored at closure+24 closes them when the closure is
+    // dropped) instead of closing them at scope exit, which would be a use-after-close. See
+    // RESOURCE_SAFETY.md Gap B.
+    private readonly Dictionary<int, List<(int EnvOffset, string Name, TypeRef Type)>> _closureResourceCaptures = new();
 
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
@@ -2596,15 +2596,16 @@ public sealed partial class Lowering
             Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
         }
 
-        // Record any resource captured by this closure. Ownership scopes are separate from binding
-        // scopes, so the captured names still resolve to their owning bindings here.
-        var resourceCaptures = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var cap in captures)
+        // Record any resource captured by this closure, with its env offset (capture i lives at
+        // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
+        // names still resolve to their owning bindings here.
+        var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
+        for (int ci = 0; ci < captures.Count; ci++)
         {
-            var owned = LookupOwnedValue(cap);
-            if (owned is not null && owned.IsResource)
+            var owned = LookupOwnedValue(captures[ci]);
+            if (owned is not null && owned.IsResource && owned.Type is not null)
             {
-                resourceCaptures.Add(ResolveOwnershipAlias(cap));
+                resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
             }
         }
 
@@ -2723,14 +2724,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
             }
 
-            // A resource passed by name as a self-call argument moves to the next iteration — it
-            // must not be closed at this back-edge. Mark it consumed so EmitTcoBackEdgeResourceDrops
-            // (and the dead-code arm Drops after the jump) skip it.
+            // An owned value passed by name as a self-call argument moves to the next iteration —
+            // it must not be dropped at this back-edge (a resource would be closed, a closure with a
+            // dropper would close its captured resource). Mark it consumed so
+            // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
             foreach (var arg in collectedArgs)
             {
-                if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsResource: true } movedResource)
+                if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
                 {
-                    movedResource.IsDropped = true;
+                    movedOwned.IsDropped = true;
                 }
             }
 

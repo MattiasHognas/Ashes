@@ -217,19 +217,36 @@ public sealed partial class Lowering
     {
         if (resultTemp < 0
             || _ownershipScopes.Count == 0
-            || !_closureResourceCaptures.TryGetValue(resultTemp, out var escaped))
+            || !_closureResourceCaptures.TryGetValue(resultTemp, out var captures))
         {
             return;
         }
 
         var scope = _ownershipScopes.Peek();
-        foreach (var resourceName in escaped)
+        var escaping = new List<(int EnvOffset, TypeRef Type)>();
+        foreach (var (envOffset, name, type) in captures)
         {
-            if (scope.TryGetValue(resourceName, out var info) && info.IsResource && !info.IsDropped)
+            if (scope.TryGetValue(name, out var info) && info.IsResource && !info.IsDropped)
             {
+                // The resource is owned by this exiting scope and captured by its escaping result
+                // closure, so after this scope it is reachable only through the closure: move it in.
                 info.IsDropped = true;
+                escaping.Add((envOffset, type));
             }
         }
+
+        if (escaping.Count == 0)
+        {
+            return;
+        }
+
+        // Attach a dropper to the escaping closure that closes the moved resources when the closure
+        // is itself dropped (EmitDrop "Function" invokes closure+24). This gives the escaped resource
+        // a deterministic close at the closure's death rather than leaking it to program exit.
+        string dropperLabel = SynthesizeClosureResourceDropper(escaping);
+        int dropperCodeTemp = NewTemp();
+        Emit(new IrInst.LoadFuncAddr(dropperCodeTemp, dropperLabel));
+        Emit(new IrInst.StoreMemOffset(resultTemp, 24, dropperCodeTemp));
     }
 
     /// <summary>
@@ -258,7 +275,10 @@ public sealed partial class Lowering
 
             foreach (var (_, info) in scope)
             {
-                if ((info.IsResource || info.IsResourceBearing) && !info.IsDropped)
+                // Resources/resource-bearing aggregates close their handles; closures ("Function")
+                // may carry a resource dropper (closure+24) set when they captured-and-escaped a
+                // resource (Gap B), so drop them too — it's a cheap no-op for ordinary closures.
+                if ((info.IsResource || info.IsResourceBearing || info.TypeName == "Function") && !info.IsDropped)
                 {
                     EmitOwnedValueDrop(info);
                     info.IsDropped = true;
@@ -854,6 +874,79 @@ public sealed partial class Lowering
 
     private readonly Dictionary<string, string> _adtCopierLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _adtCopierInProgress = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _closureDropperLabels = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Synthesizes (once per layout, cached) a function that closes the resources an escaping
+    /// closure carries. It is stored at the closure's dropper slot (closure+24) and invoked when the
+    /// closure is dropped (see EmitDrop "Function"). Called as <c>dropper(ownEnv, targetEnv)</c> — it
+    /// ignores its own (empty) env and reads the closure's env (the arg), then closes each moved
+    /// resource at its recorded offset. Returns the function label.
+    /// </summary>
+    private string SynthesizeClosureResourceDropper(List<(int EnvOffset, TypeRef Type)> resources)
+    {
+        var key = string.Join(";", resources.Select(r => $"{r.EnvOffset}:{Pretty(r.Type)}"));
+        if (_closureDropperLabels.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        string label = $"__cdrop_{_nextLambdaId++}";
+        _closureDropperLabels[key] = label;
+
+        // Build the dropper body in isolation (mirrors TrySynthesizeAdtCopier's state save/restore).
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        _inst.Clear();
+        _nextTempSlot = 0;
+        _nextLocalSlot = 0;
+        _localNames.Clear();
+        _localTypes.Clear();
+
+        NewLocal(); // slot 0: own env (implicit, empty — ignored)
+        int targetEnvSlot = NewLocal(); // slot 1: the dropped closure's env (the call argument)
+        int targetEnvTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(targetEnvTemp, targetEnvSlot));
+        foreach (var (envOffset, type) in resources)
+        {
+            int resTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(resTemp, targetEnvTemp, envOffset));
+            EmitResourceBearingDrop(resTemp, type);
+        }
+
+        int retTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(retTemp, 0));
+        Emit(new IrInst.Return(retTemp));
+
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+
+        // Restore the enclosing function's state.
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
+        _localNames.Clear();
+        foreach (var kv in savedLocalNames)
+        {
+            _localNames[kv.Key] = kv.Value;
+        }
+
+        _localTypes.Clear();
+        foreach (var kv in savedLocalTypes)
+        {
+            _localTypes[kv.Key] = kv.Value;
+        }
+
+        return label;
+    }
 
     /// <summary>
     /// Synthesizes (once per concrete type, cached) a recursive deep-copy function for an ADT and
