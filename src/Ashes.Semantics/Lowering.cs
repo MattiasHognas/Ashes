@@ -87,11 +87,15 @@ public sealed partial class Lowering
     // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecGroup) is excluded.
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
-    // Single-parameter recursive top-level functions (let rec f = fun p -> …), by name → lambda.
-    // When such a function is applied to a uniquely-owned accumulator it is specialized into an
-    // f$reuse clone whose parameter is treated as linear, so its match-then-rebuild reuses the node
-    // in place and its self-calls recurse into f$reuse.
-    private readonly Dictionary<string, Expr.Lambda> _specializableFunctions = new(StringComparer.Ordinal);
+    // Top-level functions specializable for in-place reuse, by name. Two shapes:
+    //   • single-parameter recursion: let rec f = fun p -> body (LinearParam = p, ArgCount = 1);
+    //   • nested-rec-returning: let f = fun a -> ... -> (let rec go = fun m -> _ in go) — f isn't
+    //     itself recursive but returns a recursive single-param function (LinearParam = m, ArgCount =
+    //     outer params + 1, the accumulator being the last applied argument), e.g. Map.set.
+    // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
+    // whose recursive parameter (LinearParam) is a linear reuse root, so its match-then-rebuild
+    // reuses the node in place and the recursion stays within the reuse-enabled body.
+    private readonly Dictionary<string, (Expr.Lambda Lambda, string LinearParam, int ArgCount)> _specializableFunctions = new(StringComparer.Ordinal);
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
@@ -109,6 +113,15 @@ public sealed partial class Lowering
     // When generating an f$reuse specialization, the parameter name to treat as a linear
     // (uniquely-owned) reuse root inside the lowered body. Null outside specialization.
     private string? _specializingLinearParam;
+
+    // Set when the linear param above is injected: the IR label of the function that owns it (the
+    // recursive reuse function — f$reuse itself, or the inner go inside a nested-rec specialization).
+    // That is the function whose return values determine reset-safety, not the outer wrapper.
+    private string? _specializingReuseLabel;
+
+    // True while lowering a reuse specialization body, so saturated helper calls inline
+    // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
+    private bool _inSpecialization;
 
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
@@ -223,21 +236,84 @@ public sealed partial class Lowering
         {
             if (item is TopLevelItem.LetDecl { Value: Expr.Lambda lam, IsRecursive: false } let)
             {
-                _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+                // A non-recursive function that returns a nested recursive single-param function
+                // (the Map.set shape) is specialized, not inlined; any other plain function is an
+                // inline candidate for helper rebuilds inside a reuse arm.
+                if (TryGetNestedRecReturn(lam, out var nestedParam, out var nestedArgCount))
+                {
+                    _specializableFunctions[let.Name] = (lam, nestedParam, nestedArgCount);
+                }
+                else
+                {
+                    _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+                }
             }
 
             // Single-parameter recursive functions (let rec f = fun p -> body, body not a lambda)
             // are candidates for in-place-reuse specialization when applied to a unique accumulator.
             else if (item is TopLevelItem.LetDecl { Value: Expr.Lambda { Body: not Expr.Lambda } recLam, IsRecursive: true } recLet)
             {
-                _specializableFunctions[recLet.Name] = recLam;
+                _specializableFunctions[recLet.Name] = (recLam, recLam.ParamName, 1);
             }
             else if (item is TopLevelItem.RecGroup { Bindings.Count: 1 } group
                 && group.Bindings[0].Value is Expr.Lambda { Body: not Expr.Lambda } groupLam)
             {
-                _specializableFunctions[group.Bindings[0].Name] = groupLam;
+                _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
             }
         }
+    }
+
+    /// <summary>
+    /// Detects the <c>Map.set</c> shape: a chain of outer parameter lambdas whose innermost body is
+    /// <c>let rec go = (fun m -> _) in go</c> — returning a recursive single-parameter function.
+    /// Outputs the recursive parameter to specialize on and the total number of arguments the full
+    /// application takes (outer params + the recursive arg).
+    /// </summary>
+    private static bool TryGetNestedRecReturn(Expr.Lambda lam, out string linearParam, out int argCount)
+    {
+        linearParam = "";
+        argCount = 0;
+        Expr body = lam;
+        int outer = 0;
+        while (body is Expr.Lambda inner)
+        {
+            outer++;
+            body = inner.Body;
+        }
+
+        if (body is Expr.LetRec { Value: Expr.Lambda recValue, Body: Expr.Var recRef } letRec
+            && string.Equals(letRec.Name, recRef.Name, StringComparison.Ordinal)
+            && recValue.Body is not Expr.Lambda)
+        {
+            linearParam = recValue.ParamName;
+            argCount = outer + 1;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the type of the <paramref name="n"/>th curried argument of a function type (0-based),
+    /// i.e. peels <paramref name="n"/> <c>-&gt;</c> arrows and returns the next argument type, or null
+    /// if the type isn't curried that far.
+    /// </summary>
+    private TypeRef? NthCurriedArgType(TypeRef funcType, int n)
+    {
+        var t = Prune(funcType);
+        for (int i = 0; i < n; i++)
+        {
+            if (t is TypeRef.TFun f)
+            {
+                t = Prune(f.Ret);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        return t is TypeRef.TFun last ? Prune(last.Arg) : null;
     }
 
     /// <summary>
@@ -2363,6 +2439,11 @@ public sealed partial class Lowering
         // Both branches ARE in tail position (if the if itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
+        // In-place reuse: only one branch runs at a time, so a live reuse token is available to each
+        // independently. Snapshot before Then, restore before Else, so both branches may reuse the
+        // same dead cell (at runtime only one does).
+        var reuseTokensAtIf = new List<(int, int)>(_reuseTokens);
+
         int slot = NewLocal();
         var (tTemp, tType) = LowerExpr(iff.Then);
         var thenType = Prune(tType);
@@ -2370,6 +2451,9 @@ public sealed partial class Lowering
 
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(elseLabel));
+
+        _reuseTokens.Clear();
+        _reuseTokens.AddRange(reuseTokensAtIf);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (eTemp, eType) = LowerExpr(iff.Else);
@@ -2510,6 +2594,7 @@ public sealed partial class Lowering
         if (_specializingLinearParam == lam.ParamName)
         {
             _linearReuseNames.Add(lam.ParamName);
+            _specializingReuseLabel = label;
             _specializingLinearParam = null;
         }
 
@@ -2670,8 +2755,8 @@ public sealed partial class Lowering
                 if (_scopes.Peek().TryGetValue(accName, out var accB)
                     && accB is Binding.Local accL
                     && Lookup(funcName) is { } funcBinding
-                    && Prune(funcBinding.Type) is TypeRef.TFun funcFun
-                    && Prune(funcFun.Arg) is TypeRef.TNamedType paramNamed
+                    && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
+                    && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed
                     && !BuiltinRegistry.IsResourceTypeName(paramNamed.Symbol.Name)
                     && !IsResourceBearing(paramNamed)
                     && !CanCopyOutAdt(paramNamed, out _)
@@ -2898,20 +2983,23 @@ public sealed partial class Lowering
         // loop accumulator we deep-copied to uniqueness at loop entry. Route to f$reuse, which rewrites
         // the unique tree in place. The accumulator is dead after this call (it's the loop's only use).
         if (rootExpr is Expr.Var specVar
-            && collectedArgs.Count == 1
-            && collectedArgs[0] is Expr.Var accArg
+            && _specializableFunctions.TryGetValue(specVar.Name, out var specInfo)
+            && collectedArgs.Count == specInfo.ArgCount
+            && collectedArgs[^1] is Expr.Var accArg
             && _linearSpecializationAccumulators.Contains(accArg.Name)
-            && _specializableFunctions.ContainsKey(specVar.Name)
             && Lookup(specVar.Name) is { } specBinding)
         {
-            return LowerReuseSpecializedCall(specVar.Name, Prune(specBinding.Type), collectedArgs[0]);
+            return LowerReuseSpecializedCall(specVar.Name, Prune(specBinding.Type), collectedArgs);
         }
 
         // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
         // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
         // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
         // Only when the callee name resolves to that top-level function (not shadowed by a local).
-        if (_reuseTokens.Count > 0
+        // Inline a saturated helper call when a reuse token is live, OR unconditionally inside a
+        // specialization (so every helper folds down to constructors and never leaves a call to a
+        // top-level function the specialization didn't capture).
+        if ((_reuseTokens.Count > 0 || _inSpecialization)
             && rootExpr is Expr.Var fnVar
             && !_shadowedInlinables.ContainsKey(fnVar.Name)
             && !_inliningInProgress.Contains(fnVar.Name)
@@ -4205,9 +4293,12 @@ public sealed partial class Lowering
         switch (e)
         {
             case Expr.Call call:
-                if (call.Func is Expr.Var fn
-                    && _specializableFunctions.ContainsKey(fn.Name)
-                    && call.Arg is Expr.Var arg
+                var callArgs = new List<Expr>();
+                var callRoot = CollectCallArgs(call, callArgs);
+                if (callRoot is Expr.Var fn
+                    && _specializableFunctions.TryGetValue(fn.Name, out var fnSpec)
+                    && callArgs.Count == fnSpec.ArgCount
+                    && callArgs[^1] is Expr.Var arg
                     && paramNames.Contains(arg.Name))
                 {
                     result[arg.Name] = fn.Name;
@@ -4308,27 +4399,37 @@ public sealed partial class Lowering
             return cached;
         }
 
-        var lam = _specializableFunctions[name];
+        var spec = _specializableFunctions[name];
         string label = $"{name}__reuse";
         _reuseSpecializations[name] = label;
 
         var savedLinear = _specializingLinearParam;
-        _specializingLinearParam = lam.ParamName;
+        var savedReuseLabel = _specializingReuseLabel;
+        var savedInSpec = _inSpecialization;
+        _specializingLinearParam = spec.LinearParam;
+        _specializingReuseLabel = null;
+        _inSpecialization = true;
         // forcedLabel + selfName=name make recursive calls resolve to Binding.Self(label) → f$reuse.
         // LowerLambdaCore adds the function to _funcs and then emits an incidental closure into the
         // current _inst; we don't need that closure (we build our own at each call site), so discard
         // the emitted instructions after the function is registered.
         int instBefore = _inst.Count;
-        LowerLambdaCore(lam, selfName: name, selfType: funcType, stackAllocateClosure: false, forcedLabel: label);
+        LowerLambdaCore(lam: spec.Lambda, selfName: name, selfType: funcType, stackAllocateClosure: false, forcedLabel: label);
         if (_inst.Count > instBefore)
         {
             _inst.RemoveRange(instBefore, _inst.Count - instBefore);
         }
 
+        // The recursive reuse function (f$reuse itself, or the inner go for a nested-rec shape) is the
+        // one whose return values must be below the watermark. If it is fully reusing, the whole
+        // specialized call's result is below the watermark, so mark the callable label reset-safe.
+        var reuseLabel = _specializingReuseLabel;
         _specializingLinearParam = savedLinear;
+        _specializingReuseLabel = savedReuseLabel;
+        _inSpecialization = savedInSpec;
 
-        var generated = _funcs.LastOrDefault(f => f.Label == label);
-        if (generated is not null && IsFullyReusing(generated, label))
+        var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => f.Label == reuseLabel) : null;
+        if (recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!))
         {
             _fullyReusingLabels.Add(label);
         }
@@ -4406,35 +4507,46 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Lowers <c>f(acc)</c> as a call to the in-place-reuse specialization <c>f$reuse</c>: builds an
-    /// empty-env closure for the (no-capture) specialized function and calls it with the
-    /// uniquely-owned accumulator. <c>f$reuse</c> rewrites that tree in place.
+    /// Lowers <c>f(args…)(acc)</c> as a call to the in-place-reuse specialization <c>f$reuse</c>:
+    /// builds an empty-env closure for the (no-capture) specialized function and applies it to all
+    /// arguments in turn (the last being the uniquely-owned accumulator). <c>f$reuse</c> rewrites that
+    /// tree in place.
     /// </summary>
-    private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, Expr argExpr)
+    private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
     {
         string label = GetOrCreateReuseSpecialization(name, funcType);
         // If the specialization fully reuses, its result is the accumulator rewritten in place below
         // the watermark, so the loop back-edge may reset the arena (reclaiming this call's recursion
         // scaffolding) and keep the accumulator.
-        if (_fullyReusingLabels.Contains(label) && argExpr is Expr.Var accVar)
+        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar)
         {
             _resetSafeAccumulators.Add(accVar.Name);
-        }
-
-        var (argTemp, argType) = LowerExpr(argExpr);
-        if (funcType is TypeRef.TFun tfun)
-        {
-            Unify(tfun.Arg, argType);
         }
 
         int envPtr = NewTemp();
         Emit(new IrInst.Alloc(envPtr, 8));
         int closureTemp = NewTemp();
         Emit(new IrInst.MakeClosure(closureTemp, label, envPtr, 0));
-        int result = NewTemp();
-        Emit(new IrInst.CallClosure(result, closureTemp, argTemp));
-        var retType = funcType is TypeRef.TFun tf ? Prune(tf.Ret) : NewTypeVar();
-        return (result, retType);
+
+        // Apply the specialized closure to each argument in turn; each application yields the next
+        // curried closure (or the final result).
+        var curType = Prune(funcType);
+        int current = closureTemp;
+        foreach (var argExpr in args)
+        {
+            var (argTemp, argType) = LowerExpr(argExpr);
+            if (curType is TypeRef.TFun tfun)
+            {
+                Unify(tfun.Arg, argType);
+                curType = Prune(tfun.Ret);
+            }
+
+            int next = NewTemp();
+            Emit(new IrInst.CallClosure(next, current, argTemp));
+            current = next;
+        }
+
+        return (current, curType);
     }
 
     /// <summary>
