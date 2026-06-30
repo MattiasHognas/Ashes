@@ -23,7 +23,31 @@
 >    `_shadowedInlinables` for the whole program → inliner never fired. Fix: record the defining-let
 >    value object at registration (`_inlinableDefiningValues`) and match `isOwnDefinition` by reference
 >    identity. (After this, `makeNode`/`balance` inline correctly inside `set$reuse`.)
-> 4. **REMAINING — heap key/value fields dangle; needs MONOMORPHIC specialization.** With 1–3 fixed the
+> **Update (2026-07-01).** Blocker 4's two named sub-problems are now BUILT and working; a third,
+> narrower residual remains (all in the WIP stash, message starts `WIP3`):
+> - **Monomorphic specialization — DONE.** `GetOrCreateReuseSpecialization` now takes the call's
+>   concrete arg types (lowered first in `LowerReuseSpecializedCall`), caches per instantiation, and
+>   `LowerLambdaCore` unifies each curried parameter with the concrete type (`_specializationConcreteParamTypes`).
+>   So `Map.set`'s `newKey` resolves to `Str`, not the generic `K`.
+> - **Key materialization — DONE.** A heap leaf field (String/Bytes key) of a genuinely-new
+>   (`AllocAdtToSpace`) node is materialized into the to-space (`CopyOutArenaToSpace`) at the insert
+>   site only — bounded by distinct keys, not iterations. The reused (`AllocReusing`) spine keeps its
+>   already-persistent keys (no re-copy). `Map.set`'s update arm was changed to keep the existing key
+>   (`makeNode(left)(key)(newValue)(right)`) so it stores no fresh key into a reused node.
+> - **Result:** `smap2` (string-keyed, Int value) is now **correct AND bounded to ~250k rows** (7 MB;
+>   was miscompiling `out=1` at every size, or leaking 873 MB). 
+> - **RESIDUAL (null-child at ~300k).** A control — a custom **Int-keyed full-AVL** map reusing via the
+>   *existing* machinery — is **correct at 1M** (just leaks, no to-space). So the AVL rotation reuse is
+>   sound; the crash is introduced by the **to-space + per-iteration reset**: enabling the reset (which
+>   to-space makes possible by clearing main-arena `AllocAdt`) reclaims a live cell at scale → a node's
+>   child becomes null → segfault in `go`. The to-space also still grows ~13 B/iter on updates (a path
+>   allocates to-space per update — likely a spurious rotation from a stale height, or a missed reuse
+>   token), hitting a 2nd to-space chunk around 300k. Next step: instrument which `AllocAdtToSpace`
+>   fires on a pure-update iteration (should be none), and which live main-arena cell the reset
+>   reclaims (gdb watchpoint on the corrupted node's child field). Likely a missing reuse token on the
+>   rebalance spine or a below-watermark vs to-space placement bug — NOT the monomorphization/materialization.
+>
+> 4. **(original) REMAINING — heap key/value fields dangle; needs MONOMORPHIC specialization.** With 1–3 fixed the
 >    spec fires, `IsFullyReusing` is true, and the loop resets the arena. The spec produces *no*
 >    main-arena `AllocAdt` — all map *nodes* are `AllocReusing` (in place, below W) or `AllocAdtToSpace`
 >    (persistent), so the nodes survive. The bug is the **node's heap-typed fields**: bisection (custom
