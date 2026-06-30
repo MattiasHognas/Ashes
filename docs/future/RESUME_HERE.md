@@ -91,28 +91,43 @@ Needs:
    accumulator lets the back-edge reset the arena. _Deep-copy fallback already exists for
    non-linear cases._
 
-> **STATUS 2026-06-30 — deferred as research-grade, deliberately not written unattended.**
-> The realistic target (a `Map`/AVL fold) needs the reuse to thread **through `Map.set`'s
-> recursion + `balance`/`rotate` helpers** (interprocedural) — Perceus-style cell reuse where
-> a single wrong linearity inference is a silent use-after-reuse corruption along a rebalancing
-> path that is hard to exhaustively stress-test. Unlike #5's threading (self-contained codegen
-> I could hammer with thousands of runs), reuse correctness is a global property of the analysis.
-> **The shared move/linearity engine is being built first via `RESOURCE_SAFETY.md`** (where it
-> fixes reproduced bugs and is independently verifiable); reuse-token plumbing + arena-reset
-> integration then layer on that engine. **Two safe intermediate options** if you want bounded
-> memory before the fast path: (a) wire the **deep-copy fallback** into `GetTcoCopyOutKind`
-> for recursive-ADT accumulators (correct, O(K)/iter, ends the OOM — the doc's own fallback,
-> just slower than in-place — the user de-prioritized it but it is *safe* and unblocks 1BRC
-> completion); (b) gate the in-place path behind a verified reuse-correctness + constant-memory
-> + shared-accumulator-falls-back-to-copy test trio before trusting it.
+> **STATUS 2026-06-30 — investigated deeply; both viable paths are larger than a safe
+> unattended change. Confirmed the leak: 200K `Map.set` calls over 50 keys → VmPeak 515 MB
+> (the superseded path nodes pile up because the back-edge can't reset).**
+>
+> **Path 1 — fast in-place reuse (what the user wants).** Needs the reuse to thread *through*
+> `Map.set`'s recursion + `balance`/`rotate` (interprocedural). Without runtime refcounting
+> (Ground Rule 6), soundness needs **linearity-driven *specialization*** — a "linear" clone of
+> `Map.set` (and its helpers) that reuses, called only where the arg is provably linear (the TCO
+> accumulator). A wrong inference is silent use-after-reuse corruption along a rebalancing path.
+> This is the genuine Perceus-without-RC feature; substantial and corruption-prone.
+>
+> **Path 2 — deep-copy fallback (the doc's Phase 4; user de-prioritized).** I **attempted wiring
+> it into the TCO two-pass** (`GetTcoCopyOutKind` → new `DeepCopy` kind, `EmitDeepCopy` in both
+> phases) and **it segfaults — fundamental flaw, reverted.** The two-pass copies each arg UP to
+> `[C1, C1+K]` then DOWN to `[W, W+K]`; for a *fixed-size* shallow copy these don't overlap, but a
+> `Map.set` iteration allocates only **O(log K)** new nodes, so `C1 − W ≪ K` and the down-copy
+> `[W, W+K]` **overlaps and clobbers the up-copy mid-walk**. A correct deep-copy fallback therefore
+> needs a **separate scratch / persistent region** (to-space) so the copy's source and destination
+> never share the resettable arena — i.e. deep-copy the new map into a fresh `mmap`'d region, reset
+> the main arena, keep the accumulator in (or copy it back from) the separate region, free the old
+> one. That's a new arena-switch mechanism (~100–150 lines), still O(K)/iter, but it *would* end
+> the OOM safely. The faster Path 1 is the real goal.
 
 ## 3. ⭐ NEXT STEP (start here)
 
-#5 is **done and verified**. The only remaining milestone here is **#2 — in-place reuse**
-(§2). Start with the **linearity analysis as a read-only pass** that just *reports* which TCO
-accumulators are provably consumed-exactly-once (the `loop(newAcc)` accumulator pattern),
-before touching any codegen — verify the analysis on `tests/` folds first, then layer reuse
-tokens (`AllocReusing`) and the TCO arena-reset integration. Keep each sub-step green.
+#5 (**done**) and all of `RESOURCE_SAFETY.md` (**done**, Gaps A–D + deterministic close) are
+landed. The only remaining milestone is **#2 — in-place reuse** (§2), now investigated in depth.
 
-This is the **same move/linearity engine** that `RESOURCE_SAFETY.md` needs — building it once
-serves both #2 and deterministic resource safety.
+Pick the path (see §2 STATUS):
+- **Fast (Path 1):** linearity-driven specialization of `Map.set`. Start with the linearity
+  analysis as a **read-only pass** that *reports* which TCO accumulators are provably
+  consumed-exactly-once, verified on `tests/` folds; then a "linear" specialized clone of
+  `Map.set`/`balance`/`rotate` with reuse tokens (`AllocReusing`) + TCO arena-reset integration.
+  Gate behind a reuse-correctness + constant-memory + shared-accumulator-falls-back test trio.
+- **Safe bounded-memory (Path 2):** the **separate-scratch-arena** deep-copy fallback (the naive
+  in-arena two-pass deep copy was tried and *segfaults* — see §2). Add an arena-switch so the
+  per-iteration deep copy goes to a fresh `mmap`'d region disjoint from the resettable arena.
+
+The move/linearity machinery already partly exists from resource safety (`IsResourceBearing`,
+`MarkResourceArgMoved`, the TCO back-edge move/drop, `SynthesizeClosureResourceDropper`).
