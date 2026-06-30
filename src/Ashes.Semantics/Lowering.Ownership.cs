@@ -52,6 +52,87 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Returns true if the type is, or transitively contains, a resource type that needs
+    /// deterministic cleanup — e.g. <c>Result(Str, FileHandle)</c>, <c>Maybe(Socket)</c>,
+    /// <c>(FileHandle, Int)</c>, <c>List(Socket)</c>. Closures (<see cref="TypeRef.TFun"/>) are
+    /// excluded: a resource captured by a closure is handled by the escape logic (Gap B), not by
+    /// dropping the closure value. Recursion is cycle-guarded for recursive ADTs.
+    /// </summary>
+    private bool IsResourceBearing(TypeRef type) => IsResourceBearing(type, new HashSet<string>(StringComparer.Ordinal));
+
+    private bool IsResourceBearing(TypeRef type, HashSet<string> visiting)
+    {
+        var pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
+                return true;
+
+            case TypeRef.TNamedType named:
+                {
+                    var key = Pretty(named);
+                    if (!visiting.Add(key))
+                    {
+                        return false; // recursive ADT cycle — no resource found on this path
+                    }
+
+                    Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+                    if (named.Symbol.TypeParameters.Count > 0 && named.TypeArgs.Count == named.Symbol.TypeParameters.Count)
+                    {
+                        typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+                        for (int i = 0; i < named.Symbol.TypeParameters.Count; i++)
+                        {
+                            typeParamMap[named.Symbol.TypeParameters[i]] = named.TypeArgs[i];
+                        }
+                    }
+
+                    bool found = false;
+                    foreach (var ctor in named.Symbol.Constructors)
+                    {
+                        for (int j = 0; j < ctor.Arity && !found; j++)
+                        {
+                            if (IsResourceBearing(ResolveFieldType(ctor.ParameterTypes[j], typeParamMap), visiting))
+                            {
+                                found = true;
+                            }
+                        }
+                    }
+
+                    visiting.Remove(key);
+                    return found;
+                }
+
+            case TypeRef.TTuple tuple:
+                return tuple.Elements.Any(e => IsResourceBearing(e, visiting));
+
+            case TypeRef.TList list:
+                return IsResourceBearing(list.Element, visiting);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// When a resource (or resource-bearing) binding is stored by name into an aggregate
+    /// (constructor field, tuple element, list cell), its ownership moves into that aggregate:
+    /// mark it consumed so its own scope no longer drops it. Otherwise the resource would be closed
+    /// twice (once directly, once via the aggregate's recursive Drop) or — if the aggregate
+    /// escapes — closed before the aggregate's user reads it (an aggregate analog of the Gap B
+    /// closure escape). The aggregate now carries the cleanup, via recursive Drop or by transferring
+    /// to its own consumer.
+    /// </summary>
+    private void MarkResourceArgMoved(Expr arg)
+    {
+        if (arg is Expr.Var v
+            && LookupOwnedValue(v.Name) is { IsDropped: false } info
+            && (info.IsResource || info.IsResourceBearing))
+        {
+            info.IsDropped = true;
+        }
+    }
+
+    /// <summary>
     /// Resolves an ownership alias chain to the original owner name.
     /// If the name is not an alias, returns itself.
     /// </summary>
@@ -69,11 +150,14 @@ public sealed partial class Lowering
     /// Registers an owned binding in the current ownership scope.
     /// Called when a let binding or pattern binding creates an owned-type variable.
     /// </summary>
-    private void TrackOwnedValue(string name, int slot, string typeName, bool isResource, TextSpan? definitionSpan)
+    private void TrackOwnedValue(string name, int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null)
     {
         if (_ownershipScopes.Count > 0)
         {
-            _ownershipScopes.Peek()[name] = new OwnershipInfo(slot, typeName, isResource, definitionSpan);
+            // A direct resource is not also "resource-bearing"; only aggregates that nest a resource
+            // need the recursive walk at drop time.
+            bool isResourceBearing = !isResource && type is not null && IsResourceBearing(type);
+            _ownershipScopes.Peek()[name] = new OwnershipInfo(slot, typeName, isResource, definitionSpan, type is null ? null : Prune(type), isResourceBearing);
         }
     }
 
@@ -174,17 +258,179 @@ public sealed partial class Lowering
 
             foreach (var (_, info) in scope)
             {
-                if (info.IsResource && !info.IsDropped)
+                if ((info.IsResource || info.IsResourceBearing) && !info.IsDropped)
                 {
-                    int loadTemp = NewTemp();
-                    Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
-                    Emit(new IrInst.Drop(loadTemp, info.TypeName));
+                    EmitOwnedValueDrop(info);
                     info.IsDropped = true;
                 }
             }
 
             index++;
         }
+    }
+
+    /// <summary>
+    /// Emits the drop for a single owned value: a type-directed recursive walk closing nested
+    /// resources for a resource-bearing aggregate (Result(_, FileHandle), tuples/lists of resources,
+    /// …), or the plain <see cref="IrInst.Drop"/> otherwise (which closes a direct resource and is a
+    /// no-op for ordinary heap values reclaimed by the arena).
+    /// </summary>
+    private void EmitOwnedValueDrop(OwnershipInfo info)
+    {
+        int loadTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
+        if (info.IsResourceBearing && info.Type is not null)
+        {
+            EmitResourceBearingDrop(loadTemp, info.Type);
+        }
+        else
+        {
+            Emit(new IrInst.Drop(loadTemp, info.TypeName));
+        }
+    }
+
+    /// <summary>
+    /// Walks <paramref name="temp"/> (of <paramref name="type"/>) and closes every resource nested
+    /// in it. Handles a direct resource (Drop), an ADT (tag switch → drop resource-bearing fields of
+    /// the live constructor), a tuple (drop resource-bearing elements), and a list (loop, drop each
+    /// resource-bearing element). Recursion is cycle-guarded; a recursive resource-bearing ADT (a
+    /// data structure that nests both itself and a resource — effectively unheard of) is left to
+    /// program-exit cleanup rather than risk an unbounded unfold.
+    /// </summary>
+    private void EmitResourceBearingDrop(int temp, TypeRef type)
+        => EmitResourceBearingDrop(temp, type, new HashSet<string>(StringComparer.Ordinal));
+
+    private void EmitResourceBearingDrop(int temp, TypeRef type, HashSet<string> visiting)
+    {
+        var pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
+                Emit(new IrInst.Drop(temp, named.Symbol.Name));
+                return;
+
+            case TypeRef.TNamedType named:
+                EmitAdtResourceDrop(temp, named, visiting);
+                return;
+
+            case TypeRef.TTuple tuple:
+                for (int i = 0; i < tuple.Elements.Count; i++)
+                {
+                    if (IsResourceBearing(tuple.Elements[i]))
+                    {
+                        int elemTemp = NewTemp();
+                        Emit(new IrInst.LoadMemOffset(elemTemp, temp, i * 8));
+                        EmitResourceBearingDrop(elemTemp, tuple.Elements[i], visiting);
+                    }
+                }
+
+                return;
+
+            case TypeRef.TList list when IsResourceBearing(list.Element):
+                EmitListResourceDrop(temp, list.Element, visiting);
+                return;
+
+            default:
+                return;
+        }
+    }
+
+    private void EmitAdtResourceDrop(int temp, TypeRef.TNamedType named, HashSet<string> visiting)
+    {
+        var key = Pretty(named);
+        if (!visiting.Add(key))
+        {
+            return; // recursive resource-bearing ADT — leave to program exit (extremely rare)
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (named.Symbol.TypeParameters.Count > 0 && named.TypeArgs.Count == named.Symbol.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < named.Symbol.TypeParameters.Count; i++)
+            {
+                typeParamMap[named.Symbol.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        var cases = new List<(long, string)>();
+        var blocks = new List<(string Label, ConstructorSymbol Ctor)>();
+        foreach (var ctor in named.Symbol.Constructors)
+        {
+            bool hasResourceField = false;
+            for (int j = 0; j < ctor.Arity; j++)
+            {
+                if (IsResourceBearing(ResolveFieldType(ctor.ParameterTypes[j], typeParamMap)))
+                {
+                    hasResourceField = true;
+                    break;
+                }
+            }
+
+            if (hasResourceField)
+            {
+                string label = NewLabel("rdrop_ctor");
+                cases.Add((GetConstructorTag(ctor), label));
+                blocks.Add((label, ctor));
+            }
+        }
+
+        string endLabel = NewLabel("rdrop_end");
+        if (cases.Count == 0)
+        {
+            visiting.Remove(key);
+            return; // no constructor carries a resource (shouldn't happen for a resource-bearing ADT)
+        }
+
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, temp));
+        Emit(new IrInst.SwitchTag(tagTemp, cases, endLabel));
+        foreach (var (label, ctor) in blocks)
+        {
+            Emit(new IrInst.Label(label));
+            for (int j = 0; j < ctor.Arity; j++)
+            {
+                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                if (IsResourceBearing(fieldType))
+                {
+                    int fieldTemp = NewTemp();
+                    Emit(new IrInst.GetAdtField(fieldTemp, temp, j));
+                    EmitResourceBearingDrop(fieldTemp, fieldType, visiting);
+                }
+            }
+
+            Emit(new IrInst.Jump(endLabel));
+        }
+
+        Emit(new IrInst.Label(endLabel));
+        visiting.Remove(key);
+    }
+
+    private void EmitListResourceDrop(int listTemp, TypeRef elementType, HashSet<string> visiting)
+    {
+        int curSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(curSlot, listTemp));
+        string headLabel = NewLabel("rdrop_list_head");
+        string endLabel = NewLabel("rdrop_list_end");
+
+        Emit(new IrInst.Label(headLabel));
+        int curTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(curTemp, curSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonNilTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonNilTemp, curTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonNilTemp, endLabel));
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(headTemp, curTemp, 0));
+        EmitResourceBearingDrop(headTemp, elementType, visiting);
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(tailTemp, curTemp, 8));
+        Emit(new IrInst.StoreLocal(curSlot, tailTemp));
+        Emit(new IrInst.Jump(headLabel));
+
+        Emit(new IrInst.Label(endLabel));
     }
 
     /// <summary>
@@ -203,9 +449,7 @@ public sealed partial class Lowering
         {
             if (!info.IsDropped)
             {
-                int loadTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
-                Emit(new IrInst.Drop(loadTemp, info.TypeName));
+                EmitOwnedValueDrop(info);
                 info.IsDropped = true;
             }
         }
@@ -842,7 +1086,7 @@ public sealed partial class Lowering
                 if (Lookup(name) is Binding.Local local)
                 {
                     var isResource = GetResourceTypeName(prunedType) is not null;
-                    TrackOwnedValue(name, local.Slot, ownedTypeName, isResource, local.DefinitionSpan);
+                    TrackOwnedValue(name, local.Slot, ownedTypeName, isResource, local.DefinitionSpan, prunedType);
                 }
             }
         }

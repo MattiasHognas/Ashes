@@ -585,6 +585,7 @@ public sealed partial class Lowering
 
             var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
             Unify(parameterType, argType);
+            MarkResourceArgMoved(args[i]);
         }
 
         int tag = GetConstructorTag(ctor);

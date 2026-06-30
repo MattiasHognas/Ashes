@@ -1,8 +1,27 @@
 # Deterministic Resource Safety — Findings & Plan
 
-Status: **Gaps B, C, D fixed & verified (2026-06-30); Gap A remaining.**
+Status: **All known gaps (A, B, C, D) fixed & verified (2026-06-30); deterministic close of escaped resources is the remaining refinement.**
 
-> **Progress (3 of 4 gaps closed — the common/impactful patterns now work):**
+> **Gap A (resource nested in an aggregate) is now FIXED too**, via an affine ownership model:
+> - **Recursive `Drop` for resource-bearing aggregates** (`EmitResourceBearingDrop` /
+>   `EmitAdtResourceDrop` / `EmitListResourceDrop` in Lowering.Ownership.cs, driven by
+>   `IsResourceBearing`): a still-owned `Result(_, FileHandle)`, `Some(Socket)`, tuple/list of
+>   resources, etc. is walked and its nested resources closed (also at the TCO back-edge).
+> - **Move-on-destructure** (`LowerMatch`): matching a resource-bearing binding consumes it (nested
+>   resource moves to the arm's pattern bindings), so its own recursive Drop is skipped — no
+>   double-close.
+> - **Move-on-construction** (`MarkResourceArgMoved` at constructor/tuple/cons sites): storing a
+>   resource into an aggregate moves ownership into it, so a returned `Some(handle)` keeps the
+>   handle open for its consumer (aggregate analog of Gap B) and an aggregate dropped later isn't a
+>   double-close. Tests: `resource_aggregate_escape.ash`; verified `let _r = open()` non-destructured
+>   stays bounded under `ulimit -n 64`, and `let r = open() in match r` is a single close.
+>
+> Remaining refinement: escaped resources (Gap B closures, aggregates returned past their scope) are
+> released at **program exit** rather than deterministically when their carrier dies — full
+> deterministic close needs carrier-drops-its-captured-resource lifetime tracking. Everything below
+> is the original audit + plan.
+
+> **Progress (the common/impactful patterns now work):**
 > - **Gap C (`Process` undropped) — FIXED** (Phase 0; `EmitProcessDrop`).
 > - **Gap D (resource bound in a TCO tail-call arm leaks) — FIXED.** The most impactful gap — the
 >   loop-over-files/connections pattern. Back-edge now closes iteration-local resources

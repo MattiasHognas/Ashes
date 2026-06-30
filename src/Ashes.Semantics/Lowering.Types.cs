@@ -164,12 +164,22 @@ public sealed partial class Lowering
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
     // Owned types (String, List, ADTs, Closures, resource types) are tracked.
-    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan)
+    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null, bool isResourceBearing = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
         public bool IsResource { get; } = isResource;
         public TextSpan? DefinitionSpan { get; } = definitionSpan;
+
+        /// <summary>The binding's pruned type, used for type-directed recursive resource drop.</summary>
+        public TypeRef? Type { get; } = type;
+
+        /// <summary>
+        /// True if the type is, or transitively contains, a resource type (e.g. Result(_, FileHandle)).
+        /// Such an aggregate, if still owned at scope exit, is dropped by walking it for nested resources.
+        /// </summary>
+        public bool IsResourceBearing { get; } = isResourceBearing;
+
         public bool IsDropped { get; set; }
         /// <summary>
         /// Number of live borrows of this value. The compiler infers borrows when

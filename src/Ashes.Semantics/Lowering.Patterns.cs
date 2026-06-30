@@ -15,6 +15,17 @@ public sealed partial class Lowering
             && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
                 ? loweredMatchValue
                 : LowerExpr(match.Value);
+
+        // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
+        // arm's pattern bindings, which take over its cleanup. Mark the binding moved so its own
+        // recursive drop is skipped — otherwise the same resource would be closed twice (once by
+        // the extracted binding, once by the aggregate's recursive Drop).
+        if (match.Value is Expr.Var scrutineeVar
+            && LookupOwnedValue(scrutineeVar.Name) is { IsDropped: false } scrutineeInfo
+            && (scrutineeInfo.IsResource || scrutineeInfo.IsResourceBearing))
+        {
+            scrutineeInfo.IsDropped = true;
+        }
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();
         var endLabel = NewLabel("match_end");

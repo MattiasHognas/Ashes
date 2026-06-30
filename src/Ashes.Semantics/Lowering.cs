@@ -1940,7 +1940,7 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let));
+                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let), prunedValueType);
             }
         }
     }
@@ -3381,6 +3381,7 @@ public sealed partial class Lowering
             var (temp, type) = LowerExpr(tuple.Elements[i]);
             elementTemps.Add(temp);
             elementTypes.Add(type);
+            MarkResourceArgMoved(tuple.Elements[i]);
         }
 
         int tupleTemp = NewTemp();
@@ -3403,6 +3404,8 @@ public sealed partial class Lowering
 
         var (headTemp, headType) = LowerExpr(cons.Head);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        MarkResourceArgMoved(cons.Head);
+        MarkResourceArgMoved(cons.Tail);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
