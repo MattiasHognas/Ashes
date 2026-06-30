@@ -1,6 +1,31 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **In progress — direct + helper + recursive-specialization reuse all landed, sound, AND constant-memory bounded (the phase-5 arena reset is done). Remaining: extend specialization to the multi-param / nested-`go` / helper-rebuilding shape of `Map.set`. 2026-06-30.**
+Status: **Largely complete. Direct + helper + recursive-specialization + the full `Map.set` *shape* (multi-param / nested-`go` / helper-rebuilding / intermediate linearity) are landed, sound, and constant-memory bounded for pure-rewrite folds. The one remaining piece is the insert path of an insert-or-update `Map.set` (a fresh node for a new key lands above the watermark), which needs a to-space / persistent region. 2026-06-30.**
+
+> **DONE — the `Map.set` shape.** A non-recursive multi-parameter function that returns a nested
+> recursive single-param function — `let f a b = (let rec go m = … in go)` — applied to a unique
+> accumulator is specialized into `f$reuse` whose nested `go` has a linear parameter. Pieces:
+> `TryGetNestedRecReturn` (detect the shape + inner param); the registry carries
+> `(lambda, linear param, arg count)`; the trigger/scan/call handle the full curried
+> `f(args…)(acc)`; `_specializingReuseLabel` points `IsFullyReusing` at the inner `go`; both `if`
+> branches independently see a live token; helper calls inline unconditionally inside a
+> specialization (folding helpers down to constructors). **Intermediate-value linearity** (doc item
+> c): a freshly-reused node passed to a second helper that rebuilds it (`balance`'s
+> `normalized = makeNode(…)`) is itself linear, so that rebuild reuses too (`_reuseResultTemps` +
+> `InlineCall` marking). Verified bounded + sound on pure-rewrite nested-rec / double-rebuild folds
+> (`tests/reuse_nested_rec_specialization.ash`, `tests/reuse_intermediate_linearity.ash`).
+>
+> **REMAINING — the insert path (the only thing between this and a fully-bounded 1BRC `Map.set`).**
+> `Map.set` is insert-*or*-update: the `Empty -> makeNode(Empty)(k)(v)(Empty)` arm allocates a fresh
+> node for a new key. That node is part of the result but lands *above* the watermark, so
+> `IsFullyReusing` (correctly, conservatively) refuses the loop reset — otherwise the reset would
+> reclaim the new node out from under the live map. Pure-rewrite folds (no growth) are fully bounded;
+> insert-or-update folds are correct and partially improved (e.g. a user AVL fold dropped ~500 → 175
+> MB) but not constant. Closing this needs the fresh insert nodes to land *below* the watermark —
+> a small to-space / persistent region for genuinely-new cells, copied down (or allocated there)
+> while the reused path stays in place — so the per-iteration reset can still reclaim the scaffolding.
+> For 1BRC the inserts are rare (≈413 of 1B), so the copy cost is negligible; the mechanism is the
+> work.
 
 > **DONE — constant-memory bounding (the phase-5 arena reset).** The recursive specialization is now
 > memory-bounded, not just in-place: a recursive tree-rebuilding fold runs in constant memory
