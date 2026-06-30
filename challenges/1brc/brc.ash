@@ -15,8 +15,8 @@
 //   * #6: Ashes.Map/Ashes.String are called directly inside functions; the local-
 //     alias workaround they used to need is gone.
 // Input is streamed in fixed-size chunks with Ashes.File.open / readChunk / close (constant
-// file-memory; flaw #1) and split with the pure `uncons` builtin; a line may straddle a chunk
-// boundary, so scanChunk carries the trailing partial line into the next chunk.
+// file-memory) and split with the pure `uncons` builtin; a line may straddle a chunk boundary, so
+// scanChunk carries the trailing partial line into the next chunk.
 
 import Ashes.IO
 import Ashes.File
