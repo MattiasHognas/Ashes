@@ -27,6 +27,32 @@ Status: **In progress — direct-accumulator in-place reuse landed & verified; `
 > token threaded from `set$reuse`'s match into `makeNode$reuse`'s construction. The direct-case
 > machinery above (`AllocReusing`, token plumbing, defensive copy, eligibility) is the foundation it
 > builds on.
+>
+> **Concrete target / discriminator:** the minimal indirect case is a rebuild via a non-recursive
+> helper — `let mk l v r = Node(l)(v)(r)` then `loop(n-1)(mk(l)(v+n)(r))`. Today that **leaks
+> ~240 MB** at 2M iters where the direct `Node(l)(v+n)(r)` form reuses to ~4 MB. Drive that helper
+> case to ~4 MB first; `Map.set` is the same shape with more helpers.
+>
+> **Obstacles confirmed this session (why it's a multi-day effort, not an afternoon):**
+> 1. **No function-AST registry.** Top-level / stdlib function bodies are lowered and discarded;
+>    generating a `$reuse` variant means re-lowering the callee's AST, so a name→AST map of top-level
+>    `let`s (user + embedded stdlib) must be built and threaded into lowering first.
+> 2. **Curried closure-application calls.** `mk(l)(v)(r)` lowers to nested `CallClosure`s, not a
+>    direct call. Threading a reuse token into the callee means recognising the *saturated* call and
+>    emitting a direct call to the `$reuse` variant with the token as an extra argument — a new
+>    special-case call path, plus the variant generation, plus call rewiring.
+> 3. **Intermediate-value linearity (the real killer for bounded `Map.set`).** Each rebuild level is
+>    `balance(makeNode(go(left))(key)(value)(right))`: `makeNode` builds a node that `balance`
+>    immediately matches and supersedes with its own `normalized = makeNode(…)`. For *constant*
+>    memory both must reuse — the cell must flow old-node → `makeNode` → `normalized`. Reusing only
+>    the matched accumulator node (what the direct-case machinery does) still leaves the `normalized`
+>    + rotation nodes as fresh allocations on the new map's path, so the arena still can't reset →
+>    still O(log K)/set leaked. This needs tracking that a *freshly-built, used-once, then-matched*
+>    value is unique (local linearity), in addition to the accumulator linearity.
+> 4. **Recursive specialization through `balance`/`rotate`.** `set$reuse` → `makeNode$reuse`,
+>    `balance$reuse` → `rotateLeft$reuse`/`rotateRight$reuse`/`makeNode$reuse`, each threading tokens
+>    for the dead nodes they match. A single wrong token along a rebalancing path is silent
+>    use-after-reuse corruption that is hard to exhaustively stress-test.
 
 > **What's done:** the `IrInst.AllocReusing(Target, Tag, FieldCount, TokenTemp)` primitive +
 > backend (`EmitAllocReusing`: overwrite the dead cell's tag, no bump alloc) + optimizer wiring.
