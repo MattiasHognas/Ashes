@@ -91,6 +91,21 @@ Needs:
    accumulator lets the back-edge reset the arena. _Deep-copy fallback already exists for
    non-linear cases._
 
+> **STATUS 2026-06-30 — deferred as research-grade, deliberately not written unattended.**
+> The realistic target (a `Map`/AVL fold) needs the reuse to thread **through `Map.set`'s
+> recursion + `balance`/`rotate` helpers** (interprocedural) — Perceus-style cell reuse where
+> a single wrong linearity inference is a silent use-after-reuse corruption along a rebalancing
+> path that is hard to exhaustively stress-test. Unlike #5's threading (self-contained codegen
+> I could hammer with thousands of runs), reuse correctness is a global property of the analysis.
+> **The shared move/linearity engine is being built first via `RESOURCE_SAFETY.md`** (where it
+> fixes reproduced bugs and is independently verifiable); reuse-token plumbing + arena-reset
+> integration then layer on that engine. **Two safe intermediate options** if you want bounded
+> memory before the fast path: (a) wire the **deep-copy fallback** into `GetTcoCopyOutKind`
+> for recursive-ADT accumulators (correct, O(K)/iter, ends the OOM — the doc's own fallback,
+> just slower than in-place — the user de-prioritized it but it is *safe* and unblocks 1BRC
+> completion); (b) gate the in-place path behind a verified reuse-correctness + constant-memory
+> + shared-accumulator-falls-back-to-copy test trio before trusting it.
+
 ## 3. ⭐ NEXT STEP (start here)
 
 #5 is **done and verified**. The only remaining milestone here is **#2 — in-place reuse**
