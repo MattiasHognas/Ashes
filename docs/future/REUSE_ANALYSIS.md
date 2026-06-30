@@ -1,6 +1,90 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **In progress — direct-accumulator in-place reuse landed & verified; `Map.set`-group specialization (indirect reuse) is the remaining work. 2026-06-30.**
+Status: **Largely complete. Direct + helper + recursive-specialization + the full `Map.set` *shape* (multi-param / nested-`go` / helper-rebuilding / intermediate linearity) are landed, sound, and constant-memory bounded for pure-rewrite folds. The one remaining piece is the insert path of an insert-or-update `Map.set` (a fresh node for a new key lands above the watermark), which needs a to-space / persistent region. 2026-06-30.**
+
+> **DONE — the `Map.set` shape.** A non-recursive multi-parameter function that returns a nested
+> recursive single-param function — `let f a b = (let rec go m = … in go)` — applied to a unique
+> accumulator is specialized into `f$reuse` whose nested `go` has a linear parameter. Pieces:
+> `TryGetNestedRecReturn` (detect the shape + inner param); the registry carries
+> `(lambda, linear param, arg count)`; the trigger/scan/call handle the full curried
+> `f(args…)(acc)`; `_specializingReuseLabel` points `IsFullyReusing` at the inner `go`; both `if`
+> branches independently see a live token; helper calls inline unconditionally inside a
+> specialization (folding helpers down to constructors). **Intermediate-value linearity** (doc item
+> c): a freshly-reused node passed to a second helper that rebuilds it (`balance`'s
+> `normalized = makeNode(…)`) is itself linear, so that rebuild reuses too (`_reuseResultTemps` +
+> `InlineCall` marking). Verified bounded + sound on pure-rewrite nested-rec / double-rebuild folds
+> (`tests/reuse_nested_rec_specialization.ash`, `tests/reuse_intermediate_linearity.ash`).
+>
+> **REMAINING — the insert path (the only thing between this and a fully-bounded 1BRC `Map.set`).**
+> `Map.set` is insert-*or*-update: the `Empty -> makeNode(Empty)(k)(v)(Empty)` arm allocates a fresh
+> node for a new key. That node is part of the result but lands *above* the watermark, so
+> `IsFullyReusing` (correctly, conservatively) refuses the loop reset — otherwise the reset would
+> reclaim the new node out from under the live map. Pure-rewrite folds (no growth) are fully bounded;
+> insert-or-update folds are correct and partially improved (e.g. a user AVL fold dropped ~500 → 175
+> MB) but not constant. Closing this needs the fresh insert nodes to land *below* the watermark —
+> a small to-space / persistent region for genuinely-new cells, copied down (or allocated there)
+> while the reused path stays in place — so the per-iteration reset can still reclaim the scaffolding.
+> For 1BRC the inserts are rare (≈413 of 1B), so the copy cost is negligible; the mechanism is the
+> work.
+
+> **DONE — constant-memory bounding (the phase-5 arena reset).** The recursive specialization is now
+> memory-bounded, not just in-place: a recursive tree-rebuilding fold runs in constant memory
+> (`incAll` over a loop: 318 MB → ~7 MB at 50M iters, correct). Three pieces:
+> 1. **Nullary reuse** — `Leaf -> Leaf` reuses the dead nullary cell (the token push covers nullary
+>    arms — a bare `Leaf` pattern is `Pattern.Var` of a known nullary ctor, and the tag-switch plan is
+>    authoritative — and `LowerNullaryConstructor` consumes an arity-0 token). Keeps the whole result
+>    below the watermark.
+> 2. **Loop back-edge arena reset for a linear accumulator** — when the accumulator is rewritten fully
+>    in place below the watermark, the TCO back-edge does a plain reset, reclaiming the iteration's
+>    recursion scaffolding (env allocs + reconstructed self-closures) and keeping the accumulator.
+> 3. **The soundness gate (`IsFullyReusing`)** — the reset only fires when the specialization provably
+>    returns only below-watermark values: no fresh `AllocAdt`/`ConcatStr`/copy-out, every raw `Alloc`
+>    is a closure env, every closure is a self-closure used only as a call target. A fresh-allocating
+>    function (insert/grow) is *not* fully reusing → no reset → unaffected (verified: `1 6`
+>    counter-example correct, caller-shared accumulator uncorrupted `5 8`).
+>
+> **REMAINING — the 1BRC `Map.set` shape.** The specialization above handles a *single-parameter*
+> recursive top-level function whose body rebuilds via direct constructors (or inlined non-recursive
+> helpers). `Map.set` adds three things on top: (a) it's **multi-parameter** (`set compare key value
+> map`) and the recursion lives in a **nested `let rec go`** inside `set` (the registry/trigger only
+> see top-level single-param functions today); (b) `go` rebuilds via the **helper `makeNode`** and
+> **`balance`/`rotate`**, which must inline into `go$reuse` (the helper-inlining already works inside
+> a reuse arm, but needs to fire inside the generated specialization); (c) `balance` rebuilds each
+> node a second time (`normalized = makeNode(…)`), so **intermediate-value linearity** is needed for
+> that to reuse too, or `IsFullyReusing` will (correctly, conservatively) refuse the reset. The
+> direct + helper + recursive-specialization + bounding machinery is the foundation for all three.
+
+> **DONE — recursive-function specialization (sound mechanism).** Indirect reuse where the
+> accumulator is matched inside a *recursive* callee. For `loop(…)(f(acc))` with a single-parameter
+> recursive top-level `f`: the accumulator is deep-copied once at loop entry, an `f__reuse` clone is
+> generated whose parameter is a linear reuse root (its match-then-rebuild emits `AllocReusing`) and
+> whose self-calls recurse into `f__reuse`, and the call is routed there. Pieces:
+> `_specializableFunctions` registry; `GetOrCreateReuseSpecialization` (re-lowers the body via
+> `LowerLambdaCore` with a forced label + `selfName` so recursion resolves to `Binding.Self(f__reuse)`,
+> and `_specializingLinearParam` injects the param into `_linearReuseNames`);
+> `CollectSpecializableCallArgs` + a loop-entry defensive-copy trigger for accumulators *passed to*
+> such functions; `LowerReuseSpecializedCall`. Verified sound: correct results, node rewrites are
+> in place (`AllocReusing` fires, recursion redirects), and a caller-shared accumulator is **not**
+> corrupted (`tests/reuse_recursive_specialization.ash`). Suite green.
+>
+> **REMAINING — the per-iteration arena reset (full constant-memory bounding).** The specialization
+> is semantically in-place but **not yet memory-bounded**: each loop iteration's recursion allocates
+> scaffolding (env `Alloc`s + reconstructed closures for the no-capture self-calls) and any nullary
+> (`Leaf`) cells, none reclaimed because the loop can't reset the arena for a pointer-bearing
+> accumulator. Making it bounded needs:
+> 1. **Nullary reuse** so `Leaf -> Leaf` reuses the matched cell (keeps the whole result below the
+>    watermark) — relax the `Arity > 0` gate on the token push.
+> 2. **A loop back-edge arena reset for a linear accumulator** — the accumulator is reused in place
+>    below the watermark, so a plain reset reclaims the iteration's scaffolding and keeps it.
+> 3. **The soundness gate (the hard part):** the reset is only safe if every value *returned* by
+>    `f__reuse` is below the watermark — i.e. an `AllocReusing` result, the scrutinee, or a recursive
+>    `f__reuse` result — and never a fresh `AllocAdt`/`Alloc`. This is a **return-value reuse
+>    analysis**, not a simple "no fresh allocation" check: the recursion's env `Alloc`s + closures are
+>    scaffolding (not returned, must be reclaimed) and must be excluded, so the all-allocations
+>    counting that would be easy is wrong. A wrong gate here resets the arena out from under a live
+>    result → silent corruption. (Optionally, eliminating the no-capture self-recursion's closure
+>    reconstruction — a static/hoisted closure — removes most of the scaffolding and shrinks the leak
+>    even before the reset.)
 
 > **DONE — direct-accumulator reuse.** When a TCO loop body directly `match`es a recursive-ADT
 > accumulator and rebuilds it with the same constructor, the deconstructed node is now overwritten
