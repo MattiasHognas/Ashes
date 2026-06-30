@@ -23,15 +23,29 @@
 >    `_shadowedInlinables` for the whole program → inliner never fired. Fix: record the defining-let
 >    value object at registration (`_inlinableDefiningValues`) and match `isOwnDefinition` by reference
 >    identity. (After this, `makeNode`/`balance` inline correctly inside `set$reuse`.)
-> 4. **REMAINING — the rebuild corrupts.** With 1–3 fixed the spec fires, the `IsFullyReusing` gate
->    returns true, and the loop resets the arena — but the map is **not** actually kept below the
->    watermark: the output is `1` (only the last iteration survives, i.e. the whole map is reclaimed
->    each iteration) and it segfaults at scale. This is the `balance`/`rotate` in-place rebuild +
->    intermediate-value-linearity path (this doc's obstacles 3/4), now exercised for the first time by
->    real `Map.set`; it produces `AllocAdt` (main-arena, above W) where it must produce `AllocReusing`
->    (in place, below W) / `AllocAdtToSpace` (persistent), so the reset reclaims the live map. Needs the
->    correctness debugging that obstacles 3/4 describe, gated behind the reuse-correct + constant-memory
->    + shared-accumulator test trio. **Do not enable stdlib `Map.set` reuse until this is sound.**
+> 4. **REMAINING — heap key/value fields dangle; needs MONOMORPHIC specialization.** With 1–3 fixed the
+>    spec fires, `IsFullyReusing` is true, and the loop resets the arena. The spec produces *no*
+>    main-arena `AllocAdt` — all map *nodes* are `AllocReusing` (in place, below W) or `AllocAdtToSpace`
+>    (persistent), so the nodes survive. The bug is the **node's heap-typed fields**: bisection (custom
+>    ADT folds) shows an **Int-keyed** map is fully correct *with and without* balance/rotate, but a
+>    **String-keyed** map corrupts. The fresh key string (`fromInt(i)` — allocated in the loop's
+>    per-iteration scratch, above W) is stored into the reused/to-space node but **reclaimed by the
+>    reset → dangling key** → `compare(newKey, k)` misreads as `0` → every insert collapses into an
+>    in-place update → `size==1`. (So it is NOT balance/rotate, and NOT the to-space node mechanism —
+>    both are sound; it is heap *leaf* fields not being made persistent.)
+>
+>    Fix (built but not yet effective): materialize the spec's heap-typed parameters into the to-space
+>    once at entry (`IrInst.CopyOutArenaToSpace` + the param-materialization in `LowerLambdaCore` — both
+>    in the stash). It does **not fire** because `Map.set` is **polymorphic**: at spec-generation time
+>    `newKey`'s type is the generic type parameter `K`, not `Str`, so the "is this a heap param?" check
+>    can't decide (a type var could be a copy-type `Int`). **The real requirement is monomorphic
+>    specialization**: generate `set$reuse` for the concrete instantiation (`Map(Str, …)`) so the key
+>    type is known and materializable — e.g. unify the spec lambda's parameter types with the concrete
+>    call's curried arg types (`funcType`) before lowering the body. Then a copy-type key (Int) needs no
+>    materialization and a heap key (Str/tuple) is copied to to-space. brc additionally needs the
+>    **tuple value** materialized (extend `CopyOutArenaToSpace`/the to-space deep-copy to tuples), and
+>    the `compare` closure must stay live across the reset. **Do not enable stdlib `Map.set` reuse until
+>    this is sound** — it currently miscompiles (`out=1`, segfault).
 >
 > **The insert-path to-space (item below) was BUILT this session** and is sound infrastructure (it is
 > in the same stash): a second, never-reset bump arena (`IrInst.AllocAdtToSpace`, TCB offsets 24/32 on
