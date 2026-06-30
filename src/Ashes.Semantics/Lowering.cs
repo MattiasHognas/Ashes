@@ -81,6 +81,21 @@ public sealed partial class Lowering
     // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
     private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
 
+    // Non-recursive top-level functions, by name → (param names, body). When such a function is
+    // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
+    // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
+    // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecGroup) is excluded.
+    private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
+
+    // Inlinable-function names currently shadowed by a more-local binding (lambda param / let), so a
+    // call to that name is NOT the top-level helper and must not be inlined. Counter per name (a name
+    // can be shadowed at multiple nesting levels).
+    private readonly Dictionary<string, int> _shadowedInlinables = new(StringComparer.Ordinal);
+
+    // Inlinable functions currently being inlined, to break any unforeseen inline cycle (fall back to
+    // a normal call instead of looping). Non-recursive lets shouldn't form cycles, but this is cheap.
+    private readonly HashSet<string> _inliningInProgress = new(StringComparer.Ordinal);
+
     // Substitution for type variables
     private readonly Dictionary<int, TypeRef> _subst = new();
 
@@ -159,12 +174,30 @@ public sealed partial class Lowering
             .ToList();
 
         CollectTopLevelBindingNames(valueItems);
+        RegisterInlinableFunctions(valueItems);
 
         // Desugar the ordered value declarations into the existing nested let / let rec forms so
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
         // name and all enclosing ones, never a later sibling.
         var body = DesugarTopLevel(valueItems, program.Body);
         return Lower(body);
+    }
+
+    /// <summary>
+    /// Records non-recursive top-level functions (a plain <c>let</c> whose value is a lambda chain)
+    /// so a saturated call to one inside a reuse arm can be inlined, letting the helper's constructor
+    /// reuse a dead cell. <c>let rec</c> / mutually-recursive groups are excluded — they can't be
+    /// inlined, and self-reference would loop.
+    /// </summary>
+    private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
+    {
+        foreach (var item in valueItems)
+        {
+            if (item is TopLevelItem.LetDecl { Value: Expr.Lambda lam, IsRecursive: false } let)
+            {
+                _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+            }
+        }
     }
 
     /// <summary>
@@ -1896,7 +1929,14 @@ public sealed partial class Lowering
         TrackLetOwnership(let, slot, valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
+        // top-level definition itself (same lambda we registered) must stay inlinable in its own body.
+        bool isOwnDefinition = let.Value is Expr.Lambda defLam
+            && _inlinableFunctions.TryGetValue(let.Name, out var reg)
+            && ReferenceEquals(reg.Body, GetInnermostBody(defLam));
+        bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
+        if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
     }
@@ -2593,7 +2633,9 @@ public sealed partial class Lowering
         }
 
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
+        bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
         var (bodyTemp, bodyType) = LowerExpr(lam.Body);
+        if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
         if (isInnermostTco && savedTcoCtx is not null)
         {
             savedTcoCtx.InTailPosition = false;
@@ -2766,6 +2808,20 @@ public sealed partial class Lowering
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(ctorSym, collectedArgs);
+        }
+
+        // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
+        // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
+        // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
+        // Only when the callee name resolves to that top-level function (not shadowed by a local).
+        if (_reuseTokens.Count > 0
+            && rootExpr is Expr.Var fnVar
+            && !_shadowedInlinables.ContainsKey(fnVar.Name)
+            && !_inliningInProgress.Contains(fnVar.Name)
+            && _inlinableFunctions.TryGetValue(fnVar.Name, out var inlinable)
+            && inlinable.Params.Count == collectedArgs.Count)
+        {
+            return InlineCall(fnVar.Name, inlinable.Params, inlinable.Body, collectedArgs);
         }
 
         // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
@@ -4054,6 +4110,68 @@ public sealed partial class Lowering
 
         tokenTemp = -1;
         return false;
+    }
+
+    /// <summary>
+    /// Inlines a saturated call to a non-recursive top-level helper: evaluates the arguments in the
+    /// current scope (so they can't be captured by the helper's own parameter names), binds the
+    /// parameters to those values, and lowers the helper body in place. Lowering it here means any
+    /// constructor in the body can consume a live reuse token from the enclosing arm.
+    /// </summary>
+    private (int, TypeRef) InlineCall(string fnName, IReadOnlyList<string> paramNames, Expr body, List<Expr> args)
+    {
+        var argSlots = new int[paramNames.Count];
+        var argTypes = new TypeRef[paramNames.Count];
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            int slot = NewLocal();
+            Emit(new IrInst.StoreLocal(slot, argTemp));
+            argSlots[i] = slot;
+            argTypes[i] = argType;
+        }
+
+        var inlineScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            inlineScope[paramNames[i]] = new Binding.Local(argSlots[i], argTypes[i]);
+        }
+
+        _scopes.Push(inlineScope);
+        _inliningInProgress.Add(fnName);
+        var result = LowerExpr(body);
+        _inliningInProgress.Remove(fnName);
+        _scopes.Pop();
+        return result;
+    }
+
+    /// <summary>
+    /// Marks/unmarks an inlinable-function name as shadowed by a more-local binding so a call to it
+    /// is not mistaken for the top-level helper. No-op unless the name is actually a registered
+    /// inlinable function. Returns whether a mark was added (so the caller can balance the unmark).
+    /// </summary>
+    private bool PushInlinableShadow(string name)
+    {
+        if (!_inlinableFunctions.ContainsKey(name))
+        {
+            return false;
+        }
+
+        _shadowedInlinables[name] = _shadowedInlinables.GetValueOrDefault(name) + 1;
+        return true;
+    }
+
+    private void PopInlinableShadow(string name)
+    {
+        int remaining = _shadowedInlinables.GetValueOrDefault(name) - 1;
+        if (remaining <= 0)
+        {
+            _shadowedInlinables.Remove(name);
+        }
+        else
+        {
+            _shadowedInlinables[name] = remaining;
+        }
     }
 
     private static bool ExprReferencesName(Expr expr, string targetName, bool shadowed = false)
