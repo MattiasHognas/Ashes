@@ -1,6 +1,33 @@
 # Automatic In-Place Reuse (Uniqueness/Linearity Analysis) — Design
 
-Status: **In progress — direct + helper + recursive-specialization reuse mechanisms landed & sound; the per-iteration arena reset for linear accumulators (full constant-memory bounding) is the remaining phase-5 work. 2026-06-30.**
+Status: **In progress — direct + helper + recursive-specialization reuse all landed, sound, AND constant-memory bounded (the phase-5 arena reset is done). Remaining: extend specialization to the multi-param / nested-`go` / helper-rebuilding shape of `Map.set`. 2026-06-30.**
+
+> **DONE — constant-memory bounding (the phase-5 arena reset).** The recursive specialization is now
+> memory-bounded, not just in-place: a recursive tree-rebuilding fold runs in constant memory
+> (`incAll` over a loop: 318 MB → ~7 MB at 50M iters, correct). Three pieces:
+> 1. **Nullary reuse** — `Leaf -> Leaf` reuses the dead nullary cell (the token push covers nullary
+>    arms — a bare `Leaf` pattern is `Pattern.Var` of a known nullary ctor, and the tag-switch plan is
+>    authoritative — and `LowerNullaryConstructor` consumes an arity-0 token). Keeps the whole result
+>    below the watermark.
+> 2. **Loop back-edge arena reset for a linear accumulator** — when the accumulator is rewritten fully
+>    in place below the watermark, the TCO back-edge does a plain reset, reclaiming the iteration's
+>    recursion scaffolding (env allocs + reconstructed self-closures) and keeping the accumulator.
+> 3. **The soundness gate (`IsFullyReusing`)** — the reset only fires when the specialization provably
+>    returns only below-watermark values: no fresh `AllocAdt`/`ConcatStr`/copy-out, every raw `Alloc`
+>    is a closure env, every closure is a self-closure used only as a call target. A fresh-allocating
+>    function (insert/grow) is *not* fully reusing → no reset → unaffected (verified: `1 6`
+>    counter-example correct, caller-shared accumulator uncorrupted `5 8`).
+>
+> **REMAINING — the 1BRC `Map.set` shape.** The specialization above handles a *single-parameter*
+> recursive top-level function whose body rebuilds via direct constructors (or inlined non-recursive
+> helpers). `Map.set` adds three things on top: (a) it's **multi-parameter** (`set compare key value
+> map`) and the recursion lives in a **nested `let rec go`** inside `set` (the registry/trigger only
+> see top-level single-param functions today); (b) `go` rebuilds via the **helper `makeNode`** and
+> **`balance`/`rotate`**, which must inline into `go$reuse` (the helper-inlining already works inside
+> a reuse arm, but needs to fire inside the generated specialization); (c) `balance` rebuilds each
+> node a second time (`normalized = makeNode(…)`), so **intermediate-value linearity** is needed for
+> that to reuse too, or `IsFullyReusing` will (correctly, conservatively) refuse the reset. The
+> direct + helper + recursive-specialization + bounding machinery is the foundation for all three.
 
 > **DONE — recursive-function specialization (sound mechanism).** Indirect reuse where the
 > accumulator is matched inside a *recursive* callee. For `loop(…)(f(acc))` with a single-parameter
