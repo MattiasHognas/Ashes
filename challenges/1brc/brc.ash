@@ -14,9 +14,9 @@
 //     90-line hand-rolled ASCII comparator this file used to carry is gone.
 //   * #6: Ashes.Map/Ashes.String are called directly inside functions; the local-
 //     alias workaround they used to need is gone.
-// Input is still read whole-file with Ashes.File.readText (flaw #1 at full scale)
-// and split with the pure `uncons` builtin; per-line streaming via readLine is
-// now crash-free (#1b fixed) but remains unbuffered (#1).
+// Input is streamed in fixed-size chunks with Ashes.File.open / readChunk / close (constant
+// file-memory; flaw #1) and split with the pure `uncons` builtin; a line may straddle a chunk
+// boundary, so scanChunk carries the trailing partial line into the next chunk.
 
 import Ashes.IO
 import Ashes.File
@@ -99,16 +99,29 @@ let processLine line map =
                                 | None -> Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map)
                                 | Some(existing) -> Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
 
-let rec loop remaining lineAcc map = 
+let rec scanChunk remaining lineAcc map = 
     match Ashes.Text.uncons(remaining) with
-        | None -> 
+        | None -> (lineAcc, map)
+        | Some((c, rest)) -> 
+            if c == "\n"
+            then scanChunk(rest)("")(processLine(lineAcc)(map))
+            else scanChunk(rest)(lineAcc + c)(map)
+
+let rec streamLoop handle lineAcc map = 
+    match Ashes.File.readChunk(handle)(65536) with
+        | Error(_e) -> 
             if lineAcc == ""
             then map
             else processLine(lineAcc)(map)
-        | Some((c, rest)) -> 
-            if c == "\n"
-            then loop(rest)("")(processLine(lineAcc)(map))
-            else loop(rest)(lineAcc + c)(map)
+        | Ok(chunk) -> 
+            if chunk == ""
+            then 
+                if lineAcc == ""
+                then map
+                else processLine(lineAcc)(map)
+            else 
+                match scanChunk(chunk)(lineAcc)(map) with
+                    | (nextLineAcc, nextMap) -> streamLoop(handle)(nextLineAcc)(nextMap)
 
 let collectEntry acc key value = 
     match value with
@@ -116,15 +129,17 @@ let collectEntry acc key value =
             let entry = key + "=" + fmtTenths(mn) + "/" + fmtMean(sm)(ct) + "/" + fmtTenths(mx)
             in entry :: acc
 
-let body = 
+let final = 
     match Ashes.IO.args with
         | path :: _ -> 
-            match Ashes.File.readText(path) with
-                | Ok(text) -> text
-                | Error(_) -> ""
-        | [] -> ""
-
-let final = loop(body)("")(Ashes.Map.empty)
+            match Ashes.File.open(path) with
+                | Error(_e) -> Ashes.Map.empty
+                | Ok(handle) -> 
+                    let result = streamLoop(handle)("")(Ashes.Map.empty)
+                    in 
+                        let _closed = Ashes.File.close(handle)
+                        in result
+        | [] -> Ashes.Map.empty
 
 let entries = Ashes.List.reverse(Ashes.Map.foldLeft(collectEntry)([])(final))
 

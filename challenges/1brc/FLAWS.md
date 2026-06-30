@@ -36,18 +36,24 @@ each open section ends with an actionable **Task** breakdown.
 Benchmarked `brc.ash` on subsets of `measurements.txt` (8700 unique stations in the
 first 10k rows; `hyperfine`, peak RSS from `/proc/<pid>/status`):
 
-| Rows | Baseline | After #7 (uncons views) | After #8 (`join`) | After #2a (lookup-copy fix) |
-|------|----------|-------------------------|-------------------|------------------------------|
+| Rows | Baseline | After #7 (uncons views) | After #8 (`join`) | After #2a + streaming |
+|------|----------|-------------------------|-------------------|-----------------------|
 | 100 | 0.92 ms | 0.56 ms | 0.43 ms | 0.4 ms |
 | 1 000 | 57 ms | 18 ms | 9.6 ms | <10 ms |
 | 10 000 | 5.2 s / 15 GB | 1.57 s / 3.6 GB | 0.79 s / 2.6 GB | **~0.1 s / 105 MB** |
 | 20 000 | 56 s | 6 s | 4 s | <1 s |
 | 30 000 | >90 s | 12 s | 7 s | <1 s |
 | 50 000 | (OOM ~46 GB) | — | — | **1 s / 508 MB** |
+| 100 000 | (OOM) | — | — | **1 s / 1.0 GB** (37 191 stations) |
+| 1 000 000 | (OOM) | — | — | **4 s / 9.3 GB** (41 343 stations) |
 
 Cumulative at 10k rows: **5.2 s / 15 GB → ~0.1 s / 105 MB** (≈25× less memory; quadratic → linear).
-brc no longer OOMs at scale; it now stops accumulating around ~50–65k rows because
-`Ashes.File.readText` returns empty past ~1 MB (that is **#1**, the whole-file read, not memory).
+brc no longer OOMs at scale. Memory is **linear** in rows (≈9 GB at 1M) — that is the residual #2
+leak (per-row `Map.set` garbage the loop never reclaims), not the file: input is now **streamed** in
+64 KiB chunks (`Ashes.File.open`/`readChunk`/`close`, **#1**), so file memory is constant and brc
+reads any size (whole-file `readText` capped at 1 MiB and OOM'd past ~50k). Output verified correct at
+1M (41 343 entries == unique stations; md5-stable vs whole-file on 30k). The remaining limiter for
+much larger inputs is the residual #2 linear leak (needs the hot-loop arena reset).
 
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
@@ -84,9 +90,11 @@ Halved the 10k-row runtime (was ~45 % of it).
 
 **Remaining 1BRC tasks:**
 
-1. **#1 whole-file read is now the scaling cap.** With memory linear, `brc` stops accumulating
-   around ~50–65k rows because `Ashes.File.readText` returns empty past ~1 MB. Streaming/chunked
-   reading (or a larger read) is now what blocks higher row counts — see #1 below.
+1. ~~#1 whole-file read cap~~ — **DONE**: `brc` now streams in 64 KiB chunks
+   (`Ashes.File.open`/`readChunk`/`close`), carrying a line that straddles a chunk boundary. Reads any
+   size; file memory is constant. (Residual UTF-8 caveat: a multibyte char split across a 64 KiB
+   boundary relies on `uncons` tolerating the partial bytes — verified correct on the city data, but a
+   line-aligned read would be more robust.)
 2. **#2 residual linear leak — the hot-loop arena reset.** The O(N²) blowup is fixed (#2a above);
    what remains is the *linear* per-row garbage (superseded `Map.set` path nodes + per-line scratch)
    that the loop never reclaims because the Map accumulator isn't copy-out-able and the per-char loop
