@@ -12,7 +12,7 @@ on top of the async TCP runtime that already landed in
 [`ASYNC_NETWORKING.md`](ASYNC_NETWORKING.md) and does not require new
 user-visible syntax or changes to the `Task(E, A)` discipline.
 
-------------------------------------------------------------------------
+---
 
 ## Completed Work
 

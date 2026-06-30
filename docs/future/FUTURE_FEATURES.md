@@ -26,7 +26,7 @@ Planned features and future work for the Ashes language and ecosystem.
 | [Ashes.Math](ASHES_MATH.md) | Planned | Two layers: a hermetic core (Int helpers, `sqrt`, Float arithmetic, constants — no library) plus native transcendentals (`sin`/`cos`/`exp`/`log`/…) from a **vendored `libm` (openlibm), statically linked and dead-stripped** per binary — compile-time only, no runtime dependency |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
-------------------------------------------------------------------------
+---
 
 ## Ground Rules
 

@@ -14,7 +14,7 @@
 This document proposes a record syntax that avoids curly braces and aligns
 record declarations and usage with the existing ADT/call style.
 
-------------------------------------------------------------------------
+---
 
 ## Proposed Syntax
 
@@ -56,7 +56,7 @@ Parenthesized form should remain valid when needed:
 
 `let p2 = (p with x = 5)`
 
-------------------------------------------------------------------------
+---
 
 ## Design Goals
 
@@ -65,7 +65,7 @@ Parenthesized form should remain valid when needed:
 - Preserve immutability and current record-update semantics.
 - Keep field access unchanged (`p.x`).
 
-------------------------------------------------------------------------
+---
 
 ## Compatibility Direction
 
@@ -75,7 +75,7 @@ Parenthesized form should remain valid when needed:
 - Remove old syntax only after parser, formatter, tests, and examples are
   migrated.
 
-------------------------------------------------------------------------
+---
 
 ## Implementation Steps
 
@@ -122,7 +122,7 @@ Parenthesized form should remain valid when needed:
    - Phase 2: warn on old syntax.
    - Phase 3: remove old syntax after migration is complete.
 
-------------------------------------------------------------------------
+---
 
 ## Open Decisions
 

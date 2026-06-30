@@ -13,7 +13,7 @@ coverage for cleanup, error propagation, and networking under task
 combinators. The substantial runtime work tracked in this document is
 now landed.
 
-------------------------------------------------------------------------
+---
 
 ## Completed Work
 
@@ -46,7 +46,7 @@ The async-only API redesign is partially complete:
 | **Full verification rerun** | `Ashes.Tests`, `Ashes.Lsp.Tests`, the full `.ash` suite, and `dotnet format Ashes.slnx --verify-no-changes` were rerun after the runtime and test changes and now pass together. |
 | **Future-features status** | `docs/future/FUTURE_FEATURES.md` now treats the async-only API surface as complete while leaving the non-blocking runtime optimization as future work. |
 
-------------------------------------------------------------------------
+---
 
 ## Ordered Roadmap — Next Work Items
 
@@ -56,7 +56,7 @@ verification gaps tracked by this document are now addressed.
 
 No additional runtime items remain in this roadmap at the moment.
 
-------------------------------------------------------------------------
+---
 
 ## Explicitly Deferred
 

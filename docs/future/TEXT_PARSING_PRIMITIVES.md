@@ -14,7 +14,7 @@ The landed scope intentionally stays narrow: add the minimum surface
 needed for user-space parsers, keep JSON itself out of the language,
 and avoid a large string API before the need is proven.
 
-------------------------------------------------------------------------
+---
 
 ## Completed Work
 

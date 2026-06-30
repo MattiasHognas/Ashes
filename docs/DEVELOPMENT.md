@@ -3,7 +3,7 @@
 This guide covers everything needed to build, test, and develop Ashes
 locally.
 
-------------------------------------------------------------------------
+---
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ locally.
 | pnpm | (managed via corepack) | VS Code extension only |
 | bash | any | Scripts and LLVM provisioning |
 
-------------------------------------------------------------------------
+---
 
 ## Repository Layout
 
@@ -38,7 +38,7 @@ scripts/                    Development and CI helper scripts
 vscode-extension/           VS Code extension source
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Building
 
@@ -54,7 +54,7 @@ Release build:
 dotnet build Ashes.slnx --configuration Release
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Native Runtime Libraries
 
@@ -145,7 +145,7 @@ passes `SSL_CERT_FILE` to the compiled PE program using a Wine-visible
 path so the vendored `rustls.dll` can load PEM roots without touching a
 host Windows certificate store.
 
-------------------------------------------------------------------------
+---
 
 ## Running the Compiler
 
@@ -166,7 +166,7 @@ dotnet run --project src/Ashes.Cli -- compile --target linux-arm64 hello.ash -o 
 dotnet run --project src/Ashes.Cli -- repl
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Testing
 
@@ -204,7 +204,7 @@ examples, and run end-to-end tests:
 bash scripts/verify.sh
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Formatting
 
@@ -227,7 +227,7 @@ dotnet run --project src/Ashes.Cli -- fmt examples -w
 dotnet format Ashes.slnx
 ```
 
-------------------------------------------------------------------------
+---
 
 ## VS Code Extension
 
@@ -279,7 +279,7 @@ pnpm run lint
 pnpm run format:check
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Publishing
 
@@ -291,7 +291,7 @@ bash scripts/publish.sh
 
 On Windows, run the same command from WSL.
 
-------------------------------------------------------------------------
+---
 
 ## Development Rules
 

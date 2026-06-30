@@ -4,7 +4,7 @@ This document describes the internal architecture of the Ashes compiler,
 covering the compilation pipeline, project structure, backend design,
 intermediate representation, memory model, and linking strategy.
 
-------------------------------------------------------------------------
+---
 
 ## Compilation Pipeline
 
@@ -36,7 +36,7 @@ flowchart LR
 | Code generation | Ashes.Backend | `LlvmCodegen` | LLVM IR → object file |
 | Linking | Ashes.Backend | `LlvmImageLinker` | Native executable bytes |
 
-------------------------------------------------------------------------
+---
 
 ## Project Dependency Graph
 
@@ -88,7 +88,7 @@ graph TD
 - **Dap** currently has zero internal compiler dependencies and remains a standalone tooling process.
 - **Cli** is the only orchestration project that wires all phases together.
 
-------------------------------------------------------------------------
+---
 
 ## Tooling Servers
 
@@ -108,7 +108,7 @@ parse or type-check `.ash` code; instead it brokers DAP traffic between
 the IDE and a native debugger backend such as GDB or LLDB, operating on
 already-compiled binaries and their debug information.
 
-------------------------------------------------------------------------
+---
 
 ## Backend Architecture
 
@@ -196,7 +196,7 @@ releases. For rustls-ffi, update `RustlsFfiVersion` in
 `Directory.Build.props` and re-run `scripts/download-rustls-ffi.sh` to
 provision matching payloads.
 
-------------------------------------------------------------------------
+---
 
 ## Intermediate Representation
 
@@ -236,7 +236,7 @@ Registers are addressed by integer index (temporaries). Each instruction
 writes to a `Target` register and reads from `Source` / `Left` / `Right`
 registers.
 
-------------------------------------------------------------------------
+---
 
 ## Memory Model
 
@@ -290,7 +290,7 @@ This model is still arena-based and non-GC, but it is no longer a single
 never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
 and whole OS chunks can be returned once they fall out of scope.
 
-------------------------------------------------------------------------
+---
 
 ## Linking
 
@@ -355,7 +355,7 @@ executable images.
 | Input buffer | 64 KB | `ReadLine` buffer |
 | Max file read | 1 MB | `FileReadText` limit |
 
-------------------------------------------------------------------------
+---
 
 ## How to Add a New Target
 
