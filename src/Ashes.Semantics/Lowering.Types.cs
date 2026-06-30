@@ -49,6 +49,11 @@ public sealed partial class Lowering
         // when all tail-call arguments are copy types (no heap pointers escape).
         public int ArenaCursorSlot { get; set; } = -1;
         public int ArenaEndSlot { get; set; } = -1;
+
+        // Ownership-scope stack depth at the loop body start. Scopes pushed above this during the
+        // iteration hold iteration-local resources that must be closed at the back-edge (else the
+        // per-arm Drop becomes dead code after the jump and the resource leaks each iteration).
+        public int OwnershipDepthAtEntry { get; set; } = -1;
     }
 
     private enum IntrinsicKind

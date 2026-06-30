@@ -149,6 +149,45 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Emits Drop instructions for every alive resource in the ownership scopes pushed since the
+    /// TCO loop body started (those above <see cref="TcoContext.OwnershipDepthAtEntry"/>). Called at
+    /// the tail-call back-edge so iteration-local resources are closed before the jump back, instead
+    /// of leaking via the per-arm Drop that the jump turns into dead code. Resources moved into the
+    /// next iteration (passed as a self-call argument) are marked dropped by the caller and skipped.
+    /// Accumulators are loop parameters, not ownership-scope entries, so they are unaffected.
+    /// </summary>
+    private void EmitTcoBackEdgeResourceDrops(TcoContext tco)
+    {
+        if (tco.OwnershipDepthAtEntry < 0)
+        {
+            return;
+        }
+
+        int scopesAboveEntry = _ownershipScopes.Count - tco.OwnershipDepthAtEntry;
+        int index = 0;
+        foreach (var scope in _ownershipScopes) // top-to-bottom
+        {
+            if (index >= scopesAboveEntry)
+            {
+                break;
+            }
+
+            foreach (var (_, info) in scope)
+            {
+                if (info.IsResource && !info.IsDropped)
+                {
+                    int loadTemp = NewTemp();
+                    Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
+                    Emit(new IrInst.Drop(loadTemp, info.TypeName));
+                    info.IsDropped = true;
+                }
+            }
+
+            index++;
+        }
+    }
+
+    /// <summary>
     /// Emits Drop instructions for all alive (not yet dropped) owned values in the current scope.
     /// Called at scope exit.
     /// </summary>

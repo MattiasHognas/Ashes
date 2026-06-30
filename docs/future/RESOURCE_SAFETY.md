@@ -66,6 +66,14 @@ Reproduced: returns `read-err` instead of the file's first 5 bytes. **No diagnos
 `CheckUseAfterDrop` only inspects direct `Expr.Var` uses in the same scope, not captures/returns.
 This is an unsound use-after-close.
 
+### Gap D — a resource bound in a TCO tail-call arm leaks (found & fixed 2026-06-30)
+The per-arm `Drop` is emitted *after* the tail-call back-edge jump, so for a loop like
+`let rec loop n = … match File.open(p) with Ok(h) -> loop(n-1)` the close becomes dead code and
+the fd leaks every iteration (5000 opens exhaust a low `ulimit -n`). This is the common
+loop-over-files/connections pattern — the most impactful resource gap. **Fixed:** the back-edge now
+closes iteration-local resources before resetting the arena and jumping (a resource *passed* as a
+self-call argument moves to the next iteration and is skipped). See `EmitTcoBackEdgeResourceDrops`.
+
 ### Gap C — `Process` has no cleanup at all
 `EmitDrop` handles `FileHandle`/`Socket`/`TlsSocket` but **not `Process`** — it falls through to the
 no-op default. A spawned process that is never `waitForExit`'d is never reaped (zombie) and its

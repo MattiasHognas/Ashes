@@ -2520,6 +2520,7 @@ public sealed partial class Lowering
             tco.ArenaCursorSlot = NewLocal();
             tco.ArenaEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+            tco.OwnershipDepthAtEntry = _ownershipScopes.Count;
 
             tco.InTailPosition = true;
         }
@@ -2721,6 +2722,22 @@ public sealed partial class Lowering
             {
                 Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
             }
+
+            // A resource passed by name as a self-call argument moves to the next iteration — it
+            // must not be closed at this back-edge. Mark it consumed so EmitTcoBackEdgeResourceDrops
+            // (and the dead-code arm Drops after the jump) skip it.
+            foreach (var arg in collectedArgs)
+            {
+                if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsResource: true } movedResource)
+                {
+                    movedResource.IsDropped = true;
+                }
+            }
+
+            // Close iteration-local resources (open files/sockets/processes bound this iteration)
+            // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
+            // after the jump as dead code and the resource leaks every iteration.
+            EmitTcoBackEdgeResourceDrops(tco);
 
             // Arena reset: restore heap state to loop-iteration watermark before
             // jumping back.
