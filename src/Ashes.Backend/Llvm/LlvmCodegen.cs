@@ -37,6 +37,28 @@ internal static partial class LlvmCodegen
     private const long SyscallPipe2 = 293;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
+    private const long SyscallClone = 56;
+    private const long SyscallFutex = 202;
+    private const long SyscallArchPrctl = 158;
+    // ARCH_SET_GS, not ARCH_SET_FS: glibc and the Rust runtime (linked rustls) own the FS
+    // base for their thread-local storage on x86-64. GS is unused by userspace on Linux, so
+    // pointing it at our per-thread arena control block coexists with the dlopen'd TLS runtime.
+    private const long ArchSetGs = 0x1001;
+    // futex op codes (FUTEX_PRIVATE_FLAG = 128)
+    private const long FutexWaitPrivate = 0 | 128;
+    private const long FutexWakePrivate = 1 | 128;
+
+    // Per-thread control block (TCB). On linux-x64 the GS segment base points at the TCB,
+    // giving each thread a private bump arena that coexists with FS-based glibc/rustls TLS.
+    // To stay clear of the O0 FastISel bug that mis-propagates address-space-256 segment
+    // provenance into later stores, code never addresses the arena via an addrspace(256)
+    // pointer. Instead offset 0 holds a self-pointer (the TCB base); functions recover the
+    // base with a single opaque `movq %gs:0` and then address cursor/end as ordinary
+    // pointers. Offsets reserved generously for future per-thread fields.
+    private const ulong TcbSelfOffset = 0;
+    private const ulong TcbHeapCursorOffset = 8;
+    private const ulong TcbHeapEndOffset = 16;
+    private const int MainTcbSizeBytes = 512;
     private const long LinuxErrWouldBlock = -11;
     private const long LinuxErrAlready = -114;
     private const long LinuxErrInProgress = -115;
@@ -413,12 +435,23 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsWaitForSingleObjectImport = default;
         LlvmValueHandle windowsGetExitCodeProcessImport = default;
         LlvmValueHandle windowsIocpPortGlobal = default;
-        LlvmValueHandle heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
-        LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
-        LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
-        LlvmValueHandle heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
-        LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
-        LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        // Bump-arena cursor/end. On linux-x64 these live in a per-thread control block
+        // reached through the GS segment base, so each worker thread gets its own arena with
+        // no shared state and no atomics; the actual cursor/end pointers are built per
+        // function from the TCB base (see the LinuxX64 arena setup in EmitFunctionBody), so
+        // no module global is needed there. Other flavors keep plain module globals
+        // (single-threaded today).
+        LlvmValueHandle heapCursorGlobal = default;
+        LlvmValueHandle heapEndGlobal = default;
+        if (flavor != LlvmCodegenFlavor.LinuxX64)
+        {
+            heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
+            LlvmApi.SetLinkage(heapCursorGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(heapCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
+            LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        }
         if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
@@ -1008,6 +1041,19 @@ internal static partial class LlvmCodegen
             flavor,
             usesProgramArgs,
             isEntry);
+
+        if (flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            // Recover this thread's TCB base and address the arena cursor/end through it as
+            // ordinary pointers. The entry function sets up GS (arch_prctl) and the TCB
+            // self-pointer and knows the main-TCB address directly; every other function
+            // reads the base back from %gs:0.
+            LlvmValueHandle tcbBase = isEntry
+                ? EmitMainThreadTlsInit(state)
+                : EmitReadTcbBaseFromGs(state);
+            (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
+            state = state with { HeapCursorSlot = cursorSlot, HeapEndSlot = endSlot };
+        }
 
         if (isEntry)
         {
