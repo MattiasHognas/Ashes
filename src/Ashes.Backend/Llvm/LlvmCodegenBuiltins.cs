@@ -1635,6 +1635,7 @@ internal static partial class LlvmCodegen
                 false,
                 false);
 
+            runtimeState = WithLinuxThreadArena(runtimeState);
             LlvmApi.BuildRet(target.Builder, NormalizeToI64(runtimeState, emitBody(runtimeState, function)));
         }
 
@@ -1721,6 +1722,7 @@ internal static partial class LlvmCodegen
                 false,
                 false);
 
+            runtimeState = WithLinuxThreadArena(runtimeState);
             emitBody(runtimeState, function);
             return function;
         }

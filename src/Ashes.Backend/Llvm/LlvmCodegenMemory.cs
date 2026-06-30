@@ -212,6 +212,83 @@ internal static partial class LlvmCodegen
     /// first chunk). This linked-list header enables RestoreArenaState to walk back and reclaim
     /// OS chunks that are no longer reachable after an arena reset.
     /// </summary>
+    /// <summary>
+    /// Points the GS segment base at the main thread's control block (TCB) and writes the
+    /// TCB self-pointer at offset 0, then returns the TCB base as an i64. Emitted once in the
+    /// entry prologue on linux-x64. GS (not FS) is used because the linked rustls/glibc
+    /// runtime owns the FS base for its own thread-local storage; GS is free for application
+    /// use on x86-64 Linux. The TCB is a zero-initialised BSS global (can't fail, no syscall
+    /// to allocate it); worker threads instead get a freshly mmap'd TCB at spawn time.
+    /// Lifted functions recover this same base via <see cref="EmitReadTcbBaseFromGs"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitMainThreadTlsInit(LlvmCodegenState state)
+    {
+        LlvmTypeHandle tcbType = LlvmApi.ArrayType2(state.I8, (ulong)MainTcbSizeBytes);
+        LlvmValueHandle tcb = LlvmApi.AddGlobal(state.Target.Module, tcbType, "__ashes_main_tcb");
+        LlvmApi.SetLinkage(tcb, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(tcb, LlvmApi.ConstNull(tcbType));
+        LlvmValueHandle tcbAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, tcb, state.I64, "main_tcb_addr");
+        // Point GS base at the TCB.
+        EmitLinuxSyscall(state, SyscallArchPrctl,
+            LlvmApi.ConstInt(state.I64, (ulong)ArchSetGs, 0),
+            tcbAddr,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "arch_set_gs");
+        // Store the TCB self-pointer at offset 0 so lifted functions can recover the base
+        // through `movq %gs:0` (see EmitReadTcbBaseFromGs).
+        StoreMemory(state, tcbAddr, (int)TcbSelfOffset, tcbAddr, "tcb_self_ptr");
+        return tcbAddr;
+    }
+
+    /// <summary>
+    /// Reads the current thread's TCB base from the GS self-pointer using a single opaque
+    /// inline-asm <c>movq %gs:0, $0</c>. Going through inline asm (rather than an
+    /// address-space-256 pointer) keeps the loaded value free of segment provenance, which
+    /// the O0 FastISel path otherwise mis-propagates into subsequent ordinary stores.
+    /// </summary>
+    private static LlvmValueHandle EmitReadTcbBaseFromGs(LlvmCodegenState state)
+    {
+        LlvmTypeHandle readType = LlvmApi.FunctionType(state.I64, []);
+        // No side effects / no memory clobber: the self-pointer is invariant for the thread's
+        // lifetime, so LLVM may hoist and CSE the read (e.g. out of allocation loops).
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, "movq %gs:0, $0", "=r", false, false);
+        return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "tcb_base");
+    }
+
+    /// <summary>
+    /// Returns <paramref name="state"/> with its arena cursor/end slots repointed at the
+    /// current thread's TCB on linux-x64; a no-op on other flavors (which keep module-global
+    /// arena slots). Intended for non-entry functions (runtime ABI helpers, lifted closures):
+    /// the builder must be positioned in the function's entry block before any allocation.
+    /// </summary>
+    private static LlvmCodegenState WithLinuxThreadArena(LlvmCodegenState state)
+    {
+        if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
+        {
+            return state;
+        }
+
+        LlvmValueHandle tcbBase = EmitReadTcbBaseFromGs(state);
+        (LlvmValueHandle cursor, LlvmValueHandle end) = BuildLinuxArenaSlots(state, tcbBase);
+        return state with { HeapCursorSlot = cursor, HeapEndSlot = end };
+    }
+
+    /// <summary>
+    /// Builds this thread's arena cursor and end pointers (ordinary address-space-0 pointers)
+    /// from the TCB base, at <see cref="TcbHeapCursorOffset"/> / <see cref="TcbHeapEndOffset"/>.
+    /// </summary>
+    private static (LlvmValueHandle Cursor, LlvmValueHandle End) BuildLinuxArenaSlots(LlvmCodegenState state, LlvmValueHandle tcbBase)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursorAddr = LlvmApi.BuildAdd(builder, tcbBase,
+            LlvmApi.ConstInt(state.I64, TcbHeapCursorOffset, 0), "tcb_cursor_addr");
+        LlvmValueHandle endAddr = LlvmApi.BuildAdd(builder, tcbBase,
+            LlvmApi.ConstInt(state.I64, TcbHeapEndOffset, 0), "tcb_end_addr");
+        return (
+            LlvmApi.BuildIntToPtr(builder, cursorAddr, state.I64Ptr, "tcb_cursor_ptr"),
+            LlvmApi.BuildIntToPtr(builder, endAddr, state.I64Ptr, "tcb_end_ptr"));
+    }
+
     private static void EmitHeapChunkInit(LlvmCodegenState state)
     {
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap");
