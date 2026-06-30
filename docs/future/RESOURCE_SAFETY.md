@@ -1,14 +1,23 @@
 # Deterministic Resource Safety — Findings & Plan
 
-Status: **Phase 0 implemented (2026-06-30); Phases 1–2 designed, pending the shared move/linearity analysis.**
+Status: **Gaps B, C, D fixed & verified (2026-06-30); Gap A remaining.**
 
-> **Progress:** Phase 0 (the `Process` drop) is **done & verified** — see §4. Phases 1 (recursive
-> drop for resource-bearing aggregates, Gap A) and 2 (move/escape analysis, Gap B) both hinge on a
-> flow-sensitive ownership/move analysis — the **same engine [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)
-> (#2 in-place reuse) needs**. That engine is the gating, correctness-critical next step: a wrong
-> inference here is a double-close (Gap A) or an incorrectly-rejected valid program (Gap B), so it
-> wants the same careful, test-gated build the rest of this plan describes — it was deliberately not
-> rushed. Build it once; it serves both resource safety and in-place reuse.
+> **Progress (3 of 4 gaps closed — the common/impactful patterns now work):**
+> - **Gap C (`Process` undropped) — FIXED** (Phase 0; `EmitProcessDrop`).
+> - **Gap D (resource bound in a TCO tail-call arm leaks) — FIXED.** The most impactful gap — the
+>   loop-over-files/connections pattern. Back-edge now closes iteration-local resources
+>   (`EmitTcoBackEdgeResourceDrops`); a resource passed as a self-call arg moves to the next
+>   iteration and is skipped. Test `tests/resource_tco_loop_cleanup.ash`.
+> - **Gap B (resource captured by an escaping closure → use-after-close) — FIXED.** The owning scope
+>   no longer closes a resource its result closure captures (`SkipDropsForResourcesEscapingViaResult`
+>   + `_closureResourceCaptures`); correct results, resource released at program exit. Test
+>   `tests/resource_capture_escape.ash`.
+> - **Gap A (resource nested in a non-destructured aggregate, e.g. `let _r = File.open(p)`) —
+>   REMAINING.** Rare (binding a resource result and ignoring it / collections of resources). Needs
+>   recursive `Drop` for resource-bearing aggregates **and** move-on-store/destructure to avoid a
+>   double-close (closing a reused fd is harmful), so it wants the careful flow-sensitive ownership
+>   analysis the rest of this plan describes — the same engine [REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)
+>   (#2) needs. Deliberately not rushed.
 
 Ashes Ground Rule 6 promises *"all resource and memory management is deterministic and
 **compile-time verified**"* with *"no user-visible `Drop`"* (Ground Rule 4). This doc audits how
