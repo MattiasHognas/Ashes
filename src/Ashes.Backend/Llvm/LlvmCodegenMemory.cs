@@ -187,15 +187,44 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildMemCpy(builder, destBytes, 1, sourceBytes, 1, length);
     }
 
+    // String header word: bits [0..62] = byte length, bit 63 = "view" flag. An owned string is
+    // {len, inline bytes…}; a view is {len|VIEW, backing-bytes-pointer} pointing into another
+    // string's bytes (no copy), used by uncons/substring. Views are materialized to owned strings by
+    // the copy-out / deep-copy paths, so a value that crosses an arena reset is never a dangling view.
+    private const ulong StringViewFlag = 1UL << 63;
+
     private static LlvmValueHandle LoadStringLength(LlvmCodegenState state, LlvmValueHandle stringRef, string name)
     {
-        return LoadMemory(state, stringRef, 0, name);
+        LlvmValueHandle raw = LoadMemory(state, stringRef, 0, name + "_raw");
+        return LlvmApi.BuildAnd(state.Target.Builder, raw, LlvmApi.ConstInt(state.I64, ~StringViewFlag, 0), name);
     }
 
     private static LlvmValueHandle GetStringBytesPointer(LlvmCodegenState state, LlvmValueHandle stringRef, string name)
     {
-        LlvmValueHandle byteAddress = LlvmApi.BuildAdd(state.Target.Builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), name + "_addr");
-        return LlvmApi.BuildIntToPtr(state.Target.Builder, byteAddress, state.I8Ptr, name);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Branchless: owned → bytes inline at ref+8; view → backing pointer stored at ref+8.
+        LlvmValueHandle raw = LoadMemory(state, stringRef, 0, name + "_hdr");
+        LlvmValueHandle isView = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            LlvmApi.BuildAnd(builder, raw, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), name + "_view_bit"),
+            LlvmApi.ConstInt(state.I64, 0, 0), name + "_is_view");
+        LlvmValueHandle inlineAddr = LlvmApi.BuildAdd(builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), name + "_inline_addr");
+        LlvmValueHandle viewPtr = LoadMemory(state, stringRef, 8, name + "_view_ptr");
+        LlvmValueHandle byteAddress = LlvmApi.BuildSelect(builder, isView, viewPtr, inlineAddr, name + "_addr");
+        return LlvmApi.BuildIntToPtr(builder, byteAddress, state.I8Ptr, name);
+    }
+
+    // Builds a view string {len|VIEW, backingBytesPtr} — O(1), no byte copy. The backing must outlive
+    // the view (the copy-out/deep-copy paths materialize views before a value crosses an arena reset).
+    private static LlvmValueHandle EmitStringView(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
+        LlvmValueHandle viewRef = EmitAlloc(state, 16);
+        LlvmValueHandle tagged = LlvmApi.BuildOr(builder, normalizedLen, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), prefix + "_tagged_len");
+        StoreMemory(state, viewRef, 0, tagged, prefix + "_len");
+        LlvmValueHandle bytesAsInt = LlvmApi.BuildPtrToInt(builder, bytesPtr, state.I64, prefix + "_bytes_int");
+        StoreMemory(state, viewRef, 8, bytesAsInt, prefix + "_ptr");
+        return viewRef;
     }
 
     private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes)
@@ -536,14 +565,17 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
     {
+        // Materialize: read length and bytes via the accessors (which handle views), then build a
+        // fresh OWNED string. This both copies an owned string out of the reclaimable region and
+        // collapses a view into a self-contained owned string so it never dangles past a reset.
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
+        LlvmValueHandle length = LoadStringLength(state, srcPtr, "copy_out_str_len");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, srcPtr, "copy_out_src");
         LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
-
         LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize);
-        LlvmValueHandle dynSrcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
-        LlvmValueHandle dynDestBytes = LlvmApi.BuildIntToPtr(builder, dynDest, state.I8Ptr, "copy_out_dest_ptr");
-        EmitCopyBytes(state, dynDestBytes, dynSrcBytes, dynSize, "copy_out");
+        StoreMemory(state, dynDest, 0, length, "copy_out_str_dest_len");
+        LlvmValueHandle dynDestBytes = GetStringBytesPointer(state, dynDest, "copy_out_dest");
+        EmitCopyBytes(state, dynDestBytes, srcBytes, length, "copy_out");
         return dynDest;
     }
 
@@ -1691,14 +1723,14 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
     {
+        // Copy the backing bytes into a fresh OWNED string. Used where the bytes are a transient
+        // buffer (e.g. Ashes.Text.fromInt), so a view would dangle. uncons/substring instead build
+        // views (EmitStringView) directly, since their backing is a live string.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
         LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, normalizedLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
         StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
-
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
-        // Bulk copy via llvm.memcpy (vectorized) rather than a byte-by-byte loop — this slice path is
-        // hot (uncons/substring) and the per-byte loop was a major cost.
         EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
         return stringRef;
     }
