@@ -9,14 +9,15 @@ those.)
 
 > 🔧 **In-progress work:** internal compiler optimizations — see
 > **[COMPILER_OPTIMIZATION.md](COMPILER_OPTIMIZATION.md)**. In-place reuse, deterministic resource
-> safety, and structured parallelism (all three targets) are landed; the remaining optimization
-> backlog (data-parallel `map`/`reduce`, the move/linearity analysis, arm64 networking+parallelism
-> coexistence, and a few smaller items) lives there under stable IDs `CO-1`…`CO-6`.
+> safety, and structured parallelism (all three targets, incl. verified win-x64 parallelism +
+> rustls-TLS coexistence) are landed; the remaining optimization backlog (the move/linearity
+> analysis and arm64 networking+parallelism coexistence) lives there under stable IDs `CO-2` and
+> `CO-3`.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
 | [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
-| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | In progress | LLVM passes, memory management, codegen. Landed: the audit roadmap (decision-tree matching, string-literal interning, mutual-recursion TCO, jump-table relocations) **plus** Perceus-style in-place reuse, deterministic resource safety, and structured parallelism on all three targets. Remaining optimization backlog tracked there as `CO-1`…`CO-6` (data-parallel `map`/`reduce`, move/linearity analysis, arm64 networking+parallelism, use-after-close diagnostic, tunables) |
+| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | In progress | LLVM passes, memory management, codegen. Landed: the audit roadmap (decision-tree matching, string-literal interning, mutual-recursion TCO, jump-table relocations) **plus** Perceus-style in-place reuse, deterministic resource safety, and structured parallelism on all three targets (incl. verified win-x64 parallelism + rustls-TLS coexistence, CO-6). Remaining optimization backlog tracked there as `CO-2` (move/linearity analysis) and `CO-3` (arm64 networking+parallelism coexistence) |
 | [Effects](EFFECTS.md) | Planned | Algebraic effect handlers — typed effect rows (`uses { ... }`), lexical handlers, optional `perform`, inferred operation/handler types, one-shot/tail-resumptive continuations. Basis for capabilities, DI/testability, typed errors, and async. Multi-shot deferred (no-GC) |
 | [Inline Modules](INLINE_MODULES.md) | Planned | Nested, named `module Name =` declarations inside a file — pure compile-time namespacing, no runtime representation; transparent inline ↔ file promotion |
 | [Ashes.Math](ASHES_MATH.md) | Planned | Two layers: a hermetic core (Int helpers, `sqrt`, Float arithmetic, constants — no library) plus native transcendentals (`sin`/`cos`/`exp`/`log`/…) from a **vendored `libm` (openlibm), statically linked and dead-stripped** per binary — compile-time only, no runtime dependency |
