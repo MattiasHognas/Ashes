@@ -2,7 +2,7 @@
 // expect: abcabcabc
 // Opens and reads the same file on each iteration of a tail-recursive loop, never closing it
 // explicitly. Each iteration's FileHandle must be (a) usable for the read inside the arm, then
-// (b) closed at the tail-call back-edge so fds don't leak (RESOURCE_SAFETY.md: TCO back-edge drop).
+// (b) closed at the tail-call back-edge so fds don't leak.
 // Reading the file 3x and getting its content back proves the handle is valid during use and that
 // the loop runs in bounded fds.
 import Ashes.File

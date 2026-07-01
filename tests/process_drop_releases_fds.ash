@@ -1,8 +1,8 @@
 // expect: ok
 // skip-on: win-x64
 // Spawns many short-lived children without an explicit close/wait. Each Process is dropped at
-// its match-arm scope exit, which closes its three pipe fds and reaps it (see
-// docs/future/RESOURCE_SAFETY.md). This exercises the Process-drop codegen path at scale; the
+// its match-arm scope exit, which closes its three pipe fds and reaps it.
+// This exercises the Process-drop codegen path at scale; the
 // fd-release guarantee itself is verified directly under a low `ulimit -n`.
 import Ashes.Process
 import Ashes.IO

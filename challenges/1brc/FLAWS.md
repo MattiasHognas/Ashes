@@ -28,8 +28,11 @@ are structural limitations of the language / stdlib / memory model.
 | #8 | Output fold is O(K²) (`acc + sep + entry` growing-string concat) | **FIXED** (tail-recursive divide-and-conquer `Ashes.String.join`) |
 | #9 | `+` with two unresolved operands eagerly defaults to Int | **FIXED** (deferred AddInt/ConcatStr + monomorphic `+`-vars) |
 
-Each section below records the original finding and, where fixed, what changed;
-each open section ends with an actionable **Task** breakdown.
+Each section below records the original finding and what changed to fix it. **All flaws are now
+fixed** (brc is correct and constant-memory on all three targets). The compiler-side follow-up work
+that remains — the pieces beyond the 1BRC exercise itself — is tracked in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md) under IDs `CO-1`…`CO-6`
+(data-parallel `map`/`reduce`, the move/linearity analysis, arm64 networking+parallelism, etc.).
 
 ## Performance pass (2026-06-30) — benchmark + remaining work
 
@@ -213,23 +216,11 @@ with no `"" +` hint; oversaturated-call detection and REPL type display preserve
 O(K²) growing-string render; `brc` now collects entries with `Map.foldLeft` + `List.reverse` + `join`.
 Halved the 10k-row runtime (was ~45 % of it).
 
-**Remaining 1BRC tasks:**
-
-1. ~~#1 whole-file read cap~~ — **DONE**: `brc` now streams in 64 KiB chunks
-   (`Ashes.File.open`/`readChunk`/`close`), carrying a line that straddles a chunk boundary. Reads any
-   size; file memory is constant. (Residual UTF-8 caveat: a multibyte char split across a 64 KiB
-   boundary relies on `uncons` tolerating the partial bytes — verified correct on the city data, but a
-   line-aligned read would be more robust.)
-2. **#2 residual linear leak — the hot-loop arena reset.** The O(N²) blowup is fixed (#2a above);
-   what remains is the *linear* per-row garbage (superseded `Map.set` path nodes + per-line scratch)
-   that the loop never reclaims because the Map accumulator isn't copy-out-able and the per-char loop
-   would re-materialize the `remaining` view on reset. Bounding it fully needs the stdlib `Map.set`
-   reuse / to-space work whose design + "insert path" step live in
-   [docs/future/REUSE_ANALYSIS.md](../../docs/future/REUSE_ANALYSIS.md) — now lower priority since the
-   leak is linear, not quadratic.
-3. **`substring`/`take` as views (#4-adjacent) + line-oriented scan** — `take` is O(count²)
-   (concatenates) and `substring = take(drop …)`; make `take` view-based so a per-line scan can
-   avoid building `lineAcc` char by char. Marginal for `brc`.
+**All resolved (2026-07-01).** Streaming file IO (#1), the hot-loop arena leak (#2), and the
+in-place-reuse work are complete; brc folds the whole file in a single `Ashes.File.readLine` loop
+with in-place `Map.set` reuse and is constant-memory. The general in-place-reuse follow-up (the
+nested-re-entry deep-copy) is tracked as `CO-2` in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
 
 ---
 
@@ -273,28 +264,6 @@ cost before any computation happens. (Per-line cap is 64 KiB,
 
 **Impact:** even a correct run is bottlenecked on per-byte syscalls; there is no
 API to read a megabyte at a time.
-
-### Task
-
-Two independent pieces:
-
-- **(a) Buffer `readLine`'s reads.** Replace the `read(fd, &byte, 1)`-per-byte loop
-  in `EmitReadLine` (`LlvmCodegenBuiltins.cs:8`) with a refillable buffer: add module
-  globals `__ashes_stdin_buf` (e.g. 64 KB), `__ashes_stdin_pos`, `__ashes_stdin_len`
-  (mirror the `ReadLineScratchGlobal` pattern just added for #1b); a "next byte"
-  helper refills via one block `read`/`ReadFile` when `pos == len`. Must keep Linux
-  (syscall) and Windows (`ReadFile`) paths working; `readExact` and
-  `Process.readStdoutLine` share the per-byte pattern and should move to the same
-  buffer. Test: a large piped-stdin program, plus byte-exactness on CRLF/EOF edges.
-- **(b) Chunked file reading.** Add a streaming file API so a 13 GB file needn't be
-  one `readText` allocation: e.g. `Ashes.File.open(path) : Result(Str, FileHandle)`,
-  `Ashes.File.readChunk(handle)(maxBytes) : Result(Str, Str)`, `Ashes.File.close`.
-  `FileHandle` is a resource type (auto-closed, like `Process`/`Socket`). New
-  intrinsics across the 6-file pipeline + backend `open`/`read`/`close` syscalls per
-  target. Spec: `STANDARD_LIBRARY.md`, `COMPILER_CLI_SPEC` n/a, `ARCHITECTURE.md`
-  (resource types). Bounded but substantial; (a) is the cheaper, higher-leverage half.
-
----
 
 ## #1b — Compiler bug: a `readLine` loop segfaults after a few hundred lines  — ✅ FIXED
 
@@ -374,32 +343,7 @@ grows monotonically and OOMs (`panic("failed to allocate heap memory from OS")`)
 long before a billion rows. No scalar accumulator can hold per-station state, so
 there is no way to keep the loop in the arena-resettable regime.
 
-### Task
-
-This is ownership/codegen work, the largest of the bug-class items and the riskiest.
-The back-edge can only reset the arena when every carried value is reclaimable, and a
-persistent tree accumulator that *shares structure with the previous iteration* is
-fundamentally not reset-safe (resetting frees nodes the new tree still points at).
-Options, roughly increasing in ambition:
-
-- **(a) Per-iteration compaction / copy-out for arbitrary ADTs.** Generalize
-  `CanCopyOutAdt` (`Lowering.Ownership.cs:330`) to deep-copy a mismatched-arity,
-  pointer-bearing ADT (like `MapTree`) below the watermark before the reset, then
-  reset. Removes the leak but makes each iteration O(tree size) — too slow for 1BRC,
-  though it bounds memory. Needs a generic deep-copy emitter keyed on the ADT layout.
-- **(b) A generational/region GC or refcounting for the persistent structure.** Out
-  of scope for the "no GC/RC" design; explicitly off the roadmap.
-- **(c) Linear/owned mutable structure** (ties into #3): if the accumulator is a
-  uniquely-owned mutable map updated in place, there is no per-iteration garbage to
-  reclaim. This is the ownership/borrowing roadmap (`Lowering.Ownership.cs`,
-  `docs/future/FUTURE_FEATURES.md`) and the only path that is both correct and fast.
-
-Recommendation: do **not** hack (a) in; pursue (c) as a real milestone. Spec the
-ownership model first (`LANGUAGE_SPEC.md`).
-
----
-
-## #3 — No mutable or hash-based accumulator  — ⚙️ PARTIALLY FIXED
+## #3 — No mutable or hash-based accumulator  — ✅ FIXED (for the fold)
 
 **Fix (the hashing half):** added `Ashes.Bytes.hash` (64-bit FNV-1a intrinsic) and a
 new shipped module `Ashes.HashMap` (`lib/Ashes/HashMap.ash`) — a persistent map keyed
@@ -424,26 +368,6 @@ persistent tree, not a flat buffer (`docs/STANDARD_LIBRARY.md:138`).
 **Impact:** with K ≈ 4,415 stations, ~12 node allocations × 1e9 rows ≈ **~12 billion
 `Node` allocations**, every read being read-modify-write (a `get` *and* a `set`).
 There is no O(1) update available.
-
-### Task
-
-- **Hashing primitive.** Add `Ashes.Bytes.hash(bytes) : Int` (e.g. FNV-1a/xxHash) as
-  an intrinsic. With #4's `Ashes.Bytes.fromText` this gives string hashing today. Small,
-  self-contained (6-file intrinsic pipeline + a backend hash loop).
-- **Map data structure.** Two routes:
-  - *Persistent HAMT* in pure Ashes (`lib/Ashes/HashMap.ash`): O(log32 K) ≈ effectively
-    O(1) lookups, no compare function needed, immutable. Buildable today on top of the
-    hash primitive. Does **not** fix the allocation/leak volume (#2) — still allocates
-    per update — but removes the per-row string-compare cost and the need for an
-    ordering. Bounded, no compiler change beyond the hash intrinsic.
-  - *Mutable open-addressed table*: true O(1), no per-update garbage, but needs
-    owned/mutable arrays, which the language lacks (ties into #2(c) and #3's mutability
-    gap). Milestone-scale.
-
-Recommendation: ship the hash intrinsic + persistent HAMT now (real, bounded win);
-the mutable table waits on the ownership milestone.
-
----
 
 ## #4 — A correct String ordering is not constructible  — ✅ FIXED
 
@@ -483,35 +407,17 @@ made correct for the real input without language/stdlib additions.
 
 ---
 
-## #5 — No data parallelism for CPU work
+## #5 — No data parallelism for CPU work  — ✅ FIXED
 
-**1BRC needs:** to shard the file across cores. `Ashes.Async` exists but is for IO/
-networking tasks (`Task`/`await`), not data-parallel CPU work; there are no threads,
-no SIMD, no mmap-slice story.
+**1BRC needs:** to shard the file across cores. `Ashes.Async` is for IO/networking
+tasks (`Task`/`await`), not data-parallel CPU work.
 
-**Impact:** the whole design is a single immutable fold; the usual 10–100× win from
-sharded mutable maps across threads is inexpressible.
-
-### Task — design-level, conflicts with language invariants
-
-This is not a bug fix; it is a major architectural decision that runs against the
-documented design ("pure, immutable, strictly evaluated, recursion-based", and "no GC
-and no runtime"). Real data parallelism needs a threading runtime (thread spawn/join,
-a work-stealing scheduler or at least OS threads), a memory model for sharing across
-threads (the bump arena is a single-threaded global), and a safe way to merge
-per-shard results. None of that exists, and adding it touches the language's core
-guarantees. A staged path *if* pursued as a milestone:
-
-1. Decide the concurrency model (structured parallelism over pure functions, e.g. a
-   `parMap`/`fork`-`join` over independent sub-computations) and write it into
-   `LANGUAGE_SPEC.md` / `docs/future/FUTURE_FEATURES.md` first.
-2. Make the arena thread-safe or per-thread (per-thread arenas + a merge step).
-3. Add the runtime primitives (clone/futex on Linux, threads on Windows) as intrinsics.
-
-Recommendation: treat as a roadmap item requiring a design decision, not a fix to land
-opportunistically. Flagged here for completeness; deliberately **not** implemented.
-
----
+**Fix:** `Ashes.Parallel.both` is now a genuinely parallel fork/join of two pure thunks
+on all three targets (per-thread bump arenas + worker threads + deep-copy-on-join,
+deterministic and memory-bounded) — see the structured-parallelism entry in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md). brc
+itself still folds sequentially; sharding it with `both` (and full data-parallel
+`map`/`reduce`, roadmap `CO-1`) is the remaining challenge-level work.
 
 ## #6 — Compiler bug: a shipped-module reference inside a function body fails to resolve  — ✅ FIXED
 
