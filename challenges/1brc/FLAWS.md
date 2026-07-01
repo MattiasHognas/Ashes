@@ -114,6 +114,39 @@ So a set-only tuple-valued map is now fully bounded (#2/#3 met). Two things rema
    rather than a char-by-char `lineAcc + c` accumulation. Then the loop is reset-safe without the view-copy
    blowup, the map reuse fires, and the get residual (#1) is the only thing left between brc and constant memory.
 
+## Performance pass (2026-07-01) — pos-indexed scan lands; the real residual is the loop RE-ENTRY deep-copy
+
+**Done (committed).** `scanChunk` now scans each chunk by an integer byte index `pos`, using two new
+byte-level intrinsics — `Ashes.Bytes.indexOf(bytes)(needle)(from) : Int` (memchr from an offset) and
+`Ashes.Bytes.subText(bytes)(start)(len) : Str` (bounds-clamped byte-range slice) — so the per-line
+fold `go pos m` carries only copy-type args plus the `Ashes.Map` accumulator, and get+set are inlined
+into `go`'s body. Reuse fires (`fullyReusing=True`), output is byte-identical to the baseline (41343
+stations @ 1M), and peak RSS drops **9.2×**: 9709 MB → **1054 MB @ 1M**, 1004 MB → **87 MB @ 100k**.
+';'/'\n' are ASCII so byte-slicing never splits a multibyte codepoint. `processLine` is kept for the
+carry-prefixed first line and streamLoop's final partial.
+
+**But it is still linear (~1 KB/row), and the cause is NOT the get borrow.** Bisected to a clean
+20-line synthetic: a get-then-set OR even a **set-only** reuse fold that is nested inside an outer loop
+threading the accumulator (`stream c m` → `scan base m` → inner `go`) leaks ~1 KB/row (≈ one root-to-
+leaf spine), while the *identical* fold as a single flat loop is bounded (23 MB @ 1M, 40k keys). The
+mechanism: in-place reuse makes the accumulator uniquely-owned by **deep-copying it once at loop entry**
+(`Lowering.cs` ~3005, `reuseDefensiveCopy`). That entry copy is part of the loop-containing function's
+body, so it re-executes on **every re-entry** — brc calls `scanChunk` (which contains `go`) once per
+64 KiB chunk (~250× at 1M), deep-copying the growing tree each time, and because the outer `streamLoop`
+is not itself reset-safe (its accumulator isn't a direct `Map.set(...)(acc)`), every prior copy leaks.
+Sum over chunks ≈ Σ tree-size ≈ the ~1 GB.
+
+**Confirmed fix direction: a single loop entry.** A stdin variant (`loop map = match readLine with … ->
+loop(set … map)`), one flat loop, is **22 MB @ 1M and 159 MB @ 10M** (both correct, 41343) — i.e. bounded
+at ~16 B/row, which is exactly the get-then-set residual (#1 below). So the two remaining items are
+orthogonal and both real:
+  - **(A) Loop re-entry deep-copy.** To keep the file API (`streamLoop`/`readChunk`) *and* be constant,
+    brc must fold in a single loop. Either (i) a buffered per-handle `Ashes.File.readLine` intrinsic
+    (module-global buffer, like the stdin `readLine` fix) so the loop threads only the accumulator, or
+    (ii) a compiler move/linearity analysis that skips the entry deep-copy when the accumulator is
+    provably moved (not aliased by the caller after the call) — the ownership milestone.
+  - **(B) The get-then-set ~16 B/row residual** — unchanged from below; dominates once (A) is solved.
+
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
 The design assumed the O(N²) blowup was `Map.set` superseded-node sharing. Empirically it was not:
