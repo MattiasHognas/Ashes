@@ -192,11 +192,12 @@ have a built-in ordering abstraction, callers supply a total ordering function
 
 ### `Ashes.Parallel`
 
-Structured, deterministic parallelism over **pure** functions (design:
-`docs/future/STRUCTURED_PARALLELISM.md`). Every result is identical to the sequential
-equivalent. **Execution is currently sequential** — `both` is the fork/join primitive that
-the threading runtime (per-thread arenas + clone/futex + deep-copy-on-join) will make
-genuinely parallel; `map`/`reduce` then parallelize with no source changes.
+Structured, deterministic parallelism over **pure** functions (see
+`docs/future/COMPILER_OPTIMIZATION.md`). Every result is identical to the sequential
+equivalent. `both` is a **genuinely parallel** fork/join primitive on all three targets
+(per-thread arenas + worker threads + deep-copy-on-join), forking at concrete result types
+and running sequentially for abstract ones. `map`/`reduce` currently run sequentially
+(their element type is abstract inside the polymorphic body — roadmap CO-1).
 
 - `both(left)(right)` returning `(A, B)` — fork/join two pure thunks `(Unit -> A)`, `(Unit -> B)`
 - `map(f)(list)` returning `List(B)` — order-preserving map, split-and-fork shaped

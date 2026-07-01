@@ -1,7 +1,6 @@
-// Structured, deterministic parallelism over pure functions (see
-// docs/future/STRUCTURED_PARALLELISM.md). The result of every operation here is
-// IDENTICAL to its sequential equivalent — purity guarantees order-independence —
-// so code written with these combinators is always correct.
+// Structured, deterministic parallelism over pure functions. The result of every
+// operation here is IDENTICAL to its sequential equivalent — purity guarantees
+// order-independence — so code written with these combinators is always correct.
 //
 // `both` (the single fork/join primitive) is a compiler intrinsic registered in
 // BuiltinRegistry — it must be lowered at each call site so it can deep-copy a worker's
@@ -9,7 +8,7 @@
 // `both` runs its right thunk on a worker thread; polymorphic uses fall back to sequential
 // evaluation (always correct). `map`/`reduce` below are ordinary Ashes and are sequential
 // (they cannot route through the parallel `both` because their element type is abstract
-// inside the polymorphic body; see docs/future/STRUCTURED_PARALLELISM.md).
+// inside the polymorphic body).
 //
 // Self-contained: uses only core language features.
 

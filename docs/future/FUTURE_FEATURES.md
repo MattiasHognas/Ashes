@@ -2,24 +2,20 @@
 
 Planned features and future work for the Ashes language and ecosystem.
 
-> 🔧 **In-progress work:** In-Place Reuse (#2). The shared deep-copy foundation, the reuse
-> primitive, and the **direct-accumulator** in-place reuse are landed and verified; the remaining
-> piece is the `Map.set`-group **specialization** for indirect reuse (the 1BRC fold). Full design,
-> the concrete leak discriminator, and the four confirmed obstacles are in
-> **[REUSE_ANALYSIS.md](REUSE_ANALYSIS.md)**. (Structured Parallelism #5 and Resource Safety are
-> done.)
+> 🔧 **In-progress work:** internal compiler optimizations — see
+> **[COMPILER_OPTIMIZATION.md](COMPILER_OPTIMIZATION.md)**. In-place reuse, deterministic resource
+> safety, and structured parallelism (all three targets) are landed; the remaining optimization
+> backlog (data-parallel `map`/`reduce`, the move/linearity analysis, arm64 networking+parallelism
+> coexistence, and a few smaller items) lives there under stable IDs `CO-1`…`CO-6`.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
 | [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Landed | Landed as `Ashes.Text.uncons`, `Ashes.Text.parseInt`, and `Ashes.Text.parseFloat`; recursive user-space JSON parser smoke coverage proves the surface; follow-on text helpers remain deferred |
 | [Async Networking](ASYNC_NETWORKING.md) | Landed | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
 | [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
-| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | Landed | LLVM passes, memory management, codegen improvements. Roadmap complete: decision-tree pattern matching, compile-time string-literal interning, mutual-recursion TCO, and LLVM jump-table relocation support in the image linkers. Further codegen improvements remain welcome but the audit roadmap is done |
+| [Compiler Optimization](COMPILER_OPTIMIZATION.md) | In progress | LLVM passes, memory management, codegen. Landed: the audit roadmap (decision-tree matching, string-literal interning, mutual-recursion TCO, jump-table relocations) **plus** Perceus-style in-place reuse, deterministic resource safety, and structured parallelism on all three targets. Remaining optimization backlog tracked there as `CO-1`…`CO-6` (data-parallel `map`/`reduce`, move/linearity analysis, arm64 networking+parallelism, use-after-close diagnostic, tunables) |
 | [HTTPS/TLS](HTTPS_TLS.md) | Landed | Transparent `https://` in `Ashes.Http` and the public `Ashes.Net.Tls` surface now ride on the hermetic `rustls` runtime across `linux-x64`, `linux-arm64`, and `win-x64` |
 | [Brace-Free Records](BRACE_FREE_RECORDS.md) | Landed | Curly-brace record declaration/construction/update forms replaced with pipe-style declarations, named constructor calls, and bare `with` updates; old `{ ... }` forms now report a migration diagnostic |
-| [Structured Parallelism](STRUCTURED_PARALLELISM.md) | Landed (all targets) | `Ashes.Parallel.both` is **genuinely parallel on linux-x64, win-x64, and linux-arm64** — per-thread bump arenas + worker threads + deep-copy-on-join, deterministic, memory-bounded. linux-x64 uses a GS-segment TCB + `clone`/`futex`; win-x64 uses a TEB+0x28 (ArbitraryUserPointer) per-thread TCB + `CreateThread`/`WaitForSingleObject`; arm64 uses real ELF TLS (PT_TLS + `TPIDR_EL0`, TLSLE relocs in the in-house linker) + `clone`/`futex` (verified on qemu/wine, incl. nested divide-and-conquer). Concrete result types fork to a worker; abstract/polymorphic uses (and `map`/`reduce`, whose element type is abstract inside the polymorphic body) run sequentially — full data-parallel `map`/`reduce` would need monomorphization. (arm64 networking programs keep the BSS arena — rustls's dynamic TLS conflicts with a PT_TLS — so `both` runs inline there.) |
-| [In-Place Reuse Analysis](REUSE_ANALYSIS.md) | Largely landed | Perceus-style in-place reuse without runtime refcounting. Landed, sound, and constant-memory bounded for **pure-rewrite folds**: direct-accumulator reuse, helper-rebuild inlining, recursive-function specialization, and the full **`Map.set` shape** (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). A defensive entry deep-copy makes the accumulator uniquely owned; a conservative `IsFullyReusing` gate guards the per-iteration arena reset. **Remaining:** the insert path of an insert-or-update `Map.set` — a fresh node for a new key lands above the watermark and blocks the reset; needs a to-space / persistent region for genuinely-new cells (detailed in the doc) |
-| [Resource Safety](RESOURCE_SAFETY.md) | Landed | Deterministic file/socket/process cleanup vs Ground Rule 6. All gaps fixed & verified: affine ownership + recursive `Drop` for resource-bearing aggregates, move-on-destructure/construction, TCO back-edge resource drops, `Process` reaping, and deterministic close of resources captured by escaping closures (dropper at `closure+24`) |
 | [Effects](EFFECTS.md) | Planned | Algebraic effect handlers — typed effect rows (`uses { ... }`), lexical handlers, optional `perform`, inferred operation/handler types, one-shot/tail-resumptive continuations. Basis for capabilities, DI/testability, typed errors, and async. Multi-shot deferred (no-GC) |
 | [Inline Modules](INLINE_MODULES.md) | Planned | Nested, named `module Name =` declarations inside a file — pure compile-time namespacing, no runtime representation; transparent inline ↔ file promotion |
 | Ashes.String | Landed | Standard library string utilities (`length`, `take`, `drop`, `substring`, `indexOf`, `startsWith`, `contains`, `split`, `join`, `trim`, `trimStart`, `trimEnd`, `isLetter`, `isDigit`, `isWhiteSpace`, `compare`) |

@@ -114,7 +114,7 @@ public abstract record IrInst
     /// arena's TCO back-edge reset never reclaims to-space, so the new cell survives the reset while the
     /// reset still reclaims the iteration's scaffolding/scratch. To-space is never reset during the loop
     /// (it holds part of the live accumulator); it is bounded by the number of genuinely-new cells
-    /// (≈distinct keys), not by iterations. See <see cref="IrInst.AllocAdt"/> and REUSE_ANALYSIS.md.
+    /// (≈distinct keys), not by iterations. See <see cref="IrInst.AllocAdt"/>.
     /// </summary>
     public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
 
