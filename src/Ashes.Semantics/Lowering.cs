@@ -156,7 +156,24 @@ public sealed partial class Lowering
 
     // Accumulator names whose specialization is fully reusing, so the loop back-edge may reset the
     // arena: the new accumulator is rewritten in place below the watermark and survives the reset.
+    // Membership alone is not sufficient to reset: the actual back-edge argument expression must also
+    // be proven address-stable (IsStableAccumulatorExpr) — a name-marked accumulator threaded back
+    // through a relocating (declined) entry copy is above the watermark and a plain reset frees it.
     private readonly HashSet<string> _resetSafeAccumulators = new(StringComparer.Ordinal);
+
+    // Reuse-specialized call nodes whose result IS the accumulator (their last argument) rewritten in
+    // place — the specialization fully reuses and the accumulator is fully persistent. Recorded by the
+    // call Expr's identity so IsStableAccumulatorExpr can tell an in-place rewrite (address-stable when
+    // its input is) from a relocating allocation. Reference identity, not name/span keyed.
+    private readonly HashSet<Expr> _inPlaceReuseCallExprs = new(ReferenceEqualityComparer.Instance);
+
+    // User folds proven to thread their accumulator through at a stable address: the accumulator is the
+    // last curried param, its spec-path entry deep-copy was elided (no relocation on entry), and every
+    // tail leaf of the body preserves the accumulator's address (Var acc, an in-place reuse call with a
+    // stable acc arg, or a self back-edge with a stable acc arg). Keyed by the fold's definition span
+    // (Binding.Self inherits the outer binding's span, so a caller and the fold's self-calls resolve the
+    // identical span; any shadowing binder has a distinct span) → the fold's curried parameter count.
+    private readonly Dictionary<TextSpan, int> _accStableFolds = new();
 
     // When generating an f$reuse specialization, the parameter name to treat as a linear
     // (uniquely-owned) reuse root inside the lowered body. Null outside specialization.
@@ -3010,6 +3027,10 @@ public sealed partial class Lowering
         // call becomes O(size) instead of O(depth). Specialization copies (the reuse is in a $reuse
         // clone) are not gated this way.
         var directReuseSlots = new HashSet<int>();
+        // Spec-path reuse accumulators (by name) whose entry deep-copy was elided this frame — i.e. the
+        // accumulator is threaded into its reuse specialization without a relocating copy, so its address
+        // is preserved. Used after the body is lowered to decide whether this fold is address-stable.
+        var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
         int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
@@ -3103,6 +3124,10 @@ public sealed partial class Lowering
                     {
                         reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
                     }
+                    else
+                    {
+                        specElidedAccs.Add(accName);
+                    }
                 }
             }
 
@@ -3143,6 +3168,10 @@ public sealed partial class Lowering
                     if (!elide)
                     {
                         reuseDefensiveCopy.Add((accL.Slot, accL.T));
+                    }
+                    else
+                    {
+                        specElidedAccs.Add(accName);
                     }
                 }
             }
@@ -3251,6 +3280,27 @@ public sealed partial class Lowering
             _inst.InsertRange(reuseInsertIndex, generated);
         }
 
+        // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
+        // decide whether calling this fold returns its accumulator at a stable address, so a caller
+        // threading it across a loop back-edge can keep the plain arena reset. The accumulator is the
+        // last curried param; require its spec-path entry copy to have been elided AND every tail leaf
+        // to preserve its address. Recorded by definition span → param count. Skip inside a
+        // specialization clone (it re-lowers the same AST/spans; the primary lowering already records).
+        if (savedTcoCtx is not null
+            && !_inSpecialization
+            && !_inParallelSpecialization
+            && savedTcoCtx.ParamNames.Count > 0
+            && specElidedAccs.Contains(savedTcoCtx.ParamNames[^1])
+            && Lookup(savedTcoCtx.SelfName)?.DefinitionSpan is { } foldSpan)
+        {
+            string accName = savedTcoCtx.ParamNames[^1];
+            int paramCount = savedTcoCtx.ParamNames.Count;
+            if (TailLeavesStable(lam.Body, accName, foldSpan, paramCount, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                _accStableFolds[foldSpan] = paramCount;
+            }
+        }
+
         _tcoCtx = outerTcoCtx;
         if (isChainLambda)
         {
@@ -3348,6 +3398,136 @@ public sealed partial class Lowering
         return expr;
     }
 
+    // Whether <paramref name="expr"/> evaluates to a loop accumulator threaded in place at a stable
+    // address — one below the loop watermark that a plain arena reset (reclaiming everything above the
+    // watermark) keeps live. <paramref name="isAcc"/> decides whether a bare Var is that accumulator:
+    // at a back edge it is a live-scope slot check; inside a fold's stability recording it is name
+    // equality against the (unshadowed) accumulator param. <paramref name="selfSpan"/>/<paramref
+    // name="selfParamCount"/>, when set during recording, let a self back-edge count as a stable fold
+    // before it is itself recorded. Conservative: an unrecognized shape (including a let-bound name) is
+    // not stable, which only loses the reset (sound), never keeps an unsafe one.
+    private bool IsStableAccumulatorExpr(Expr expr, Func<string, bool> isAcc, TextSpan? selfSpan = null, int selfParamCount = 0)
+    {
+        switch (expr)
+        {
+            case Expr.Var v:
+                return isAcc(v.Name);
+            case Expr.Call:
+                {
+                    var args = new List<Expr>();
+                    var root = CollectCallArgs(expr, args);
+                    if (args.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    // A reuse specialization rewrites its last argument's tree in place and returns it —
+                    // stable exactly when that argument is.
+                    if (_inPlaceReuseCallExprs.Contains(expr))
+                    {
+                        return IsStableAccumulatorExpr(args[^1], isAcc, selfSpan, selfParamCount);
+                    }
+
+                    if (root is not Expr.Var f || Lookup(f.Name)?.DefinitionSpan is not { } span)
+                    {
+                        return false;
+                    }
+
+                    // A call to a fold proven address-stable (or a self back-edge during recording) threads
+                    // its accumulator (last arg) through at a stable address.
+                    bool isSelf = selfSpan is { } s && span.Equals(s) && args.Count == selfParamCount;
+                    bool isStableFold = _accStableFolds.TryGetValue(span, out var pc) && pc == args.Count;
+                    if (isSelf || isStableFold)
+                    {
+                        return IsStableAccumulatorExpr(args[^1], isAcc, selfSpan, selfParamCount);
+                    }
+
+                    return false;
+                }
+            default:
+                return false;
+        }
+    }
+
+    // Whether every tail leaf of a fold body preserves the accumulator's address, so calling the fold
+    // returns it at a stable address. Walks the tail spine (If arms, Match case bodies, Let bodies),
+    // tracking binders that shadow the accumulator name; each leaf must satisfy IsStableAccumulatorExpr
+    // under the shadow set (a rebound accumulator name is no longer the accumulator). Used only when
+    // recording a fold's stability, keyed by name — the caller side uses live-scope slots instead.
+    private bool TailLeavesStable(Expr body, string accName, TextSpan selfSpan, int selfParamCount, HashSet<string> shadowed)
+    {
+        switch (body)
+        {
+            case Expr.If iff:
+                return TailLeavesStable(iff.Then, accName, selfSpan, selfParamCount, shadowed)
+                    && TailLeavesStable(iff.Else, accName, selfSpan, selfParamCount, shadowed);
+            case Expr.Match m:
+                foreach (var c in m.Cases)
+                {
+                    var caseShadow = shadowed;
+                    var binders = new HashSet<string>(StringComparer.Ordinal);
+                    CollectPatternBinders(c.Pattern, binders);
+                    if (binders.Count > 0)
+                    {
+                        caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                        caseShadow.UnionWith(binders);
+                    }
+
+                    if (!TailLeavesStable(c.Body, accName, selfSpan, selfParamCount, caseShadow))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            case Expr.Let let:
+                {
+                    var bodyShadow = shadowed;
+                    if (!shadowed.Contains(let.Name))
+                    {
+                        bodyShadow = new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+                    }
+
+                    return TailLeavesStable(let.Body, accName, selfSpan, selfParamCount, bodyShadow);
+                }
+            default:
+                return IsStableAccumulatorExpr(
+                    body,
+                    name => !shadowed.Contains(name) && string.Equals(name, accName, StringComparison.Ordinal),
+                    selfSpan,
+                    selfParamCount);
+        }
+    }
+
+    // Collect the names a pattern binds (Var subpatterns), recursively.
+    private static void CollectPatternBinders(Pattern pattern, HashSet<string> into)
+    {
+        switch (pattern)
+        {
+            case Pattern.Var v:
+                into.Add(v.Name);
+                break;
+            case Pattern.Cons cons:
+                CollectPatternBinders(cons.Head, into);
+                CollectPatternBinders(cons.Tail, into);
+                break;
+            case Pattern.Tuple tuple:
+                foreach (var p in tuple.Elements)
+                {
+                    CollectPatternBinders(p, into);
+                }
+
+                break;
+            case Pattern.Constructor ctor:
+                foreach (var p in ctor.Patterns)
+                {
+                    CollectPatternBinders(p, into);
+                }
+
+                break;
+        }
+    }
+
     private bool TryGetExactFunctionArity(TypeRef type, out int arity)
     {
         arity = 0;
@@ -3439,7 +3619,7 @@ public sealed partial class Lowering
             && Lookup(specName) is { } specBinding
             && SpecializationRebuildsAccumulator(Prune(specBinding.Type), collectedArgs.Count))
         {
-            return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs);
+            return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs, call);
         }
 
         // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
@@ -3537,7 +3717,11 @@ public sealed partial class Lowering
                 // already survives a plain reset, which then reclaims the iteration's scaffolding.
                 bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
                     || IsResourceHandleType(newArgTypes[i])
-                    || (i < tco.ParamNames.Count && _resetSafeAccumulators.Contains(tco.ParamNames[i]));
+                    || (i < tco.ParamNames.Count
+                        && _resetSafeAccumulators.Contains(tco.ParamNames[i])
+                        && IsStableAccumulatorExpr(
+                            collectedArgs[i],
+                            name => Lookup(name) is Binding.Local local && local.Slot == tco.ParamSlots[i]));
 
                 if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
                 {
@@ -5205,7 +5389,7 @@ public sealed partial class Lowering
             && string.Equals(paramNamed.Symbol.Name, resultNamed.Symbol.Name, StringComparison.Ordinal);
     }
 
-    private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
+    private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args, Expr callExpr)
     {
         // Lower the arguments first to learn their concrete types: the generic funcType does not say
         // whether the key/value are heap (Str) or copy (Int), and the specialization must be
@@ -5227,13 +5411,19 @@ public sealed partial class Lowering
         }
 
         string label = GetOrCreateReuseSpecialization(name, funcType, concreteParamTypes);
-        // If the specialization fully reuses, its result is the accumulator rewritten in place below
-        // the watermark, so the loop back-edge may reset the arena (reclaiming this call's recursion
-        // scaffolding) and keep the accumulator.
-        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar
+        // If the specialization fully reuses, its result is the accumulator (the last argument)
+        // rewritten in place — address-stable exactly when that argument was. Record the call node so a
+        // back-edge stability check can trace through it, and (when the argument is a bare accumulator
+        // name) mark that name reset-safe. The reset itself still requires the back-edge argument to be
+        // proven address-stable — this marking is necessary, not sufficient.
+        if (_fullyReusingLabels.Contains(label)
             && AccumulatorIsFullyPersistent(concreteParamTypes[^1]))
         {
-            _resetSafeAccumulators.Add(accVar.Name);
+            _inPlaceReuseCallExprs.Add(callExpr);
+            if (args[^1] is Expr.Var accVar)
+            {
+                _resetSafeAccumulators.Add(accVar.Name);
+            }
         }
 
         int envPtr = NewTemp();

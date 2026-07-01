@@ -1,4 +1,13 @@
-# CO-8 investigation findings (2026-07-02, session paused — resume from here)
+# CO-8 investigation findings (2026-07-02)
+
+> **RESOLVED (2026-07-02).** The fix described under *Agreed fix design* below is implemented in
+> `Lowering.cs`: the TCO back-edge plain arena reset now additionally requires the back-edge argument
+> to be provably address-stable (`IsStableAccumulatorExpr` / `TailLeavesStable` / `_inPlaceReuseCallExprs`
+> / `_accStableFolds`). `docs/future/co8_repro_declined_seed.ash` now prints `7` (was SIGSEGV);
+> `tests/reuse_map_tco_reset_declined_seed.ash` is the committed regression. The fully-elided nested
+> reuse shape keeps the fast plain reset (verified RSS-flat ~1 MB at 200k rounds). Full gate green
+> (C# unit, LSP, 381 e2e). CO-8 moved to the Completed Work table in `COMPILER_OPTIMIZATION.md`. This
+> file is retained as the investigation record.
 
 ## TL;DR
 
