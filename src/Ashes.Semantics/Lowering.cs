@@ -4965,9 +4965,6 @@ public sealed partial class Lowering
                 case IrInst.CopyOutClosure:
                 case IrInst.CopyOutTcoListCell:
                     return false;
-                case IrInst.MakeClosure mk when mk.FuncLabel != selfLabel:
-                case IrInst.MakeClosureStack mks when mks.FuncLabel != selfLabel:
-                    return false;
             }
         }
 
@@ -5015,6 +5012,33 @@ public sealed partial class Lowering
     /// arguments in turn (the last being the uniquely-owned accumulator). <c>f$reuse</c> rewrites that
     /// tree in place.
     /// </summary>
+    // Whether a reuse specialization's rebuilt accumulator references only persistent (never-reset) memory,
+    // so the loop back-edge may reclaim the main arena each iteration without dangling anything. The tree's
+    // nodes are always persistent (to-space / in-place reuse) and its children are too; the only risk is a
+    // heap LEAF field pointing into per-iteration scratch. For the stdlib Map (MapTree(K, V)): the key is
+    // materialized to the persistent blob on insert and kept from the matched node on update, so a copy or
+    // Str/Bytes key is always persistent; the value is freshly produced on every update and only
+    // insert-materialized, so it is persistent only when it is a copy type. Other (non-Map) heap
+    // accumulators are treated conservatively as not-yet-persistent (correct, just not reset-reclaimed):
+    // the general fix is to materialize fresh heap leaf fields on the update path too.
+    private bool AccumulatorIsFullyPersistent(TypeRef accType)
+    {
+        if (Prune(accType) is not TypeRef.TNamedType named)
+        {
+            return false;
+        }
+
+        if (string.Equals(named.Symbol.Name, "MapTree", StringComparison.Ordinal) && named.TypeArgs.Count == 2)
+        {
+            var key = Prune(named.TypeArgs[0]);
+            var value = Prune(named.TypeArgs[1]);
+            bool keyPersistent = BuiltinRegistry.IsCopyType(key) || key is TypeRef.TStr or TypeRef.TBytes;
+            return keyPersistent && BuiltinRegistry.IsCopyType(value);
+        }
+
+        return false;
+    }
+
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
     {
         // Lower the arguments first to learn their concrete types: the generic funcType does not say
@@ -5040,7 +5064,8 @@ public sealed partial class Lowering
         // If the specialization fully reuses, its result is the accumulator rewritten in place below
         // the watermark, so the loop back-edge may reset the arena (reclaiming this call's recursion
         // scaffolding) and keep the accumulator.
-        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar)
+        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar
+            && AccumulatorIsFullyPersistent(concreteParamTypes[^1]))
         {
             _resetSafeAccumulators.Add(accVar.Name);
         }
