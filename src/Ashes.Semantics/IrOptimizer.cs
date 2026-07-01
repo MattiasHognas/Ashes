@@ -226,6 +226,8 @@ public static class IrOptimizer
             IrInst.BytesSingleton b => b with { ByteTemp = R(b.ByteTemp) },
             IrInst.BytesLength b => b with { BytesTemp = R(b.BytesTemp) },
             IrInst.BytesGet b => b with { BytesTemp = R(b.BytesTemp), IndexTemp = R(b.IndexTemp) },
+            IrInst.BytesIndexOf b => b with { BytesTemp = R(b.BytesTemp), NeedleTemp = R(b.NeedleTemp), FromTemp = R(b.FromTemp) },
+            IrInst.BytesSubText b => b with { BytesTemp = R(b.BytesTemp), StartTemp = R(b.StartTemp), LenTemp = R(b.LenTemp) },
             IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
             IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
@@ -1112,6 +1114,8 @@ public static class IrOptimizer
             case IrInst.BytesSingleton b: usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesLength b: usedTemps.Add(b.BytesTemp); break;
             case IrInst.BytesGet b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.IndexTemp); break;
+            case IrInst.BytesIndexOf b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.NeedleTemp); usedTemps.Add(b.FromTemp); break;
+            case IrInst.BytesSubText b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.StartTemp); usedTemps.Add(b.LenTemp); break;
             case IrInst.BytesAppend b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
             case IrInst.BytesAppendByte b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;

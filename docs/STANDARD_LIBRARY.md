@@ -50,6 +50,14 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `singleton(byte)` returning `Bytes` — one-byte sequence
 - `length(bytes)` returning `Int`
 - `get(bytes, index)` returning `u8` — panics if index out of bounds
+- `indexOf(bytes)(needle)(from)` returning `Int` — index of the first byte equal to `needle` (an
+  `Int` byte value) at or after `from`, or `-1` if none. O(len − from), no allocation — a memchr for
+  scanning a buffer by integer position without materializing views.
+- `subText(bytes)(start)(len)` returning `Str` — copy `len` bytes starting at `start` into a fresh
+  `Str`. O(len); the range is clamped into the source so it never reads out of bounds. The caller
+  must ensure the range lies on valid UTF-8 boundaries (slicing at ASCII delimiters like `;`/`\n`
+  always does). With `indexOf` this lets a buffer be scanned by integer index instead of a shrinking
+  `Str` view.
 - `append(left, right)` returning `Bytes` — concatenate two sequences
 - `appendByte(bytes, byte)` returning `Bytes` — append one byte
 - `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`

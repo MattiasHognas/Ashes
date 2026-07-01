@@ -101,6 +101,8 @@ public sealed partial class Lowering
         BytesSingleton,
         BytesLength,
         BytesGet,
+        BytesIndexOf,
+        BytesSubText,
         BytesAppend,
         BytesAppendByte,
         BytesFromList,

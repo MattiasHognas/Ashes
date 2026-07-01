@@ -15,8 +15,11 @@
 //   * #6: Ashes.Map/Ashes.String are called directly inside functions; the local-
 //     alias workaround they used to need is gone.
 // Input is streamed in fixed-size chunks with Ashes.File.open / readChunk / close (constant
-// file-memory) and split with the pure `uncons` builtin; a line may straddle a chunk boundary, so
-// scanChunk carries the trailing partial line into the next chunk.
+// file-memory). Each chunk is scanned by an integer byte index (Ashes.Bytes.indexOf finds the
+// delimiters, Ashes.Bytes.subText slices out a line) rather than a shrinking Str view, so the
+// per-line fold loop carries only copy-type args and the Ashes.Map accumulator's in-place reuse
+// fires. A line may straddle a chunk boundary, so scanChunk carries the trailing partial into the
+// next chunk.
 
 import Ashes.IO
 import Ashes.File
@@ -24,6 +27,7 @@ import Ashes.List
 import Ashes.Map
 import Ashes.Text
 import Ashes.String
+import Ashes.Bytes
 let absInt n = 
     if n < 0
     then -n
@@ -99,13 +103,47 @@ let processLine line map =
                                 | None -> Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map)
                                 | Some(existing) -> Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
 
-let rec scanChunk remaining lineAcc map = 
-    match Ashes.Text.uncons(remaining) with
-        | None -> (lineAcc, map)
-        | Some((c, rest)) -> 
-            if c == "\n"
-            then scanChunk(rest)("")(processLine(lineAcc)(map))
-            else scanChunk(rest)(lineAcc + c)(map)
+let scanChunk chunk carry map = 
+    (let bytes = Ashes.Bytes.fromText(chunk)
+    in 
+        let len = Ashes.Bytes.length(bytes)
+        in 
+            let nl0 = Ashes.Bytes.indexOf(bytes)(10)(0)
+            in 
+                if nl0 < 0
+                then (carry + chunk, map)
+                else 
+                    let firstLine = carry + Ashes.Bytes.subText(bytes)(0)(nl0)
+                    in 
+                        let map1 = processLine(firstLine)(map)
+                        in 
+                            let rec go pos m = 
+                                let nl = Ashes.Bytes.indexOf(bytes)(10)(pos)
+                                in 
+                                    if nl < 0
+                                    then (Ashes.Bytes.subText(bytes)(pos)(len - pos), m)
+                                    else 
+                                        let sep = Ashes.Bytes.indexOf(bytes)(59)(pos)
+                                        in 
+                                            if sep < 0
+                                            then go(nl + 1)(m)
+                                            else 
+                                                if sep >= nl
+                                                then go(nl + 1)(m)
+                                                else 
+                                                    if Ashes.Bytes.subText(bytes)(pos)(1) == "#"
+                                                    then go(nl + 1)(m)
+                                                    else 
+                                                        let name = Ashes.Bytes.subText(bytes)(pos)(sep - pos)
+                                                        in 
+                                                            let rest = Ashes.Bytes.subText(bytes)(sep + 1)(nl - sep - 1)
+                                                            in 
+                                                                let tenths = parseTenths(rest)
+                                                                in 
+                                                                    match Ashes.Map.get(Ashes.String.compare)(name)(m) with
+                                                                        | None -> go(nl + 1)(Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(m))
+                                                                        | Some(existing) -> go(nl + 1)(Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(m))
+                            in go(nl0 + 1)(map1))
 
 let rec streamLoop handle lineAcc map = 
     match Ashes.File.readChunk(handle)(65536) with

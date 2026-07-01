@@ -754,6 +754,8 @@ public sealed partial class Lowering
         IntrinsicKind.FileWriteText => 2,
         IntrinsicKind.FileWriteBytes => 2,
         IntrinsicKind.BytesGet => 2,
+        IntrinsicKind.BytesIndexOf => 3,
+        IntrinsicKind.BytesSubText => 3,
         IntrinsicKind.BytesAppend => 2,
         IntrinsicKind.BytesAppendByte => 2,
         IntrinsicKind.BytesGetU16Le => 2,
@@ -1831,6 +1833,109 @@ public sealed partial class Lowering
         return (target, new TypeRef.TUInt(8));
     }
 
+    // Lower an argument that must be Int (coercing an unresolved type var to Int). Returns
+    // (temp, ok); ok is false if the argument had a concrete non-Int type (a diagnostic was
+    // reported) so the caller can bail with the offending temp/type.
+    private (int Temp, bool Ok) LowerIntArgument(Expr arg, string diagnosticContext)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (temp, type) = LowerExpr(arg);
+        var pruned = Prune(type);
+        if (pruned is TypeRef.TNever)
+        {
+            return (temp, false);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"{diagnosticContext} expects Int but got {Pretty(pruned)}.");
+            return (temp, false);
+        }
+
+        return (temp, true);
+    }
+
+    private (int Temp, bool Ok) LowerBytesArgument(Expr arg, string diagnosticContext)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (temp, type) = LowerExpr(arg);
+        var pruned = Prune(type);
+        if (pruned is TypeRef.TNever)
+        {
+            return (temp, false);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TBytes());
+            pruned = new TypeRef.TBytes();
+        }
+
+        if (pruned is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(arg), $"{diagnosticContext} expects Bytes but got {Pretty(pruned)}.");
+            return (temp, false);
+        }
+
+        return (temp, true);
+    }
+
+    private (int, TypeRef) LowerBytesIndexOf(Expr bytesArg, Expr needleArg, Expr fromArg)
+    {
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.indexOf()");
+        if (!bytesOk)
+        {
+            return (bytesTemp, new TypeRef.TInt());
+        }
+
+        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Bytes.indexOf() needle");
+        if (!needleOk)
+        {
+            return (needleTemp, new TypeRef.TInt());
+        }
+
+        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Bytes.indexOf() from");
+        if (!fromOk)
+        {
+            return (fromTemp, new TypeRef.TInt());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesIndexOf(target, bytesTemp, needleTemp, fromTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerBytesSubText(Expr bytesArg, Expr startArg, Expr lenArg)
+    {
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subText()");
+        if (!bytesOk)
+        {
+            return (bytesTemp, new TypeRef.TStr());
+        }
+
+        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Bytes.subText() start");
+        if (!startOk)
+        {
+            return (startTemp, new TypeRef.TStr());
+        }
+
+        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Bytes.subText() length");
+        if (!lenOk)
+        {
+            return (lenTemp, new TypeRef.TStr());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesSubText(target, bytesTemp, startTemp, lenTemp));
+        return (target, new TypeRef.TStr());
+    }
+
     private (int, TypeRef) LowerBytesAppend(Expr leftArg, Expr rightArg)
     {
         using var leftDiagnosticSpan = PushDiagnosticSpan(leftArg);
@@ -2186,6 +2291,29 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.BytesGet,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(8))))
+        );
+    }
+
+    // Ashes.Bytes.indexOf : Bytes -> Int -> Int -> Int. Returns the index of the first byte
+    // equal to the needle at or after `from`, or -1 if none. O(len - from), no allocation — a
+    // memchr for scanning a buffer by integer position without materializing views.
+    private Binding.Intrinsic CreateBytesIndexOfBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesIndexOf,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TInt()))))
+        );
+    }
+
+    // Ashes.Bytes.subText : Bytes -> Int -> Int -> Str. Copies `len` bytes starting at `start`
+    // into a fresh Str ([length][bytes]). O(len). The caller must ensure the range lies on valid
+    // UTF-8 boundaries (splitting at ASCII delimiters like ';'/'\n' always does). Together with
+    // indexOf this lets a chunk be scanned by integer index instead of a shrinking Str view.
+    private Binding.Intrinsic CreateBytesSubTextBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesSubText,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))))
         );
     }
 
