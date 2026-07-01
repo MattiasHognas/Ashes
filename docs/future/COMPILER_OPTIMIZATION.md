@@ -58,7 +58,7 @@ stable IDs.
 
 | ID | Item | Notes |
 |----|------|-------|
-| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds**, **non-`Ashes.Map` (user-ADT) direct-reuse folds**, and **richer aliasing** — a `Var` bound by a `let` (locally, or on the top-level spine) to a fully-fresh construction and proven **dead-after-this-use by intraprocedural move-linearity**, so freshness no longer has to be syntactic *at the call site*. It further admits **higher-order seeds** — a seed produced by a **result-fresh function call** (`IsFreshResultCall` / `ComputeResultFreshness`), proven uniquely-owned-for-any-arguments by a per-function result-freshness greatest fixpoint that reads the constructor's resolved field types (a heap-typed field must hold a fresh argument; a copy-typed field is unconstrained), covering recursive builders such as `let rec build n = if n <= 0 then Leaf else Node(build(n - 1))(n)(Leaf)`. See the detailed write-up below. Remaining under the broader ownership milestone: a seed produced by a function that is *not* provably result-fresh — an identity/`wrap` that returns or embeds a heap parameter, or an opaque/stdlib call (e.g. `Ashes.Map.set`) whose result may be aliased or reuse-rewritten — which needs full return-value ownership reasoning. Conservatively keeps the copy where unproven. |
+| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds**, **non-`Ashes.Map` (user-ADT) direct-reuse folds**, and **richer aliasing** — a `Var` bound by a `let` (locally, or on the top-level spine) to a fully-fresh construction and proven **dead-after-this-use by intraprocedural move-linearity**, so freshness no longer has to be syntactic *at the call site*. It further admits **higher-order seeds and `wrap`-style result-alias builders** — a seed produced by a **registered-function call** admitted by the **result-reachability (may-alias) summary** (`ComputeResultReach` / `IsResultAliasMove`): a per-function monotone least fixpoint recording a conservative over-approximation of which of a function's own parameters its result may alias (a per-parameter multiplicity, capped at 2 — internal sharing poisons, tracked for fresh let/pattern-bound heap values too via a per-binding synthetic identity token) plus a poison flag (a global/unmodeled/aliased result is not confined). A call `f(a₁…aₙ)` is a move iff `f`'s summary is not poisoned and, for every parameter its result may reach, the argument bound to it is itself a move. This subsumes the earlier result-freshness rule as the **empty-reach special case** (reach {} + not poisoned = uniquely-owned-and-fresh for any arguments), covering recursive builders such as `let rec build n = if n <= 0 then Leaf else Node(build(n - 1))(n)(Leaf)`, and **generalizes** it to builders that return/embed a heap parameter — `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is now a move and `wrap(<retained>)` is not. See the detailed write-up below. Remaining under the broader ownership milestone: a seed whose result-alias summary is *poisoned* — an opaque/stdlib call (e.g. `Ashes.Map.set`) whose result may be aliased or reuse-rewritten, or a result reaching a global — which needs full return-value ownership reasoning. Conservatively keeps the copy where unproven. |
 | **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). **Increment landed:** the state-machine transform's `Parallel*` liveness + fork/join/cleanup-within-one-segment invariant (the one blocker that was independently verifiable without the scheduler) is now implemented and directly unit-tested (`StateMachineTransformTests`), so it is no longer untested dead code. Remaining blockers: the non-blocking scheduler, wiring the coroutine path to user code, and the concurrent-overlap test. Design/validation + partial implementation task. See the **subtask decomposition** below. |
 
 ---
@@ -269,25 +269,54 @@ iff `F`'s name never escapes as a value (so its call-site census is complete) an
   the name's scope, so move-linearity there proves no other live reference exists anywhere, and the
   fresh RHS proves the value is unaliased and free of internal sharing; or
 
-- **(higher-order seed)** a saturated **call to a result-fresh function** (`IsFreshResultCall`),
-  either written directly at the call site — inherently a move, its result reachable only through this
-  one argument reference — or `let`-bound and move-linear in its scope (the richer-aliasing path
-  above, generalized from a fresh *construction* to a fresh-result *call*). A function is **result-fresh**
-  (`ComputeResultFreshness`, a monotone greatest fixpoint over all registered functions) when its
-  result is provably a uniquely-owned, freshly-allocated value on **every** path *regardless of its
-  arguments*: literals and sole-nullary constructors are fresh; an `if`/`match` is fresh iff every arm
-  is; a saturated data-constructor application is fresh iff every **heap-typed** field holds a fresh
-  argument (a **copy-typed** field — `Int`/`Bool`/`Float`/… by the constructor's resolved
-  `ParameterTypes` — holds its value inline and cannot alias a cell the fold overwrites, so it is
-  unconstrained); and a saturated call to another result-fresh function is fresh. A bare parameter,
-  pattern-bound sub-value, or shared global is *not* fresh, so a function that returns or embeds a heap
-  argument into a heap field (an identity/`wrap`) is correctly retracted — its calls are never treated
-  as moves. This admits **recursive builders** (`let rec build n = if n <= 0 then Leaf else
-  Node(build(n - 1))(n)(Leaf)`), whose recursive result sits in a `Tree` field and whose only embedded
-  parameter sits in the copy-typed `Int` field. (Recognizing a recursive builder's concrete field
-  types — recursive `Tree`, primitive `Int` — depends on the companion fix that stops migration-compat
-  implicit type-parameter inference from over-generalizing self-referential and primitive payloads;
-  before it, such a builder failed the occurs check outright.)
+- **(result-alias / higher-order seed)** a saturated **call to a registered function** admitted by the
+  **result-reachability (may-alias) summary** (`IsResultAliasMove` over `_maResultReach`), either written
+  directly at the call site — its result reachable only through this one argument reference — or
+  `let`-bound and move-linear in its scope (the richer-aliasing path above, generalized from a fresh
+  *construction* to a builder *call*). The summary (`ComputeResultReach`, a monotone **least** fixpoint
+  over all registered functions) records, per function, a conservative **over-approximation** of which of
+  its own parameters the result may be reachable-through / alias — as a per-parameter multiplicity capped
+  at 2 — plus a **poison** flag meaning the result is not provably confined to those parameters. It is a
+  structural may-analysis mirroring the reach of the returned value: literals and copy-typed
+  scalar/arith/comparison results reach {}; a bare parameter reaches {that param}; a **sole-nullary**
+  constructor reaches {}; a bare global/top-level reference, a non-sole nullary or partially-applied
+  constructor, a `QualifiedVar`, or any unmodeled node **poisons**; an `if`/`match` joins its arms by max
+  (a match's scrutinee reach flows into each arm's **pattern** bindings — a pattern variable may alias the
+  scrutinee, so an arm returning one reaches whatever the scrutinee reaches); a saturated
+  data-constructor application **sums** the reach of its **heap-typed** fields (a **copy-typed** field —
+  `Int`/`Bool`/`Float`/… by the constructor's resolved `ParameterTypes` — holds its value inline and
+  cannot alias a cell the fold overwrites, so it is ignored); and a saturated call to another registered
+  function substitutes the argument bound to each parameter that callee's result may reach, scaled by its
+  multiplicity, and sums (a poisoned/ambiguous/mis-arity/unresolved callee poisons). Summing is what
+  makes **internal sharing** poison: a value reachable through two simultaneous heap positions hits the
+  cap and poisons, because moving such an argument would leave two live aliases the reuse fold's
+  entry copy exists precisely to unshare. To track this for a **fresh (non-parameter) heap value** too —
+  not only for a parameter, whose `{p:1}` seed already sums to `{p:2}` on `Node(p)(0)(p)` — every
+  locally-introduced binding (a `let`/let-result value, a `match` pattern variable) is given a **unique
+  synthetic identity token** (a `'#'`-prefixed key that cannot collide with a real identifier) summed
+  into its env reach. So `let x = Node(Leaf)(u)(Leaf) in Node(x)(0)(x)` sums that token to the cap and
+  poisons — the fresh `x` is embedded twice, hence internally shared and not uniquely owned — as do
+  `[x, x]`, `(x, x)`, `Cons(x, …x…)`, and a fresh scrutinee's pattern variable used twice
+  (`match fresh with Node(l,_,_) -> Node(l)(0)(l)`). Distinct bindings get **distinct** tokens, so
+  disjoint sub-values stay disjoint (`Node(l)(0)(r)` does not poison), and branch arms **max** rather than
+  sum, so a fresh value used once per `if`/`match` arm does not poison. Tokens are **stripped** from the
+  stored per-function summary (a count-1 token is a fresh internal cell escaping via a single path —
+  harmless and confined; a count-2 token has already set poison during the sum, which the strip
+  preserves), so they never appear in a stored summary or reach the wiring below (which maps real
+  parameters only). The
+  **wiring** (`IsResultAliasMove`): a saturated call `f(a₁…aₙ)` is a move iff `f`'s summary is **not
+  poisoned** and, for **every** parameter `p` in `f`'s reach set, the argument bound to `p` here is itself
+  a move (recursively via `ArgIsMove`). This subsumes the earlier result-freshness rule as the
+  **empty-reach special case** — a function whose result reaches {} and is not poisoned is result-fresh
+  (uniquely-owned, freshly-allocated *for any arguments*: the loop over reached parameters is vacuous, so
+  the call is a move unconditionally), covering **recursive builders** (`let rec build n = if n <= 0 then
+  Leaf else Node(build(n - 1))(n)(Leaf)`, reach {}). It **generalizes** to `wrap`-style builders that the
+  old rule declined: `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is a move and
+  `wrap(<retained>)` is not — the builder that returns/embeds a heap parameter is now admitted exactly
+  when that parameter's argument is a move, rather than declined outright. (Recognizing a recursive
+  builder's concrete field types — recursive `Tree`, primitive `Int` — depends on the companion fix that
+  stops migration-compat implicit type-parameter inference from over-generalizing self-referential and
+  primitive payloads; before it, such a builder failed the occurs check outright.)
 
 Anything else keeps the copy. A bare (non-constructor) `Var` is deliberately **never** treated as a
 fresh construction *at the call site* even when it is `let`-bound to a fresh allocation, because a name
@@ -317,7 +346,7 @@ reverts that nullary reuse to a fresh allocation, so its returned cell is never 
 cell that the caller's arena could later reclaim.
 
 **Verified.** Nested `Ashes.Map.set` re-entry (300-key map, 400/800/1600/3200 batches) is flat
-(constant memory) — the specialization-path copy runs once, not per re-entry. All nine
+(constant memory) — the specialization-path copy runs once, not per re-entry. All thirteen
 `tests/reuse_*.ash` stay green (the ones that would corrupt under a naive unconditional elision — a
 retained field-bearing accumulator — are correctly *declined*): `tests/reuse_move_elision_soundness.ash`
 elides a move-safe specialization fold and declines a sibling whose accumulator is retained (`keep`
@@ -359,16 +388,22 @@ previously declined purely because their fresh seed was introduced via a `let`: 
 direct-reuse increment there is no `O(batches × size)` term to remove (a direct-reuse accumulator
 cannot grow); the increment eliminates a redundant per-re-entry copy of a constant-size structure.
 
-**Higher-order seeds — landed.** A seed produced by a function *result* (not a data-constructor tree
-or a `let`-bound construction) — e.g. `let s = build(n) in fold(s)`, or `fold(build(n))` — is now
-admitted when `build` is proven **result-fresh** by the `ComputeResultFreshness` greatest fixpoint
-described in the *implemented elision* section: its result is a uniquely-owned freshly-allocated value
-*for any arguments*, because it embeds a heap argument only into copy-typed constructor fields and
-never returns/embeds a heap parameter into a heap field. This is the "return-value ownership reasoning"
-the roadmap deferred, in a self-contained, conservative form (a per-function result-uniqueness summary
-that reads the constructor's resolved field types), rather than the full ownership milestone. It
-notably covers **recursive builders** (`let rec build n = if n <= 0 then Leaf else
-Node(build(n - 1))(n)(Leaf)`).
+**Higher-order seeds + result-alias builders — landed.** A seed produced by a function *result* (not a
+data-constructor tree or a `let`-bound construction) — e.g. `let s = build(n) in fold(s)`,
+`fold(build(n))`, or `fold(wrap(<moved>))` — is now admitted via the **result-reachability (may-alias)
+summary** (`ComputeResultReach` / `IsResultAliasMove`) described in the *implemented elision* section.
+The summary is a monotone least fixpoint recording, per function, which of its own parameters its result
+may alias (a per-parameter multiplicity, capped at 2) plus a poison flag; a call `f(<args>)` is a move
+iff `f`'s summary is not poisoned and every parameter its result may reach is bound to an argument that
+is itself a move. This **subsumes** the previous result-freshness summary (a function whose result
+reaches {} and is not poisoned is result-fresh — uniquely-owned-and-freshly-allocated for any arguments,
+because it embeds a heap argument only into copy-typed constructor fields and never returns/embeds a heap
+parameter into a heap field), covering **recursive builders** (`let rec build n = if n <= 0 then Leaf
+else Node(build(n - 1))(n)(Leaf)`, reach {}), and **generalizes** it to `wrap`-style builders the old
+rule declined outright — `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is now a move
+and `wrap(<retained>)` is not. This is the "return-value ownership reasoning" the roadmap deferred, in a
+self-contained, conservative form (a per-function result-alias summary that reads the constructor's
+resolved field types), rather than the full ownership milestone.
 
 Measured on a nested direct-reuse `grow`/`outer` fold whose accumulator is seeded by the result of a
 recursive builder — a 32 767-node balanced tree (`build(15)`) threaded through 400 batches into
@@ -379,13 +414,23 @@ a ~110× reduction, not merely a constant-size startup saving. Verified sound by
 `tests/reuse_higher_order_seed_move_elision.ash`, which elides two folds seeded by result-fresh calls
 (a direct seed and a `let`-bound move-linear seed) and **declines** two soundness discriminators — a
 retained let-bound fresh-result seed (`keep` reads 3, not the corrupted 203) and an identity builder
-`pick t = t` that is not result-fresh (`keepP` reads 7, not the corrupted 57).
+`pick t = t` (reach {t}) whose seed argument is retained (`keepP` reads 7, not the corrupted 57) — and by
+`tests/reuse_result_alias_move_elision.ash`, the **result-alias `wrap`-builder** discriminator: a direct
+`grow`/`outer` fold seeded by `wrap(3)(Node(Leaf)(5)(Leaf))` (the reached parameter bound to a
+fully-fresh construction, a move) is **elided** (root 15), while a sibling `bump` seeded by a **retained**
+let-bound `wrap(7)(…)` result is **declined** (`keep` reads 7, not the corrupted 207); and by
+`tests/reuse_internal_sharing_declines.ash`, the **internal-sharing** guard: a fold seeded by a builder
+whose result embeds a *fresh* cell twice (`let x = Node(Leaf)(k)(Leaf) in Node(x)(0)(x)`) is **declined**
+(the per-binding token sums to the cap and poisons the builder), so its unsharing entry copy is kept. The
+`grow/t elide=True` / `bump/t elide=False` / `sgrow/t elide=False` splits were confirmed at the
+direct-reuse elide decision (and a fresh value used once per branch arm stays `elide=True` — not
+over-rejected).
 
-Still genuinely deferred: a seed produced by a function that is *not* provably result-fresh — one that
-returns or embeds a heap parameter (an identity/`wrap`), or an opaque/stdlib call whose result may be
-aliased or reuse-rewritten (e.g. `Ashes.Map.set`, which returns its accumulator argument). Proving
-such a result uniquely owned needs the full return-value ownership reasoning of the broader ownership
-milestone. It conservatively keeps the copy (a leak, never corruption).
+Still genuinely deferred: a seed produced by a function whose result-alias summary is **poisoned** — one
+that returns a value reaching a global/top-level binding, is internally shared, or is an opaque/stdlib
+call whose result may be aliased or reuse-rewritten (e.g. `Ashes.Map.set`, which returns its accumulator
+argument). Proving such a result uniquely owned needs the full return-value ownership reasoning of the
+broader ownership milestone. It conservatively keeps the copy (a leak, never corruption).
 
 > **Adjacent bug found while building the repro (out of CO-2 scope, not fixed here):** a TCO loop
 > whose accumulator is a recursive ADT in a **non-last curried parameter position** miscompiles to a

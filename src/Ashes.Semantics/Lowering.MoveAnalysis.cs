@@ -65,15 +65,39 @@ public sealed partial class Lowering
     // would be unsound); they are also treated as escaped.
     private readonly HashSet<string> _maAmbiguous = new(StringComparer.Ordinal);
 
-    // Result-freshness summary (CO-2 higher-order seeds): per registered function, true when its
-    // result is provably a uniquely-owned, freshly-allocated value on every execution path — every
-    // heap cell reachable from the return value is either freshly allocated by that function or a
-    // no-op-safe sole-nullary constructor cell, and no pre-existing/aliased heap value is embedded
-    // into a heap-typed field. Computed once as a monotone greatest fixpoint (all functions assumed
-    // fresh, retracted when a concrete non-fresh shape is found). Used to admit a fold accumulator
-    // seeded by such a function's *result* (`let s = build(n) in fold(s)` or `fold(build(n))`) as a
-    // move, without needing the return-value ownership reasoning of the broader ownership milestone.
-    private readonly Dictionary<string, bool> _maResultFresh = new(StringComparer.Ordinal);
+    // Result-reachability (may-alias) summary (CO-2 result-alias elision): per registered function, a
+    // conservative OVER-APPROXIMATION of which of its own parameters the function's RESULT value may be
+    // reachable-through / alias, as a per-parameter multiplicity, plus a "poison" flag meaning the
+    // result is not provably confined to the parameters (it may alias a top-level/global binding, an
+    // unmodeled value, or be internally shared). Multiplicities are capped at 2: a parameter reachable
+    // through two simultaneous heap positions (internal sharing, e.g. `Node(x)(0)(x)`) forces poison,
+    // because moving such an argument would leave two live aliases the reuse fold could corrupt.
+    // Computed once as a monotone least fixpoint — every function starts with empty reach and not
+    // poisoned; reach sets and poison only grow until stable — so an under-computed early pass can only
+    // stay smaller, never over-claim (the sound direction for a may-analysis). Used to admit a fold
+    // accumulator seeded by a builder's *result* as a move: a `wrap`-style builder
+    // (`let wrap x = Node(x)(0)(Leaf)`) reaches {x}, so `wrap(<arg>)` is a move iff the argument bound
+    // to `x` is itself a move. A function whose result reaches {} and is not poisoned is result-fresh
+    // (its result is a uniquely-owned freshly-allocated value for any arguments) — the higher-order-seed
+    // case, subsumed here as the empty-reach special case.
+    private readonly Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> _maResultReach =
+        new(StringComparer.Ordinal);
+
+    // Reach multiplicity cap: any count reaching this is folded into the poison flag (internal sharing).
+    private const int ReachCap = 2;
+
+    // Per-binding synthetic identity token counter (reset at the start of each function's ResultReach
+    // pass). Every locally-introduced binding (a `let`/let-result value, a `match` pattern variable) is
+    // given a unique synthetic reach token summed into its env reach, so multiplicity is tracked for a
+    // *fresh* (non-parameter) heap value exactly as it is for a parameter: embedding the same bound name
+    // through two simultaneous heap positions (e.g. `let x = Node(...)(u)(...) in Node(x)(0)(x)`, or
+    // `[x, x]`) sums the token to the cap and poisons — the fresh value is internally shared, so not
+    // uniquely owned, and its entry copy (which exists precisely to unshare it) must stay. Tokens are
+    // stripped from the stored per-function summary (see ComputeResultReach): a count-1 token is a fresh
+    // internal cell escaping via a single path (harmless, confined), and a count-2 token has already set
+    // poison during the sum. Token keys are prefixed with '#', which no real identifier uses, so they can
+    // never collide with a parameter name and never reach IsResultAliasMove (which maps real params only).
+    private int _maReachToken;
 
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
@@ -90,7 +114,7 @@ public sealed partial class Lowering
         _maAmbiguous.Clear();
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
-        _maResultFresh.Clear();
+        _maResultReach.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -105,7 +129,7 @@ public sealed partial class Lowering
         }
 
         CollectCallsAndEscapes(desugaredBody, "");
-        ComputeResultFreshness();
+        ComputeResultReach();
         _maAnalyzed = true;
     }
 
@@ -346,11 +370,13 @@ public sealed partial class Lowering
             return true;
         }
 
-        // (CO-2 higher-order seed) A saturated call to a result-fresh function written inline at the
-        // call site: its result is a uniquely-owned freshly-allocated value (see IsResultFresh), and a
-        // freshly-produced result reachable only through this one argument reference is inherently a
-        // move — used once, unaliased — exactly like an inline fresh construction above.
-        if (IsFreshResultCall(arg))
+        // (CO-2 result-alias) A saturated call to a registered function written inline at the call site
+        // whose result is a move here: the callee's result-reach summary is not poisoned, and for every
+        // parameter its result may alias, the argument bound to it is itself a move (recursively). A
+        // result-fresh callee reaches {} and is admitted unconditionally (the empty-reach special case,
+        // subsuming the earlier higher-order-seed rule); a `wrap`-style builder that returns a parameter
+        // is admitted exactly when that parameter's argument is a move.
+        if (IsResultAliasMove(arg, enclosing))
         {
             return true;
         }
@@ -387,9 +413,10 @@ public sealed partial class Lowering
                 && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
                 && boundRhs is not null
                 && boundScope is not null
-                // Fresh by construction, or (CO-2 higher-order seed) the result of a result-fresh
-                // function call — both give a uniquely-owned, internally-unshared bound value.
-                && (IsFullyFreshConstruction(boundRhs) || IsFreshResultCall(boundRhs))
+                // Fresh by construction, or (CO-2 result-alias) the result of a builder call that is a
+                // move here (result-reach not poisoned, and every reached parameter's argument is itself
+                // a move) — both give a uniquely-owned, internally-unshared bound value.
+                && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing))
                 // Move-linear within the binding's own scope (its `let` body): used at most once on
                 // any path there, never captured. Counting in the scope — not the whole enclosing
                 // body — is essential: the whole-body count would stop at this very definition
@@ -624,22 +651,22 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Computes the result-freshness summary (<see cref="_maResultFresh"/>) as a monotone greatest
-    /// fixpoint: every registered function starts assumed result-fresh, and any function whose body is
-    /// found to produce a possibly-non-fresh value on some path is retracted, until no more retract.
-    /// Starting optimistic (all-true) and only retracting is what lets a recursive builder qualify —
-    /// its recursive self-call in a fresh field is read as fresh under the current assumption, so the
-    /// only way a function stays fresh is if every *concrete* (non-recursive) shape it can return is
-    /// itself fresh. A non-fresh value can only enter through a directly-checked shape (a bare
-    /// parameter/global reference, or a heap-typed constructor field holding a non-fresh argument), so
-    /// the fixpoint is sound regardless of recursion.
+    /// Computes the result-reachability (may-alias) summary (<see cref="_maResultReach"/>) as a monotone
+    /// least fixpoint: every registered function starts with empty reach and not poisoned, and each pass
+    /// recomputes its result-reach from its body under the current summaries, unioning the growth in,
+    /// until stable. Starting from the empty (bottom) approximation and only growing is the sound
+    /// direction for a MAY-analysis (over-approximation): an under-computed early pass can only stay
+    /// smaller, never over-claim confinement. Recursion is handled naturally — a self/mutual call reads
+    /// the callee's current (growing) summary — so a recursive builder converges without a special cycle
+    /// rule; a poison source (a global reference, an unmodeled node, or internal sharing) is detected
+    /// directly in the body and propagates through the fixpoint.
     /// </summary>
-    private void ComputeResultFreshness()
+    private void ComputeResultReach()
     {
-        _maResultFresh.Clear();
+        _maResultReach.Clear();
         foreach (var name in _maFuncs.Keys)
         {
-            _maResultFresh[name] = true;
+            _maResultReach[name] = ReachBottom();
         }
 
         bool changed = true;
@@ -648,30 +675,164 @@ public sealed partial class Lowering
             changed = false;
             foreach (var (name, info) in _maFuncs)
             {
-                if (!_maResultFresh[name])
+                var env = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+                foreach (var p in info.Params)
                 {
-                    continue; // already retracted — monotone, never revived
+                    env[p] = (new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 }, false);
                 }
 
-                if (!ResultShapeFresh(info.Body))
+                _maReachToken = 0;
+                var computed = StripSyntheticTokens(ResultReach(info.Body, env));
+                var merged = ReachJoin(_maResultReach[name], computed);
+                if (!ReachEquals(_maResultReach[name], merged))
                 {
-                    _maResultFresh[name] = false;
+                    _maResultReach[name] = merged;
                     changed = true;
                 }
             }
         }
     }
 
+    private static (Dictionary<string, int> Counts, bool Poison) ReachBottom()
+        => (new Dictionary<string, int>(StringComparer.Ordinal), false);
+
+    private static (Dictionary<string, int> Counts, bool Poison) ReachPoisoned()
+        => (new Dictionary<string, int>(StringComparer.Ordinal), true);
+
+    // Sequential composition (simultaneously-live heap positions — a constructor's heap fields, an
+    // aggregate's elements): multiplicities add, so a parameter reachable through two positions reaches
+    // the cap and poisons (internal sharing — a moved argument would be doubly aliased in the result).
+    private static (Dictionary<string, int> Counts, bool Poison) ReachSum(
+        (Dictionary<string, int> Counts, bool Poison) a,
+        (Dictionary<string, int> Counts, bool Poison) b)
+    {
+        var counts = new Dictionary<string, int>(a.Counts, StringComparer.Ordinal);
+        bool poison = a.Poison || b.Poison;
+        foreach (var (k, v) in b.Counts)
+        {
+            int nv = (counts.TryGetValue(k, out var e) ? e : 0) + v;
+            counts[k] = nv >= ReachCap ? ReachCap : nv;
+        }
+
+        foreach (var v in counts.Values)
+        {
+            if (v >= ReachCap)
+            {
+                poison = true;
+            }
+        }
+
+        return (counts, poison);
+    }
+
+    // Branch join (if/match arms — at most one executes): multiplicities take the max, so distinct arms
+    // never manufacture sharing.
+    private static (Dictionary<string, int> Counts, bool Poison) ReachMax(
+        (Dictionary<string, int> Counts, bool Poison) a,
+        (Dictionary<string, int> Counts, bool Poison) b)
+    {
+        var counts = new Dictionary<string, int>(a.Counts, StringComparer.Ordinal);
+        foreach (var (k, v) in b.Counts)
+        {
+            counts[k] = counts.TryGetValue(k, out var e) && e > v ? e : v;
+        }
+
+        return (counts, a.Poison || b.Poison);
+    }
+
+    // Fixpoint join: identical to the branch max (grow reach sets / poison until stable).
+    private static (Dictionary<string, int> Counts, bool Poison) ReachJoin(
+        (Dictionary<string, int> Counts, bool Poison) a,
+        (Dictionary<string, int> Counts, bool Poison) b)
+        => ReachMax(a, b);
+
+    // Scale by a callee's per-parameter multiplicity: a callee embedding a parameter twice doubles the
+    // reach of the argument bound to it (again capped into poison at the sharing boundary).
+    private static (Dictionary<string, int> Counts, bool Poison) ReachScale(
+        (Dictionary<string, int> Counts, bool Poison) a,
+        int factor)
+    {
+        if (factor <= 0)
+        {
+            return ReachBottom();
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        bool poison = a.Poison;
+        foreach (var (k, v) in a.Counts)
+        {
+            int nv = v * factor;
+            if (nv >= ReachCap)
+            {
+                nv = ReachCap;
+                poison = true;
+            }
+
+            counts[k] = nv;
+        }
+
+        return (counts, poison);
+    }
+
+    private static bool ReachEquals(
+        (Dictionary<string, int> Counts, bool Poison) a,
+        (Dictionary<string, int> Counts, bool Poison) b)
+    {
+        if (a.Poison != b.Poison || a.Counts.Count != b.Counts.Count)
+        {
+            return false;
+        }
+
+        foreach (var (k, v) in a.Counts)
+        {
+            if (!b.Counts.TryGetValue(k, out var bv) || bv != v)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // A fresh per-binding synthetic identity token, reach {token:1}. Summed into a binding's env reach so
+    // multiplicity of a fresh (non-parameter) heap value is tracked exactly as for a parameter.
+    private (Dictionary<string, int> Counts, bool Poison) TokenReach()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal) { ["#" + _maReachToken] = 1 };
+        _maReachToken++;
+        return (counts, false);
+    }
+
+    // Drops synthetic '#'-prefixed identity tokens from a summary (they are local to one function's
+    // ResultReach pass and must never be stored or reach IsResultAliasMove). Poison is preserved: a
+    // token that reached the cap already set poison during the sum before it is stripped here.
+    private static (Dictionary<string, int> Counts, bool Poison) StripSyntheticTokens(
+        (Dictionary<string, int> Counts, bool Poison) r)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            if (k.Length == 0 || k[0] != '#')
+            {
+                counts[k] = v;
+            }
+        }
+
+        return (counts, r.Poison);
+    }
+
     /// <summary>
-    /// True when <paramref name="e"/>, as the returned value of a function body, is provably a
-    /// uniquely-owned freshly-allocated value under the current <see cref="_maResultFresh"/>
-    /// assumption: every heap cell it can reach is freshly allocated here (or a no-op-safe sole-nullary
-    /// constructor cell), and no pre-existing/aliased heap value is embedded into a heap-typed field.
-    /// A bare parameter/global reference is fresh only when it is the sole nullary constructor of its
-    /// type — a returned parameter, pattern-bound sub-value, or shared global otherwise breaks
-    /// freshness (it may alias a value the reuse fold would overwrite in place).
+    /// The result-reach of <paramref name="e"/> as the returned value of a function body: the set of the
+    /// enclosing function's parameters (with multiplicity) the value may alias, plus a poison flag when
+    /// the value is not provably confined to those parameters. <paramref name="env"/> maps each in-scope
+    /// name to its reach (each parameter to itself; let/pattern bindings to the reach of what they bind).
+    /// A bare free reference (a top-level/global binding or unmodeled name), a non-sole nullary or
+    /// partially-applied constructor, an unresolved/under-or-over-applied call, or any unmodeled node
+    /// poisons; the conservative default is poison, so an unproven shape never over-claims confinement.
     /// </summary>
-    private bool ResultShapeFresh(Expr e)
+    private (Dictionary<string, int> Counts, bool Poison) ResultReach(
+        Expr e,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
         switch (e)
         {
@@ -680,85 +841,228 @@ public sealed partial class Lowering
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
-                return true;
+            // Arithmetic/comparison/bitwise/shift results are copy-typed scalars — they reach no heap
+            // cell, so they are confined and reach no parameter.
+            case Expr.Add:
+            case Expr.Subtract:
+            case Expr.Multiply:
+            case Expr.Divide:
+            case Expr.BitwiseAnd:
+            case Expr.BitwiseOr:
+            case Expr.BitwiseXor:
+            case Expr.ShiftLeft:
+            case Expr.ShiftRight:
+            case Expr.BitwiseNot:
+            case Expr.GreaterThan:
+            case Expr.LessThan:
+            case Expr.GreaterOrEqual:
+            case Expr.LessOrEqual:
+            case Expr.Equal:
+            case Expr.NotEqual:
+                return ReachBottom();
 
-            // A bare name is fresh only when it denotes the sole nullary constructor of its type. Any
-            // other variable — a parameter, a pattern-bound sub-value (e.g. `match t with Node(l,_,_)
-            // -> l`), or a shared top-level binding — may alias a pre-existing heap value.
-            case Expr.Var:
+            case Expr.Var v:
+                if (env.TryGetValue(v.Name, out var bound))
+                {
+                    return bound;
+                }
+
+                if (_constructorSymbols.TryGetValue(v.Name, out var ctor))
+                {
+                    // A nullary constructor value reaches no parameter; it is confined only when it is
+                    // the sole nullary constructor of its type (a no-op-safe tag cell). Any other nullary
+                    // (a possibly-shared non-sole singleton) or a partially-applied constructor poisons.
+                    return ctor.Arity == 0 && IsSoleNullaryConstructor(ctor) ? ReachBottom() : ReachPoisoned();
+                }
+
+                // A free reference: a top-level/global binding or an unmodeled name — not confined.
+                return ReachPoisoned();
+
             case Expr.QualifiedVar:
-                return IsNullarySeed(e, new HashSet<string>(StringComparer.Ordinal));
+                return ReachPoisoned();
 
-            // Control flow: the returned value is one of the arms, so every arm must be fresh. The
-            // scrutinee/condition is not part of the returned value.
+            // Control flow: the returned value is one of the arms; the scrutinee/condition is not part
+            // of the returned value (but a match's scrutinee reach flows into its pattern bindings).
             case Expr.If i:
-                return ResultShapeFresh(i.Then) && ResultShapeFresh(i.Else);
+                return ReachMax(ResultReach(i.Then, env), ResultReach(i.Else, env));
             case Expr.Match m:
-                return m.Cases.Count > 0 && m.Cases.All(c => ResultShapeFresh(c.Body));
+                return MatchReach(m, env);
 
-            // The returned value is the let body. A bare reference to the let-bound name inside the
-            // body is rejected by the Var case above (it is not a constructor), so a body that embeds
-            // the bound value into a heap field is conservatively declined — sound, only loses cases.
             case Expr.Let l:
-                return ResultShapeFresh(l.Body);
+                return ResultReach(l.Body, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
             case Expr.LetResult lr:
-                return ResultShapeFresh(lr.Body);
+                return ResultReach(lr.Body, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
             case Expr.LetRec lrec:
-                return ResultShapeFresh(lrec.Body);
+                // A self-referential local binding is not modeled; treat any use of it as poison.
+                return ResultReach(lrec.Body, ExtendEnv(env, lrec.Name, ReachPoisoned()));
 
-            // Aggregate/list literals whose element types are not individually known here: require
-            // every element fresh (conservative — a copy-typed element written fresh, e.g. a literal,
-            // still passes; a bare heap reference does not).
+            // Aggregate/list literals: every element is simultaneously live, so reach sums.
             case Expr.Cons cons:
-                return ResultShapeFresh(cons.Head) && ResultShapeFresh(cons.Tail);
+                return ReachSum(ResultReach(cons.Head, env), ResultReach(cons.Tail, env));
             case Expr.ListLit lst:
-                return lst.Elements.All(ResultShapeFresh);
+                return SumReach(lst.Elements, env);
             case Expr.TupleLit t:
-                return t.Elements.All(ResultShapeFresh);
+                return SumReach(t.Elements, env);
             case Expr.RecordLit rec:
-                return rec.Fields.All(f => ResultShapeFresh(f.Value));
+                {
+                    var acc = ReachBottom();
+                    foreach (var (_, fv) in rec.Fields)
+                    {
+                        acc = ReachSum(acc, ResultReach(fv, env));
+                    }
+
+                    return acc;
+                }
 
             case Expr.Call:
-                return CallShapeFresh(e);
+                return CallReach(e, env);
 
             default:
-                return false;
+                // Unmodeled node (Lambda, Await, RecordUpdate, Result pipes, …): not provably confined.
+                return ReachPoisoned();
+        }
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) SumReach(
+        IReadOnlyList<Expr> exprs,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var acc = ReachBottom();
+        foreach (var el in exprs)
+        {
+            acc = ReachSum(acc, ResultReach(el, env));
+        }
+
+        return acc;
+    }
+
+    private static Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> ExtendEnv(
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        string name,
+        (Dictionary<string, int> Counts, bool Poison) value)
+    {
+        var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal)
+        {
+            [name] = value,
+        };
+        return env2;
+    }
+
+    /// <summary>
+    /// Result-reach of a <c>match</c>: the scrutinee's reach flows into each arm's pattern variables
+    /// (each pattern binding may alias the scrutinee — sub-values of a value the fold could overwrite),
+    /// then the arms join by max (at most one executes). A copy-typed pattern variable so bound is only
+    /// ever used in a copy position (ignored by the constructor case), so over-approximating it here is
+    /// harmless.
+    /// </summary>
+    private (Dictionary<string, int> Counts, bool Poison) MatchReach(
+        Expr.Match m,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var scrut = ResultReach(m.Value, env);
+        (Dictionary<string, int> Counts, bool Poison)? acc = null;
+        foreach (var c in m.Cases)
+        {
+            var env2 = BindPatternReach(c.Pattern, scrut, env);
+            var arm = ResultReach(c.Body, env2);
+            acc = acc is null ? arm : ReachMax(acc.Value, arm);
+        }
+
+        return acc ?? ReachPoisoned();
+    }
+
+    private Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> BindPatternReach(
+        Pattern p,
+        (Dictionary<string, int> Counts, bool Poison) scrut,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var names = new List<string>();
+        CollectPatternVars(p, names);
+        if (names.Count == 0)
+        {
+            return env;
+        }
+
+        var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal);
+        foreach (var n in names)
+        {
+            // Each pattern variable may alias the scrutinee (so it carries the scrutinee's reach) but is a
+            // distinct sub-value, so it also gets its own fresh identity token: two DIFFERENT pattern vars
+            // in one heap shape (`Node(l)(0)(r)`) stay disjoint, while the SAME pattern var used twice
+            // (`Node(l)(0)(l)`) sums its token to the cap and poisons — even when the scrutinee is fresh.
+            env2[n] = ReachSum(scrut, TokenReach());
+        }
+
+        return env2;
+    }
+
+    private static void CollectPatternVars(Pattern p, List<string> into)
+    {
+        switch (p)
+        {
+            case Pattern.Var v:
+                into.Add(v.Name);
+                break;
+            case Pattern.Constructor c:
+                foreach (var sub in c.Patterns)
+                {
+                    CollectPatternVars(sub, into);
+                }
+
+                break;
+            case Pattern.Tuple t:
+                foreach (var sub in t.Elements)
+                {
+                    CollectPatternVars(sub, into);
+                }
+
+                break;
+            case Pattern.Cons cons:
+                CollectPatternVars(cons.Head, into);
+                CollectPatternVars(cons.Tail, into);
+                break;
+            default:
+                break;
         }
     }
 
     /// <summary>
-    /// Result-freshness of a call expression: either a saturated data-constructor application (a fresh
-    /// cell whose heap-typed fields must hold fresh arguments — copy-typed fields hold scalars stored
-    /// inline and cannot alias a cell the fold overwrites, so they are unconstrained), or a saturated
-    /// call to a function that is itself result-fresh (its result is fresh by the summary, for *any*
-    /// arguments — a result-fresh function provably never embeds a heap argument into a heap-typed
-    /// field of its result, so the argument shapes are irrelevant here).
+    /// Result-reach of a call expression: a saturated data-constructor application (its heap-typed fields
+    /// sum — copy-typed fields hold scalars inline and are ignored), or a saturated call to a registered
+    /// function (substitute the argument bound to each parameter the callee's result may reach, scaled by
+    /// its multiplicity, and sum). A partial/over-applied constructor, an unresolved/ambiguous/mis-arity
+    /// call, or a poisoned callee poisons.
     /// </summary>
-    private bool CallShapeFresh(Expr e)
+    private (Dictionary<string, int> Counts, bool Poison) CallReach(
+        Expr e,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
         var args = new List<Expr>();
         var head = CollectCallArgs(e, args);
 
-        // (1) Saturated data-constructor application: a freshly-allocated cell. Only heap-typed fields
-        // can carry an aliasing hazard; copy-typed fields (Int/Float/Bool/…) hold their value inline.
-        if (head is Expr.Var hv
-            && _constructorSymbols.TryGetValue(hv.Name, out var ctor)
-            && args.Count == ctor.Arity)
+        if (head is Expr.Var hv && _constructorSymbols.TryGetValue(hv.Name, out var ctor))
         {
+            if (args.Count != ctor.Arity)
+            {
+                return ReachPoisoned(); // partial or over-applied constructor
+            }
+
+            var acc = ReachBottom();
             for (int i = 0; i < args.Count; i++)
             {
                 bool copyField = ctor.ParameterTypes.Count == ctor.Arity
                     && BuiltinRegistry.IsCopyType(ctor.ParameterTypes[i]);
-                if (!copyField && !ResultShapeFresh(args[i]))
+                if (copyField)
                 {
-                    return false;
+                    continue; // inline scalar — cannot alias a heap cell the fold overwrites
                 }
+
+                acc = ReachSum(acc, ResultReach(args[i], env));
             }
 
-            return true;
+            return acc;
         }
 
-        // (2) Saturated call to a result-fresh function: fresh result regardless of arguments.
         string? name = head switch
         {
             Expr.Var v => v.Name,
@@ -766,22 +1070,43 @@ public sealed partial class Lowering
             _ => null,
         };
 
-        return name is not null
-            && !_maAmbiguous.Contains(name)
-            && _maFuncs.TryGetValue(name, out var info)
-            && args.Count == info.Params.Count
-            && _maResultFresh.TryGetValue(name, out var fresh)
-            && fresh;
+        if (name is null
+            || _maAmbiguous.Contains(name)
+            || !_maFuncs.TryGetValue(name, out var info)
+            || args.Count != info.Params.Count
+            || !_maResultReach.TryGetValue(name, out var summary)
+            || summary.Poison)
+        {
+            return ReachPoisoned();
+        }
+
+        var result = ReachBottom();
+        foreach (var (paramName, mult) in summary.Counts)
+        {
+            int idx = info.Params.IndexOf(paramName);
+            if (idx < 0 || idx >= args.Count)
+            {
+                return ReachPoisoned();
+            }
+
+            result = ReachSum(result, ReachScale(ResultReach(args[idx], env), mult));
+        }
+
+        return result;
     }
 
     /// <summary>
-    /// True when <paramref name="arg"/> is a saturated call to a result-fresh function — a
-    /// higher-order seed whose result is a uniquely-owned, freshly-allocated value (see
-    /// <see cref="ComputeResultFreshness"/>). A saturated constructor application is deliberately
-    /// excluded here (it is already covered by <see cref="IsFullyFreshConstruction"/>); this predicate
-    /// is specifically the non-constructor case the fresh-construction rule cannot see through.
+    /// True when <paramref name="arg"/> is a saturated call to a registered function whose result is a
+    /// MOVE at this site: the callee's result-reach summary is not poisoned, and for every parameter its
+    /// result may alias, the argument bound to it here is itself a move (recursively via
+    /// <see cref="ArgIsMove"/>). A result-fresh callee reaches {} and is admitted unconditionally (the
+    /// empty-reach special case — subsuming the earlier higher-order-seed rule); a <c>wrap</c>-style
+    /// builder that returns/embeds a parameter is admitted exactly when that parameter's argument is a
+    /// move. A saturated constructor application is excluded (already covered by
+    /// <see cref="IsFullyFreshConstruction"/>); this is the non-constructor case that rule cannot see
+    /// through.
     /// </summary>
-    private bool IsFreshResultCall(Expr arg)
+    private bool IsResultAliasMove(Expr arg, string enclosing)
     {
         if (arg is not Expr.Call)
         {
@@ -804,12 +1129,26 @@ public sealed partial class Lowering
             _ => null,
         };
 
-        return name is not null
-            && !_maAmbiguous.Contains(name)
-            && _maFuncs.TryGetValue(name, out var info)
-            && args.Count == info.Params.Count
-            && _maResultFresh.TryGetValue(name, out var fresh)
-            && fresh;
+        if (name is null
+            || _maAmbiguous.Contains(name)
+            || !_maFuncs.TryGetValue(name, out var info)
+            || args.Count != info.Params.Count
+            || !_maResultReach.TryGetValue(name, out var summary)
+            || summary.Poison)
+        {
+            return false;
+        }
+
+        foreach (var (paramName, _) in summary.Counts)
+        {
+            int idx = info.Params.IndexOf(paramName);
+            if (idx < 0 || idx >= args.Count || !ArgIsMove(args[idx], enclosing))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
