@@ -351,10 +351,30 @@ internal static partial class LlvmCodegen
             return g;
         });
         LlvmValueHandle blockAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, block, state.I64, "arm64_tls_block_addr");
+        EmitArm64SetThreadPointer(state, blockAddr);
+    }
+
+    // Sets TPIDR_EL0 (the aarch64 thread pointer) to the given block address. Used by the main entry
+    // (static executable) and by each parallel worker to point its thread-local arena at its own block.
+    private static void EmitArm64SetThreadPointer(LlvmCodegenState state, LlvmValueHandle blockAddr)
+    {
         LlvmTypeHandle fnType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
         LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType, "msr tpidr_el0, $0", "r", true, false);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
     }
+
+    // Repoints a bare runtime state's six arena cursor slots at the arm64 thread-local globals, so
+    // reads/writes go through TP+tprel (this thread's TLS block). Used by the parallel worker after it
+    // sets TPIDR_EL0 to its own block.
+    private static LlvmCodegenState WithArm64ThreadLocalArenaSlots(LlvmCodegenState state) => state with
+    {
+        HeapCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_heap_cursor"),
+        HeapEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_heap_end"),
+        ToSpaceCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_tospace_cursor"),
+        ToSpaceEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_tospace_end"),
+        BlobCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_cursor"),
+        BlobEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_end"),
+    };
 
     // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
     // No arch_prctl — GS already addresses the OS-provided TEB on Windows x64.

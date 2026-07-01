@@ -94,6 +94,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallClockGettime = 113;
     private const long Arm64SyscallDup3 = 24;
     private const long Arm64SyscallClone = 220;
+    private const long Arm64SyscallFutex = 98;
     private const long Arm64SyscallExecve = 221;
     private const long Arm64SyscallWait4 = 260;
     private const long Arm64SyscallKill = 129;
@@ -757,7 +758,12 @@ internal static partial class LlvmCodegen
                 EnsureWindowsImport("__imp_CloseHandle");
             }
 
-            EmitParallelRuntime(target, flavor, nounwindAttr);
+            // arm64 workers need the TLS arena to get their own per-thread arena; a networking arm64
+            // program keeps the BSS arena, so skip the runtime there and `both` runs inline.
+            if (flavor != LlvmCodegenFlavor.LinuxArm64 || arm64UsesTlsArena)
+            {
+                EmitParallelRuntime(target, flavor, nounwindAttr);
+            }
         }
 
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
@@ -1879,6 +1885,7 @@ internal static partial class LlvmCodegen
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,
+            SyscallFutex => Arm64SyscallFutex,
             SyscallDup2 => Arm64SyscallDup3,
             SyscallFork => Arm64SyscallClone,
             SyscallExecve => Arm64SyscallExecve,
