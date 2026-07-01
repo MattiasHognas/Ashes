@@ -5524,6 +5524,151 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fchunk_result_value");
     }
 
+    // Ashes.File.readLine(handle) : Maybe(Str). Reads one '\n'-terminated line (newline + a trailing
+    // '\r' stripped) from the handle's fd through a refillable module-global buffer, returning None at
+    // EOF (or on a read error, matching stdin readLine). Mirrors EmitReadLine but the read buffer is
+    // guarded by the fd it currently holds: if readLine is called with a different handle than the one
+    // buffered, the buffer is reset (any read-ahead for the previous fd is discarded — so this is for
+    // reading one file to completion, not interleaving line-reads across handles). No per-call alloca:
+    // the line buffer and scratch are .bss globals, so it is safe inside a TCO loop.
+    private static LlvmValueHandle EmitFileReadLine(LlvmCodegenState state, LlvmValueHandle handleVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle lineBufType = LlvmApi.ArrayType2(state.I8, InputBufSize);
+        LlvmValueHandle lineBuf = ReadLineScratchGlobal(state, "__ashes_fileline_buf", lineBufType);
+        LlvmValueHandle lineBufPtr = GetArrayElementPointer(state, lineBufType, lineBuf, LlvmApi.ConstInt(state.I64, 0, 0), "fline_buf_ptr");
+        LlvmValueHandle byteSlot = ReadLineScratchGlobal(state, "__ashes_fileline_byte", state.I8);
+        LlvmValueHandle lenSlot = ReadLineScratchGlobal(state, "__ashes_fileline_len", state.I64);
+        LlvmValueHandle resultSlot = ReadLineScratchGlobal(state, "__ashes_fileline_result", state.I64);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), lenSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+        LlvmTypeHandle fbufType = LlvmApi.ArrayType2(state.I8, StdinReadBufSize);
+        LlvmValueHandle fbuf = ReadLineScratchGlobal(state, "__ashes_file_rbuf", fbufType);
+        LlvmValueHandle fbufPtr = GetArrayElementPointer(state, fbufType, fbuf, LlvmApi.ConstInt(state.I64, 0, 0), "file_rbuf_ptr");
+        LlvmValueHandle fposSlot = ReadLineScratchGlobal(state, "__ashes_file_rpos", state.I64);
+        LlvmValueHandle flenSlot = ReadLineScratchGlobal(state, "__ashes_file_rlen", state.I64);
+        LlvmValueHandle ffdSlot = ReadLineScratchGlobal(state, "__ashes_file_rfd", state.I64);
+
+        // fd guard: if the buffer currently holds a different handle, discard it and start fresh.
+        LlvmValueHandle bufferedFd = LlvmApi.BuildLoad2(builder, state.I64, ffdSlot, "fline_buffered_fd");
+        LlvmValueHandle sameFd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bufferedFd, handleVal, "fline_same_fd");
+        var resetFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_reset_fd");
+        var afterFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_after_fd");
+        LlvmApi.BuildCondBr(builder, sameFd, afterFdBlock, resetFdBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, resetFdBlock);
+        LlvmApi.BuildStore(builder, handleVal, ffdSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fposSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flenSlot);
+        LlvmApi.BuildBr(builder, afterFdBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterFdBlock);
+
+        LlvmValueHandle bytesReadSlot = default;
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            bytesReadSlot = ReadLineScratchGlobal(state, "__ashes_fileline_bytes_read", state.I32);
+        }
+
+        var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_loop");
+        var refillBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_refill");
+        var haveByteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_have_byte");
+        var inspectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_inspect");
+        var skipCrBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_skip_cr");
+        var storeByteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_store_byte");
+        var appendByteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_append_byte");
+        var eofBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_eof");
+        var finishSomeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_finish_some");
+        var returnNoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_return_none");
+        var overflowBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_overflow");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_continue");
+
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle curPos = LlvmApi.BuildLoad2(builder, state.I64, fposSlot, "fline_rpos");
+        LlvmValueHandle curLen = LlvmApi.BuildLoad2(builder, state.I64, flenSlot, "fline_rlen");
+        LlvmValueHandle exhausted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, curPos, curLen, "fline_buf_exhausted");
+        LlvmApi.BuildCondBr(builder, exhausted, refillBlock, haveByteBlock);
+
+        // refill: one block read into the shared buffer from the handle's fd. n <= 0 means EOF/error.
+        LlvmApi.PositionBuilderAtEnd(builder, refillBlock);
+        LlvmValueHandle refilled;
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            refilled = EmitLinuxSyscall(
+                state,
+                SyscallRead,
+                handleVal,
+                LlvmApi.BuildPtrToInt(builder, fbufPtr, state.I64, "fline_rbuf_ptr_int"),
+                LlvmApi.ConstInt(state.I64, StdinReadBufSize, 0),
+                "sys_fline_block");
+        }
+        else
+        {
+            LlvmValueHandle readOk = EmitWindowsReadFile(state, handleVal, fbufPtr, LlvmApi.ConstInt(state.I32, StdinReadBufSize, 0), bytesReadSlot, "fline_read");
+            LlvmValueHandle bytesRead = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "fline_bytes_val"), state.I64, "fline_bytes_i64");
+            refilled = LlvmApi.BuildSelect(builder, readOk, bytesRead, LlvmApi.ConstInt(state.I64, 0, 0), "fline_n");
+        }
+
+        LlvmApi.BuildStore(builder, refilled, flenSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fposSlot);
+        LlvmValueHandle refilledEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, refilled, LlvmApi.ConstInt(state.I64, 0, 0), "fline_refill_empty");
+        LlvmApi.BuildCondBr(builder, refilledEmpty, eofBlock, haveByteBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, haveByteBlock);
+        LlvmValueHandle takePos = LlvmApi.BuildLoad2(builder, state.I64, fposSlot, "fline_take_pos");
+        LlvmValueHandle takePtr = LlvmApi.BuildGEP2(builder, state.I8, fbufPtr, [takePos], "fline_take_ptr");
+        LlvmValueHandle takenByte = LlvmApi.BuildLoad2(builder, state.I8, takePtr, "fline_taken_byte");
+        LlvmApi.BuildStore(builder, takenByte, byteSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, takePos, LlvmApi.ConstInt(state.I64, 1, 0), "fline_take_pos_next"), fposSlot);
+        LlvmApi.BuildBr(builder, inspectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, inspectBlock);
+        LlvmValueHandle currentByte = LlvmApi.BuildLoad2(builder, state.I8, byteSlot, "fline_current_byte");
+        LlvmValueHandle isLf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentByte, LlvmApi.ConstInt(state.I8, 10, 0), "fline_is_lf");
+        LlvmApi.BuildCondBr(builder, isLf, finishSomeBlock, skipCrBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, skipCrBlock);
+        LlvmValueHandle isCr = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentByte, LlvmApi.ConstInt(state.I8, 13, 0), "fline_is_cr");
+        LlvmApi.BuildCondBr(builder, isCr, loopBlock, storeByteBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, storeByteBlock);
+        LlvmValueHandle currentLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "fline_len_value");
+        LlvmValueHandle atCapacity = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, currentLen, LlvmApi.ConstInt(state.I64, InputBufSize, 0), "fline_at_capacity");
+        LlvmApi.BuildCondBr(builder, atCapacity, overflowBlock, appendByteBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, appendByteBlock);
+        LlvmValueHandle destPtr = LlvmApi.BuildGEP2(builder, state.I8, lineBufPtr, [currentLen], "fline_dest_ptr");
+        LlvmApi.BuildStore(builder, currentByte, destPtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), "fline_len_next"), lenSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, eofBlock);
+        LlvmValueHandle lenAtEof = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "fline_len_at_eof");
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, lenAtEof, LlvmApi.ConstInt(state.I64, 0, 0), "fline_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, returnNoneBlock, finishSomeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishSomeBlock);
+        LlvmValueHandle finalLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "fline_final_len");
+        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), "fline_string_bytes"));
+        StoreMemory(state, stringRef, 0, finalLen, "fline_string_len");
+        EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, "fline_string_dest"), lineBufPtr, finalLen, "fline_copy_bytes");
+        LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);
+        StoreMemory(state, someRef, 8, stringRef, "fline_some_value");
+        LlvmApi.BuildStore(builder, someRef, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, returnNoneBlock);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0), resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
+        EmitPanic(state, EmitStackStringObject(state, "Ashes.File.readLine input line too long"));
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fline_result_value");
+    }
+
     private static LlvmValueHandle EmitFileClose(LlvmCodegenState state, LlvmValueHandle handleVal)
     {
         EmitFileHandleClose(state, handleVal);

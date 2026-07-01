@@ -583,6 +583,16 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// True if the type is a resource handle (FileHandle, Socket, Process, …). These are represented
+    /// as a scalar i64 fd/HANDLE with no heap payload, so a value of this type survives a TCO
+    /// back-edge arena reset trivially (nothing to copy out) and the reset never Drops it — Drop
+    /// happens only at scope exit / explicit close. This lets a read loop thread its handle without
+    /// blocking the per-iteration reset (e.g. a single-loop file fold stays constant-memory).
+    /// </summary>
+    private bool IsResourceHandleType(TypeRef type) =>
+        Prune(type) is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+
+    /// <summary>
     /// Determines whether the given type's heap representation can be safely copy-outed
     /// after a RestoreArenaState, and what kind of copy-out is needed.
     /// <para>

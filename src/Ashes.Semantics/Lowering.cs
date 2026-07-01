@@ -1422,6 +1422,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileOpen => LowerQualifiedBuiltinFunctionReference(name, CreateFileOpenBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadChunkBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileClose => LowerQualifiedBuiltinFunctionReference(name, CreateFileCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerQualifiedBuiltinFunctionReference(name, CreateInternalDeepCopyBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerQualifiedBuiltinFunctionReference(name, CreateParallelBothBinding().S.Body),
@@ -3431,10 +3432,12 @@ public sealed partial class Lowering
             {
                 int tcoPreRestoreEndSlot = NewLocal();
 
-                // An arg needs no copy-out at the reset if it's a copy type (inline) OR it's a
+                // An arg needs no copy-out at the reset if it's a copy type (inline), a resource
+                // handle (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), OR a
                 // fully-reusing specialized accumulator — rewritten in place below the watermark, it
                 // already survives a plain reset, which then reclaims the iteration's scaffolding.
                 bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
+                    || IsResourceHandleType(newArgTypes[i])
                     || (i < tco.ParamNames.Count && _resetSafeAccumulators.Contains(tco.ParamNames[i]));
 
                 if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
@@ -3555,6 +3558,7 @@ public sealed partial class Lowering
                 IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                 IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
                 IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
                 IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
                 IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
                 IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
@@ -3646,6 +3650,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),

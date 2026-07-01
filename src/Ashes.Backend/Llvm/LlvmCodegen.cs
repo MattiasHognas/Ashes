@@ -361,6 +361,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileWriteBytes>(program)
                 || ProgramUsesInstruction<IrInst.FileOpen>(program)
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
+                || ProgramUsesInstruction<IrInst.FileReadLine>(program)
                 || ProgramUsesInstruction<IrInst.FileClose>(program)
                 || ProgramUsesInstruction<IrInst.Drop>(program));
         bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
@@ -1180,6 +1181,7 @@ internal static partial class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileOpen fileOpen => StoreTemp(state, fileOpen.Target, EmitFileOpen(state, LoadTemp(state, fileOpen.PathTemp))),
             IrInst.FileReadChunk fileReadChunk => StoreTemp(state, fileReadChunk.Target, EmitFileReadChunk(state, LoadTemp(state, fileReadChunk.HandleTemp), LoadTemp(state, fileReadChunk.CountTemp))),
+            IrInst.FileReadLine fileReadLine => StoreTemp(state, fileReadLine.Target, EmitFileReadLine(state, LoadTemp(state, fileReadLine.HandleTemp))),
             IrInst.FileClose fileClose => StoreTemp(state, fileClose.Target, EmitFileClose(state, LoadTemp(state, fileClose.HandleTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),

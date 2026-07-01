@@ -22,6 +22,7 @@ public static class BuiltinRegistry
         FileExists,
         FileOpen,
         FileReadChunk,
+        FileReadLine,
         FileClose,
         InternalDeepCopy,
         ParallelBoth,
@@ -179,6 +180,7 @@ public static class BuiltinRegistry
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
                     ["open"] = new("open", BuiltinValueKind.FileOpen, IsCallable: true, Arity: 1),
                     ["readChunk"] = new("readChunk", BuiltinValueKind.FileReadChunk, IsCallable: true, Arity: 2),
+                    ["readLine"] = new("readLine", BuiltinValueKind.FileReadLine, IsCallable: true, Arity: 1),
                     ["close"] = new("close", BuiltinValueKind.FileClose, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Text"] = new(

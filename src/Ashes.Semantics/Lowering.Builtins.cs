@@ -200,6 +200,28 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
+    // Ashes.File.readLine : FileHandle -> Maybe(Str). Reads one line (newline stripped) through a
+    // refillable module-global buffer, returning None at EOF. Unlike readChunk it threads no buffer
+    // state through the caller, so a whole-file fold can be a single loop that carries only its
+    // accumulator (the fold's in-place reuse then stays constant-memory instead of re-deep-copying).
+    private Binding.Intrinsic CreateFileReadLineBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileReadLine,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["FileHandle"], CreateMaybeType(new TypeRef.TStr())))
+        );
+    }
+
+    private (int, TypeRef) LowerFileReadLine(Expr handleArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        var (handleTemp, handleType) = LowerExpr(handleArg);
+        Unify(Prune(handleType), _resolvedTypes["FileHandle"]);
+        var target = NewTemp();
+        Emit(new IrInst.FileReadLine(target, handleTemp));
+        return (target, CreateMaybeType(new TypeRef.TStr()));
+    }
+
     // Ashes.File.close : FileHandle -> Result(Str, Unit)
     private Binding.Intrinsic CreateFileCloseBinding()
     {

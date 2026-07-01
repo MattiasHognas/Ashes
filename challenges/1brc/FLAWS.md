@@ -17,10 +17,10 @@ are structural limitations of the language / stdlib / memory model.
 
 | # | Flaw | Status |
 |---|------|--------|
-| #1 | No buffered/streaming file IO | **FIXED** (buffered stdin + chunked file API) |
+| #1 | No buffered/streaming file IO | **FIXED** (buffered stdin + chunked file API + buffered `File.readLine`) |
 | #1b | `readLine` loop segfaults at depth | **FIXED** |
-| #2 | Hot-loop arena leak (Map accumulator) | **quadratic part FIXED** (lookup defensive-copy bug); residual linear leak (no arena reset) open |
-| #3 | No hash/mutable O(1) accumulator | **hashing+HashMap FIXED**; O(1)/leak-free open |
+| #2 | Hot-loop arena leak (Map accumulator) | **FIXED** — brc is now constant-memory (45 MB @ 1M, 49 MB @ 10M): in-place `Map.set` reuse + single-loop `File.readLine` fold + reset-safe resource handles |
+| #3 | No hash/mutable O(1) accumulator | **FIXED for the fold** — persistent `Map` with in-place reuse gives O(log K), constant-memory updates (HashMap also shipped) |
 | #4 | No constructible String ordering | **FIXED** |
 | #5 | No data parallelism | open — design-level milestone |
 | #6 | Shipped-module ref unresolved in a function body | **FIXED** |
@@ -140,11 +140,22 @@ Sum over chunks ≈ Σ tree-size ≈ the ~1 GB.
 loop(set … map)`), one flat loop, is **22 MB @ 1M and 159 MB @ 10M** (both correct, 41343) — i.e. bounded
 at ~16 B/row, which is exactly the get-then-set residual (#1 below). So the two remaining items are
 orthogonal and both real:
-  - **(A) Loop re-entry deep-copy.** To keep the file API (`streamLoop`/`readChunk`) *and* be constant,
-    brc must fold in a single loop. Either (i) a buffered per-handle `Ashes.File.readLine` intrinsic
-    (module-global buffer, like the stdin `readLine` fix) so the loop threads only the accumulator, or
-    (ii) a compiler move/linearity analysis that skips the entry deep-copy when the accumulator is
-    provably moved (not aliased by the caller after the call) — the ownership milestone.
+  - **(A) Loop re-entry deep-copy — RESOLVED via a single-loop file fold.** Added a buffered
+    `Ashes.File.readLine(handle) : Maybe(Str)` intrinsic (module-global refill buffer + fd guard,
+    mirroring the stdin `readLine`; `EmitFileReadLine`), so brc folds the whole file in ONE loop over
+    `readLine` — no `scanChunk`/`streamLoop`/carry, `readLine` reassembles a line straddling a 64 KiB
+    read internally. One loop entry ⇒ the accumulator is deep-copied to uniqueness exactly once, and
+    the get+set are inlined into the loop body so the map's in-place reuse fires. A second fix was
+    needed: the loop also threads the `handle`, and a `FileHandle` (a resource type) was not
+    reset-safe, so the arena reset never fired and per-row scratch leaked (14 GB/10M!). Fix
+    (`Lowering.cs`/`Lowering.Ownership.cs`, `IsResourceHandleType`): a resource handle is a scalar
+    fd/HANDLE with no heap payload and is never Dropped by a reset, so it is reset-safe as a back-edge
+    arg (general — helps any socket/process/file read loop). **Result: brc is now constant-memory —
+    45 MB @ 1M and 49 MB @ 10M** (was 9.7 GB @ 1M / OOM @ 10M), output byte-identical to baseline.
+    Tests: `tests/file_readline.ash`.
+  - (ii, not taken) A compiler move/linearity analysis that skips the entry deep-copy when the
+    accumulator is provably moved (not aliased after the call) — the ownership milestone — would fix
+    the *general* nested-re-entry pattern (not just brc's file loop). Still worthwhile; left open.
   - **(B) The get-then-set ~16 B/row residual** — **FIXED.** Root cause: `Ashes.Map.get` returns
     `Maybe(V)`, not `MapTree`, so it rebuilds nothing — yet because `map` was deep-copied to a linear
     accumulator for the *set*, the *get* call was also routed to a reuse specialization, and inside a
