@@ -282,7 +282,9 @@ size.
 ```
 
 - The allocator state lives in **LLVM module-level globals** for the current
-   heap cursor and current chunk end, so every function shares one arena.
+   heap cursor and current chunk end, so every function on a thread shares one
+   arena. (This is per-thread once parallelism forks a worker — see
+   *Per-thread arenas* below.)
 - Program entry allocates the first chunk from the OS with `mmap` (Linux) or
    `VirtualAlloc` (Windows).
 - `Alloc(n)` and dynamic allocation paths bump the cursor inside the current
@@ -298,11 +300,53 @@ size.
    values it is a no-op; bulk reclamation happens through arena reset. Resource
    types such as sockets still route `Drop` to explicit cleanup operations.
 
+### Per-thread arenas (structured parallelism)
+
+The single-arena description above is per **thread**. When `Ashes.Parallel.both`
+forks a worker, that worker runs on its own bump arena so the two threads never
+race on the shared heap-cursor globals:
+
+- The worker's arena cursor/end live in a small **thread-control block (TCB)**
+  reached through a platform thread-pointer register instead of the module
+  globals: `%gs`-segment TCB on linux-x64, the TEB `ArbitraryUserPointer` slot
+  on win-x64, and ELF `PT_TLS` local-exec cursors (via `TPIDR_EL0`) on
+  linux-arm64. `EmitHeapChunkInit` gives each worker its first chunk
+  (`LlvmCodegenParallel.cs`).
+- The right-hand thunk of `both` is a pure closure whose result type
+  `CanRunRightOnWorker` restricts to arena-safe, deep-copyable values, so the
+  worker's arena never aliases the main thread's heap (or its rustls/socket
+  state); the join copies the result back into the caller's arena.
+- This coexists with dynamically linked (networking) images: the arm64 prologue
+  self-initialises `TPIDR_EL0` only when the loader left it zero, so a `dlopen`d
+  rustls keeps the loader's thread pointer (CO-3/CO-6).
+
+### In-place reuse (Perceus-style, no runtime RC)
+
+On top of the arena, immutable recursive-ADT accumulators are, where provably
+safe, **rebuilt in place** instead of reallocated — a Perceus-style reuse with
+no reference counting:
+
+- A matched-and-rebuilt cell is overwritten through an `AllocReusing` token
+  rather than freshly allocated, so an accumulator threaded through a TCO loop
+  stays constant-memory instead of allocating one new spine per iteration.
+- Fresh leaf fields (Str/Bytes/tuple keys and values) produced during reuse are
+  materialised into a **persistent to-space/blob** that the per-iteration arena
+  reset does *not* reclaim, so an in-place-updated value is not stranded by the
+  watermark reset.
+- A one-time defensive deep copy at loop entry makes the accumulator uniquely
+  owned before reuse begins. A whole-program **move/linearity analysis**
+  (`Lowering.MoveAnalysis.cs`) elides that entry copy when it can prove the
+  accumulator is already uniquely owned at every call site — conservatively, so
+  an incomplete proof can only leak, never corrupt (CO-2).
+
 ### Runtime layouts
 
-- Dynamic strings use `[length:i64][bytes...]`. String literals may also be
-   emitted as read-only globals with the same in-memory layout instead of being
-   copied into the arena.
+- Strings are `[header:i64][bytes...]`. The header word is not a plain length:
+   bits `[0..62]` hold the byte length and **bit 63 is a "view" flag** that
+   distinguishes an owned arena string from a read-only literal/borrowed view.
+   That flag is what lets string literals be emitted as **read-only globals**
+   (same in-memory layout, marked as a view) instead of being copied into the
+   arena — an owned string clears the bit, a view sets it.
 - Heap closures are 24-byte records:
    `[function-pointer:i64][env-pointer:i64][env-size:i64]`.
 - ADT values use `[tag:i64][field0:i64][field1:i64]...`.
@@ -375,7 +419,7 @@ executable images.
 |----------|-------|-------|
 | Image base | `0x400000` | Both ELF and PE |
 | Page/section alignment | `0x1000` | 4 KB |
-| Heap size | 4 MB | Static arena |
+| Arena chunk size | 4 MB | Chunked, grow-on-demand — not a static slab |
 | Input buffer | 64 KB | `ReadLine` buffer |
 | Max file read | 1 MB | `FileReadText` limit |
 
