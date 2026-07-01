@@ -315,6 +315,18 @@ public sealed partial class Lowering
             return true;
         }
 
+        // A syntactically fully-fresh allocation (a saturated constructor application / literal /
+        // aggregate literal built solely from constructors and literals, with NO variable reference
+        // anywhere in it) is unaliased by construction: every reachable cell is freshly allocated by
+        // this very expression and reachable only through this single argument reference, so moving
+        // it into a reuse fold can never corrupt a concurrently-live value. Unlike a nullary seed
+        // (safe even when *shared*), the guarantee here is uniqueness-by-construction, so any nullary
+        // constructor — not only the sole one — is admissible, and non-nullary shapes are covered.
+        if (IsFullyFreshConstruction(arg))
+        {
+            return true;
+        }
+
         if (arg is Expr.Var v
             && _maFuncs.TryGetValue(enclosing, out var encInfo)
             && encInfo.Params.Contains(v.Name)
@@ -380,6 +392,64 @@ public sealed partial class Lowering
         }
 
         return nullaryCount == 1;
+    }
+
+    /// <summary>
+    /// True when <paramref name="arg"/> is a syntactically fully-fresh allocation: a saturated
+    /// constructor application, a scalar/string literal, or a tuple/list/cons/record literal, whose
+    /// every sub-expression is itself fully fresh. Crucially it contains <b>no variable reference</b>
+    /// (no <c>Var</c>/<c>QualifiedVar</c>, no <c>Call</c> to a non-constructor) — a variable could
+    /// alias shared data or introduce internal sharing (e.g. <c>let x = Node(..) in Node(0, x, x)</c>),
+    /// which reuse could then corrupt. With no variables the value is a fresh tree with no internal
+    /// sharing, reachable only through this one argument reference, hence a sound move. A bare
+    /// (unapplied) <c>Var</c> is never fresh here — nullary seeds go through <see cref="IsNullarySeed"/>.
+    /// </summary>
+    private bool IsFullyFreshConstruction(Expr arg)
+    {
+        switch (arg)
+        {
+            case Expr.IntLit:
+            case Expr.UIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                return true;
+
+            // A bare name is fresh only when it is the sole nullary constructor of its type — a
+            // 0-field cell whose reuse-overwrite is a no-op even if shared (the seed rule). Any other
+            // variable may alias shared data, so it breaks freshness.
+            case Expr.Var:
+            case Expr.QualifiedVar:
+                return IsNullarySeed(arg, new HashSet<string>(StringComparer.Ordinal));
+
+            case Expr.TupleLit t:
+                return t.Elements.All(IsFullyFreshConstruction);
+            case Expr.ListLit lst:
+                return lst.Elements.All(IsFullyFreshConstruction);
+            case Expr.Cons cons:
+                return IsFullyFreshConstruction(cons.Head) && IsFullyFreshConstruction(cons.Tail);
+            case Expr.RecordLit rec:
+                return rec.Fields.All(f => IsFullyFreshConstruction(f.Value));
+
+            case Expr.Call:
+                {
+                    var args = new List<Expr>();
+                    var head = CollectCallArgs(arg, args);
+                    // Only a saturated application of a data constructor is a fresh allocation; any
+                    // other call may return an aliased/shared (or reuse-rewritten) value.
+                    if (head is Expr.Var hv
+                        && _constructorSymbols.TryGetValue(hv.Name, out var ctor)
+                        && args.Count == ctor.Arity)
+                    {
+                        return args.All(IsFullyFreshConstruction);
+                    }
+
+                    return false;
+                }
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>

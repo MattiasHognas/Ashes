@@ -3083,8 +3083,26 @@ public sealed partial class Lowering
                     && TrySynthesizeAdtCopier(accNamed) is not null)
                 {
                     _linearReuseNames.Add(accName);
-                    reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+
+                    // Move/linearity elision (CO-2), symmetric to the specialization path below: the
+                    // direct-reuse entry deep-copy exists only to make the accumulator uniquely owned
+                    // so the loop body may overwrite its matched cells in place. When the whole-program
+                    // move analysis proves the accumulator is already uniquely owned at every external
+                    // call site of this fold, the copy is redundant (and, when the fold is called from
+                    // an outer loop, re-executes per re-entry). Skip it only when provably safe; the
+                    // conservative default keeps the copy. The slot is still tracked in
+                    // directReuseSlots so the non-structural-reuse revert below still governs it — a
+                    // move-safe *pure reader* (nullary-only reuse, result type ≠ accumulator) must
+                    // still fall back to a fresh allocation so its returned cell is not a reused
+                    // accumulator cell. When the reuse is structural, the AllocReusing fires in place
+                    // against the already-unique accumulator with no copy — the actual win.
                     directReuseSlots.Add(accLocal.Slot);
+                    bool elideDirect = tco.SelfName.Length > 0
+                        && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                    if (!elideDirect)
+                    {
+                        reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+                    }
                 }
             }
 
@@ -3177,7 +3195,10 @@ public sealed partial class Lowering
         // resolved, generate the one-time defensive deep copies and splice them in at loop entry
         // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
         // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
-        if (reuseDefensiveCopy.Count > 0 && reuseInsertIndex >= 0)
+        // Run when there is any copy to emit, or any direct-reuse slot whose copy was elided by the
+        // move analysis (directReuseSlots without a matching reuseDefensiveCopy entry) — the latter
+        // still needs the non-structural-reuse revert below to protect a move-safe pure reader.
+        if ((reuseDefensiveCopy.Count > 0 || directReuseSlots.Count > 0) && reuseInsertIndex >= 0)
         {
             // A direct-reuse defensive copy (O(size)) is only worth it if reuse rebuilds the
             // accumulator's recursive *structure* — i.e. an AllocReusing with fields. A function that
