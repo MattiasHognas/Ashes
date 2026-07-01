@@ -82,9 +82,9 @@ result keeps the copy (a leak, never a corruption).
 | **CO-2a** | **Result-reachability (may-alias) summary.** Per registered function, a monotone fixpoint computing the set of parameters (plus a "may reach a global" flag) the result value may be reachable-through / alias. Over-approximate; self-contained, no wiring. | Unit tests on hand-built ASTs: `identity`→{p0}, `wrap x = Node(x, 0, Leaf)`→{p0}, fresh `build n`→{}, a result that reaches a top-level binding→{global}. | — | low |
 | **CO-2b** | **Admit "result aliases a moved argument" seeds.** Extend `ArgIsMove` / `IsFreshResultCall`: a call `f(a₁…aₙ)` is a move iff the result-reach set excludes globals and every parameter in it is bound to a move at this site (recursive via the existing move analysis). Closes `wrap`-style builders. | `tests/reuse_result_alias_move_elision.ash`: a `wrap(freshMove)` seed elides; a `wrap(retained)` sibling declines (soundness discriminator). | CO-2a | low–med |
 | **CO-2c** | **Stdlib reuse-rewriting results (`Ashes.Map.set`-shape).** Apply the summary to functions that return *and* reuse-rewrite their accumulator: the result is a move when the accumulator argument is a move (a fresh/`empty` map). | Nested `Map.set`-seeded fold: peak-RSS A/B, plus a retained-map soundness discriminator. | CO-2a, CO-2b | med (touches the specialization machinery) |
-| **CO-2d** | **Closure / function-valued seeds.** Extend to a seed produced by a closure result or function-valued binding; capture-aware (a captured heap value counts as result-reachable). Completeness tail. | A closure-built seed elides; a capturing closure seed declines. | CO-2a | med |
+| **CO-2d** | **Closure / function-valued seeds — DONE.** Extends the result-reach summary to see through a seed produced by a **closure the currying did not statically flatten** (a lambda returned from behind an `if`/`match`/`let`, so the producer is a 1-arg function whose *result* is a closure) and its **over-application** (`(makeBuilder(x))(n)`). `OverApplicationReach` inlines the callee one level, binding each surplus argument to the returned lambda's parameter; capture-aware — a captured parameter embedded in the produced value is reached via its argument marker (`wrap`-style), a captured global or any unmodeled capture poisons (keep copy). Verified by `tests/reuse_closure_seed_move_elision.ash`: a no-capture closure seed (reach {}) and a closure capturing a **fresh-move** value both **elide**; a closure returning a **retained** capture directly **declines** (`keep` reads 7, not the corrupted 207), confirmed at the direct-reuse elide decision (`grow/t elide=True`, `bump/t elide=False`). | CO-2a | med |
 
-**Fully-covering spine:** CO-2a → CO-2b → CO-2c (CO-2d is the completeness tail).
+**Fully-covering spine:** CO-2a → CO-2b → CO-2c (CO-2d, the completeness tail, is **done** — see below).
 
 ### CO-7 remaining — genuine temporal overlap of `both` with in-flight async I/O
 
@@ -425,6 +425,30 @@ whose result embeds a *fresh* cell twice (`let x = Node(Leaf)(k)(Leaf) in Node(x
 `grow/t elide=True` / `bump/t elide=False` / `sgrow/t elide=False` splits were confirmed at the
 direct-reuse elide decision (and a fresh value used once per branch arm stays `elide=True` — not
 over-rejected).
+
+**Closure / function-valued seeds (CO-2d) — landed.** The result-reach summary now also sees through a
+seed produced by a **closure the currying did not statically flatten**. A curried multi-argument binding
+(`let f x n = …`) is flattened by `CollectLambdaParams`/`GetInnermostBody` into a single multi-param
+function, so `f(x)(n)` is an ordinary saturated call the summary already handled — *not* a closure seed.
+A genuine closure seed arises only when a lambda is **returned from behind an `if`/`match`/`let`**, so the
+producer is a 1-arg function whose *result* is a closure, and the seed is that closure **over-applied**:
+`let makeBuilder flag = if flag then (fun (n) -> Node(Leaf)(n)(Leaf)) else (fun (n) -> Leaf)` with seed
+`(makeBuilder(true))(n)`. `OverApplicationReach` models the surplus application by inlining the callee's
+body **one level** and binding each surplus argument to the parameter of the lambda the body returns,
+descending through the closure-producing structure (a returned `Lambda`, or lambdas behind `if`/`match`/
+`let`); the reach is computed over `"@i"` argument-position markers so both the wiring (`IsResultAliasMove`
+— every reached marker's argument must be a move) and the fixpoint (`CallReach` — substitute each marker's
+argument reach) share one computation. It is **capture-aware**: the callee's own parameters are seeded to
+their argument markers, so a captured parameter embedded in the produced value (`makeCap cap = … Node(cap)
+(n)(Leaf) …`, reach {cap}) is a move exactly when that captured argument is a move; a captured global, an
+internally-shared capture, or any unmodeled closure source (a nested call result) **poisons** (keep copy).
+A bounded recursion depth caps a chain of nested over-applications (poison past the cap). Verified by
+`tests/reuse_closure_seed_move_elision.ash`: a **no-capture** closure seed (`(makeFresh(true))(5)`, reach
+{}) and a closure capturing a **fresh-move** value (`(makeCap(Node(Leaf)(20)(Leaf)))(0)`, reach {cap} with
+`cap` a move) both **elide** the inner direct-reuse fold's entry copy (`grow/t elide=True`), while a
+closure returning a **retained** capture directly (`(makeId(shared))(0)`, the seed *is* `shared`, which is
+retained) is **declined** (`bump/t elide=False`) and the retained `shared` reads its original 7, not the
+corrupted 207.
 
 Still genuinely deferred: a seed produced by a function whose result-alias summary is **poisoned** — one
 that returns a value reaching a global/top-level binding, is internally shared, or is an opaque/stdlib
