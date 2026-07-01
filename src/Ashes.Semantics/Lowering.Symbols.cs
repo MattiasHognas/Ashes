@@ -188,7 +188,7 @@ public sealed partial class Lowering
 
             var declaredOrInferredTypeParameters = decl.TypeParameters.Count > 0
                 ? decl.TypeParameters
-                : InferImplicitTypeParameters(decl.Constructors);
+                : InferImplicitTypeParameters(decl.Name, decl.Constructors);
 
             var seenTypeParams = new HashSet<string>(StringComparer.Ordinal);
             var hasDuplicateTypeParams = false;
@@ -452,13 +452,34 @@ public sealed partial class Lowering
         return new TypeRef.TTypeParam(new TypeParameterSymbol(parameterName));
     }
 
-    private static IReadOnlyList<TypeParameter> InferImplicitTypeParameters(IReadOnlyList<TypeConstructor> constructors)
+    // Concrete primitive type names that may appear as constructor payloads. A payload naming one of
+    // these is a concrete field type, never an implicit type parameter. (The full resolution list also
+    // treats the declaring type's own name as concrete — handled per-declaration below.)
+    private static readonly HashSet<string> PrimitivePayloadTypeNames =
+        new(StringComparer.Ordinal) { "Int", "Bool", "Str", "Bytes", "Float" };
+
+    private static IReadOnlyList<TypeParameter> InferImplicitTypeParameters(
+        string declaringTypeName,
+        IReadOnlyList<TypeConstructor> constructors)
     {
         var typeParameters = new List<TypeParameter>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var parameterName in constructors.SelectMany(ctor => ctor.Parameters))
         {
+            // A payload that names the declaring type itself (a self-recursive field) or a primitive
+            // type is a *concrete* field type, not an implicit type parameter. Inferring a parameter
+            // for it over-generalizes the constructor: a self-recursive field becomes polymorphic —
+            // which makes `let rec build n = ... Node(build(n - 1)) ...` fail the occurs check when the
+            // type is actually built recursively — and a primitive field's concrete type is lost to
+            // later analyses. `ResolveUserConstructorParameterType` already resolves both of these to
+            // their concrete `TypeRef` once they are absent from the parameter list.
+            if (string.Equals(parameterName, declaringTypeName, StringComparison.Ordinal)
+                || PrimitivePayloadTypeNames.Contains(parameterName))
+            {
+                continue;
+            }
+
             if (seen.Add(parameterName))
             {
                 typeParameters.Add(new TypeParameter(parameterName));

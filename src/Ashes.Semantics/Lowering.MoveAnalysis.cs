@@ -65,6 +65,16 @@ public sealed partial class Lowering
     // would be unsound); they are also treated as escaped.
     private readonly HashSet<string> _maAmbiguous = new(StringComparer.Ordinal);
 
+    // Result-freshness summary (CO-2 higher-order seeds): per registered function, true when its
+    // result is provably a uniquely-owned, freshly-allocated value on every execution path — every
+    // heap cell reachable from the return value is either freshly allocated by that function or a
+    // no-op-safe sole-nullary constructor cell, and no pre-existing/aliased heap value is embedded
+    // into a heap-typed field. Computed once as a monotone greatest fixpoint (all functions assumed
+    // fresh, retracted when a concrete non-fresh shape is found). Used to admit a fold accumulator
+    // seeded by such a function's *result* (`let s = build(n) in fold(s)` or `fold(build(n))`) as a
+    // move, without needing the return-value ownership reasoning of the broader ownership milestone.
+    private readonly Dictionary<string, bool> _maResultFresh = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
     /// <see cref="IsReuseAccumulatorMoveSafe"/> over the fully desugared program expression (which
@@ -80,6 +90,7 @@ public sealed partial class Lowering
         _maAmbiguous.Clear();
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
+        _maResultFresh.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -94,6 +105,7 @@ public sealed partial class Lowering
         }
 
         CollectCallsAndEscapes(desugaredBody, "");
+        ComputeResultFreshness();
         _maAnalyzed = true;
     }
 
@@ -334,6 +346,15 @@ public sealed partial class Lowering
             return true;
         }
 
+        // (CO-2 higher-order seed) A saturated call to a result-fresh function written inline at the
+        // call site: its result is a uniquely-owned freshly-allocated value (see IsResultFresh), and a
+        // freshly-produced result reachable only through this one argument reference is inherently a
+        // move — used once, unaliased — exactly like an inline fresh construction above.
+        if (IsFreshResultCall(arg))
+        {
+            return true;
+        }
+
         if (arg is Expr.Var v)
         {
             bool haveFunc = _maFuncs.TryGetValue(enclosing, out var encInfo);
@@ -366,7 +387,9 @@ public sealed partial class Lowering
                 && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
                 && boundRhs is not null
                 && boundScope is not null
-                && IsFullyFreshConstruction(boundRhs)
+                // Fresh by construction, or (CO-2 higher-order seed) the result of a result-fresh
+                // function call — both give a uniquely-owned, internally-unshared bound value.
+                && (IsFullyFreshConstruction(boundRhs) || IsFreshResultCall(boundRhs))
                 // Move-linear within the binding's own scope (its `let` body): used at most once on
                 // any path there, never captured. Counting in the scope — not the whole enclosing
                 // body — is essential: the whole-body count would stop at this very definition
@@ -598,6 +621,195 @@ public sealed partial class Lowering
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Computes the result-freshness summary (<see cref="_maResultFresh"/>) as a monotone greatest
+    /// fixpoint: every registered function starts assumed result-fresh, and any function whose body is
+    /// found to produce a possibly-non-fresh value on some path is retracted, until no more retract.
+    /// Starting optimistic (all-true) and only retracting is what lets a recursive builder qualify —
+    /// its recursive self-call in a fresh field is read as fresh under the current assumption, so the
+    /// only way a function stays fresh is if every *concrete* (non-recursive) shape it can return is
+    /// itself fresh. A non-fresh value can only enter through a directly-checked shape (a bare
+    /// parameter/global reference, or a heap-typed constructor field holding a non-fresh argument), so
+    /// the fixpoint is sound regardless of recursion.
+    /// </summary>
+    private void ComputeResultFreshness()
+    {
+        _maResultFresh.Clear();
+        foreach (var name in _maFuncs.Keys)
+        {
+            _maResultFresh[name] = true;
+        }
+
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var (name, info) in _maFuncs)
+            {
+                if (!_maResultFresh[name])
+                {
+                    continue; // already retracted — monotone, never revived
+                }
+
+                if (!ResultShapeFresh(info.Body))
+                {
+                    _maResultFresh[name] = false;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="e"/>, as the returned value of a function body, is provably a
+    /// uniquely-owned freshly-allocated value under the current <see cref="_maResultFresh"/>
+    /// assumption: every heap cell it can reach is freshly allocated here (or a no-op-safe sole-nullary
+    /// constructor cell), and no pre-existing/aliased heap value is embedded into a heap-typed field.
+    /// A bare parameter/global reference is fresh only when it is the sole nullary constructor of its
+    /// type — a returned parameter, pattern-bound sub-value, or shared global otherwise breaks
+    /// freshness (it may alias a value the reuse fold would overwrite in place).
+    /// </summary>
+    private bool ResultShapeFresh(Expr e)
+    {
+        switch (e)
+        {
+            case Expr.IntLit:
+            case Expr.UIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                return true;
+
+            // A bare name is fresh only when it denotes the sole nullary constructor of its type. Any
+            // other variable — a parameter, a pattern-bound sub-value (e.g. `match t with Node(l,_,_)
+            // -> l`), or a shared top-level binding — may alias a pre-existing heap value.
+            case Expr.Var:
+            case Expr.QualifiedVar:
+                return IsNullarySeed(e, new HashSet<string>(StringComparer.Ordinal));
+
+            // Control flow: the returned value is one of the arms, so every arm must be fresh. The
+            // scrutinee/condition is not part of the returned value.
+            case Expr.If i:
+                return ResultShapeFresh(i.Then) && ResultShapeFresh(i.Else);
+            case Expr.Match m:
+                return m.Cases.Count > 0 && m.Cases.All(c => ResultShapeFresh(c.Body));
+
+            // The returned value is the let body. A bare reference to the let-bound name inside the
+            // body is rejected by the Var case above (it is not a constructor), so a body that embeds
+            // the bound value into a heap field is conservatively declined — sound, only loses cases.
+            case Expr.Let l:
+                return ResultShapeFresh(l.Body);
+            case Expr.LetResult lr:
+                return ResultShapeFresh(lr.Body);
+            case Expr.LetRec lrec:
+                return ResultShapeFresh(lrec.Body);
+
+            // Aggregate/list literals whose element types are not individually known here: require
+            // every element fresh (conservative — a copy-typed element written fresh, e.g. a literal,
+            // still passes; a bare heap reference does not).
+            case Expr.Cons cons:
+                return ResultShapeFresh(cons.Head) && ResultShapeFresh(cons.Tail);
+            case Expr.ListLit lst:
+                return lst.Elements.All(ResultShapeFresh);
+            case Expr.TupleLit t:
+                return t.Elements.All(ResultShapeFresh);
+            case Expr.RecordLit rec:
+                return rec.Fields.All(f => ResultShapeFresh(f.Value));
+
+            case Expr.Call:
+                return CallShapeFresh(e);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Result-freshness of a call expression: either a saturated data-constructor application (a fresh
+    /// cell whose heap-typed fields must hold fresh arguments — copy-typed fields hold scalars stored
+    /// inline and cannot alias a cell the fold overwrites, so they are unconstrained), or a saturated
+    /// call to a function that is itself result-fresh (its result is fresh by the summary, for *any*
+    /// arguments — a result-fresh function provably never embeds a heap argument into a heap-typed
+    /// field of its result, so the argument shapes are irrelevant here).
+    /// </summary>
+    private bool CallShapeFresh(Expr e)
+    {
+        var args = new List<Expr>();
+        var head = CollectCallArgs(e, args);
+
+        // (1) Saturated data-constructor application: a freshly-allocated cell. Only heap-typed fields
+        // can carry an aliasing hazard; copy-typed fields (Int/Float/Bool/…) hold their value inline.
+        if (head is Expr.Var hv
+            && _constructorSymbols.TryGetValue(hv.Name, out var ctor)
+            && args.Count == ctor.Arity)
+        {
+            for (int i = 0; i < args.Count; i++)
+            {
+                bool copyField = ctor.ParameterTypes.Count == ctor.Arity
+                    && BuiltinRegistry.IsCopyType(ctor.ParameterTypes[i]);
+                if (!copyField && !ResultShapeFresh(args[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // (2) Saturated call to a result-fresh function: fresh result regardless of arguments.
+        string? name = head switch
+        {
+            Expr.Var v => v.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(head),
+            _ => null,
+        };
+
+        return name is not null
+            && !_maAmbiguous.Contains(name)
+            && _maFuncs.TryGetValue(name, out var info)
+            && args.Count == info.Params.Count
+            && _maResultFresh.TryGetValue(name, out var fresh)
+            && fresh;
+    }
+
+    /// <summary>
+    /// True when <paramref name="arg"/> is a saturated call to a result-fresh function — a
+    /// higher-order seed whose result is a uniquely-owned, freshly-allocated value (see
+    /// <see cref="ComputeResultFreshness"/>). A saturated constructor application is deliberately
+    /// excluded here (it is already covered by <see cref="IsFullyFreshConstruction"/>); this predicate
+    /// is specifically the non-constructor case the fresh-construction rule cannot see through.
+    /// </summary>
+    private bool IsFreshResultCall(Expr arg)
+    {
+        if (arg is not Expr.Call)
+        {
+            return false;
+        }
+
+        var args = new List<Expr>();
+        var head = CollectCallArgs(arg, args);
+
+        // A constructor application is not a "result call" — IsFullyFreshConstruction handles it.
+        if (head is Expr.Var cv && _constructorSymbols.ContainsKey(cv.Name))
+        {
+            return false;
+        }
+
+        string? name = head switch
+        {
+            Expr.Var v => v.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(head),
+            _ => null,
+        };
+
+        return name is not null
+            && !_maAmbiguous.Contains(name)
+            && _maFuncs.TryGetValue(name, out var info)
+            && args.Count == info.Params.Count
+            && _maResultFresh.TryGetValue(name, out var fresh)
+            && fresh;
     }
 
     /// <summary>
