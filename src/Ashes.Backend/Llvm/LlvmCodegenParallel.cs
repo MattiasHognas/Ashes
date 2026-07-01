@@ -22,7 +22,13 @@ internal static partial class LlvmCodegen
     private const int ParallelDescWorkerStack = 32;  // mmap'd worker stack base (for munmap); win-x64: thread HANDLE
     private const int ParallelDescWorkerTcb = 40;    // worker TCB / TLS block base (for munmap + arena walk)
     private const int ParallelDescWorkerArenaEnd = 48; // arm64: worker's heap-arena end (worker-written; parent walks chunks on cleanup)
-    private const int ParallelDescSizeBytes = 56;
+    // CLONE_CHILD_CLEARTID word: set to 1 before clone; the kernel zeroes it and futex-wakes it only
+    // once the worker thread has FULLY exited (its stack is no longer in use). The parent waits on this
+    // before reclaiming the worker stack, closing a race where the worker's return epilogue still reads
+    // its stack after publishing the result — distinct from the Done word (result-ready) so the parent
+    // can consume the result immediately and only the stack free blocks on true exit. (linux only.)
+    private const int ParallelDescExited = 56;
+    private const int ParallelDescSizeBytes = 64;
 
     // Default per-worker stack size when the --parallel-stack-size tunable is unset. On linux this
     // is the mmap'd worker-stack length; on win-x64 CreateThread gets the OS default (dwStackSize=0)
@@ -34,8 +40,10 @@ internal static partial class LlvmCodegen
     private static long ParallelStackBytesFor(LlvmCodegenState state) =>
         state.Target.ParallelWorkerStackBytes ?? DefaultParallelWorkerStackBytes;
     // CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM — a thread
-    // sharing the address space and fds, auto-reaped on exit (no SIGCHLD, no zombie).
-    private const long ParallelCloneFlags = 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x40000;
+    // sharing the address space and fds, auto-reaped on exit (no SIGCHLD, no zombie). CLONE_CHILD_CLEARTID
+    // (0x200000) makes the kernel zero the ctid word (ParallelDescExited) and futex-wake it once the
+    // thread has fully exited, so the parent can safely reclaim the worker stack (see EmitParallelCleanup).
+    private const long ParallelCloneFlags = 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x40000 | 0x200000;
     private const string ParallelWorkerFnName = "__ashes_parallel_worker";
     private const string ParallelActiveCounterName = "__ashes_parallel_active";
 
@@ -230,6 +238,9 @@ internal static partial class LlvmCodegen
             long parallelStackBytes = ParallelStackBytesFor(state);
             LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack");
             StoreMemory(state, desc, ParallelDescWorkerStack, stack, "par_desc_stack");
+            // Mark the ctid/exited word running (1); the kernel zeroes it + futex-wakes on true thread
+            // exit (CLONE_CHILD_CLEARTID). Must be set before clone so the kernel's clear can't be missed.
+            StoreMemory(state, desc, ParallelDescExited, LlvmApi.ConstInt(state.I64, 1, 0), "par_desc_exited1");
             LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack_top");
             EmitCloneWorker(state, desc, stackTop); // EmitCloneWorker branches on flavor (x86 vs aarch64 asm)
         }
@@ -349,6 +360,40 @@ internal static partial class LlvmCodegen
         LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
             LlvmApi.GetNamedGlobal(state.Target.Module, ParallelActiveCounterName), state.I64, "par_cleanup_counter_addr");
         EmitAtomicFetchAdd(state, counterAddr, unchecked((ulong)-1L), "par_cleanup_release");
+
+        // linux: the result (Done word) is published before the worker returns, but the worker still
+        // runs its return epilogue on its stack afterwards. Wait for true thread exit — the kernel zeroes
+        // the ctid/exited word and futex-wakes it in mm_release, after the stack is no longer used — before
+        // reclaiming the stack/TCB/arena. Non-private FUTEX_WAIT to match the kernel's clear_child_tid wake.
+        // (win-x64 reclaims via CloseHandle after WaitForSingleObject, which already waits for full exit.)
+        if (state.Flavor == LlvmCodegenFlavor.LinuxX64 || state.Flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            var exitCheck = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_cleanup_exit_check");
+            var exitWait = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_cleanup_exit_wait");
+            var exitDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_cleanup_exited");
+            LlvmValueHandle exitedAddr = LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(state.I64, ParallelDescExited, 0), "par_exited_addr");
+            LlvmApi.BuildBr(builder, exitCheck);
+
+            LlvmApi.PositionBuilderAtEnd(builder, exitCheck);
+            LlvmValueHandle exited = LoadMemory(state, desc, ParallelDescExited, "par_exited_val");
+            LlvmValueHandle stillRunning = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, exited, LlvmApi.ConstInt(state.I64, 0, 0), "par_still_running");
+            LlvmApi.BuildCondBr(builder, stillRunning, exitWait, exitDone);
+
+            // futex(&exited, FUTEX_WAIT, 1, NULL, NULL, 0) — non-private to match the kernel wake. Loops
+            // and re-checks, so a clear that races the check is never lost.
+            LlvmApi.PositionBuilderAtEnd(builder, exitWait);
+            EmitLinuxSyscall6(state, SyscallFutex,
+                exitedAddr,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "par_cleanup_exit_wait_call");
+            LlvmApi.BuildBr(builder, exitCheck);
+
+            LlvmApi.PositionBuilderAtEnd(builder, exitDone);
+        }
         // Reclaim the worker thread's memory. linux: free the mmap'd stack; win-x64: close the thread
         // HANDLE (the OS frees the CreateThread stack). Then free the worker's arena chunks + TCB/TLS
         // block. The arena end comes from the TCB on x64/win (parent-written), or from the descriptor
@@ -458,7 +503,7 @@ internal static partial class LlvmCodegen
                 "mov x1, x9\n\t" +         // arg1 = child stack
                 "mov x2, xzr\n\t" +        // arg2 ptid = 0
                 "mov x3, xzr\n\t" +        // arg3 tls = 0
-                "mov x4, xzr\n\t" +        // arg4 ctid = 0
+                "add x4, x10, #56\n\t" +   // arg4 ctid = &desc.exited (CLONE_CHILD_CLEARTID target)
                 "mov x8, #220\n\t" +       // SYS_clone
                 "svc #0\n\t" +
                 "cbz x0, 1f\n\t" +         // child if x0==0
@@ -494,7 +539,8 @@ internal static partial class LlvmCodegen
             "mov $2, %r9\n\t" +        // r9 = trampoline
             "mov $3, %rdi\n\t" +       // clone arg1 = flags
             "xor %edx, %edx\n\t" +     // arg3 ptid = 0
-            "xor %r10d, %r10d\n\t" +   // arg4 ctid = 0
+            "mov $1, %r10\n\t" +       // arg4 ctid = &desc.exited (CLONE_CHILD_CLEARTID target)
+            "add $$56, %r10\n\t" +
             "xor %r8d, %r8d\n\t" +     // arg5 tls = 0
             "mov $$56, %eax\n\t" +     // SYS_clone (arg2 = rsi = child stack)
             "syscall\n\t" +

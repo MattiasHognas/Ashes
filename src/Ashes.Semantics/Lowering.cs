@@ -125,6 +125,29 @@ public sealed partial class Lowering
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
 
+    // Stitched names of the data-parallel combinators. The grain-parameterized `mapGrained`/`reduceGrained`
+    // are the recursive divide-and-conquer functions whose above-grain split routes through the
+    // concrete-result-typed `both` primitive, so a monomorphic specialization at a concrete element type
+    // lets `both` genuinely fork (the polymorphic copy runs sequentially). `map`/`reduce` are the grain-1
+    // wrappers — a saturated call to one routes to the corresponding grained combinator with grain = 1.
+    private static readonly string ParallelModulePrefix = ProjectSupport.SanitizeModuleBindingName("Ashes.Parallel");
+    private static readonly string ParallelMapName = ParallelModulePrefix + "_map";
+    private static readonly string ParallelReduceName = ParallelModulePrefix + "_reduce";
+    private static readonly string ParallelMapGrainedName = ParallelModulePrefix + "_mapGrained";
+    private static readonly string ParallelReduceGrainedName = ParallelModulePrefix + "_reduceGrained";
+
+    // The stripped lambda + full arity of each grained parallel combinator (registered when the embedded
+    // module is lowered), used to generate a monomorphic self-recursive specialization at each concrete
+    // call. Keyed by the grained name; `map`/`reduce` calls are rewritten to the grained form first.
+    private readonly Dictionary<string, (Expr.Lambda Lambda, int ArgCount)> _parallelSpecializable = new(StringComparer.Ordinal);
+
+    // Cache of generated parallel specializations: name|concrete-param-types → specialized function label.
+    private readonly Dictionary<string, string> _parallelSpecializations = new(StringComparer.Ordinal);
+
+    // True while generating a parallel specialization body, so a self-recursive call to the combinator
+    // resolves to the specialization's own label (Binding.Self) instead of re-triggering specialization.
+    private bool _inParallelSpecialization;
+
     // f$reuse labels that are "fully reusing": every value they return is below the loop watermark
     // (an AllocReusing result, the scrutinee, or a recursive f$reuse result), with only self-recursion
     // scaffolding (env allocs + self-closures) freshly allocated. Only these allow the loop arena
@@ -362,6 +385,18 @@ public sealed partial class Lowering
 
         foreach (var item in valueItems)
         {
+            // The grained data-parallel combinators: capture their stripped multi-parameter recursive
+            // lambda so each concrete-typed call site can generate a monomorphic parallel specialization.
+            // mapGrained is grain+f+xs (arity 3); reduceGrained is grain+combine+identity+f+xs (arity 5).
+            if (item is TopLevelItem.LetDecl { IsRecursive: true } parLet
+                && (string.Equals(parLet.Name, ParallelMapGrainedName, StringComparison.Ordinal)
+                    || string.Equals(parLet.Name, ParallelReduceGrainedName, StringComparison.Ordinal))
+                && Strip(parLet.Value) is Expr.Lambda parLam)
+            {
+                int arity = string.Equals(parLet.Name, ParallelMapGrainedName, StringComparison.Ordinal) ? 3 : 5;
+                _parallelSpecializable[parLet.Name] = (parLam, arity);
+            }
+
             if (item is TopLevelItem.LetDecl { IsRecursive: false } let && Strip(let.Value) is Expr.Lambda lam)
             {
                 // A non-recursive function that returns a nested recursive single-param function
@@ -1191,7 +1226,7 @@ public sealed partial class Lowering
     {
         var b = Lookup(v.Name);
 
-        if (b is null && _inSpecialization && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
+        if (b is null && (_inSpecialization || _inParallelSpecialization) && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
             // Reuse specialization: this name is a non-inlined top-level helper (e.g. an AVL height/max
             // reader) referenced from the spec's isolated scope, where its generation-site slot is gone.
@@ -2555,6 +2590,23 @@ public sealed partial class Lowering
         RecordHoverType(AstSpans.GetLetRecNameOrDefault(letRec), letRec.Name, recType);
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
 
+        // Register an empty-env recursive top-level function so a specialization generated later (in an
+        // isolated scope) can reference it by-label — as static code with a null env — rather than
+        // capturing it. Its self-recursion already goes through Binding.Self, so it captures nothing.
+        // This is what lets a parallel specialization call the module's list helpers across a fork
+        // boundary without materializing an arena closure a worker could race. Guarded like the
+        // non-recursive registration below: exactly this function's own depth-0 lambda was lowered last.
+        // Generalize against the parent scope (pop the self-binding first) so the scheme quantifies the
+        // function's own type vars — otherwise the self-binding keeps them in the environment and two
+        // specializations at different element types would share (and conflict on) one monotype.
+        if (_lambdaDepth == 0 && _lastLoweredLambdaEmptyEnv && letRec.Value is Expr.Lambda)
+        {
+            var selfScope = _scopes.Pop();
+            var helperScheme = FreshenScheme(Generalize(Prune(recType)));
+            _scopes.Push(selfScope);
+            _topLevelFunctionRefs[letRec.Name] = (_lastLoweredLambdaLabel, helperScheme);
+        }
+
         var (bodyTemp, bodyType) = LowerExpr(letRec.Body);
         _scopes.Pop();
         return (bodyTemp, bodyType);
@@ -3326,6 +3378,18 @@ public sealed partial class Lowering
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(ctorSym, collectedArgs);
+        }
+
+        // Data-parallel map/reduce: a saturated call to a parallel combinator at a concrete result type
+        // is monomorphized into a self-recursive specialization whose `both` splits fork genuinely. A
+        // `map`/`reduce` call is rewritten to its grained form (grain = 1) first. A self-recursive call
+        // from inside such a specialization (Binding.Self) must NOT re-specialize — it already runs the
+        // concrete body — so skip while generating one.
+        if (!_inParallelSpecialization
+            && TryResolveParallelCombinatorCall(rootExpr, collectedArgs) is { } parCall
+            && TryLowerParallelSpecializedCall(parCall.GrainedName, parCall.Lambda, parCall.Args) is { } parResult)
+        {
+            return parResult;
         }
 
         // Indirect in-place reuse: f(acc) where f is a specializable recursive function and acc is a
@@ -5152,6 +5216,188 @@ public sealed partial class Lowering
         }
 
         return (current, curType);
+    }
+
+    /// <summary>
+    /// Resolves a call whose root is one of the four data-parallel combinators to the grained combinator
+    /// it monomorphizes through, plus the full argument list (the `map`/`reduce` wrappers prepend a
+    /// literal grain of 1). Returns null when the root is not a saturated combinator call.
+    /// </summary>
+    private (string GrainedName, Expr.Lambda Lambda, List<Expr> Args)? TryResolveParallelCombinatorCall(Expr rootExpr, List<Expr> collectedArgs)
+    {
+        if (ResolveSpecializableCalleeName(rootExpr) is not { } calleeName)
+        {
+            return null;
+        }
+
+        // Direct grained call: monomorphize as-is.
+        if (_parallelSpecializable.TryGetValue(calleeName, out var grained) && collectedArgs.Count == grained.ArgCount)
+        {
+            return (calleeName, grained.Lambda, collectedArgs);
+        }
+
+        // grain-1 wrapper (`map`/`reduce`): route to the grained combinator with grain = 1 prepended.
+        string? grainedName =
+            string.Equals(calleeName, ParallelMapName, StringComparison.Ordinal) && collectedArgs.Count == 2 ? ParallelMapGrainedName
+            : string.Equals(calleeName, ParallelReduceName, StringComparison.Ordinal) && collectedArgs.Count == 4 ? ParallelReduceGrainedName
+            : null;
+        if (grainedName is not null && _parallelSpecializable.TryGetValue(grainedName, out var grainedTarget))
+        {
+            var args = new List<Expr>(collectedArgs.Count + 1) { new Expr.IntLit(1) };
+            args.AddRange(collectedArgs);
+            return (grainedName, grainedTarget.Lambda, args);
+        }
+
+        return null;
+    }
+
+    // The polymorphic signatures of the grained data-parallel combinators, rebuilt with fresh type
+    // variables so that lowering the arguments against them propagates concrete element types (e.g. an
+    // identity mapper's element type is fixed by the list argument, not by the lambda alone). Returns the
+    // full curried function type and the combinator's result type (List b for map, the accumulator for
+    // reduce). The leading `grain : Int` parameter is present on both.
+    private (TypeRef FuncType, TypeRef ResultType) BuildParallelCombinatorType(string name)
+    {
+        if (string.Equals(name, ParallelMapGrainedName, StringComparison.Ordinal))
+        {
+            // mapGrained : Int -> (a -> b) -> List a -> List b
+            var a = NewTypeVar();
+            var b = NewTypeVar();
+            var func = new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TFun(a, b), new TypeRef.TFun(new TypeRef.TList(a), new TypeRef.TList(b))));
+            return (func, new TypeRef.TList(b));
+        }
+
+        // reduceGrained : Int -> (c -> c -> c) -> c -> (e -> c) -> List e -> c
+        var acc = NewTypeVar();
+        var elem = NewTypeVar();
+        var combine = new TypeRef.TFun(acc, new TypeRef.TFun(acc, acc));
+        var mapFn = new TypeRef.TFun(elem, acc);
+        var reduceFunc = new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(combine, new TypeRef.TFun(acc, new TypeRef.TFun(mapFn, new TypeRef.TFun(new TypeRef.TList(elem), acc)))));
+        return (reduceFunc, acc);
+    }
+
+    /// <summary>
+    /// Data-parallel map/reduce. Lowers the arguments once (against a reconstructed generic signature so
+    /// element types propagate), then — when the concrete result type is one a worker's arena-isolated
+    /// result can be safely lifted back from, so <c>both</c> will genuinely fork — routes to a monomorphic
+    /// self-recursive specialization whose recursive halves split through <c>both</c>. Otherwise it lowers
+    /// a plain sequential call to the polymorphic combinator (an identical result). Never falls through, so
+    /// the arguments are lowered exactly once.
+    /// </summary>
+    private (int, TypeRef) TryLowerParallelSpecializedCall(string name, Expr.Lambda lambda, List<Expr> args)
+    {
+        var (funcType, resultType) = BuildParallelCombinatorType(name);
+
+        var argTemps = new int[args.Count];
+        var concreteParamTypes = new List<TypeRef>(args.Count);
+        var curType = Prune(funcType);
+        for (int i = 0; i < args.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            argTemps[i] = argTemp;
+            if (curType is TypeRef.TFun tfun)
+            {
+                Unify(tfun.Arg, argType);
+                curType = Prune(tfun.Ret);
+            }
+
+            concreteParamTypes.Add(Prune(argType));
+        }
+
+        resultType = Prune(resultType);
+
+        // Only specialize when the worker's result can be lifted into the parent arena — otherwise `both`
+        // would fall back to sequential inside the body anyway, so a call to the polymorphic combinator is
+        // equivalent and avoids emitting a dead specialization.
+        if (CanRunRightOnWorker(resultType))
+        {
+            string label = GetOrCreateParallelSpecialization(name, lambda, Prune(funcType), concreteParamTypes);
+            // Invoke with a null env, exactly like a top-level empty-env function: the specialization
+            // captures nothing, and its self-closure is rebuilt from this env pointer, which must not be a
+            // live arena allocation that a forked worker could observe dangling after an arena reset.
+            int envPtr = NewTemp();
+            Emit(new IrInst.LoadConstInt(envPtr, 0));
+            int closureTemp = NewTemp();
+            Emit(new IrInst.MakeClosure(closureTemp, label, envPtr, 0));
+            return ApplyLoweredArgs(closureTemp, argTemps, resultType);
+        }
+
+        var (combinatorTemp, _) = LowerVar(new Expr.Var(name));
+        return ApplyLoweredArgs(combinatorTemp, argTemps, resultType);
+    }
+
+    // Applies a sequence of already-lowered argument temps to a callable closure temp, returning the
+    // final result temp paired with the supplied result type.
+    private (int, TypeRef) ApplyLoweredArgs(int closureTemp, IReadOnlyList<int> argTemps, TypeRef resultType)
+    {
+        int current = closureTemp;
+        foreach (var argTemp in argTemps)
+        {
+            int next = NewTemp();
+            Emit(new IrInst.CallClosure(next, current, argTemp));
+            current = next;
+        }
+
+        return (current, resultType);
+    }
+
+    /// <summary>
+    /// Generates (once per concrete instantiation) a monomorphic self-recursive specialization of a
+    /// parallel combinator. The body is the combinator's own source, lowered with its parameters pinned to
+    /// the call's concrete types, so the recursive <c>both</c> splits see a concrete result type and fork.
+    /// Recursive self-calls resolve to this label (Binding.Self); stitched list helpers resolve by-label
+    /// from the captured top-level scope (the <c>_inSpecialization</c> path). Not a linear-reuse spec.
+    /// </summary>
+    private string GetOrCreateParallelSpecialization(string name, Expr.Lambda lambda, TypeRef funcType, IReadOnlyList<TypeRef> concreteParamTypes)
+    {
+        string cacheKey = name + "|" + string.Join(",", concreteParamTypes.Select(t => Pretty(Prune(t))));
+        if (_parallelSpecializations.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        string label = _parallelSpecializations.Count == 0 ? $"{name}__par" : $"{name}__par${_parallelSpecializations.Count}";
+        _parallelSpecializations[cacheKey] = label;
+
+        // Generate the body in an isolated scope: its only free names are the module's top-level list
+        // helpers (resolved by-label as static globals via _topLevelFunctionRefs — never captured, so no
+        // arena closure crosses a fork), the self reference (Binding.Self on this label), and the qualified
+        // `both` primitive (module-resolved, scope-independent). Emptying the scope means the helpers are
+        // NOT found by Lookup and fall through to by-label resolution; a captured helper would otherwise
+        // become an arena closure a worker thread could read while the parent resets its arena — a race.
+        // The bumped lambda depth keeps LowerLambdaCore from treating this as a top-level declaration and
+        // snapshotting the emptied scope over the real one. Pin the concrete parameter types so the body
+        // monomorphizes and `both` sees a concrete result.
+        var savedInParSpec = _inParallelSpecialization;
+        var savedConcrete = _specializationConcreteParamTypes;
+        var savedCursor = _specializationParamCursor;
+        var savedScopes = _scopes.ToArray();
+        var savedLambdaDepth = _lambdaDepth;
+        _inParallelSpecialization = true;
+        _specializationConcreteParamTypes = concreteParamTypes;
+        _specializationParamCursor = 0;
+        _scopes.Clear();
+        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+        _lambdaDepth = savedLambdaDepth == 0 ? 1 : savedLambdaDepth;
+
+        int instBefore = _inst.Count;
+        LowerLambdaCore(lam: lambda, selfName: name, selfType: funcType, stackAllocateClosure: false, forcedLabel: label);
+        if (_inst.Count > instBefore)
+        {
+            _inst.RemoveRange(instBefore, _inst.Count - instBefore);
+        }
+
+        _inParallelSpecialization = savedInParSpec;
+        _specializationConcreteParamTypes = savedConcrete;
+        _specializationParamCursor = savedCursor;
+        _lambdaDepth = savedLambdaDepth;
+        _scopes.Clear();
+        for (int i = savedScopes.Length - 1; i >= 0; i--)
+        {
+            _scopes.Push(savedScopes[i]);
+        }
+
+        return label;
     }
 
     /// <summary>

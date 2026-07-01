@@ -6,9 +6,16 @@
 // BuiltinRegistry — it must be lowered at each call site so it can deep-copy a worker's
 // result at the concrete result type — so it is NOT defined here. At concrete result types
 // `both` runs its right thunk on a worker thread; polymorphic uses fall back to sequential
-// evaluation (always correct). `map`/`reduce` below are ordinary Ashes and are sequential
-// (they cannot route through the parallel `both` because their element type is abstract
-// inside the polymorphic body).
+// evaluation (always correct).
+//
+// `mapGrained`/`reduceGrained` are divide-and-conquer with a grain threshold: at or below
+// `grain` elements they run sequentially (plSeqMap/plSeqReduce), and above it they split the
+// list in half and evaluate the two halves through `both`. A saturated call at a concrete
+// element type is monomorphized by the compiler, so `both` sees a concrete result and
+// genuinely forks; used polymorphically (or partially applied) they degrade to a sequential —
+// but still correct — evaluation. `map`/`reduce` are the grain-1 defaults. The list helpers are
+// top-level so the monomorphic specialization references them as static code (never an arena
+// closure that could cross a fork).
 //
 // Self-contained: uses only core language features.
 
@@ -59,10 +66,8 @@ let rec mapGrained grain f xs =
             else 
                 let half = plLength(xs) / 2
                 in 
-                    let leftRes = mapGrained(grain)(f)(plTake(xs)(half))
-                    in 
-                        let rightRes = mapGrained(grain)(f)(plDrop(xs)(half))
-                        in plAppend(leftRes)(rightRes)
+                    match Ashes.Parallel.both(fun (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(fun (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
+                        | (leftRes, rightRes) -> plAppend(leftRes)(rightRes)
 
 let rec reduceGrained grain combine identity f xs = 
     match xs with
@@ -74,10 +79,8 @@ let rec reduceGrained grain combine identity f xs =
             else 
                 let half = plLength(xs) / 2
                 in 
-                    let leftRes = reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half))
-                    in 
-                        let rightRes = reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))
-                        in combine(leftRes)(rightRes)
+                    match Ashes.Parallel.both(fun (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(fun (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
+                        | (leftRes, rightRes) -> combine(leftRes)(rightRes)
 
 let map f xs = mapGrained(1)(f)(xs)
 

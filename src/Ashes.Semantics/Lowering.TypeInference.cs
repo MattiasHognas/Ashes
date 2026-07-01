@@ -117,6 +117,30 @@ public sealed partial class Lowering
         return new TypeScheme(quantified, t);
     }
 
+    // Rename a scheme's quantified variables to brand-new, unbound type-variable IDs (rewriting the
+    // body to match). The result is self-contained: its quantified vars are referenced nowhere else, so
+    // no later unification of the original vars can leak into the scheme. Needed when a scheme is stashed
+    // for reuse across independent instantiations while the type it was generalized from is still live in
+    // the inference state (e.g. a top-level recursive helper whose own binding keeps its vars mutable).
+    private TypeScheme FreshenScheme(TypeScheme scheme)
+    {
+        if (scheme.Quantified.Count == 0)
+        {
+            return scheme;
+        }
+
+        var subst = new Dictionary<int, TypeRef>(scheme.Quantified.Count);
+        var freshQuantified = new List<TypeVar>(scheme.Quantified.Count);
+        foreach (var qv in scheme.Quantified)
+        {
+            var fresh = (TypeRef.TVar)NewTypeVar();
+            subst[qv.Id] = fresh;
+            freshQuantified.Add(new TypeVar(fresh.Id, qv.Name));
+        }
+
+        return new TypeScheme(freshQuantified, ApplyInstSubst(scheme.Body, subst));
+    }
+
     // Instantiate a scheme: replace each quantified variable with a fresh type variable.
     private TypeRef Instantiate(TypeScheme scheme)
     {
