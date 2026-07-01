@@ -59,7 +59,53 @@ stable IDs.
 | ID | Item | Notes |
 |----|------|-------|
 | **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds**, **non-`Ashes.Map` (user-ADT) direct-reuse folds**, and **richer aliasing** — a `Var` bound by a `let` (locally, or on the top-level spine) to a fully-fresh construction and proven **dead-after-this-use by intraprocedural move-linearity**, so freshness no longer has to be syntactic *at the call site*. It further admits **higher-order seeds** — a seed produced by a **result-fresh function call** (`IsFreshResultCall` / `ComputeResultFreshness`), proven uniquely-owned-for-any-arguments by a per-function result-freshness greatest fixpoint that reads the constructor's resolved field types (a heap-typed field must hold a fresh argument; a copy-typed field is unconstrained), covering recursive builders such as `let rec build n = if n <= 0 then Leaf else Node(build(n - 1))(n)(Leaf)`. See the detailed write-up below. Remaining under the broader ownership milestone: a seed produced by a function that is *not* provably result-fresh — an identity/`wrap` that returns or embeds a heap parameter, or an opaque/stdlib call (e.g. `Ashes.Map.set`) whose result may be aliased or reuse-rewritten — which needs full return-value ownership reasoning. Conservatively keeps the copy where unproven. |
-| **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). **Increment landed:** the state-machine transform's `Parallel*` liveness + fork/join/cleanup-within-one-segment invariant (the one blocker that was independently verifiable without the scheduler) is now implemented and directly unit-tested (`StateMachineTransformTests`), so it is no longer untested dead code. Remaining blockers: the non-blocking scheduler, wiring the coroutine path to user code, and the concurrent-overlap test. Design/validation + partial implementation task. |
+| **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). **Increment landed:** the state-machine transform's `Parallel*` liveness + fork/join/cleanup-within-one-segment invariant (the one blocker that was independently verifiable without the scheduler) is now implemented and directly unit-tested (`StateMachineTransformTests`), so it is no longer untested dead code. Remaining blockers: the non-blocking scheduler, wiring the coroutine path to user code, and the concurrent-overlap test. Design/validation + partial implementation task. See the **subtask decomposition** below. |
+
+---
+
+## Subtask decomposition (single-workload slices)
+
+The two open roadmap items each bottom out on a milestone (CO-2 → return-value ownership reasoning;
+CO-7 → a non-blocking async runtime), so neither closes in one pass. The slices below each have a
+single failing→passing verification endpoint sized for one focused work session, and together they
+cover the feature fully. Dependencies are stated; the marked spine is the minimal fully-covering path.
+
+### CO-2 remaining — results of non-result-fresh functions
+
+The only gap left is proving an *arbitrary* function's result is uniquely owned. A conservative
+**may-alias result summary** captures the real cases (identity/`wrap` builders, `Ashes.Map.set`-shape
+reuse functions) without the full ownership model. The elision stays sound-by-default: an unproven
+result keeps the copy (a leak, never a corruption).
+
+| ID | Slice | Endpoint / verification | Deps | Risk |
+|----|-------|-------------------------|------|------|
+| **CO-2a** | **Result-reachability (may-alias) summary.** Per registered function, a monotone fixpoint computing the set of parameters (plus a "may reach a global" flag) the result value may be reachable-through / alias. Over-approximate; self-contained, no wiring. | Unit tests on hand-built ASTs: `identity`→{p0}, `wrap x = Node(x, 0, Leaf)`→{p0}, fresh `build n`→{}, a result that reaches a top-level binding→{global}. | — | low |
+| **CO-2b** | **Admit "result aliases a moved argument" seeds.** Extend `ArgIsMove` / `IsFreshResultCall`: a call `f(a₁…aₙ)` is a move iff the result-reach set excludes globals and every parameter in it is bound to a move at this site (recursive via the existing move analysis). Closes `wrap`-style builders. | `tests/reuse_result_alias_move_elision.ash`: a `wrap(freshMove)` seed elides; a `wrap(retained)` sibling declines (soundness discriminator). | CO-2a | low–med |
+| **CO-2c** | **Stdlib reuse-rewriting results (`Ashes.Map.set`-shape).** Apply the summary to functions that return *and* reuse-rewrite their accumulator: the result is a move when the accumulator argument is a move (a fresh/`empty` map). | Nested `Map.set`-seeded fold: peak-RSS A/B, plus a retained-map soundness discriminator. | CO-2a, CO-2b | med (touches the specialization machinery) |
+| **CO-2d** | **Closure / function-valued seeds.** Extend to a seed produced by a closure result or function-valued binding; capture-aware (a captured heap value counts as result-reachable). Completeness tail. | A closure-built seed elides; a capturing closure seed declines. | CO-2a | med |
+
+**Fully-covering spine:** CO-2a → CO-2b → CO-2c (CO-2d is the completeness tail).
+
+### CO-7 remaining — genuine temporal overlap of `both` with in-flight async I/O
+
+**Runtime-model decision (settled):** async I/O uses a **single-threaded cooperative event loop**;
+`both` remains the CPU-parallelism primitive (real OS threads + per-thread arenas + deep-copy-on-join).
+Rationale: a work-stealing pool would migrate a suspended coroutine across threads, but each thread has
+its own bump arena, so migration breaks the per-thread-arena invariant or forces a deep copy per hop; a
+single loop thread keeps every coroutine and its allocations on one arena. Cooperative is also
+deterministic (matching `both`), and the split is clean — I/O concurrency on the loop, CPU parallelism
+via `both`. A CPU-bound coroutine stalling the loop is exactly what `both` offloads.
+
+| ID | Slice | Endpoint / verification | Deps | Risk |
+|----|-------|-------------------------|------|------|
+| **CO-7a-1** | **Make the coroutine path live (semantics-preserving).** Wire `LowerCapturedStringTask` / `CreateTask` / `StateMachineTransform` so user `async`/`await` lowers to a suspending coroutine, while `RunTask` stays a *blocking* driver — behavior identical, but now through the state machine (turns today's dead code live). | Existing async tests pass, now routed through the coroutine path (a transform-coverage assertion / binary byte-scan proves the state machine is exercised). | — (builds on done blocker 3) | med (codegen + coroutine ABI) |
+| **CO-7a-2** | **Cooperative scheduler + timer queue (non-networking).** Replace the blocking driver with a cooperative loop over a ready/timer queue; make `Ashes.Async.sleep` a real timer suspension. | `tests/async_sleep_interleave.ash`: two tasks provably interleave (B advances while A sleeps) — impossible today. | CO-7a-1 | med–high |
+| **CO-7b-1** | **linux epoll networking leaf tasks.** Make `CreateHttpGetTask` / `CreateTls*Task` non-blocking on linux, integrated so an I/O-pending task yields to the loop. | Loopback HTTPS where a second task runs while the request is in flight. | CO-7a-2 | high (per-platform I/O) |
+| **CO-7b-2** | **win-x64 IOCP / overlapped networking.** Same for Windows, verified under Wine. | Wine loopback overlap test. | CO-7a-2 | high |
+| **CO-7b-3** | **linux-arm64 networking.** Mostly epoll reuse + qemu validation (small; may fold into CO-7b-1). | qemu loopback overlap test. | CO-7b-1 | low–med |
+| **CO-7c** | **`both` ↔ scheduler overlap + concurrent-overlap test (blocker 4).** Ensure a `both` inside an async segment yields to the loop while an I/O is pending; add the test that observes a worker making progress during a live I/O. | The concurrent-overlap test the CO-7 blocker list names. | CO-7a-2, CO-7b-1 | med |
+
+**Fully-covering spine:** CO-7a-1 → CO-7a-2 → CO-7b-1 → CO-7c (CO-7b-2 / CO-7b-3 are cross-target completeness).
 
 ---
 
@@ -445,9 +491,13 @@ is impossible without the scheduler above.)
 **Remaining CO-7 work (blocker list).**
 
 1. A non-blocking async scheduler / event loop and non-blocking networking leaf tasks (the enabling
-   milestone; everything else depends on it).
+   milestone; everything else depends on it). **Model settled: a single-threaded cooperative event
+   loop** (see the *Subtask decomposition* above for the rationale vs. a thread pool). Sliced into
+   **CO-7a-2** (cooperative scheduler + timer queue) and **CO-7b-1/2/3** (per-target non-blocking
+   networking leaf tasks).
 2. Wire the dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path so user
-   `async` code lowers to a genuine suspending coroutine.
+   `async` code lowers to a genuine suspending coroutine. Sliced as **CO-7a-1** (make the coroutine
+   path live, semantics-preserving).
 3. ~~Extend `StateMachineTransform` liveness to the three `Parallel*` instructions (blocker-(2)(a)
    above) and assert the fork→join→cleanup-within-one-segment invariant (blocker-(2)(b)).~~
    **DONE** — `GetDefinedTemps`/`GetUsedTemps` now cover `ParallelFork`/`ParallelJoin`/`ParallelCleanup`,
