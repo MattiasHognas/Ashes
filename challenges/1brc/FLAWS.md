@@ -84,14 +84,25 @@ its heap fields are provably persistent (`AccumulatorIsFullyPersistent`: MapTree
 materialized-on-insert + kept-on-update, value must be a copy type), so the per-iteration arena scratch is
 reclaimed.
 
-**brc itself is still ~9.7 KB/row** because its map value is a 4-tuple, and two pieces remain:
-1. **Reuse must fire for brc's shape.** `processLine` uses `map` in *both* `Map.get` and `Map.set`, so the
-   accumulator isn't seen as linear and no `set$reuse` is generated → brc uses the normal (leaky) `Map.set`.
-   Needs the reuse trigger to accept a borrow (`get`) before the consuming `set`.
-2. **Heap-value in-place reuse / materialization.** A tuple value is fresh on every update; making it
-   reset-safe needs either materializing the fresh value on the update path (bounded only if the superseded
-   value's storage is reused, else the blob leaks) or in-place value-payload reuse. Copy value types are
-   already handled.
+**Heap-value in-place reuse — DONE for tuple values (set path).** Fresh heap Map values are now materialized
+into the blob on insert and update (Str/Bytes dynamic; tuple-of-copy fixed-size), and on update the fresh
+tuple overwrites the superseded value's blob cell in place (`IrInst.CopyFixedInto`) so nothing leaks. Result:
+
+| Map shape (Str key, tuple value), 1M / 10M rows | memory |
+|---|---|
+| set-only fold (`tsmap`) | **1 MB / 1 MB** (constant) |
+| get-then-set fold (`gsmap`) | 16 MB / 154 MB (~15 B/row) |
+
+So a set-only tuple-valued map is now fully bounded (#2/#3 met). Two things remain for **brc** specifically:
+1. **`Map.get`-before-`set` residual (~15 B/row).** Isolated to the `get` borrow (a get-then-set fold leaks
+   even when the fetched value is ignored; set-only is flat). The borrow appears to cost the following `set`
+   its in-place reuse tokens (or blocks the per-iteration reset), so a little to-space/scratch accrues each
+   row. This is the last thing between brc and constant memory once its reuse fires.
+2. **Reuse must fire for brc's shape.** brc's `Map.set` lives in the `processLine` *helper*, not the loop
+   body, so the loop's reuse analysis never sees the accumulator and no `set$reuse` is generated → brc still
+   uses the normal (leaky) `Map.set` (9.7 KB/row). A synthetic get-then-set fold with the set *in the loop*
+   (`gsmap`) does fire the reuse; brc needs the same — either inline `processLine` into the loop or restructure
+   brc so the get+set are in the loop body (per the "restructure brc" task).
 
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
