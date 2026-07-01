@@ -81,7 +81,7 @@ result keeps the copy (a leak, never a corruption).
 |----|-------|-------------------------|------|------|
 | **CO-2a** | **Result-reachability (may-alias) summary.** Per registered function, a monotone fixpoint computing the set of parameters (plus a "may reach a global" flag) the result value may be reachable-through / alias. Over-approximate; self-contained, no wiring. | Unit tests on hand-built ASTs: `identity`→{p0}, `wrap x = Node(x, 0, Leaf)`→{p0}, fresh `build n`→{}, a result that reaches a top-level binding→{global}. | — | low |
 | **CO-2b** | **Admit "result aliases a moved argument" seeds.** Extend `ArgIsMove` / `IsFreshResultCall`: a call `f(a₁…aₙ)` is a move iff the result-reach set excludes globals and every parameter in it is bound to a move at this site (recursive via the existing move analysis). Closes `wrap`-style builders. | `tests/reuse_result_alias_move_elision.ash`: a `wrap(freshMove)` seed elides; a `wrap(retained)` sibling declines (soundness discriminator). | CO-2a | low–med |
-| **CO-2c** | **Stdlib reuse-rewriting results (`Ashes.Map.set`-shape).** Apply the summary to functions that return *and* reuse-rewrite their accumulator: the result is a move when the accumulator argument is a move (a fresh/`empty` map). | Nested `Map.set`-seeded fold: peak-RSS A/B, plus a retained-map soundness discriminator. | CO-2a, CO-2b | med (touches the specialization machinery) |
+| **CO-2c** ✅ | **Stdlib reuse-rewriting results (`Ashes.Map.set`-shape).** Apply the summary to functions that return *and* reuse-rewrite their accumulator: the result is a move when the accumulator argument is a move (a fresh/`empty` map). **Landed** — needed three summary extensions (below): a **hierarchical path-token** reach so destructure-then-rebuild helpers (`balance`/rotate) stop falsely reporting internal sharing, **nested-rec-return** registration so `set`'s inner `go(acc)` recursion is analyzable (its result reaches `{map, newKey, newValue}`, not poison), and treating a **bare-`Var` nullary-constructor pattern** (`\| Empty ->`) as binding nothing. | `tests/reuse_map_set_seed_move_elision.ash` (elides), `tests/reuse_map_set_seed_retained_declines.ash` (declines, reads uncorrupted original); peak-RSS A/B measured out-of-band (≈2× reduction, below). | CO-2a, CO-2b | med (touches the specialization machinery) |
 | **CO-2d** | **Closure / function-valued seeds — DONE.** Extends the result-reach summary to see through a seed produced by a **closure the currying did not statically flatten** (a lambda returned from behind an `if`/`match`/`let`, so the producer is a 1-arg function whose *result* is a closure) and its **over-application** (`(makeBuilder(x))(n)`). `OverApplicationReach` inlines the callee one level, binding each surplus argument to the returned lambda's parameter; capture-aware — a captured parameter embedded in the produced value is reached via its argument marker (`wrap`-style), a captured global or any unmodeled capture poisons (keep copy). Verified by `tests/reuse_closure_seed_move_elision.ash`: a no-capture closure seed (reach {}) and a closure capturing a **fresh-move** value both **elide**; a closure returning a **retained** capture directly **declines** (`keep` reads 7, not the corrupted 207), confirmed at the direct-reuse elide decision (`grow/t elide=True`, `bump/t elide=False`). | CO-2a | med |
 
 **Fully-covering spine:** CO-2a → CO-2b → CO-2c (CO-2d, the completeness tail, is **done** — see below).
@@ -288,22 +288,37 @@ iff `F`'s name never escapes as a value (so its call-site census is complete) an
   cannot alias a cell the fold overwrites, so it is ignored); and a saturated call to another registered
   function substitutes the argument bound to each parameter that callee's result may reach, scaled by its
   multiplicity, and sums (a poisoned/ambiguous/mis-arity/unresolved callee poisons). Summing is what
-  makes **internal sharing** poison: a value reachable through two simultaneous heap positions hits the
-  cap and poisons, because moving such an argument would leave two live aliases the reuse fold's
-  entry copy exists precisely to unshare. To track this for a **fresh (non-parameter) heap value** too —
-  not only for a parameter, whose `{p:1}` seed already sums to `{p:2}` on `Node(p)(0)(p)` — every
-  locally-introduced binding (a `let`/let-result value, a `match` pattern variable) is given a **unique
-  synthetic identity token** (a `'#'`-prefixed key that cannot collide with a real identifier) summed
-  into its env reach. So `let x = Node(Leaf)(u)(Leaf) in Node(x)(0)(x)` sums that token to the cap and
-  poisons — the fresh `x` is embedded twice, hence internally shared and not uniquely owned — as do
-  `[x, x]`, `(x, x)`, `Cons(x, …x…)`, and a fresh scrutinee's pattern variable used twice
-  (`match fresh with Node(l,_,_) -> Node(l)(0)(l)`). Distinct bindings get **distinct** tokens, so
-  disjoint sub-values stay disjoint (`Node(l)(0)(r)` does not poison), and branch arms **max** rather than
-  sum, so a fresh value used once per `if`/`match` arm does not poison. Tokens are **stripped** from the
-  stored per-function summary (a count-1 token is a fresh internal cell escaping via a single path —
-  harmless and confined; a count-2 token has already set poison during the sum, which the strip
-  preserves), so they never appear in a stored summary or reach the wiring below (which maps real
-  parameters only). The
+  makes **internal sharing** poison: a value reachable through two simultaneous heap positions poisons,
+  because moving such an argument would leave two live aliases the reuse fold's entry copy exists
+  precisely to unshare. Cell identities are **hierarchical path tokens** (CO-2c): a parameter `p` seeds
+  reach `{p:1}` (its name is its own root token), and destructuring a value's field `i` yields a
+  **distinct sub-cell** token — every token `k` in the scrutinee's reach becomes `k/i`, so field paths
+  nest (`map/4/1`) and distinct fields stay disjoint siblings (`map/1`, `map/2`). Poison fires when a
+  summed token hits the cap (the same cell twice) **or** when two simultaneously-live tokens are in a
+  proper path **ancestor/descendant** relation (a value co-embedded with one of its own sub-cells,
+  `Node(map)(0)(left)` → `{map, map/1}`). This is what lets a **destructure-then-rebuild** helper —
+  `balance`, `rotateLeft`, `makeNode(left)(key)(value)(right)` — reach `{map}` cleanly instead of falsely
+  summing four `{map:1}` copies to `{map:2}`: its parts are disjoint siblings, not the same cell reused.
+  Every locally-introduced binding (a `let`/let-result value, a `match` pattern variable) additionally
+  gets a **fresh `'#'`-rooted identity token** summed into its env reach, so a **fresh (non-parameter)**
+  value used twice still poisons even with no parameter root: `let x = Node(Leaf)(u)(Leaf) in Node(x)(0)(x)`
+  sums that token to the cap (as do `[x, x]`, `(x, x)`, `Cons(x, …x…)`, and a fresh scrutinee's pattern
+  variable used twice, `match fresh with Node(l,_,_) -> Node(l)(0)(l)`). Distinct bindings get **distinct**
+  tokens, so disjoint sub-values stay disjoint (`Node(l)(0)(r)` does not poison), and branch arms **max**
+  rather than sum, so a fresh value used once per `if`/`match` arm does not poison. A bare **`Var`
+  pattern whose name is a data constructor** is a **nullary-constructor pattern** (`| Empty ->`), not a
+  binding: it is left unbound, so `| Empty -> makeNode(Empty)(k)(v)(Empty)` resolves `Empty` as the
+  sole-nullary constant (reach {}) rather than binding the scrutinee to "Empty" and using it twice.
+  Tokens are collapsed to their **root parameter name** in the stored per-function summary (a `'#'`-rooted
+  token drops; `map/1` and `map/2` collapse to `map` at presence, a genuine same-cell double having already
+  set poison), so a stored summary's keys are exactly parameter names — never reaching the wiring below,
+  which maps real parameters only. **Nested-rec-return** functions (the `Ashes.Map.set` shape: a chain of
+  outer-parameter lambdas whose innermost body is `let rec go = (fun acc -> B) in go`) are registered with
+  the accumulator as a real trailing parameter and body `B`, and the inner `go(x)` self-call is resolved
+  against the function's own growing summary (accumulator ↦ reach(x), outer params held at identity) — so
+  `set`'s result reach computes as `{map, newKey, newValue}` (the accumulator plus the inserted key/value),
+  admitted as a move exactly when all three arguments are moves (`empty`/fresh map, and — for `Int` keys —
+  literal keys/values, which are moves). The
   **wiring** (`IsResultAliasMove`): a saturated call `f(a₁…aₙ)` is a move iff `f`'s summary is **not
   poisoned** and, for **every** parameter `p` in `f`'s reach set, the argument bound to `p` here is itself
   a move (recursively via `ArgIsMove`). This subsumes the earlier result-freshness rule as the
@@ -387,6 +402,34 @@ previously declined purely because their fresh seed was introduced via a `let`: 
 (`40001`) — the per-re-entry entry deep-copy of the seed structure is removed. As with the earlier
 direct-reuse increment there is no `O(batches × size)` term to remove (a direct-reuse accumulator
 cannot grow); the increment eliminates a redundant per-re-entry copy of a constant-size structure.
+
+**CO-2c — stdlib reuse-rewriting result seeds (`Ashes.Map.set`-shape).** The result-reach summary now
+computes `Ashes.Map.set`'s reach as `{map, newKey, newValue}` (not poison), so a fold seeded by a
+`Ashes.Map.set(...)` **result** — where the accumulator argument and (for `Int` keys) the key/value are
+moves — is admitted as a move and the fold's entry deep-copy is elided. Reaching this required three
+soundness-preserving summary extensions, each an *over*-approximation (only ever adds poison versus the
+true disjoint-partition reach): (1) **hierarchical path tokens** so `balance`/`rotateLeft`/`rotateRight`
+and the chained `makeNode(left)(key)(value)(right)` rebuilds — which destructure `map` and re-embed its
+*disjoint* children — reach `{map}` instead of a false `{map:2}` internal-sharing poison; (2)
+**nested-rec-return** registration so `set`'s inner `let rec go = fun map -> … in go` is analyzable with
+the accumulator as a real parameter and the `go(x)` self-call resolved to `set`'s own growing summary;
+and (3) a **bare-`Var` nullary-constructor pattern** (`| Empty ->`) binding nothing, so the empty arm's
+`makeNode(Empty)(k)(v)(Empty)` does not bind the scrutinee to "Empty" and use it twice. Verified by two
+new discriminators, both green: `tests/reuse_map_set_seed_move_elision.ash` — an `outer` loop re-seeding
+an inner `Map.set` reuse fold from `Ashes.Map.set(...)(m)` each re-entry — **elides** the inner fold's
+entry copy (output `5 40`, identical to the copy-in-place baseline); and
+`tests/reuse_map_set_seed_retained_declines.ash` — a `Map.set` result that is **retained** (`keep = w`
+read after `bump(3)(w)`) — is correctly **declined** (the move admission is gated on move-linearity, not
+merely on the seed being a `Map.set` result), so `keep` reads the uncorrupted original `100`, not the
+in-place-overwritten `999` (output `100 999`, not `999 999`). Peak-RSS A/B on a nested set-result-seeded
+fold (inner reuse fold re-seeded from `Ashes.Map.set(0)(0)(m)` per outer round, so its entry copy of the
+threaded map re-executes only when *not* elided), measured with `/usr/bin/time -v` "Maximum resident set
+size", elision **on vs off** (the latter forced by reverting `set`'s reach to poison): **50 000-key
+base × 3000 rounds → 6.5 MB vs 11.8 MB**; **200 000-key base × 4000 rounds → 21.6 MB vs 43.1 MB**
+(≈2× reduction). This is the first shape where the entry copy is `O(size)` in a *large* structure that
+re-executes per re-entry, so eliding it roughly halves peak RSS; the un-elided baseline additionally
+SIGSEGVs on the repeated deep-copy path, which the elision sidesteps. Full gate green (build; 1313 C# +
+52 LSP tests; `test tests` 379 passed / 39 skipped; `dotnet format`).
 
 **Higher-order seeds + result-alias builders — landed.** A seed produced by a function *result* (not a
 data-constructor tree or a `let`-bound construction) — e.g. `let s = build(n) in fold(s)`,

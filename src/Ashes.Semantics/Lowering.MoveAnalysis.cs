@@ -105,6 +105,21 @@ public sealed partial class Lowering
     private const int MaxOverAppDepth = 4;
     private int _maOverAppDepth;
 
+    // Nested-rec-return (Map.set-shape) functions: a chain of outer-parameter lambdas whose innermost body
+    // is `let rec go = (fun acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
+    // function. Such a function is registered in _maFuncs with the FULL parameter list (outer params +
+    // acc) and body B, so its saturated (outerCount+1)-arg application is analyzable; the inner recursive
+    // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRec / CallReach) with
+    // the outer params held at identity and the accumulator bound to x. Maps registered name → the inner
+    // recursive binder name, the outer parameter names, and the accumulator parameter name.
+    private readonly Dictionary<string, (string RecName, List<string> Outer, string Acc)> _maNestedRec =
+        new(StringComparer.Ordinal);
+
+    // The nested-rec context of the function currently being analyzed by ComputeResultReach (set per pass,
+    // null for ordinary functions). Lets CallReach recognize the inner `go(x)` self-call and map it to the
+    // enclosing function's summary. Func is the registered (full-param) function name.
+    private (string Func, string RecName, List<string> Outer, string Acc)? _maSelfRec;
+
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
     /// <see cref="IsReuseAccumulatorMoveSafe"/> over the fully desugared program expression (which
@@ -121,6 +136,7 @@ public sealed partial class Lowering
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
         _maResultReach.Clear();
+        _maNestedRec.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -220,8 +236,57 @@ public sealed partial class Lowering
         _maValueRhs[name] = stripped;
         if (stripped is Expr.Lambda lam)
         {
-            _maFuncs[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+            if (TryGetNestedRecReturnShape(lam, out var outer, out var accParam, out var recName, out var innerBody))
+            {
+                // Register the Map.set-shape with the accumulator as a real trailing parameter and the
+                // inner recursive body as the function body, so its full (outer + accumulator) application
+                // is analyzable. The inner `go(x)` self-call is resolved in CallReach via _maSelfRec.
+                var full = new List<string>(outer) { accParam };
+                _maFuncs[name] = (full, innerBody);
+                _maNestedRec[name] = (recName, outer, accParam);
+            }
+            else
+            {
+                _maFuncs[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+            }
         }
+    }
+
+    /// <summary>
+    /// Recognizes the nested-rec-return (Map.set) shape: a chain of outer-parameter lambdas whose innermost
+    /// body is <c>let rec go = (fun acc -&gt; B) in go</c> (the letrec binder returned bare, its value a
+    /// single-parameter lambda whose own body is not a further lambda). Outputs the outer parameter names,
+    /// the accumulator parameter name, the recursive binder name, and the inner body B.
+    /// </summary>
+    private static bool TryGetNestedRecReturnShape(
+        Expr.Lambda lam,
+        out List<string> outer,
+        out string accParam,
+        out string recName,
+        out Expr innerBody)
+    {
+        outer = new List<string>();
+        accParam = string.Empty;
+        recName = string.Empty;
+        innerBody = lam;
+        Expr body = lam;
+        while (body is Expr.Lambda inner)
+        {
+            outer.Add(inner.ParamName);
+            body = inner.Body;
+        }
+
+        if (body is Expr.LetRec { Value: Expr.Lambda recValue, Body: Expr.Var recRef } letRec
+            && string.Equals(letRec.Name, recRef.Name, StringComparison.Ordinal)
+            && recValue.Body is not Expr.Lambda)
+        {
+            accParam = recValue.ParamName;
+            recName = letRec.Name;
+            innerBody = recValue.Body;
+            return true;
+        }
+
+        return false;
     }
 
     private static IEnumerable<Expr> EnumerateChildren(Expr e)
@@ -688,7 +753,11 @@ public sealed partial class Lowering
                 }
 
                 _maReachToken = 0;
+                _maSelfRec = _maNestedRec.TryGetValue(name, out var nr)
+                    ? (name, nr.RecName, nr.Outer, nr.Acc)
+                    : null;
                 var computed = StripSyntheticTokens(ResultReach(info.Body, env));
+                _maSelfRec = null;
                 var merged = ReachJoin(_maResultReach[name], computed);
                 if (!ReachEquals(_maResultReach[name], merged))
                 {
@@ -728,7 +797,56 @@ public sealed partial class Lowering
             }
         }
 
+        // Internal-sharing at the cell-identity level: two SIMULTANEOUSLY-live tokens where one is a
+        // proper path-ancestor of the other (e.g. "map" and "map/1", or a fresh "#3" and "#3/0") mean the
+        // result embeds both a value AND one of its own sub-cells — the sub-cell is reachable through two
+        // paths, exactly the internal sharing the entry copy exists to unshare. Disjoint sibling sub-cells
+        // ("map/1" and "map/2") are NOT in an ancestor relation, so partitioning a value and re-embedding
+        // its distinct parts (a rebalance/rebuild) never falsely poisons. Only summed (simultaneously-live)
+        // positions are checked — branch joins (ReachMax) never manufacture this.
+        if (!poison)
+        {
+            poison = HasPathAncestorPair(counts);
+        }
+
         return (counts, poison);
+    }
+
+    // True when the token set contains a proper path-ancestor/descendant pair: some key k and another key
+    // equal to k + "/" + suffix. Path segments are separated by '/', which no identifier or synthetic
+    // token segment contains, so a prefix up to a '/' boundary is a genuine containment relation.
+    private static bool HasPathAncestorPair(Dictionary<string, int> counts)
+    {
+        foreach (var outer in counts.Keys)
+        {
+            string prefix = outer + "/";
+            foreach (var inner in counts.Keys)
+            {
+                if (inner.Length > prefix.Length && inner.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Extends every token in a reach by a heap-field position: destructuring a value's field <c>field</c>
+    // yields a DISTINCT sub-cell of every cell the value may alias, so each token k becomes "k/field".
+    // Distinct fields therefore stay disjoint (siblings), while a field of a field nests deeper — the path
+    // records the containment used by <see cref="HasPathAncestorPair"/>.
+    private static (Dictionary<string, int> Counts, bool Poison) ExtendPaths(
+        (Dictionary<string, int> Counts, bool Poison) r,
+        int field)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            counts[k + "/" + field] = v;
+        }
+
+        return (counts, r.Poison);
     }
 
     // Branch join (if/match arms — at most one executes): multiplicities take the max, so distinct arms
@@ -809,19 +927,27 @@ public sealed partial class Lowering
         return (counts, false);
     }
 
-    // Drops synthetic '#'-prefixed identity tokens from a summary (they are local to one function's
-    // ResultReach pass and must never be stored or reach IsResultAliasMove). Poison is preserved: a
-    // token that reached the cap already set poison during the sum before it is stripped here.
+    // Collapses a working reach to the stored per-function summary: each path token is reduced to its ROOT
+    // (the segment before the first '/'), synthetic '#'-rooted identity tokens are dropped (they are local
+    // to one function's ResultReach pass and must never be stored or reach IsResultAliasMove), and each
+    // surviving real parameter is recorded at presence (multiplicity 1) — a parameter reached through two
+    // DISJOINT sub-cells ("map/1" and "map/2") is reached once, not twice; a genuine same-cell double
+    // (which would be internal sharing) already set poison during the sum before this collapse. Poison is
+    // preserved. The result keys are exactly parameter names, so IsResultAliasMove/CallReach can map them.
     private static (Dictionary<string, int> Counts, bool Poison) StripSyntheticTokens(
         (Dictionary<string, int> Counts, bool Poison) r)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var (k, v) in r.Counts)
+        foreach (var k in r.Counts.Keys)
         {
-            if (k.Length == 0 || k[0] != '#')
+            int slash = k.IndexOf('/');
+            string root = slash < 0 ? k : k.Substring(0, slash);
+            if (root.Length == 0 || root[0] == '#')
             {
-                counts[k] = v;
+                continue;
             }
+
+            counts[root] = 1;
         }
 
         return (counts, r.Poison);
@@ -982,50 +1108,58 @@ public sealed partial class Lowering
         (Dictionary<string, int> Counts, bool Poison) scrut,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
-        var names = new List<string>();
-        CollectPatternVars(p, names);
-        if (names.Count == 0)
-        {
-            return env;
-        }
-
         var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal);
-        foreach (var n in names)
-        {
-            // Each pattern variable may alias the scrutinee (so it carries the scrutinee's reach) but is a
-            // distinct sub-value, so it also gets its own fresh identity token: two DIFFERENT pattern vars
-            // in one heap shape (`Node(l)(0)(r)`) stay disjoint, while the SAME pattern var used twice
-            // (`Node(l)(0)(l)`) sums its token to the cap and poisons — even when the scrutinee is fresh.
-            env2[n] = ReachSum(scrut, TokenReach());
-        }
-
+        BindPatternPaths(p, scrut, env2);
         return env2;
     }
 
-    private static void CollectPatternVars(Pattern p, List<string> into)
+    /// <summary>
+    /// Binds each variable of pattern <paramref name="p"/> to its reach, deriving DISJOINT sub-cell paths
+    /// from the scrutinee reach <paramref name="parentReach"/>: a constructor/tuple/cons field at index
+    /// <c>i</c> is a distinct sub-cell, so its reach is <see cref="ExtendPaths"/>(parent, i). Distinct
+    /// fields stay disjoint siblings (rebuilding a value from its own distinct parts never manufactures
+    /// sharing), while the same variable used twice, or a field-of-a-field co-embedded with its parent,
+    /// still poisons through the path relation. A bound variable additionally carries a fresh identity
+    /// token so the same-variable-twice case poisons even when the scrutinee is a fresh (path-less) value.
+    /// </summary>
+    private void BindPatternPaths(
+        Pattern p,
+        (Dictionary<string, int> Counts, bool Poison) parentReach,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env2)
     {
         switch (p)
         {
             case Pattern.Var v:
-                into.Add(v.Name);
+                // A bare Var pattern whose name is a data constructor is a NULLARY-constructor pattern
+                // (matching a specific 0-field tag), not a variable binding — it binds nothing, and the
+                // matched value is that nullary constant. Leaving it unbound lets any reference to the
+                // name in the arm resolve as the constructor (a sole-nullary reaches nothing; a non-sole
+                // nullary poisons), instead of aliasing the whole scrutinee. Without this, a nullary arm
+                // that reuses the tag (`| Empty -> makeNode(Empty)(k)(v)(Empty)`) would bind "Empty" to the
+                // scrutinee and, using it twice, falsely report the scrutinee as internally shared.
+                if (!_constructorSymbols.ContainsKey(v.Name))
+                {
+                    env2[v.Name] = ReachSum(parentReach, TokenReach());
+                }
+
                 break;
             case Pattern.Constructor c:
-                foreach (var sub in c.Patterns)
+                for (int i = 0; i < c.Patterns.Count; i++)
                 {
-                    CollectPatternVars(sub, into);
+                    BindPatternPaths(c.Patterns[i], ExtendPaths(parentReach, i), env2);
                 }
 
                 break;
             case Pattern.Tuple t:
-                foreach (var sub in t.Elements)
+                for (int i = 0; i < t.Elements.Count; i++)
                 {
-                    CollectPatternVars(sub, into);
+                    BindPatternPaths(t.Elements[i], ExtendPaths(parentReach, i), env2);
                 }
 
                 break;
             case Pattern.Cons cons:
-                CollectPatternVars(cons.Head, into);
-                CollectPatternVars(cons.Tail, into);
+                BindPatternPaths(cons.Head, ExtendPaths(parentReach, 0), env2);
+                BindPatternPaths(cons.Tail, ExtendPaths(parentReach, 1), env2);
                 break;
             default:
                 break;
@@ -1045,6 +1179,44 @@ public sealed partial class Lowering
     {
         var args = new List<Expr>();
         var head = CollectCallArgs(e, args);
+
+        // Inner recursive self-call of a nested-rec (Map.set-shape) function: `go(x)` denotes the enclosing
+        // function applied to the SAME outer params with the accumulator set to x. Resolve it against the
+        // enclosing function's own (growing) summary: substitute the accumulator parameter's reach with
+        // reach(x) and hold every outer parameter at its identity reach in env. This closes the recursion
+        // through the standard monotone fixpoint (the self summary starts at bottom and only grows).
+        if (_maSelfRec is { } sr
+            && head is Expr.Var rv
+            && string.Equals(rv.Name, sr.RecName, StringComparison.Ordinal)
+            && args.Count == 1)
+        {
+            if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
+            {
+                return selfSummary.Poison ? ReachPoisoned() : ReachBottom();
+            }
+
+            var selfResult = ReachBottom();
+            foreach (var (paramName, mult) in selfSummary.Counts)
+            {
+                (Dictionary<string, int> Counts, bool Poison) paramReach;
+                if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
+                {
+                    paramReach = ResultReach(args[0], env);
+                }
+                else if (env.TryGetValue(paramName, out var outerReach))
+                {
+                    paramReach = outerReach; // an outer parameter, held at identity
+                }
+                else
+                {
+                    return ReachPoisoned();
+                }
+
+                selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
+            }
+
+            return selfResult;
+        }
 
         if (head is Expr.Var hv && _constructorSymbols.TryGetValue(hv.Name, out var ctor))
         {
