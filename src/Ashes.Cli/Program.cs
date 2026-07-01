@@ -33,6 +33,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
     table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
+    table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
@@ -182,6 +183,37 @@ static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel le
             level = BackendCompileOptions.Default.OptimizationLevel;
             return false;
     }
+}
+
+// Parses the --parallel-stack-size value. Accepts a plain byte count or a K/M/G suffix
+// (e.g. "2M", "1048576"). Must be a positive size.
+static long ParseParallelStackSize(string value)
+{
+    string trimmed = value.Trim();
+    long multiplier = 1;
+    if (trimmed.Length > 0)
+    {
+        char suffix = char.ToLowerInvariant(trimmed[^1]);
+        multiplier = suffix switch
+        {
+            'k' => 1024L,
+            'm' => 1024L * 1024,
+            'g' => 1024L * 1024 * 1024,
+            _ => 1,
+        };
+        if (multiplier != 1)
+        {
+            trimmed = trimmed[..^1];
+        }
+    }
+
+    if (!long.TryParse(trimmed, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long amount)
+        || amount <= 0)
+    {
+        throw new CliUsageException("--parallel-stack-size expects a positive byte count (optionally suffixed with K, M, or G).");
+    }
+
+    return amount * multiplier;
 }
 
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
@@ -511,6 +543,7 @@ async Task<int> RunCompileAsync(string[] a)
     string? inputFile = null;
     string? projectPath = null;
     string? targetCpu = null;
+    long? parallelStackBytes = null;
 
     for (int i = 0; i < a.Length; i++)
     {
@@ -518,6 +551,7 @@ async Task<int> RunCompileAsync(string[] a)
 
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
         if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
@@ -550,7 +584,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes);
 
     var sw = Stopwatch.StartNew();
     byte[] image;
@@ -635,12 +669,14 @@ async Task<int> RunRunAsync(string[] a)
     string? inputFile = null;
     string? projectPath = null;
     string? targetCpu = null;
+    long? parallelStackBytes = null;
 
     for (int i = 0; i < cliArgs.Length; i++)
     {
         var arg = cliArgs[i];
         if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
+        if (arg == "--parallel-stack-size" && i + 1 < cliArgs.Length) { parallelStackBytes = ParseParallelStackSize(cliArgs[++i]); continue; }
         if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
@@ -670,7 +706,7 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes);
     byte[] image;
     if (project is null)
     {
@@ -723,18 +759,20 @@ async Task<int> RunReplAsync(string[] a)
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? targetCpu = null;
+    long? parallelStackBytes = null;
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         throw new CliUsageException("Unknown argument.");
     }
 
     target ??= BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes);
     var sessionBindings = new List<ReplBinding>();
 
     AnsiConsole.Write(new Rule("[bold]Ashes REPL[/]").RuleStyle("grey").LeftJustified());
@@ -896,6 +934,7 @@ int RunTest(string[] a)
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? projectPath = null;
     string? targetCpu = null;
+    long? parallelStackBytes = null;
     var paths = new List<string>();
 
     for (int i = 0; i < a.Length; i++)
@@ -903,6 +942,7 @@ int RunTest(string[] a)
         var arg = a[i];
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -915,7 +955,7 @@ int RunTest(string[] a)
 
     var project = ResolveProject(projectPath, null, null);
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes);
 
     return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions);
 }

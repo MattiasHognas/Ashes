@@ -9,7 +9,7 @@ internal static class LlvmTargetSetup
     private static bool _initialized;
     private static readonly Lock SyncRoot = new();
 
-    public static LlvmTargetContext Create(string targetId, BackendOptimizationLevel optimizationLevel, string? targetCpu = null)
+    public static LlvmTargetContext Create(string targetId, BackendOptimizationLevel optimizationLevel, string? targetCpu = null, long? parallelWorkerStackBytes = null)
     {
         EnsureInitialized();
 
@@ -92,7 +92,7 @@ internal static class LlvmTargetSetup
         }
 
         LlvmBuilderHandle builder = LlvmApi.CreateBuilderInContext(context);
-        return new LlvmTargetContext(context, module, builder, machine, targetTriple);
+        return new LlvmTargetContext(context, module, builder, machine, targetTriple, parallelWorkerStackBytes);
     }
 
     private static void EnsureInitialized()
@@ -124,7 +124,10 @@ internal sealed record LlvmTargetContext(
     LlvmModuleHandle Module,
     LlvmBuilderHandle Builder,
     LlvmTargetMachineHandle TargetMachine,
-    string TargetTriple) : IDisposable
+    string TargetTriple,
+    // Per-worker stack size (bytes) for structured parallelism. Null = the built-in default
+    // (see LlvmCodegen.DefaultParallelWorkerStackBytes on linux; the OS default on win-x64).
+    long? ParallelWorkerStackBytes = null) : IDisposable
 {
     private int _moduleConstantCounter;
 

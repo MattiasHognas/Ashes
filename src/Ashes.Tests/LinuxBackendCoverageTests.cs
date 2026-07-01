@@ -47,6 +47,23 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_parallel_worker_stack_size_tunable_is_honored()
+    {
+        var ir = LowerExpression("match Ashes.Parallel.both(fun (u) -> 3 + 4)(fun (u) -> 5 + 6) with | (a, b) -> Ashes.IO.print(a + b)");
+
+        byte[] unset = new LinuxX64LlvmBackend().Compile(ir);
+        byte[] explicitDefault = new LinuxX64LlvmBackend().Compile(ir,
+            new BackendCompileOptions(BackendOptimizationLevel.O2, ParallelWorkerStackBytes: 1L * 1024 * 1024));
+        byte[] custom = new LinuxX64LlvmBackend().Compile(ir,
+            new BackendCompileOptions(BackendOptimizationLevel.O2, ParallelWorkerStackBytes: 8L * 1024 * 1024));
+
+        // Default is unchanged: leaving the tunable unset matches an explicit 1 MiB worker stack.
+        explicitDefault.ShouldBe(unset);
+        // The tunable is honored: an 8 MiB worker stack changes the emitted image.
+        custom.ShouldNotBe(unset);
+    }
+
+    [Test]
     public void Linux_backend_compile_should_support_string_concat_programs()
     {
         var bytes = CompileForLinux("Ashes.IO.print(\"hello \" + \"world\")");
