@@ -609,6 +609,7 @@ public sealed partial class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
+        bool reuseNode = false;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
@@ -616,6 +617,7 @@ public sealed partial class Lowering
             // above, so overwriting the cell now is safe.
             Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
             _reuseResultTemps.Add(ptrTemp);
+            reuseNode = true;
         }
         else if (stackAllocate)
         {
@@ -656,10 +658,26 @@ public sealed partial class Lowering
                 }
                 else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
                 {
-                    // Tuple of copy-type elements: a fixed-size shallow copy fully materializes it.
-                    int persistentField = NewTemp();
-                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, tup.Elements.Count * 8));
-                    fieldTemp = persistentField;
+                    int sizeBytes = tup.Elements.Count * 8;
+                    if (reuseNode)
+                    {
+                        // Update path: the reused node's old value cell (a same-size blob tuple, still in
+                        // field i until we overwrite it below) is dead. Overwrite its contents in place
+                        // rather than allocating a fresh blob cell, so value storage is reused and the blob
+                        // stays bounded by distinct keys instead of growing per update.
+                        int oldValueTemp = NewTemp();
+                        Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, i));
+                        Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
+                        fieldTemp = oldValueTemp;
+                    }
+                    else
+                    {
+                        // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
+                        // the number of distinct keys).
+                        int persistentField = NewTemp();
+                        Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, sizeBytes));
+                        fieldTemp = persistentField;
+                    }
                 }
             }
 

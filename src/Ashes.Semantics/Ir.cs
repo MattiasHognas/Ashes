@@ -276,6 +276,10 @@ public abstract record IrInst
     /// so it survives the loop's per-iteration reset alongside the reused/to-space node.
     /// </summary>
     public sealed record CopyOutArenaToSpace(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+    // In-place value-cell reuse: memcpy SizeBytes from SrcTemp into the (already-persistent, same-size) cell
+    // at DestTemp. Used on the reuse/update path so a fresh fixed-size heap value (e.g. a Map tuple value)
+    // overwrites the superseded value's blob cell instead of allocating a new one — keeps the blob bounded.
+    public sealed record CopyFixedInto(int DestTemp, int SrcTemp, int SizeBytes) : IrInst;
 
     /// <summary>
     /// Describes how head values are handled during deep list copy-out.

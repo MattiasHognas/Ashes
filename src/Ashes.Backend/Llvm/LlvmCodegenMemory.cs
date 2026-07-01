@@ -626,6 +626,16 @@ internal static partial class LlvmCodegen
     /// the proven layout of copy-type (e.g. Int-keyed) maps. Only the dynamic-size (string) path is needed
     /// today (in-place-reuse key/value materialization). See <see cref="IrInst.CopyOutArenaToSpace"/>.
     /// </summary>
+    // memcpy SizeBytes from *srcTemp into the existing cell at *destTemp (in-place value-cell reuse).
+    private static bool EmitCopyFixedInto(LlvmCodegenState state, int destTemp, int srcTemp, int sizeBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, LoadTemp(state, destTemp), state.I8Ptr, "copy_into_dest");
+        LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, LoadTemp(state, srcTemp), state.I8Ptr, "copy_into_src");
+        EmitCopyBytes(state, destBytes, srcBytes, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "copy_into");
+        return false;
+    }
+
     private static LlvmValueHandle EmitCopyOutArenaToSpace(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
     {
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
