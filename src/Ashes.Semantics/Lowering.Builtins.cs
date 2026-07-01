@@ -182,6 +182,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerFileReadChunk(Expr handleArg, Expr countArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        CheckUseAfterDrop(handleArg);
         var (handleTemp, handleType) = LowerExpr(handleArg);
         Unify(Prune(handleType), _resolvedTypes["FileHandle"]);
         var (countTemp, countType) = LowerExpr(countArg);
@@ -215,6 +216,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerFileReadLine(Expr handleArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        CheckUseAfterDrop(handleArg);
         var (handleTemp, handleType) = LowerExpr(handleArg);
         Unify(Prune(handleType), _resolvedTypes["FileHandle"]);
         var target = NewTemp();
