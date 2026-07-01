@@ -47,6 +47,12 @@ public static class StateMachineTransform
     /// <returns>The transformed instruction list with state machine structure.</returns>
     public static StateMachineResult Transform(List<IrInst> instructions, int captureCount)
     {
+        // A `both`'s worker descriptor and worker arena are NOT part of the serialized coroutine
+        // state struct and cannot survive a suspend/resume, so a fork/join/cleanup group must stay
+        // within a single coroutine segment (no `await` between a fork and its cleanup). Assert it
+        // rather than assume it, now that (once wired) coroutines can carry user `both`s.
+        AssertParallelForkJoinWithinSegment(instructions);
+
         // Find all AwaitTask instructions and their positions
         var awaitPositions = new List<int>();
         for (int i = 0; i < instructions.Count; i++)
@@ -294,6 +300,39 @@ public static class StateMachineTransform
         }
 
         return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+    }
+
+    /// <summary>
+    /// Asserts the structured-parallelism invariant that a <c>both</c>'s fork → join → cleanup group
+    /// stays within a single coroutine segment: no <see cref="IrInst.AwaitTask"/> may appear between
+    /// a <see cref="IrInst.ParallelFork"/> and its matching <see cref="IrInst.ParallelCleanup"/>.
+    /// The worker descriptor and worker arena are not serialized into the coroutine state struct, so
+    /// a fork straddling an <c>await</c> would leak the worker and dangle its arena on resume.
+    /// <see cref="Lowering"/>'s <c>LowerParallelBoth</c> emits fork+join+cleanup contiguously with no
+    /// intervening <c>await</c>, so this holds by construction — this check turns that contract into a
+    /// hard invariant so a future lowering change can't silently break it.
+    /// </summary>
+    private static void AssertParallelForkJoinWithinSegment(List<IrInst> instructions)
+    {
+        var openForks = new HashSet<int>();
+        foreach (var inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.ParallelFork fork:
+                    openForks.Add(fork.DescTarget);
+                    break;
+                case IrInst.ParallelCleanup cleanup:
+                    openForks.Remove(cleanup.DescTemp);
+                    break;
+                case IrInst.AwaitTask when openForks.Count > 0:
+                    throw new InvalidOperationException(
+                        "Structured-parallelism invariant violated: an `await` appears between a " +
+                        "ParallelFork and its ParallelCleanup. A `both` fork/join/cleanup must stay " +
+                        "within a single coroutine segment because the worker descriptor and arena " +
+                        "are not part of the serialized coroutine state.");
+            }
+        }
     }
 
     /// <summary>
@@ -576,6 +615,12 @@ public static class StateMachineTransform
             IrInst.CreateTlsCloseTask i => [i.Target],
             IrInst.AsyncAll i => [i.Target],
             IrInst.AsyncRace i => [i.Target],
+            // Structured parallelism (`both`). A `both`'s worker descriptor or joined result may be
+            // live across an `await` split, so the transform must know these instructions define
+            // temps — otherwise the value would be dropped from the coroutine save/restore set and
+            // read back as garbage on resume.
+            IrInst.ParallelFork i => [i.DescTarget],
+            IrInst.ParallelJoin i => [i.ResultTarget],
             _ => []
         };
     }
@@ -689,6 +734,13 @@ public static class StateMachineTransform
             IrInst.CreateTlsCloseTask t => [t.SslTemp],
             IrInst.AsyncAll aa => [aa.TaskListTemp],
             IrInst.AsyncRace ar => [ar.TaskListTemp],
+            // Structured parallelism (`both`). The fork reads its right-thunk closure, and the join
+            // and cleanup read the worker descriptor; any of these temps defined before an `await`
+            // and read after it must be recognised as used or it would be dropped from the coroutine
+            // save/restore set.
+            IrInst.ParallelFork p => [p.RightClosureTemp],
+            IrInst.ParallelJoin p => [p.DescTemp],
+            IrInst.ParallelCleanup p => [p.DescTemp],
             IrInst.PanicStr p => [p.Source],
             IrInst.JumpIfFalse j => [j.CondTemp],
             IrInst.Return r => [r.Source],
