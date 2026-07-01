@@ -59,7 +59,7 @@ stable IDs.
 | ID | Item | Notes |
 |----|------|-------|
 | **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds** and **non-`Ashes.Map` (user-ADT) direct-reuse folds**. See the detailed write-up below. Remaining under the broader ownership milestone: higher-order seeds, richer aliasing (a `let`-bound fresh value proven dead), and the interprocedural direct-reuse growing-accumulator shapes (all conservatively keep the copy today). |
-| **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). Design/validation task. |
+| **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). **Increment landed:** the state-machine transform's `Parallel*` liveness + fork/join/cleanup-within-one-segment invariant (the one blocker that was independently verifiable without the scheduler) is now implemented and directly unit-tested (`StateMachineTransformTests`), so it is no longer untested dead code. Remaining blockers: the non-blocking scheduler, wiring the coroutine path to user code, and the concurrent-overlap test. Design/validation + partial implementation task. |
 
 ---
 
@@ -262,8 +262,11 @@ folds over non-`Ashes.Map` recursive ADTs.
 
 ### CO-7 — detailed analysis (`both` vs. the async runtime)
 
-**Status: design/validation complete; the original diagnosis was wrong, and there is no safe *and*
-verifiable runtime increment yet — the real fix is a scheduler milestone.** This section records the
+**Status: design/validation complete; the original diagnosis was wrong. Blocker (3) — the
+`StateMachineTransform` liveness/invariant work — is now implemented and directly unit-tested (see
+below); the remaining blockers (1) the non-blocking scheduler, (2) wiring the dead coroutine path,
+and (4) the concurrent-overlap test are still a milestone-sized runtime, and no *runtime* increment
+(anything a compiled program observes) is safe-and-verifiable until (1)/(2) exist.** This section records the
 mechanism as it actually is on current `main`, corrects the roadmap's earlier "`both` lowers to
 inline inside an async state machine" claim, and lists the precise blockers.
 
@@ -326,17 +329,22 @@ thread runs other code.
    suspensions cooperatively so the main thread can advance a `both` while an I/O is pending. That is
    a milestone-sized runtime, not a conservative increment.
 2. *Preserving `both`'s forkable shape through the state-machine transform* is a **precondition** of
-   (1), not independently verifiable now: with the transform unreachable, any change to it is
-   untested dead code. When (1) is built it will need two things. **(a)** `StateMachineTransform`'s
-   liveness tables (`GetDefinedTemps` / `GetUsedTemps`) must learn `ParallelFork` (`DescTarget`),
-   `ParallelJoin` (`ResultTarget` / `DescTemp`), and `ParallelCleanup` (`DescTemp`) — they are absent
-   today, so a `both` descriptor/result live across an `await` split would be dropped from the
-   save/restore set and miscompile. **(b)** The lowering must guarantee a `both`'s
-   fork→join→cleanup stays **within a single coroutine segment** (no `await` between fork and join),
-   because the worker descriptor and worker arena are not part of the serialized state struct and
-   cannot survive a suspend/resume. `LowerParallelBoth` already emits fork+join+cleanup contiguously
-   with no intervening `await`, so this holds by construction — but it must be asserted, not assumed,
-   once coroutines carry user code.
+   (1). It has two parts, **both now implemented and directly unit-tested** (`StateMachineTransformTests`
+   drives `StateMachineTransform.Transform` on hand-built IR — the transform is still unreachable from
+   user programs, but these changes are no longer *untested* dead code):
+   **(a)** `StateMachineTransform`'s liveness tables (`GetDefinedTemps` / `GetUsedTemps`) now know
+   `ParallelFork` (defines `DescTarget`, uses `RightClosureTemp`), `ParallelJoin` (defines
+   `ResultTarget`, uses `DescTemp`), and `ParallelCleanup` (uses `DescTemp`) — so a `both` descriptor,
+   joined result, or right-thunk closure live across an `await` split is now saved/restored instead of
+   dropped. Two tests assert the save/restore actually happens (each fails if its liveness case is
+   removed). **(b)** `Transform` now asserts (via `AssertParallelForkJoinWithinSegment`) that a `both`'s
+   fork→join→cleanup stays **within a single coroutine segment** (no `await` between a `ParallelFork`
+   and its `ParallelCleanup`), because the worker descriptor and worker arena are not part of the
+   serialized state struct and cannot survive a suspend/resume. `LowerParallelBoth` emits
+   fork+join+cleanup contiguously with no intervening `await`, so this holds by construction — the
+   assertion turns that contract into a hard invariant (a test feeds a fork/await/cleanup shape and
+   asserts it throws; the contiguous shape does not). This unblocks (2) for the parallelism side, but
+   the coroutine path is still not *reachable* from user code — that is blocker (2)-proper below.
 
 **Verifiable increment that *was* landed.** `tests/parallel_async_coexist.ash`: a portable (no
 loopback server) regression that runs two genuinely-forking concrete-result `both`s (heavy
@@ -352,7 +360,12 @@ is impossible without the scheduler above.)
    milestone; everything else depends on it).
 2. Wire the dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path so user
    `async` code lowers to a genuine suspending coroutine.
-3. Extend `StateMachineTransform` liveness to the three `Parallel*` instructions (blocker-(2)(a)
-   above) and assert the fork→join→cleanup-within-one-segment invariant (blocker-(2)(b)).
+3. ~~Extend `StateMachineTransform` liveness to the three `Parallel*` instructions (blocker-(2)(a)
+   above) and assert the fork→join→cleanup-within-one-segment invariant (blocker-(2)(b)).~~
+   **DONE** — `GetDefinedTemps`/`GetUsedTemps` now cover `ParallelFork`/`ParallelJoin`/`ParallelCleanup`,
+   and `Transform` asserts the within-one-segment invariant. Directly unit-tested by
+   `StateMachineTransformTests` (each liveness assertion fails if its case is removed; the invariant
+   test asserts a fork/await/cleanup shape throws). This is the one increment that was *both* real
+   work on the remaining blockers *and* independently verifiable without the scheduler.
 4. A test that observes *actual concurrent overlap* (a `both` worker making progress while an async
-   I/O is pending) — only meaningful once 1–3 exist.
+   I/O is pending) — only meaningful once 1–2 exist.
