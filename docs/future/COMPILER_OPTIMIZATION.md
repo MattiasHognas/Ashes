@@ -55,7 +55,7 @@ stable IDs.
 
 | ID | Item | Notes |
 |----|------|-------|
-| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Analysis-only — no sound elision implemented; correctness dominates.** See the detailed write-up below. In-place reuse makes the accumulator unique via a deep copy at the fold *function's* entry; that copy re-executes on every re-entry, so an outer loop threading an accumulator into an inner reuse fold re-copies the growing structure each step and leaks (~map-size per outer iteration). A single flat loop copies once (constant memory). The sound fix is **path-aware interprocedural linearity** — skip the copy only when the accumulator is provably moved (dead + unaliased) at *every* call site — which the current infrastructure cannot prove. Corruption-prone; the elision is intentionally **not** enabled. |
+| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Analysis-only — no sound elision implemented; correctness dominates.** See the detailed write-up below. In-place reuse makes the accumulator unique via a deep copy at the fold *function's* entry; that copy re-executes on every re-entry, so an outer loop threading an accumulator into an inner reuse fold re-copies the growing structure each step and leaks (~map-size per outer iteration). A single flat loop copies once (constant memory). The sound fix is **path-aware interprocedural linearity** — skip the copy only when the accumulator is provably moved (dead + unaliased) at *every* call site — which the current infrastructure cannot prove. Corruption-prone; the elision is intentionally **not** enabled. Re-verified on current `main` (leak scales `O(batches × map-size)`, flat fold constant); confirmed there is **no sound *and* useful local shortcut** (the only locally-provable case is the already-constant single-call fold), and the detailed write-up now carries the concrete census + move/alias + fixpoint pass the milestone must add. |
 | **CO-3** | **arm64 networking + parallelism coexistence** | The arm64 per-thread arena is real ELF TLS (`PT_TLS`). A networking program `dlopen`s rustls, whose *dynamic* TLS conflicts with adding a `PT_TLS` to the image, so networking arm64 programs keep the single-threaded BSS arena and `both` runs inline. Making both coexist needs a dynamic-TLS-compatible arena (e.g. a dedicated TLS module accessed via the DTV, or not clobbering `TPIDR_EL0`). |
 | **CO-6** | **Verify win-x64 parallelism + networking coexistence** | Non-networking win-x64 parallelism is verified (wine); the TEB `gs:0x28` arena has not been tested together with rustls-on-Windows TLS. May or may not have the CO-3 conflict. Validation task. |
 
@@ -88,18 +88,22 @@ inner fold, so the inner fold's prologue copy runs again, deep-copying the whole
 accumulator. The copy lands in the persistent to-space/blob that in-place reuse never resets, so it
 is not reclaimed: total cost `O(outer-iterations × accumulator-size)`.
 
-Measured (nested `Ashes.Map.set` fold, ~map of 1024 keys, `outer` batches × 300 inner sets):
+**Re-measured on current `main` (peak RSS via `wait4`/`ru_maxrss`), nested `Ashes.Map.set` fold,
+map of 300 keys, `outer` batches × 300 inner sets:**
 
-| batches | flat single fold | nested (this shape) |
-|---|---|---|
-| 50 | — | 1.8 MB |
-| 200 | — | 4.4 MB |
-| 800 | — | 14.2 MB (≈ 16 KB / batch ≈ one full map copied per re-entry) |
+| batches | nested (this shape) |
+|---|---|
+| 400 | 8.0 MB |
+| 800 | 14.4 MB |
+| 1600 | 27.7 MB |
+| 3200 | 54.1 MB |
 
-A flat fold of the same total work is constant (60 000 rows → 1.7 MB, 240 000 rows → 1.7 MB): the
-prologue copy ran once. In all cases the output is **correct** — this is a leak, not a miscompile.
-`tests/reuse_nested_reentry_correct.ash` is a small, green regression that guards the *correctness*
-of the nested-reuse shape (it does not, and cannot in the harness, assert peak RSS).
+Peak RSS ≈ doubles when `batches` doubles → confirmed `O(batches × map-size)` (≈ one full map
+deep-copied per re-entry, ~16 KB/batch, never reclaimed). A flat fold of the *same total inner work*
+(15 000 / 240 000 / 960 000 `set`s into a 300-key map) is **flat at 5.7 MB** — the prologue copy ran
+exactly once. Output is **correct** in every case (300 distinct keys) — this is a leak, not a
+miscompile. `tests/reuse_nested_reentry_correct.ash` is a small, green regression that guards the
+*correctness* of the nested-reuse shape (it does not, and cannot in the harness, assert peak RSS).
 
 **What a sound elision requires.** Elide the prologue copy for accumulator parameter `p` of fold
 function `F` only if, at **every** call site of `F`, the argument bound to `p` is *moved*: dead on
@@ -110,18 +114,66 @@ exactly the corruption the roadmap warns about. Proving move + non-aliasing acro
 **path-aware interprocedural linearity**, and it is transitive (the caller's `p` is unique only if
 *its* own accumulator was unique, up the call chain). This is the ownership/borrowing milestone.
 
+**Why there is no sound *and useful* local shortcut (finding from the re-measurement).** The one
+case provable purely intraprocedurally — a fold whose accumulator has exactly **one external call
+site** passing a **syntactically fresh** allocation (a nullary/`empty` constructor or a fresh ctor
+application, provably unaliased) — is precisely the flat single-call fold, which **already runs the
+prologue copy once and is already constant-memory** (5.7 MB above, independent of work). Eliding its
+copy saves one `O(size)` copy at *startup* for **zero** steady-state memory benefit. Every
+leak-relevant shape is a fold called *inside a loop*, and a loop-called fold's accumulator argument
+is by construction the enclosing loop's *threaded* accumulator (e.g. `m` in
+`outer(...)(setFold(0)(n)(m))`) — semantically moved (`m` is dead after the call, its slot is
+overwritten by the result), but provably so only by the transitive whole-program argument above.
+Concretely, `setFold`'s two call sites both pass a move: `outer`'s body passes `m` (dead after), and
+`setFold`'s self-recursion passes the fresh `set(...)` result — yet proving `m` is a move needs
+`outer`'s own accumulator to be unique, which needs `outer`'s caller (`outer(0)(30)(empty)`, fresh)
+to move it, up the chain. **So the leak is genuinely elidable, but only with the interprocedural,
+transitive proof — no local increment both is sound and removes the leak.**
+
 Two viable implementation strategies, both deferred:
 
 1. *Definition-directed*: at `F`'s definition, prove all call sites move+own the arg, then drop the
    prologue copy. Needs a whole-program call-site + aliasing pass.
 2. *Call-site specialization*: generate a no-copy `F$moved` clone and route only provably
-   move+own call sites to it (leaving the safe copy on the default entry). More local, but still
-   needs the per-call-site uniqueness proof.
+   move+own call sites to it (leaving the safe copy on the default entry). Preferred — it keeps the
+   defensive copy on any unproven or newly-added call site, so a proof gap degrades to a (correct)
+   leak, never to corruption.
+
+**Concrete minimal pass the milestone must add (design sketch).** A Semantics-phase analysis (no
+Backend dependency), computed over the AST *before* `LowerLambda` emits the prologue copy:
+
+1. *Call-site census* — one whole-program walk building, per candidate fold `F` and its accumulator
+   parameter `p`, the list of `(enclosingFunction, argExpr)` for every saturated call to `F`.
+   Lowering already discovers the candidate set and its reuse-call args
+   (`_specializableFunctions`, `CollectSpecializableCallArgs`, `CollectCtorMatchedScrutinees`);
+   extend that to record *all* syntactic call sites, not only the ones inside the fold being lowered.
+2. *Local move/alias check per call site* — the arg passed to `p` is a **move** iff it is either
+   (i) a syntactically fresh allocation (ctor application or literal — unaliased by construction), or
+   (ii) a `Var v` that is (a) a `let`/parameter binding, (b) **dead** on every path after this call
+   in the enclosing function body (no later occurrence — an intraprocedural last-use/liveness check
+   over the AST, buildable from the existing free-variable/occurrence scans), and (c) **not aliased**
+   — never captured by a closure, stored into a tuple/list/ADT that outlives the call, returned, or
+   passed to a second parameter position that retains it.
+3. *Transitive fixpoint* — `p` is move-safe iff every call-site arg is a move by (2), where a
+   `Var v` of kind (ii) additionally requires `v`'s own defining parameter (when `v` is itself an
+   accumulator parameter of the enclosing function `G`) to be move-safe. Solve as a monotone
+   greatest-fixpoint: assume all candidate params move-safe, retract any param with a call-site arg
+   that fails the local check or references an already-retracted param, iterate to fixpoint.
+   **Conservative default is not-move-safe** (copy stays), so an incomplete analysis never corrupts.
+4. *Wiring* — for a fold whose accumulator param is move-safe at every site, suppress the prologue
+   `EmitDeepCopy` via strategy 2 (`F$moved` clone routed only from proven sites). Re-measure: the
+   dominant leak term is the entry deep-copy, but the reuse path also materialises fresh leaf fields
+   (Str/Bytes/tuple keys/values) into a **persistent to-space that in-place reuse never resets** — for
+   a repeated-key workload that to-space is bounded to one map, so eliding the entry copy should
+   remove the per-batch term; a genuinely-*new*-key-per-batch workload would still need the outer
+   back-edge to reset that to-space. This must be confirmed empirically once the elision is enabled.
 
 **Blocker.** `Lowering.Ownership.cs` currently models only *affine ownership of resource handles*
-(files/sockets/processes) for deterministic `Drop`; it has no general-ADT value linearity and no
-interprocedural aliasing pass. Without one, there is no way to prove the "moved at every call site"
-precondition, so the elision stays off. This item unblocks with that milestone.
+(files/sockets/processes) for deterministic `Drop`; it has (a) no general-ADT value linearity, (b) no
+intraprocedural liveness / last-use analysis for ordinary values, (c) no whole-program call-site
+census, and (d) no aliasing/escape analysis for non-resource values. All four are prerequisites for
+the "moved at every call site" proof above; without them the elision stays off. This item unblocks
+with that milestone.
 
 > **Adjacent bug found while building the repro (out of CO-2 scope, not fixed here):** a TCO loop
 > whose accumulator is a recursive ADT in a **non-last curried parameter position** miscompiles to a
