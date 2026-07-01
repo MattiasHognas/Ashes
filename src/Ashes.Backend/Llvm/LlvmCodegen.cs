@@ -176,7 +176,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.WindowsX64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options, rustlsSharedLibrary);
@@ -189,7 +189,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxX64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, rustlsSharedLibrary);
@@ -202,7 +202,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxArm64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, rustlsSharedLibrary);

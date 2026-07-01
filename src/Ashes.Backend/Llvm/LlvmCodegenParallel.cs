@@ -24,8 +24,15 @@ internal static partial class LlvmCodegen
     private const int ParallelDescWorkerArenaEnd = 48; // arm64: worker's heap-arena end (worker-written; parent walks chunks on cleanup)
     private const int ParallelDescSizeBytes = 56;
 
-    private const long ParallelStackBytes = 1L * 1024 * 1024; // 1 MiB worker stack
+    // Default per-worker stack size when the --parallel-stack-size tunable is unset. On linux this
+    // is the mmap'd worker-stack length; on win-x64 CreateThread gets the OS default (dwStackSize=0)
+    // unless the tunable is set.
+    internal const long DefaultParallelWorkerStackBytes = 1L * 1024 * 1024; // 1 MiB worker stack
     private const long ParallelWorkerCap = 8;                  // max concurrent workers
+
+    /// <summary>Resolved per-worker stack size (bytes) for the linux mmap'd worker stack.</summary>
+    private static long ParallelStackBytesFor(LlvmCodegenState state) =>
+        state.Target.ParallelWorkerStackBytes ?? DefaultParallelWorkerStackBytes;
     // CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM — a thread
     // sharing the address space and fds, auto-reaped on exit (no SIGCHLD, no zombie).
     private const long ParallelCloneFlags = 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x40000;
@@ -220,9 +227,10 @@ internal static partial class LlvmCodegen
 
         if (state.Flavor == LlvmCodegenFlavor.LinuxX64 || state.Flavor == LlvmCodegenFlavor.LinuxArm64)
         {
-            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack");
+            long parallelStackBytes = ParallelStackBytesFor(state);
+            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack");
             StoreMemory(state, desc, ParallelDescWorkerStack, stack, "par_desc_stack");
-            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack_top");
+            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack_top");
             EmitCloneWorker(state, desc, stackTop); // EmitCloneWorker branches on flavor (x86 vs aarch64 asm)
         }
         else
@@ -233,8 +241,10 @@ internal static partial class LlvmCodegen
             LlvmValueHandle workerFn = LlvmApi.GetNamedFunction(state.Target.Module, ParallelWorkerFnName);
             LlvmTypeHandle createThreadType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I8Ptr, state.I8Ptr, state.I64, state.I64]);
             LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+            // dwStackSize: the configured per-worker stack size, or 0 (OS default) when unset.
+            LlvmValueHandle stackSize = LlvmApi.ConstInt(state.I64, (ulong)(state.Target.ParallelWorkerStackBytes ?? 0), 0);
             LlvmValueHandle handle = EmitWindowsImportCall(state, "__imp_CreateThread", createThreadType,
-                [zero, zero, workerFn, LlvmApi.BuildIntToPtr(builder, desc, state.I8Ptr, "par_desc_ptr"), zero, zero], "par_create_thread");
+                [zero, stackSize, workerFn, LlvmApi.BuildIntToPtr(builder, desc, state.I8Ptr, "par_desc_ptr"), zero, zero], "par_create_thread");
             StoreMemory(state, desc, ParallelDescWorkerStack, handle, "par_desc_handle");
         }
 
@@ -354,7 +364,7 @@ internal static partial class LlvmCodegen
         }
         else
         {
-            EmitFreeOsMemory(state, LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_stack"), ParallelStackBytes, "par_cleanup_stack");
+            EmitFreeOsMemory(state, LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_stack"), ParallelStackBytesFor(state), "par_cleanup_stack");
             arenaEnd = state.Flavor == LlvmCodegenFlavor.LinuxArm64
                 ? LoadMemory(state, desc, ParallelDescWorkerArenaEnd, "par_cleanup_arena_end")
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "par_cleanup_arena_end");

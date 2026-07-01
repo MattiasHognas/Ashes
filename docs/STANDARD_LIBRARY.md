@@ -203,6 +203,11 @@ and running sequentially for abstract ones. `map`/`reduce` currently run sequent
 - `map(f)(list)` returning `List(B)` — order-preserving map, split-and-fork shaped
 - `reduce(combine)(identity)(f)(list)` returning `B` — parallel map-then-fold for associative
   `combine` (the shard-and-merge shape for data-parallel aggregation)
+- `mapGrained(grain)(f)(list)` / `reduceGrained(grain)(combine)(identity)(f)(list)` — the same
+  operations with an explicit **grain size**: shards of `grain` elements or fewer are processed
+  sequentially instead of split further, trading split overhead against parallelism. `map`/`reduce`
+  are exactly `mapGrained(1)` / `reduceGrained(1)`. The result is always identical to the sequential
+  equivalent, whatever the grain (grains `< 1` behave as `1`).
 
 ### `Ashes.Internal`
 

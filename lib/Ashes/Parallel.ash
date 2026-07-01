@@ -38,26 +38,47 @@ let rec plAppend xs ys =
         | [] -> ys
         | h :: t -> h :: plAppend(t)(ys)
 
-let rec map f xs = 
+let rec plSeqMap f xs = 
+    match xs with
+        | [] -> []
+        | h :: t -> f(h) :: plSeqMap(f)(t)
+
+let rec plSeqReduce combine identity f xs = 
+    match xs with
+        | [] -> identity
+        | h :: [] -> f(h)
+        | h :: t -> combine(f(h))(plSeqReduce(combine)(identity)(f)(t))
+
+let rec mapGrained grain f xs = 
     match xs with
         | [] -> []
         | h :: [] -> f(h) :: []
         | _ -> 
-            let half = plLength(xs) / 2
-            in 
-                let leftRes = map(f)(plTake(xs)(half))
+            if plLength(xs) <= grain
+            then plSeqMap(f)(xs)
+            else 
+                let half = plLength(xs) / 2
                 in 
-                    let rightRes = map(f)(plDrop(xs)(half))
-                    in plAppend(leftRes)(rightRes)
+                    let leftRes = mapGrained(grain)(f)(plTake(xs)(half))
+                    in 
+                        let rightRes = mapGrained(grain)(f)(plDrop(xs)(half))
+                        in plAppend(leftRes)(rightRes)
 
-let rec reduce combine identity f xs = 
+let rec reduceGrained grain combine identity f xs = 
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
         | _ -> 
-            let half = plLength(xs) / 2
-            in 
-                let leftRes = reduce(combine)(identity)(f)(plTake(xs)(half))
+            if plLength(xs) <= grain
+            then plSeqReduce(combine)(identity)(f)(xs)
+            else 
+                let half = plLength(xs) / 2
                 in 
-                    let rightRes = reduce(combine)(identity)(f)(plDrop(xs)(half))
-                    in combine(leftRes)(rightRes)
+                    let leftRes = reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half))
+                    in 
+                        let rightRes = reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))
+                        in combine(leftRes)(rightRes)
+
+let map f xs = mapGrained(1)(f)(xs)
+
+let reduce combine identity f xs = reduceGrained(1)(combine)(identity)(f)(xs)
