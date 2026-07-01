@@ -7,7 +7,7 @@
 #   just ci              # full PR-equivalent pipeline
 #   just release 1.2.3   # build release artifacts into artifacts/release/ (local)
 #   just release-github  # build + tag + publish a GitHub Release
-#   just install-hooks   # wire pre-commit (ci-quick) + pre-push (ci)
+#   just install-hooks   # wire commit-msg (ban trailers) + pre-commit (ci-quick) + pre-push (ci)
 
 engine     := env_var_or_default("CI_ENGINE", "podman")
 node_major := env_var_or_default("NODE_MAJOR", "26")
@@ -101,7 +101,7 @@ release-github *args:
 
 # --- Git hooks -------------------------------------------------------------
 
-# Route git hooks to ci/hooks (pre-commit -> ci-quick, pre-push -> ci).
+# Route git hooks to ci/hooks (commit-msg -> ban trailers, pre-commit -> ci-quick, pre-push -> ci).
 install-hooks:
     git config core.hooksPath ci/hooks
     @echo "Hooks installed. Bypass with SKIP_CI=1 or 'git push --no-verify'."

@@ -16,6 +16,7 @@ public sealed partial class Lowering
                 ? loweredMatchValue
                 : LowerExpr(match.Value);
 
+
         // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
         // arm's pattern bindings, which take over its cleanup. Mark the binding moved so its own
         // recursive drop is skipped — otherwise the same resource would be closed twice (once by

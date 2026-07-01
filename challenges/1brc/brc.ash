@@ -10,19 +10,25 @@
 // the flaws it originally exposed have since been fixed in the compiler, and this
 // version uses those fixes:
 //   * #4: stations are ordered with Ashes.String.compare (a correct UTF-8 total
-//     order), so multibyte names sort correctly and never collide/merge -- the
-//     90-line hand-rolled ASCII comparator this file used to carry is gone.
-//   * #6: Ashes.Map/Ashes.String are called directly inside functions; the local-
-//     alias workaround they used to need is gone.
-// Input is still read whole-file with Ashes.File.readText (flaw #1 at full scale)
-// and split with the pure `uncons` builtin; per-line streaming via readLine is
-// now crash-free (#1b fixed) but remains unbuffered (#1).
+//     order), so multibyte names sort correctly and never collide/merge.
+//   * #6: Ashes.Map/Ashes.String are called directly inside functions.
+//
+// The whole file is folded in a SINGLE loop over Ashes.File.readLine, which reads one line at a
+// time through a buffered module-global (constant file memory; a line straddling a 64 KiB read is
+// reassembled inside readLine). Because it is one loop, the accumulator map is made unique by a
+// deep copy exactly ONCE at loop entry, and the get+set on `map` are inlined into the loop body so
+// the map's in-place reuse fires -- together these keep peak memory constant regardless of row
+// count (a per-chunk-re-entry structure would re-deep-copy the growing tree every chunk; see FLAWS).
+// Each line is parsed by integer byte index (Ashes.Bytes.indexOf/subText); ';' is ASCII so
+// byte-slicing the name never splits a multibyte codepoint.
 
 import Ashes.IO
 import Ashes.File
+import Ashes.List
 import Ashes.Map
 import Ashes.Text
 import Ashes.String
+import Ashes.Bytes
 let absInt n = 
     if n < 0
     then -n
@@ -79,53 +85,50 @@ let updateStats existing tenths =
                     else mx
                 in (newMin, newMax, sm + tenths, ct + 1)
 
-let processLine line map = 
-    (let sep = Ashes.String.indexOf(line)(";")
-    in 
-        if sep <= -1
-        then map
-        else 
-            if Ashes.String.substring(line)(0)(1) == "#"
-            then map
-            else 
-                let name = Ashes.String.substring(line)(0)(sep)
+let rec streamLoop handle map = 
+    match Ashes.File.readLine(handle) with
+        | None -> map
+        | Some(line) -> 
+            let bytes = Ashes.Bytes.fromText(line)
+            in 
+                let sep = Ashes.Bytes.indexOf(bytes)(59)(0)
                 in 
-                    let rest = Ashes.String.substring(line)(sep + 1)(64)
-                    in 
-                        let tenths = parseTenths(rest)
-                        in 
-                            match Ashes.Map.get(Ashes.String.compare)(name)(map) with
-                                | None -> Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map)
-                                | Some(existing) -> Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
+                    if sep < 0
+                    then streamLoop(handle)(map)
+                    else 
+                        if Ashes.Bytes.subText(bytes)(0)(1) == "#"
+                        then streamLoop(handle)(map)
+                        else 
+                            let name = Ashes.Bytes.subText(bytes)(0)(sep)
+                            in 
+                                let len = Ashes.Bytes.length(bytes)
+                                in 
+                                    let rest = Ashes.Bytes.subText(bytes)(sep + 1)(len - sep - 1)
+                                    in 
+                                        let tenths = parseTenths(rest)
+                                        in 
+                                            match Ashes.Map.get(Ashes.String.compare)(name)(map) with
+                                                | None -> streamLoop(handle)(Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map))
+                                                | Some(existing) -> streamLoop(handle)(Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
 
-let rec loop remaining lineAcc map = 
-    match Ashes.Text.uncons(remaining) with
-        | None -> 
-            if lineAcc == ""
-            then map
-            else processLine(lineAcc)(map)
-        | Some((c, rest)) -> 
-            if c == "\n"
-            then loop(rest)("")(processLine(lineAcc)(map))
-            else loop(rest)(lineAcc + c)(map)
-
-let renderEntry acc key value = 
+let collectEntry acc key value = 
     match value with
         | (mn, mx, sm, ct) -> 
             let entry = key + "=" + fmtTenths(mn) + "/" + fmtMean(sm)(ct) + "/" + fmtTenths(mx)
-            in 
-                if acc == ""
-                then entry
-                else acc + ", " + entry
+            in entry :: acc
 
-let body = 
+let final = 
     match Ashes.IO.args with
         | path :: _ -> 
-            match Ashes.File.readText(path) with
-                | Ok(text) -> text
-                | Error(_) -> ""
-        | [] -> ""
+            match Ashes.File.open(path) with
+                | Error(_e) -> Ashes.Map.empty
+                | Ok(handle) -> 
+                    let result = streamLoop(handle)(Ashes.Map.empty)
+                    in 
+                        let _closed = Ashes.File.close(handle)
+                        in result
+        | [] -> Ashes.Map.empty
 
-let final = loop(body)("")(Ashes.Map.empty)
+let entries = Ashes.List.reverse(Ashes.Map.foldLeft(collectEntry)([])(final))
 
-Ashes.IO.writeLine("{" + Ashes.Map.foldLeft(renderEntry)("")(final) + "}")
+Ashes.IO.writeLine("{" + Ashes.String.join(", ")(entries) + "}")

@@ -275,7 +275,7 @@ If two dependencies contain the same module path, the current resolver
 already has a useful ambiguity model. Lean on that instead of inventing a
 package-prefixed import syntax too early.
 
-------------------------------------------------------------------------
+---
 
 ## Recommended First Milestone
 

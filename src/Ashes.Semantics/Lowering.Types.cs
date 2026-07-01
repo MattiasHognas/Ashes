@@ -50,6 +50,10 @@ public sealed partial class Lowering
         public int ArenaCursorSlot { get; set; } = -1;
         public int ArenaEndSlot { get; set; } = -1;
 
+        // Stack pointer saved at the loop body label; restored at each back-edge so per-iteration dynamic
+        // stack allocations in the loop body are freed instead of accumulating until the stack overflows.
+        public int StackPtrSlot { get; set; } = -1;
+
         // Ownership-scope stack depth at the loop body start. Scopes pushed above this during the
         // iteration hold iteration-local resources that must be closed at the back-edge (else the
         // per-arm Drop becomes dead code after the jump and the resource leaks each iteration).
@@ -65,6 +69,7 @@ public sealed partial class Lowering
         FileReadText,
         FileOpen,
         FileReadChunk,
+        FileReadLine,
         FileClose,
         InternalDeepCopy,
         ParallelBoth,
@@ -97,6 +102,8 @@ public sealed partial class Lowering
         BytesSingleton,
         BytesLength,
         BytesGet,
+        BytesIndexOf,
+        BytesSubText,
         BytesAppend,
         BytesAppendByte,
         BytesFromList,

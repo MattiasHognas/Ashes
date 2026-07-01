@@ -538,6 +538,14 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
         }
+        else if (_inSpecialization)
+        {
+            // Fresh nullary cell (e.g. an Empty leaf of a node Map.set creates for a new key) inside an
+            // in-place reuse specialization: allocate in the persistent to-space so it survives the
+            // loop's per-iteration arena reset. See LowerConstructorApplication / IrInst.AllocAdtToSpace.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, 0));
+            _reuseResultTemps.Add(ptrTemp);
+        }
         else
         {
             Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
@@ -585,6 +593,7 @@ public sealed partial class Lowering
         // This catches mismatches when the same type parameter appears in multiple positions
         // (e.g., Pair(T, T) applied to arguments of different types).
         var argTemps = new List<int>(args.Count);
+        var argTypes = new List<TypeRef>(args.Count);
         for (int i = 0; i < args.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
@@ -592,6 +601,7 @@ public sealed partial class Lowering
 
             var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
             Unify(parameterType, argType);
+            argTypes.Add(Prune(argType));
             MarkResourceArgMoved(args[i]);
         }
 
@@ -599,6 +609,7 @@ public sealed partial class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
+        bool reuseNode = false;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
@@ -606,10 +617,21 @@ public sealed partial class Lowering
             // above, so overwriting the cell now is safe.
             Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
             _reuseResultTemps.Add(ptrTemp);
+            reuseNode = true;
         }
         else if (stackAllocate)
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
+        }
+        else if (_inSpecialization)
+        {
+            // Genuinely-new cell with no reuse token inside an in-place reuse specialization — e.g. the
+            // node Map.set creates for a NEW key. Allocate it in the persistent to-space so it survives
+            // the loop's per-iteration arena reset (the reset only reclaims the main arena). The cell is
+            // uniquely owned, so it is also a linear reuse result (a rebuild by balance/rotate reuses it
+            // in place, staying in to-space). See IrInst.AllocAdtToSpace / IsFullyReusing.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
+            _reuseResultTemps.Add(ptrTemp);
         }
         else
         {
@@ -617,7 +639,49 @@ public sealed partial class Lowering
         }
         for (int i = 0; i < argTemps.Count; i++)
         {
-            Emit(new IrInst.SetAdtField(ptrTemp, i, argTemps[i]));
+            int fieldTemp = argTemps[i];
+            // A FRESH heap leaf field of a reuse-built node (a Map key/value produced from the spec's
+            // newKey/newValue input, on insert OR update) must be copied into the persistent blob, or it
+            // dangles past the per-iteration reset (the node survives, but the field would point into
+            // reclaimed scratch). Fields taken from the matched accumulator (pattern bindings) are already
+            // persistent and are NOT copied — identified by the field argument being one of the spec's
+            // fresh-input names (see _specFreshInputNames, propagated through inlined helpers).
+            if (_inSpecialization && _specFreshInputNames is not null
+                && args[i] is Expr.Var fieldVar && _specFreshInputNames.Contains(fieldVar.Name))
+            {
+                var pruned = Prune(argTypes[i]);
+                if (pruned is TypeRef.TStr or TypeRef.TBytes)
+                {
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                    fieldTemp = persistentField;
+                }
+                else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
+                {
+                    int sizeBytes = tup.Elements.Count * 8;
+                    if (reuseNode)
+                    {
+                        // Update path: the reused node's old value cell (a same-size blob tuple, still in
+                        // field i until we overwrite it below) is dead. Overwrite its contents in place
+                        // rather than allocating a fresh blob cell, so value storage is reused and the blob
+                        // stays bounded by distinct keys instead of growing per update.
+                        int oldValueTemp = NewTemp();
+                        Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, i));
+                        Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
+                        fieldTemp = oldValueTemp;
+                    }
+                    else
+                    {
+                        // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
+                        // the number of distinct keys).
+                        int persistentField = NewTemp();
+                        Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, sizeBytes));
+                        fieldTemp = persistentField;
+                    }
+                }
+            }
+
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
         }
 
         return (ptrTemp, resultType);

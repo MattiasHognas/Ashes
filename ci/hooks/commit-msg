@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# commit-msg — reject banned trailer lines in commit messages.
+# Bans:  Co-Authored-By:  and  Claude-Session:
+# These must never enter the history. Bypass (discouraged): git commit --no-verify
+set -euo pipefail
+
+msg_file="$1"
+
+# A real trailer starts the line with the keyword; comment lines start with '#'
+# (git strips those on cleanup) so they never match this pattern.
+banned="$(grep -nEi '^[[:space:]]*(Co-Authored-By|Claude-Session)[[:space:]]*:' "$msg_file" || true)"
+
+if [[ -n "$banned" ]]; then
+  echo "commit-msg: rejected — remove banned trailer line(s):" >&2
+  echo "$banned" | sed 's/^/  /' >&2
+  echo "  (Co-Authored-By: / Claude-Session: are not allowed in this repo)" >&2
+  exit 1
+fi
+
+exit 0

@@ -22,6 +22,7 @@ public static class BuiltinRegistry
         FileExists,
         FileOpen,
         FileReadChunk,
+        FileReadLine,
         FileClose,
         InternalDeepCopy,
         ParallelBoth,
@@ -51,6 +52,8 @@ public static class BuiltinRegistry
         BytesSingleton,
         BytesLength,
         BytesGet,
+        BytesIndexOf,
+        BytesSubText,
         BytesAppend,
         BytesAppendByte,
         BytesFromList,
@@ -177,6 +180,7 @@ public static class BuiltinRegistry
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
                     ["open"] = new("open", BuiltinValueKind.FileOpen, IsCallable: true, Arity: 1),
                     ["readChunk"] = new("readChunk", BuiltinValueKind.FileReadChunk, IsCallable: true, Arity: 2),
+                    ["readLine"] = new("readLine", BuiltinValueKind.FileReadLine, IsCallable: true, Arity: 1),
                     ["close"] = new("close", BuiltinValueKind.FileClose, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Text"] = new(
@@ -201,6 +205,8 @@ public static class BuiltinRegistry
                     ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1),
                     ["length"] = new("length", BuiltinValueKind.BytesLength, IsCallable: true, Arity: 1),
                     ["get"] = new("get", BuiltinValueKind.BytesGet, IsCallable: true, Arity: 2),
+                    ["indexOf"] = new("indexOf", BuiltinValueKind.BytesIndexOf, IsCallable: true, Arity: 3),
+                    ["subText"] = new("subText", BuiltinValueKind.BytesSubText, IsCallable: true, Arity: 3),
                     ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2),
                     ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2),
                     ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1),

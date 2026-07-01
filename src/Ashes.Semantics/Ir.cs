@@ -53,7 +53,10 @@ public abstract record IrInst
     public sealed record StoreMemOffset(int BasePtr, int OffsetBytes, int Source) : IrInst; // [base+off]=src
     public sealed record LoadMemOffset(int Target, int BasePtr, int OffsetBytes) : IrInst;  // tgt=[base+off]
 
-    public sealed record AddInt(int Target, int Left, int Right) : IrInst;
+    // DeferredType is non-null only for a provisional '+' whose operand type was still unresolved at
+    // lowering time; ResolveDeferredAdds patches such adds to ConcatStr/AddFloat (or a plain AddInt)
+    // once inference finishes. It is carried on the record so the TCO `with`-based remap preserves it.
+    public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
     public sealed record MulInt(int Target, int Left, int Right) : IrInst;
     public sealed record DivInt(int Target, int Left, int Right) : IrInst;
@@ -105,6 +108,17 @@ public abstract record IrInst
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
+    /// Like <see cref="AllocAdt"/> but allocates in the persistent "to-space" arena instead of the
+    /// main per-iteration arena. Emitted for a genuinely-new cell (no reuse token) inside an in-place
+    /// reuse specialization — e.g. the fresh node a <c>Map.set</c> creates for a new key. The main
+    /// arena's TCO back-edge reset never reclaims to-space, so the new cell survives the reset while the
+    /// reset still reclaims the iteration's scaffolding/scratch. To-space is never reset during the loop
+    /// (it holds part of the live accumulator); it is bounded by the number of genuinely-new cells
+    /// (≈distinct keys), not by iterations. See <see cref="IrInst.AllocAdt"/> and REUSE_ANALYSIS.md.
+    /// </summary>
+    public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
+
+    /// <summary>
     /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
     /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
     /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
@@ -114,6 +128,11 @@ public abstract record IrInst
     public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
+    // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to
+    // it at each back-edge so dynamic stack allocations in the loop body (e.g. per-iteration string/syscall
+    // scratch buffers) are freed every iteration instead of accumulating until the stack overflows.
+    public sealed record SaveStackPointer(int Slot) : IrInst;
+    public sealed record RestoreStackPointer(int Slot) : IrInst;
     // GetAdtTag: Target = *(Ptr + 0)
     public sealed record GetAdtTag(int Target, int Ptr) : IrInst;
     // GetAdtField: Target = *(Ptr + 8 + FieldIndex*8)
@@ -131,6 +150,7 @@ public abstract record IrInst
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
     public sealed record FileOpen(int Target, int PathTemp) : IrInst;
     public sealed record FileReadChunk(int Target, int HandleTemp, int CountTemp) : IrInst;
+    public sealed record FileReadLine(int Target, int HandleTemp) : IrInst;
     public sealed record FileClose(int Target, int HandleTemp) : IrInst;
     public sealed record TextUncons(int Target, int TextTemp) : IrInst;
     public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
@@ -150,6 +170,8 @@ public abstract record IrInst
     public sealed record BytesSingleton(int Target, int ByteTemp) : IrInst;
     public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
     public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
+    public sealed record BytesIndexOf(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
+    public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
     public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
     public sealed record BytesFromList(int Target, int ListTemp) : IrInst;
@@ -249,6 +271,18 @@ public abstract record IrInst
     /// </para>
     /// </summary>
     public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+
+    /// <summary>
+    /// Like <see cref="CopyOutArena"/> but the fresh copy is allocated in the persistent to-space
+    /// (see <see cref="AllocAdtToSpace"/>) instead of the main arena. Used to materialize a heap-typed
+    /// value (e.g. a String map key) that an in-place reuse specialization stores into the accumulator,
+    /// so it survives the loop's per-iteration reset alongside the reused/to-space node.
+    /// </summary>
+    public sealed record CopyOutArenaToSpace(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+    // In-place value-cell reuse: memcpy SizeBytes from SrcTemp into the (already-persistent, same-size) cell
+    // at DestTemp. Used on the reuse/update path so a fresh fixed-size heap value (e.g. a Map tuple value)
+    // overwrites the superseded value's blob cell instead of allocating a new one — keeps the blob bounded.
+    public sealed record CopyFixedInto(int DestTemp, int SrcTemp, int SizeBytes) : IrInst;
 
     /// <summary>
     /// Describes how head values are handled during deep list copy-out.

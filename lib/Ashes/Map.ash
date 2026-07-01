@@ -84,7 +84,7 @@ let set compare newKey newValue =
                 let ordering = compare(newKey)(key)
                 in 
                     if ordering == 0
-                    then makeNode(left)(newKey)(newValue)(right)
+                    then makeNode(left)(key)(newValue)(right)
                     else 
                         if ordering <= -1
                         then balance(makeNode(go(left))(key)(value)(right))

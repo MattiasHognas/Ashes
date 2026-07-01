@@ -212,3 +212,36 @@ let compare left right =
                                             then -1
                                             else 1
                     in go(0))
+
+let join separator parts = 
+    (let rec rev acc xs = 
+        match xs with
+            | [] -> acc
+            | head :: tail -> rev(head :: acc)(tail)
+    in 
+        let rec interleaveGo acc ps = 
+            match ps with
+                | [] -> rev([])(acc)
+                | first :: rest -> 
+                    match acc with
+                        | [] -> interleaveGo(first :: [])(rest)
+                        | _ -> interleaveGo(first :: separator :: acc)(rest)
+        in 
+            let rec pairwiseGo acc ps = 
+                match ps with
+                    | [] -> rev([])(acc)
+                    | first :: rest -> 
+                        match rest with
+                            | [] -> rev([])(first :: acc)
+                            | second :: more -> 
+                                let merged = first + second
+                                in pairwiseGo(merged :: acc)(more)
+            in 
+                let rec reduce ps = 
+                    match ps with
+                        | [] -> ""
+                        | only :: rest -> 
+                            match rest with
+                                | [] -> only
+                                | _ -> reduce(pairwiseGo([])(ps))
+                in reduce(interleaveGo([])(parts)))

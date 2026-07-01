@@ -103,6 +103,12 @@ public sealed partial class Lowering
         var envFtv = new HashSet<int>();
         FtvEnv(envFtv);
         typeFtv.ExceptWith(envFtv);
+        // A type var used as a '+' operand must be Int/Float/Str (no type classes), so it cannot be
+        // generalized — a single IR function can't be both AddInt and ConcatStr. Keep it monomorphic
+        // so its uses resolve it; ResolveDeferredAdds defaults any that stay unbound to Int. Compare
+        // by current representative, since the '+' var may have since been unified (e.g. with a
+        // lambda's result var).
+        typeFtv.ExceptWith(ConstrainedAddVarRepIds());
 
         var quantified = typeFtv
             .OrderBy(id => id)

@@ -209,6 +209,7 @@ public static class IrOptimizer
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileOpen f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileReadChunk f => f with { HandleTemp = R(f.HandleTemp), CountTemp = R(f.CountTemp) },
+            IrInst.FileReadLine f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.FileClose f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
@@ -226,6 +227,8 @@ public static class IrOptimizer
             IrInst.BytesSingleton b => b with { ByteTemp = R(b.ByteTemp) },
             IrInst.BytesLength b => b with { BytesTemp = R(b.BytesTemp) },
             IrInst.BytesGet b => b with { BytesTemp = R(b.BytesTemp), IndexTemp = R(b.IndexTemp) },
+            IrInst.BytesIndexOf b => b with { BytesTemp = R(b.BytesTemp), NeedleTemp = R(b.NeedleTemp), FromTemp = R(b.FromTemp) },
+            IrInst.BytesSubText b => b with { BytesTemp = R(b.BytesTemp), StartTemp = R(b.StartTemp), LenTemp = R(b.LenTemp) },
             IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
             IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
@@ -243,6 +246,8 @@ public static class IrOptimizer
             IrInst.Drop d => d with { SourceTemp = R(d.SourceTemp) },
             IrInst.Borrow b => b with { SourceTemp = R(b.SourceTemp) },
             IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
+            IrInst.CopyOutArenaToSpace co => co with { SrcTemp = R(co.SrcTemp) },
+            IrInst.CopyFixedInto ci => ci with { DestTemp = R(ci.DestTemp), SrcTemp = R(ci.SrcTemp) },
             IrInst.CopyOutList co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutClosure co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutTcoListCell co => co with { SrcTemp = R(co.SrcTemp) },
@@ -1093,6 +1098,7 @@ public static class IrOptimizer
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileOpen f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileReadChunk f: usedTemps.Add(f.HandleTemp); usedTemps.Add(f.CountTemp); break;
+            case IrInst.FileReadLine f: usedTemps.Add(f.HandleTemp); break;
             case IrInst.FileClose f: usedTemps.Add(f.HandleTemp); break;
             case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
@@ -1110,6 +1116,8 @@ public static class IrOptimizer
             case IrInst.BytesSingleton b: usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesLength b: usedTemps.Add(b.BytesTemp); break;
             case IrInst.BytesGet b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.IndexTemp); break;
+            case IrInst.BytesIndexOf b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.NeedleTemp); usedTemps.Add(b.FromTemp); break;
+            case IrInst.BytesSubText b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.StartTemp); usedTemps.Add(b.LenTemp); break;
             case IrInst.BytesAppend b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
             case IrInst.BytesAppendByte b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;
@@ -1124,6 +1132,8 @@ public static class IrOptimizer
             case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
             case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyOutArenaToSpace c: usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyFixedInto c: usedTemps.Add(c.DestTemp); usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutList c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutClosure c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutTcoListCell c: usedTemps.Add(c.SrcTemp); break;

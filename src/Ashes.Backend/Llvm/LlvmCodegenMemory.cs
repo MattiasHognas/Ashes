@@ -41,15 +41,31 @@ internal static partial class LlvmCodegen
     }
 
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
+        => EmitAlloc(state, sizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
+
+    /// <summary>
+    /// Bump-allocates from the arena identified by <paramref name="cursorSlot"/>/<paramref name="endSlot"/>
+    /// — the main arena by default, or the persistent to-space (see <see cref="IrInst.AllocAdtToSpace"/>).
+    /// Both arenas share the chunk format and grow logic; they differ only in which cursor/end pair is
+    /// bumped and (for to-space) that they are never reset by the TCO back-edge.
+    /// </summary>
+    private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle sizeConst = LlvmApi.ConstInt(state.I64, (ulong)AlignRuntimeSize(sizeBytes), 0);
-        EmitHeapEnsureSpace(state, sizeConst);
-        // After EnsureSpace the cursor global points to valid space in the current chunk.
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value");
+        EmitHeapEnsureSpace(state, sizeConst, cursorSlot, endSlot);
+        // After EnsureSpace the cursor points to valid space in the current chunk.
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "heap_cursor_value");
         LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, sizeConst, "heap_cursor_next");
-        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, nextCursor, cursorSlot);
         return cursor;
+    }
+
+    private static LlvmValueHandle EmitAllocAdtToSpace(LlvmCodegenState state, int tag, int fieldCount)
+    {
+        LlvmValueHandle ptr = EmitAlloc(state, (1 + fieldCount) * 8, state.ToSpaceCursorSlot, state.ToSpaceEndSlot);
+        StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"tospace_adt_tag_{tag}");
+        return ptr;
     }
 
     private static LlvmValueHandle EmitStackAlloc(LlvmCodegenState state, int sizeBytes, string name)
@@ -187,25 +203,57 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildMemCpy(builder, destBytes, 1, sourceBytes, 1, length);
     }
 
+    // String header word: bits [0..62] = byte length, bit 63 = "view" flag. An owned string is
+    // {len, inline bytes…}; a view is {len|VIEW, backing-bytes-pointer} pointing into another
+    // string's bytes (no copy), used by uncons/substring. Views are materialized to owned strings by
+    // the copy-out / deep-copy paths, so a value that crosses an arena reset is never a dangling view.
+    private const ulong StringViewFlag = 1UL << 63;
+
     private static LlvmValueHandle LoadStringLength(LlvmCodegenState state, LlvmValueHandle stringRef, string name)
     {
-        return LoadMemory(state, stringRef, 0, name);
+        LlvmValueHandle raw = LoadMemory(state, stringRef, 0, name + "_raw");
+        return LlvmApi.BuildAnd(state.Target.Builder, raw, LlvmApi.ConstInt(state.I64, ~StringViewFlag, 0), name);
     }
 
     private static LlvmValueHandle GetStringBytesPointer(LlvmCodegenState state, LlvmValueHandle stringRef, string name)
     {
-        LlvmValueHandle byteAddress = LlvmApi.BuildAdd(state.Target.Builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), name + "_addr");
-        return LlvmApi.BuildIntToPtr(state.Target.Builder, byteAddress, state.I8Ptr, name);
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Branchless: owned → bytes inline at ref+8; view → backing pointer stored at ref+8.
+        LlvmValueHandle raw = LoadMemory(state, stringRef, 0, name + "_hdr");
+        LlvmValueHandle isView = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            LlvmApi.BuildAnd(builder, raw, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), name + "_view_bit"),
+            LlvmApi.ConstInt(state.I64, 0, 0), name + "_is_view");
+        LlvmValueHandle inlineAddr = LlvmApi.BuildAdd(builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), name + "_inline_addr");
+        LlvmValueHandle viewPtr = LoadMemory(state, stringRef, 8, name + "_view_ptr");
+        LlvmValueHandle byteAddress = LlvmApi.BuildSelect(builder, isView, viewPtr, inlineAddr, name + "_addr");
+        return LlvmApi.BuildIntToPtr(builder, byteAddress, state.I8Ptr, name);
+    }
+
+    // Builds a view string {len|VIEW, backingBytesPtr} — O(1), no byte copy. The backing must outlive
+    // the view (the copy-out/deep-copy paths materialize views before a value crosses an arena reset).
+    private static LlvmValueHandle EmitStringView(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
+        LlvmValueHandle viewRef = EmitAlloc(state, 16);
+        LlvmValueHandle tagged = LlvmApi.BuildOr(builder, normalizedLen, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), prefix + "_tagged_len");
+        StoreMemory(state, viewRef, 0, tagged, prefix + "_len");
+        LlvmValueHandle bytesAsInt = LlvmApi.BuildPtrToInt(builder, bytesPtr, state.I64, prefix + "_bytes_int");
+        StoreMemory(state, viewRef, 8, bytesAsInt, prefix + "_ptr");
+        return viewRef;
     }
 
     private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes)
+        => EmitAllocDynamic(state, sizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static LlvmValueHandle EmitAllocDynamic(LlvmCodegenState state, LlvmValueHandle sizeBytes, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle normalizedSize = AlignRuntimeSize(state, sizeBytes, "heap_alloc_size");
-        EmitHeapEnsureSpace(state, normalizedSize);
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_cursor_value_dyn");
+        EmitHeapEnsureSpace(state, normalizedSize, cursorSlot, endSlot);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "heap_cursor_value_dyn");
         LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, normalizedSize, "heap_cursor_next_dyn");
-        LlvmApi.BuildStore(builder, nextCursor, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, nextCursor, cursorSlot);
         return cursor;
     }
 
@@ -267,6 +315,40 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "tcb_base");
     }
 
+    // win-x64 per-thread arena: the TCB base pointer lives in the TEB's ArbitraryUserPointer field
+    // (TEB+0x28, reached via the GS-based TEB), a slot Windows never uses and that is genuinely
+    // per-thread. This mirrors the linux GS:0 self-pointer approach — no TlsAlloc, no collision with a
+    // loaded runtime's TLS indices, and a cheap inline read that LLVM can hoist/CSE.
+    private const int WindowsTebArenaSlotOffset = 0x28;
+
+    private static LlvmValueHandle EmitReadTcbBaseFromTeb(LlvmCodegenState state)
+    {
+        LlvmTypeHandle readType = LlvmApi.FunctionType(state.I64, []);
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, $"movq %gs:{WindowsTebArenaSlotOffset}, $0", "=r", false, false);
+        return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "teb_tcb_base");
+    }
+
+    private static void EmitWriteTcbBaseToTeb(LlvmCodegenState state, LlvmValueHandle tcbAddr)
+    {
+        LlvmTypeHandle writeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
+        LlvmValueHandle write = LlvmApi.GetInlineAsm(writeType, $"movq $0, %gs:{WindowsTebArenaSlotOffset}", "r,~{memory}", true, false);
+        LlvmApi.BuildCall2(state.Target.Builder, writeType, write, [tcbAddr], "");
+    }
+
+    // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
+    // No arch_prctl — GS already addresses the OS-provided TEB on Windows x64.
+    private static LlvmValueHandle EmitMainThreadTlsInitWindows(LlvmCodegenState state)
+    {
+        LlvmTypeHandle tcbType = LlvmApi.ArrayType2(state.I8, (ulong)MainTcbSizeBytes);
+        LlvmValueHandle tcb = LlvmApi.AddGlobal(state.Target.Module, tcbType, "__ashes_main_tcb");
+        LlvmApi.SetLinkage(tcb, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(tcb, LlvmApi.ConstNull(tcbType));
+        LlvmValueHandle tcbAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, tcb, state.I64, "win_main_tcb_addr");
+        StoreMemory(state, tcbAddr, (int)TcbSelfOffset, tcbAddr, "win_tcb_self_ptr");
+        EmitWriteTcbBaseToTeb(state, tcbAddr);
+        return tcbAddr;
+    }
+
     /// <summary>
     /// Returns <paramref name="state"/> with its arena cursor/end slots repointed at the
     /// current thread's TCB on linux-x64; a no-op on other flavors (which keep module-global
@@ -275,12 +357,20 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmCodegenState WithLinuxThreadArena(LlvmCodegenState state)
     {
-        if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
+        LlvmValueHandle tcbBase;
+        if (state.Flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            tcbBase = EmitReadTcbBaseFromGs(state);
+        }
+        else if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            tcbBase = EmitReadTcbBaseFromTeb(state);
+        }
+        else
         {
             return state;
         }
 
-        LlvmValueHandle tcbBase = EmitReadTcbBaseFromGs(state);
         (LlvmValueHandle cursor, LlvmValueHandle end) = BuildLinuxArenaSlots(state, tcbBase);
         return state with { HeapCursorSlot = cursor, HeapEndSlot = end };
     }
@@ -290,12 +380,20 @@ internal static partial class LlvmCodegen
     /// from the TCB base, at <see cref="TcbHeapCursorOffset"/> / <see cref="TcbHeapEndOffset"/>.
     /// </summary>
     private static (LlvmValueHandle Cursor, LlvmValueHandle End) BuildLinuxArenaSlots(LlvmCodegenState state, LlvmValueHandle tcbBase)
+        => BuildLinuxTcbSlots(state, tcbBase, TcbHeapCursorOffset, TcbHeapEndOffset);
+
+    /// <summary>
+    /// Materializes a pair of i64 slot pointers into this thread's TCB at the given byte offsets
+    /// (e.g. the main arena cursor/end, or the to-space cursor/end). Used to address per-thread arena
+    /// state as ordinary pointers after the TCB base has been recovered.
+    /// </summary>
+    private static (LlvmValueHandle Cursor, LlvmValueHandle End) BuildLinuxTcbSlots(LlvmCodegenState state, LlvmValueHandle tcbBase, ulong cursorOffset, ulong endOffset)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle cursorAddr = LlvmApi.BuildAdd(builder, tcbBase,
-            LlvmApi.ConstInt(state.I64, TcbHeapCursorOffset, 0), "tcb_cursor_addr");
+            LlvmApi.ConstInt(state.I64, cursorOffset, 0), "tcb_cursor_addr");
         LlvmValueHandle endAddr = LlvmApi.BuildAdd(builder, tcbBase,
-            LlvmApi.ConstInt(state.I64, TcbHeapEndOffset, 0), "tcb_end_addr");
+            LlvmApi.ConstInt(state.I64, endOffset, 0), "tcb_end_addr");
         return (
             LlvmApi.BuildIntToPtr(builder, cursorAddr, state.I64Ptr, "tcb_cursor_ptr"),
             LlvmApi.BuildIntToPtr(builder, endAddr, state.I64Ptr, "tcb_end_ptr"));
@@ -322,6 +420,9 @@ internal static partial class LlvmCodegen
     /// until the request fits in the current chunk.
     /// </summary>
     private static void EmitHeapEnsureSpace(LlvmCodegenState state, LlvmValueHandle sizeBytes)
+        => EmitHeapEnsureSpace(state, sizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static void EmitHeapEnsureSpace(LlvmCodegenState state, LlvmValueHandle sizeBytes, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_check");
@@ -331,14 +432,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, checkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "heap_check_cursor");
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "heap_check_cursor");
         LlvmValueHandle needed = LlvmApi.BuildAdd(builder, cursor, sizeBytes, "heap_check_needed");
-        LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "heap_end");
+        LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, endSlot, "heap_end");
         LlvmValueHandle overflow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, needed, heapEnd, "heap_overflow");
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
-        EmitHeapGrow(state);
+        EmitHeapGrow(state, cursorSlot, endSlot);
         LlvmApi.BuildBr(builder, checkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
@@ -353,23 +454,28 @@ internal static partial class LlvmCodegen
     /// <see cref="EmitRestoreArenaState"/> can walk back and reclaim abandoned chunks.
     /// </summary>
     private static void EmitHeapGrow(LlvmCodegenState state)
+        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // Capture the current chunk's base before allocating the new one.
-        LlvmValueHandle prevEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "grow_heap_prev_end");
+        LlvmValueHandle prevEnd = LlvmApi.BuildLoad2(builder, state.I64, endSlot, "grow_heap_prev_end");
         LlvmValueHandle prevBase = LlvmApi.BuildSub(builder, prevEnd,
             LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_prev_base");
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
-        // Store prevBase into the new chunk's header (linked-list link).
+        // Store prevBase into the new chunk's header (linked-list link). On the to-space's first grow
+        // the slot is 0, so prevBase is garbage — harmless: to-space is never reclaimed, so the chunk
+        // header chain is never walked.
         StoreMemory(state, chunkBase, 0, prevBase, "grow_heap_prev_base_hdr");
         // Allocations start at offset 8 (after the header).
         LlvmValueHandle cursorStart = LlvmApi.BuildAdd(builder, chunkBase,
             LlvmApi.ConstInt(state.I64, 8, 0), "grow_heap_cursor_start");
-        LlvmApi.BuildStore(builder, cursorStart, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, cursorStart, cursorSlot);
         LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
             LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_end");
-        LlvmApi.BuildStore(builder, chunkEnd, state.HeapEndSlot);
+        LlvmApi.BuildStore(builder, chunkEnd, endSlot);
     }
 
     /// <summary>
@@ -535,16 +641,59 @@ internal static partial class LlvmCodegen
     /// and memcpy's the entire string. The source pointer must be non-nil.
     /// </summary>
     private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
+        => EmitCopyOutStringValue(state, srcPtr, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
+    {
+        // Materialize: read length and bytes via the accessors (which handle views), then build a
+        // fresh OWNED string. This both copies an owned string out of the reclaimable region and
+        // collapses a view into a self-contained owned string so it never dangles past a reset.
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle length = LoadStringLength(state, srcPtr, "copy_out_str_len");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, srcPtr, "copy_out_src");
+        LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
+        LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize, cursorSlot, endSlot);
+        StoreMemory(state, dynDest, 0, length, "copy_out_str_dest_len");
+        LlvmValueHandle dynDestBytes = GetStringBytesPointer(state, dynDest, "copy_out_dest");
+        EmitCopyBytes(state, dynDestBytes, srcBytes, length, "copy_out");
+        return dynDest;
+    }
+
+    /// <summary>
+    /// Like <see cref="EmitCopyOutArena"/> but allocates the copy in the persistent blob region — a bump
+    /// arena kept SEPARATE from the to-space NODE arena. Materialized heap leaf fields (Map keys/values)
+    /// must persist past the per-iteration arena reset, but must not be interleaved with the fixed-size
+    /// reuse nodes in to-space: interleaving variable-size blobs between nodes corrupts the in-place reuse
+    /// rebuild (a node child pointer ends up addressing blob/scratch bytes). A nodes-only to-space matches
+    /// the proven layout of copy-type (e.g. Int-keyed) maps. Only the dynamic-size (string) path is needed
+    /// today (in-place-reuse key/value materialization). See <see cref="IrInst.CopyOutArenaToSpace"/>.
+    /// </summary>
+    // memcpy SizeBytes from *srcTemp into the existing cell at *destTemp (in-place value-cell reuse).
+    private static bool EmitCopyFixedInto(LlvmCodegenState state, int destTemp, int srcTemp, int sizeBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle length = LoadMemory(state, srcPtr, 0, "copy_out_str_len");
-        LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, LoadTemp(state, destTemp), state.I8Ptr, "copy_into_dest");
+        LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, LoadTemp(state, srcTemp), state.I8Ptr, "copy_into_src");
+        EmitCopyBytes(state, destBytes, srcBytes, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "copy_into");
+        return false;
+    }
 
-        LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize);
-        LlvmValueHandle dynSrcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
-        LlvmValueHandle dynDestBytes = LlvmApi.BuildIntToPtr(builder, dynDest, state.I8Ptr, "copy_out_dest_ptr");
-        EmitCopyBytes(state, dynDestBytes, dynSrcBytes, dynSize, "copy_out");
-        return dynDest;
+    private static LlvmValueHandle EmitCopyOutArenaToSpace(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
+    {
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+        if (staticSizeBytes > 0)
+        {
+            // Fixed-size shallow copy into the blob region (e.g. a tuple of copy-type elements: a flat
+            // memcpy fully materializes it — there are no nested heap fields to follow).
+            LlvmBuilderHandle builder = state.Target.Builder;
+            LlvmValueHandle dest = EmitAlloc(state, staticSizeBytes, state.BlobCursorSlot, state.BlobEndSlot);
+            LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "blob_copy_src");
+            LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "blob_copy_dest");
+            EmitCopyBytes(state, destBytes, srcBytes, LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0), "blob_copy");
+            return dest;
+        }
+
+        return EmitCopyOutStringValue(state, srcPtr, state.BlobCursorSlot, state.BlobEndSlot);
     }
 
     /// <summary>
@@ -1033,6 +1182,39 @@ internal static partial class LlvmCodegen
         EmitHeapAllocFailedPanic(state);
 
         LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+    }
+
+    /// <summary>Saves the current stack pointer (llvm.stacksave) into a local slot at a TCO loop header.</summary>
+    private static bool EmitSaveStackPointer(LlvmCodegenState state, int slot)
+    {
+        LlvmValueHandle saveFn = LlvmApi.GetNamedFunction(state.Target.Module, "llvm.stacksave.p0");
+        LlvmTypeHandle saveTy = LlvmApi.FunctionType(state.I8Ptr, []);
+        if (saveFn.Ptr == 0)
+        {
+            saveFn = LlvmApi.AddFunction(state.Target.Module, "llvm.stacksave.p0", saveTy);
+        }
+
+        LlvmValueHandle sp = LlvmApi.BuildCall2(state.Target.Builder, saveTy, saveFn, [], "stacksave");
+        LlvmValueHandle spInt = LlvmApi.BuildPtrToInt(state.Target.Builder, sp, state.I64, "stacksave_i64");
+        LlvmApi.BuildStore(state.Target.Builder, spInt, state.LocalSlots[slot]);
+        return false;
+    }
+
+    /// <summary>Restores the stack pointer (llvm.stackrestore) from a slot at a TCO back-edge, freeing the
+    /// loop body's per-iteration dynamic stack allocations.</summary>
+    private static bool EmitRestoreStackPointer(LlvmCodegenState state, int slot)
+    {
+        LlvmValueHandle restoreFn = LlvmApi.GetNamedFunction(state.Target.Module, "llvm.stackrestore.p0");
+        LlvmTypeHandle restoreTy = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]);
+        if (restoreFn.Ptr == 0)
+        {
+            restoreFn = LlvmApi.AddFunction(state.Target.Module, "llvm.stackrestore.p0", restoreTy);
+        }
+
+        LlvmValueHandle spInt = LlvmApi.BuildLoad2(state.Target.Builder, state.I64, state.LocalSlots[slot], "stackrestore_i64");
+        LlvmValueHandle sp = LlvmApi.BuildIntToPtr(state.Target.Builder, spInt, state.I8Ptr, "stackrestore_ptr");
+        LlvmApi.BuildCall2(state.Target.Builder, restoreTy, restoreFn, [sp], "");
+        return false;
     }
 
     private static void EmitHeapAllocFailedPanic(LlvmCodegenState state)
@@ -1691,34 +1873,15 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
     {
+        // Copy the backing bytes into a fresh OWNED string. Used where the bytes are a transient
+        // buffer (e.g. Ashes.Text.fromInt), so a view would dangle. uncons/substring instead build
+        // views (EmitStringView) directly, since their backing is a live string.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
         LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, normalizedLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
         StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
-
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
-        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx");
-        LlvmApi.BuildStore(builder, zero, idxSlot);
-
-        var copyLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_loop");
-        var copyBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_body");
-        var copyDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_done");
-        LlvmApi.BuildBr(builder, copyLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyLoopBlock);
-        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_idx_value");
-        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, idx, normalizedLen, prefix + "_copy_done_check");
-        LlvmApi.BuildCondBr(builder, done, copyDoneBlock, copyBodyBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyBodyBlock);
-        LlvmValueHandle srcByte = LoadByteAt(state, bytesPtr, idx, prefix + "_src_byte");
-        LlvmValueHandle destBytePtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [idx], prefix + "_dest_byte_ptr");
-        LlvmApi.BuildStore(builder, srcByte, destBytePtr);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), idxSlot);
-        LlvmApi.BuildBr(builder, copyLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyDoneBlock);
+        EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
         return stringRef;
     }
 

@@ -16,6 +16,31 @@ public sealed partial class Lowering
 
     private readonly List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
+
+    // '+' overload resolution. '+' is Int+Int / Float+Float / Str+Str, but the IR op (AddInt vs
+    // ConcatStr) must be chosen at lowering time. When both operands are still type variables we
+    // can't choose yet, so we emit a provisional AddInt, record it here keyed by object identity,
+    // and patch it to ConcatStr/AddFloat once inference resolves the operand type
+    // (ResolveDeferredAdds). The shared operand var is added to _addConstrainedTvars so it stays
+    // monomorphic (not generalized) — that is what lets a later use resolve it.
+    private bool _hasDeferredAdds;
+    private readonly List<TypeRef.TVar> _addConstrainedVars = new();
+
+    // Current representative ids of the '+'-constrained type vars (a var may have been unified since
+    // it was recorded, so resolve through the union-find each time).
+    private HashSet<int> ConstrainedAddVarRepIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var v in _addConstrainedVars)
+        {
+            if (Prune(v) is TypeRef.TVar rep)
+            {
+                ids.Add(rep.Id);
+            }
+        }
+
+        return ids;
+    }
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
@@ -123,6 +148,36 @@ public sealed partial class Lowering
     // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
     private bool _inSpecialization;
 
+    // Nesting depth of LowerLambdaCore (0 = lowering a top-level declaration's value). Used to snapshot
+    // the top-level scope so a lazily-generated reuse specialization can resolve the stdlib helper
+    // functions it references (Ashes_Map_makeNode, ...) as globals, even though it is generated deep
+    // inside a loop body whose scope no longer contains them. See LowerLambdaCore.
+    private int _lambdaDepth;
+    private Dictionary<string, Binding>[] _topLevelScopeStack = [];
+
+    // Registry of top-level functions with an EMPTY closure environment (no captures), keyed by binding
+    // name → (IR label, generalized type scheme). Such a function's closure can be reconstructed anywhere
+    // from just its label (a null env), so a reuse specialization — which runs in an isolated scope with no
+    // access to the generation-site slots — can CALL it directly (MakeClosure(label, null)) instead of
+    // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
+    // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
+    private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
+    private string _lastLoweredLambdaLabel = "";
+    private bool _lastLoweredLambdaEmptyEnv;
+    private int _depth0LambdaCount;
+
+    // Concrete per-parameter types for the reuse specialization currently being generated, and a cursor
+    // consumed once per lambda in its curried chain. Monomorphizes the otherwise-polymorphic spec body
+    // (e.g. resolves Map.set's `newKey : K` to `Str`), so the heap-field check that materializes a key
+    // into the to-space can fire. Null when not generating a spec.
+    private IReadOnlyList<TypeRef>? _specializationConcreteParamTypes;
+    private int _specializationParamCursor;
+    // Outer (non-accumulator) parameter names of the reuse specialization currently being lowered — e.g.
+    // compare/newKey/newValue for Map.set. A constructor field whose argument is one of these is a FRESH
+    // heap input (materialize it into the persistent blob so it survives the per-iteration reset); a field
+    // taken from the matched accumulator (a pattern binding) is already persistent and must not be re-copied.
+    private HashSet<string>? _specFreshInputNames;
+
     // Temps holding a value built by in-place reuse (an AllocReusing result) — already below the
     // watermark and used linearly. When such a value is the argument to an inlined helper, the
     // helper's parameter is also linear, so a match-then-rebuild on it (e.g. balance's
@@ -138,6 +193,12 @@ public sealed partial class Lowering
     // call to that name is NOT the top-level helper and must not be inlined. Counter per name (a name
     // can be shadowed at multiple nesting levels).
     private readonly Dictionary<string, int> _shadowedInlinables = new(StringComparer.Ordinal);
+
+    // For each registered inlinable, the AST value object of its defining top-level let. Lets the
+    // "is this let the helper's own definition (vs a rebinding that shadows it)?" check use reference
+    // identity, which is robust to the stitcher's alias-wrapping (where the value is a `let`-chain, not
+    // a bare lambda) — without it, every stitched stdlib helper would self-shadow and never inline.
+    private readonly Dictionary<string, Expr> _inlinableDefiningValues = new(StringComparer.Ordinal);
 
     // Inlinable functions currently being inlined, to break any unforeseen inline cycle (fall back to
     // a normal call instead of looping). Non-recursive lets shouldn't form cycles, but this is cheap.
@@ -222,6 +283,11 @@ public sealed partial class Lowering
 
         CollectTopLevelBindingNames(valueItems);
         RegisterInlinableFunctions(valueItems);
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+        {
+            Console.Error.WriteLine($"[reuse] specializable funcs: {string.Join(", ", _specializableFunctions.Keys)}");
+            Console.Error.WriteLine($"[reuse] inlinable funcs: {string.Join(", ", _inlinableFunctions.Keys.Where(k => k.Contains("Map", StringComparison.Ordinal)))}");
+        }
 
         // Desugar the ordered value declarations into the existing nested let / let rec forms so
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
@@ -236,11 +302,67 @@ public sealed partial class Lowering
     /// reuse a dead cell. <c>let rec</c> / mutually-recursive groups are excluded — they can't be
     /// inlined, and self-reference would loop.
     /// </summary>
+    // True if the expression can produce a heap allocation (a constructor application or aggregate
+    // literal) anywhere within it — directly or through a nested call. Used to keep non-allocating
+    // accessor/arithmetic helpers out of the reuse-inline set: inlining them yields nothing for reuse
+    // (they never allocate) but transitively inlining them into a specialization explodes its temp/slot
+    // count and stack frame. They are instead resolved as ordinary by-label calls (see LowerVar /
+    // _topLevelFunctionRefs). Unknown composite shapes default to true (conservatively inlinable), so this
+    // never drops a helper a reuse arm depends on; only provably allocation-free leaves and their pure
+    // compositions return false.
+    private static bool ExprHasCallOrAggregate(Expr e) => e switch
+    {
+        Expr.Call or Expr.TupleLit or Expr.ListLit or Expr.Cons or Expr.RecordLit or Expr.RecordUpdate => true,
+        Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => false,
+        Expr.Add x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.Subtract x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.Multiply x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.Divide x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.BitwiseAnd x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.BitwiseOr x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.BitwiseXor x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.ShiftLeft x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.ShiftRight x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.BitwiseNot x => ExprHasCallOrAggregate(x.Operand),
+        Expr.GreaterThan x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.LessThan x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.GreaterOrEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.LessOrEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.Equal x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.NotEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.If x => ExprHasCallOrAggregate(x.Cond) || ExprHasCallOrAggregate(x.Then) || ExprHasCallOrAggregate(x.Else),
+        Expr.Let x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
+        Expr.LetRec x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
+        Expr.LetResult x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
+        Expr.Lambda x => ExprHasCallOrAggregate(x.Body),
+        Expr.Await x => ExprHasCallOrAggregate(x.Task),
+        Expr.Match x => ExprHasCallOrAggregate(x.Value)
+            || x.Cases.Any(c => ExprHasCallOrAggregate(c.Body) || (c.Guard is not null && ExprHasCallOrAggregate(c.Guard))),
+        _ => true,
+    };
+
     private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
     {
+        // Strip the import stitcher's intra-module alias prefix (let helper = Ashes_Mod_helper in ...)
+        // so a stdlib function's value is seen as the clean lambda it is — otherwise the reuse
+        // registries below never recognise stdlib functions (Map.set etc.), since their value is a
+        // chain of alias `let`s rather than a Lambda. On an unhandled shape, fall back to the raw value
+        // (the function just isn't registered for reuse — correct, only unoptimized).
+        Expr Strip(Expr value)
+        {
+            try
+            {
+                return StripModuleAliasPrefix(value);
+            }
+            catch (NotSupportedException)
+            {
+                return value;
+            }
+        }
+
         foreach (var item in valueItems)
         {
-            if (item is TopLevelItem.LetDecl { Value: Expr.Lambda lam, IsRecursive: false } let)
+            if (item is TopLevelItem.LetDecl { IsRecursive: false } let && Strip(let.Value) is Expr.Lambda lam)
             {
                 // A non-recursive function that returns a nested recursive single-param function
                 // (the Map.set shape) is specialized, not inlined; any other plain function is an
@@ -249,20 +371,24 @@ public sealed partial class Lowering
                 {
                     _specializableFunctions[let.Name] = (lam, nestedParam, nestedArgCount);
                 }
-                else
+                else if (ExprHasCallOrAggregate(GetInnermostBody(lam)))
                 {
+                    // Only inline helpers that can contribute an allocation. Non-allocating accessor /
+                    // arithmetic helpers are resolved as by-label calls in specializations instead (see
+                    // _topLevelFunctionRefs), which keeps the specialized function small.
                     _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+                    _inlinableDefiningValues[let.Name] = let.Value;
                 }
             }
 
             // Single-parameter recursive functions (let rec f = fun p -> body, body not a lambda)
             // are candidates for in-place-reuse specialization when applied to a unique accumulator.
-            else if (item is TopLevelItem.LetDecl { Value: Expr.Lambda { Body: not Expr.Lambda } recLam, IsRecursive: true } recLet)
+            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recLet && Strip(recLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recLam)
             {
                 _specializableFunctions[recLet.Name] = (recLam, recLam.ParamName, 1);
             }
             else if (item is TopLevelItem.RecGroup { Bindings.Count: 1 } group
-                && group.Bindings[0].Value is Expr.Lambda { Body: not Expr.Lambda } groupLam)
+                && Strip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
             {
                 _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
             }
@@ -872,8 +998,13 @@ public sealed partial class Lowering
     {
         // Entry function lowering (no env/arg params)
         var (resultTemp, resultType) = LowerExpr(expr);
-        LastLoweredType = Prune(resultType);
         Emit(new IrInst.Return(resultTemp));
+
+        ResolveDeferredAdds();
+
+        // After ResolveDeferredAdds, an unresolved '+' operand var has been defaulted to Int, so the
+        // reported result type (e.g. the REPL's `add : Int -> Int -> Int`) is concrete.
+        LastLoweredType = Prune(resultType);
 
         var entry = new IrFunction(
             Label: "_start_main",
@@ -898,6 +1029,53 @@ public sealed partial class Lowering
             UsesClosures: _usesClosures,
             UsesAsync: _usesAsync
         );
+    }
+
+    // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
+    // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
+    // Int. Then each provisional add becomes ConcatStr (Str), AddFloat (Float), or stays AddInt.
+    private void ResolveDeferredAdds()
+    {
+        if (!_hasDeferredAdds)
+        {
+            return;
+        }
+
+        ResolveDeferredAddsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredAddsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredAddsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.AddInt { DeferredType: { } operandType } add)
+            {
+                continue;
+            }
+
+            // An operand var still unbound (e.g. an unused generic '+') defaults to Int.
+            if (Prune(operandType) is TypeRef.TVar)
+            {
+                Unify(operandType, new TypeRef.TInt());
+            }
+
+            instructions[i] = Prune(operandType) switch
+            {
+                TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
+                TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
+                _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
+            };
+        }
+    }
+
+    private IrInst SetUsesConcatStr(IrInst inst)
+    {
+        _usesConcatStr = true;
+        return inst;
     }
 
     private (int Temp, TypeRef Type) LowerExpr(Expr e)
@@ -1012,6 +1190,22 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerVar(Expr.Var v)
     {
         var b = Lookup(v.Name);
+
+        if (b is null && _inSpecialization && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
+        {
+            // Reuse specialization: this name is a non-inlined top-level helper (e.g. an AVL height/max
+            // reader) referenced from the spec's isolated scope, where its generation-site slot is gone.
+            // It has an empty closure environment, so reconstruct its closure directly from the label with
+            // a null env, and instantiate its type scheme fresh for this use (polymorphic helpers unify
+            // against the concrete call). This is what lets non-allocating helpers stay out of the inline
+            // set without hitting the Model-A forward-reference check (ASH014).
+            int envTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(envTemp, 0));
+            int closTemp = NewTemp();
+            Emit(new IrInst.MakeClosure(closTemp, topRef.Label, envTemp, 0));
+            return (closTemp, Instantiate(topRef.Scheme));
+        }
+
         if (b is null)
         {
             if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
@@ -1028,6 +1222,11 @@ public sealed partial class Lowering
             {
                 // Out of scope but declared later in the file: a forward reference under Model-A
                 // sequential scoping. Self/mutual recursion needs 'let rec' / 'let rec ... and ...'.
+                if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+                {
+                    Console.Error.WriteLine($"[reuse] ASH014 on '{v.Name}' inSpec={_inSpecialization} inlinable={_inlinableFunctions.ContainsKey(v.Name)} depth={_lambdaDepth}");
+                }
+
                 ReportDiagnostic(GetSpan(v), $"Binding '{v.Name}' is not yet declared at this point.", ForwardReferenceCode);
             }
             else if (v.Name.Length > 0 && char.IsUpper(v.Name[0]))
@@ -1223,6 +1422,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileOpen => LowerQualifiedBuiltinFunctionReference(name, CreateFileOpenBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadChunkBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileClose => LowerQualifiedBuiltinFunctionReference(name, CreateFileCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerQualifiedBuiltinFunctionReference(name, CreateInternalDeepCopyBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerQualifiedBuiltinFunctionReference(name, CreateParallelBothBinding().S.Body),
@@ -1254,6 +1454,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSingletonBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesLength => LowerQualifiedBuiltinFunctionReference(name, CreateBytesLengthBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGet => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerQualifiedBuiltinFunctionReference(name, CreateBytesIndexOfBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSubTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendByteBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerQualifiedBuiltinFunctionReference(name, CreateBytesFromListBinding().S.Body),
@@ -1305,6 +1507,24 @@ public sealed partial class Lowering
 
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
+
+        // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
+        // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
+        // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
+        // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
+        // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
+        if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
+        {
+            Unify(leftPruned, rightPruned);
+            if (Prune(leftPruned) is TypeRef.TVar sharedVar)
+            {
+                _addConstrainedVars.Add(sharedVar);
+                _hasDeferredAdds = true;
+                int deferredTarget = NewTemp();
+                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar));
+                return (deferredTarget, sharedVar);
+            }
+        }
 
         // Resolve type variables: prefer the other side's concrete type, defaulting to Int
         if (leftPruned is TypeRef.TVar)
@@ -2031,6 +2251,7 @@ public sealed partial class Lowering
         // both value and body belong to this let scope.
         EmitArenaWatermark();
 
+        int depth0Before = _depth0LambdaCount;
         var (valueTemp, valueType) = LowerLetValue(let);
 
         // If the user wrote a type annotation, verify it matches the inferred type.
@@ -2046,6 +2267,14 @@ public sealed partial class Lowering
         var scheme = Generalize(Prune(valueType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
 
+        // Register a top-level, empty-env function so reuse specializations can call it by label. The
+        // guard (exactly one depth-0 lambda lowered while lowering this value) means the value is this
+        // function's own outer lambda — not a stale label from a sibling or a non-lambda value.
+        if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1 && _lastLoweredLambdaEmptyEnv)
+        {
+            _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
+        }
+
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
         TrackLetOwnership(let, slot, valueType);
@@ -2053,9 +2282,12 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
         // top-level definition itself (same lambda we registered) must stay inlinable in its own body.
-        bool isOwnDefinition = let.Value is Expr.Lambda defLam
-            && _inlinableFunctions.TryGetValue(let.Name, out var reg)
-            && ReferenceEquals(reg.Body, GetInnermostBody(defLam));
+        bool isOwnDefinition = (let.Value is Expr.Lambda defLam
+                && _inlinableFunctions.TryGetValue(let.Name, out var reg)
+                && ReferenceEquals(reg.Body, GetInnermostBody(defLam)))
+            // Stitched stdlib helpers have an alias-wrapped value (a `let`-chain, not a bare lambda),
+            // so match the defining let by the value object identity recorded at registration.
+            || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
         var (bodyTemp, bodyType) = LowerExpr(let.Body);
         if (shadowed) PopInlinableShadow(let.Name);
@@ -2502,6 +2734,15 @@ public sealed partial class Lowering
         var retTy = NewTypeVar();
         var funTy = new TypeRef.TFun(paramTy, retTy);
 
+        // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
+        // the routed call, so the body (and the heap-field key materialization) sees concrete types.
+        if (_specializationConcreteParamTypes is { } concreteParamTypes
+            && _specializationParamCursor < concreteParamTypes.Count)
+        {
+            Unify(paramTy, concreteParamTypes[_specializationParamCursor]);
+            _specializationParamCursor++;
+        }
+
         // Compute free variables for capture
         var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
         if (selfName is not null)
@@ -2561,6 +2802,21 @@ public sealed partial class Lowering
         var savedTemp = _nextTempSlot;
         var savedLocal = _nextLocalSlot;
         var savedScopes = _scopes.ToArray();
+        // The enclosing scope of a top-level declaration's lambda has every prior top-level binding
+        // (all stdlib helper functions). Snapshot it so a reuse specialization generated later, deep
+        // in a loop body, can still resolve those helpers as globals (see the scope build below).
+        if (_lambdaDepth == 0)
+        {
+            _topLevelScopeStack = savedScopes;
+            // Record this top-level function's outer-lambda label and whether it captures nothing, so
+            // LowerLet can register empty-env functions for by-label calls from reuse specializations.
+            _lastLoweredLambdaLabel = label;
+            _lastLoweredLambdaEmptyEnv = captures.Count == 0;
+            _depth0LambdaCount++;
+        }
+
+        _lambdaDepth++;
+
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
         // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
@@ -2645,6 +2901,31 @@ public sealed partial class Lowering
             }
         }
 
+        // Reuse specialization: a stdlib helper this body references (Ashes_Map_makeNode, ...) is a
+        // top-level function not present in the generation-site scope (we are deep inside a loop body).
+        // Bind each such free reference to its top-level Binding.Self — a direct global reference that
+        // needs no env capture (the helper is inlined at its call sites, or called by label). Added to
+        // the scope only, never to `captures`, so the closure construction does not try to fill it.
+        if (_inSpecialization && _topLevelScopeStack.Length > 0)
+        {
+            foreach (var name in free)
+            {
+                if (scope.ContainsKey(name))
+                {
+                    continue;
+                }
+
+                foreach (var topScope in _topLevelScopeStack)
+                {
+                    if (topScope.TryGetValue(name, out var topBinding) && topBinding is Binding.Self)
+                    {
+                        scope[name] = topBinding;
+                        break;
+                    }
+                }
+            }
+        }
+
         _scopes.Clear();
         _scopes.Push(scope);
 
@@ -2670,6 +2951,12 @@ public sealed partial class Lowering
         // emitted only after the body is lowered (so HM has resolved the accumulator's type), then
         // spliced in at reuseInsertIndex (before the loop body label). See below.
         var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        // Slots whose defensive copy is for DIRECT in-place reuse (the body itself rebuilds the
+        // accumulator). These are only needed if reuse actually fired (an AllocReusing was emitted);
+        // a pure traversal that matches but never rebuilds (e.g. a tree lookup) must NOT copy, or every
+        // call becomes O(size) instead of O(depth). Specialization copies (the reuse is in a $reuse
+        // clone) are not gated this way.
+        var directReuseSlots = new HashSet<int>();
         int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
@@ -2744,6 +3031,7 @@ public sealed partial class Lowering
                 {
                     _linearReuseNames.Add(accName);
                     reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
+                    directReuseSlots.Add(accLocal.Slot);
                 }
             }
 
@@ -2784,6 +3072,11 @@ public sealed partial class Lowering
             tco.ArenaCursorSlot = NewLocal();
             tco.ArenaEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+            // Save the stack pointer too: dynamic stack allocations in the loop body (per-iteration string /
+            // syscall scratch) must be freed at each back-edge, or they accumulate across iterations and
+            // overflow the stack at scale. Restored in the back-edge alongside the arena reset.
+            tco.StackPtrSlot = NewLocal();
+            Emit(new IrInst.SaveStackPointer(tco.StackPtrSlot));
             tco.OwnershipDepthAtEntry = _ownershipScopes.Count;
 
             tco.InTailPosition = true;
@@ -2820,9 +3113,45 @@ public sealed partial class Lowering
         // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
         if (reuseDefensiveCopy.Count > 0 && reuseInsertIndex >= 0)
         {
+            // A direct-reuse defensive copy (O(size)) is only worth it if reuse rebuilds the
+            // accumulator's recursive *structure* — i.e. an AllocReusing with fields. A function that
+            // matches the accumulator but only reads it — a tree lookup like Map.get, whose arms
+            // return a different type (None/Some) — at most reuses a dead nullary leaf (Lf -> None),
+            // an O(1) saving that does not justify the O(size) copy. Without a non-nullary rebuild,
+            // copying the recursive argument turns an O(depth) traversal into an O(size) deep copy per
+            // call (the 1BRC get/set O(N·K) leak). So: keep the copy only when a field-bearing
+            // AllocReusing fired; otherwise skip the direct-reuse copies AND revert this body's
+            // (now unbacked-by-a-copy, hence unsound) nullary reuses to fresh allocations.
+            // Specialization copies (reuse lives in a $reuse clone) are unaffected.
+            bool structuralReuse = false;
+            for (int i = reuseInsertIndex; i < _inst.Count; i++)
+            {
+                if (_inst[i] is IrInst.AllocReusing { FieldCount: > 0 })
+                {
+                    structuralReuse = true;
+                    break;
+                }
+            }
+
+            if (!structuralReuse)
+            {
+                for (int i = reuseInsertIndex; i < _inst.Count; i++)
+                {
+                    if (_inst[i] is IrInst.AllocReusing ar)
+                    {
+                        _inst[i] = new IrInst.AllocAdt(ar.Target, ar.Tag, ar.FieldCount) { Location = ar.Location };
+                    }
+                }
+            }
+
             int genStart = _inst.Count;
             foreach (var (slot, typeRef) in reuseDefensiveCopy)
             {
+                if (directReuseSlots.Contains(slot) && !structuralReuse)
+                {
+                    continue;
+                }
+
                 int loaded = NewTemp();
                 Emit(new IrInst.LoadLocal(loaded, slot));
                 int copied = EmitDeepCopy(loaded, Prune(typeRef));
@@ -2870,6 +3199,8 @@ public sealed partial class Lowering
         {
             _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
         }
+
+        _lambdaDepth--;
 
         _linearReuseNames.Clear();
         foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
@@ -2941,8 +3272,16 @@ public sealed partial class Lowering
             current = Prune(fun.Ret);
         }
 
-        if (current is TypeRef.TVar)
+        if (current is TypeRef.TVar resultVar)
         {
+            // A '+'-constrained var is Int/Float/Str (a scalar, never a function), so the arity is
+            // exact even though it is not yet a concrete type. This keeps oversaturated-call
+            // detection working for functions like `add a b = a + b`.
+            if (ConstrainedAddVarRepIds().Contains(resultVar.Id))
+            {
+                return true;
+            }
+
             arity = 0;
             return false;
         }
@@ -2992,14 +3331,16 @@ public sealed partial class Lowering
         // Indirect in-place reuse: f(acc) where f is a specializable recursive function and acc is a
         // loop accumulator we deep-copied to uniqueness at loop entry. Route to f$reuse, which rewrites
         // the unique tree in place. The accumulator is dead after this call (it's the loop's only use).
-        if (rootExpr is Expr.Var specVar
-            && _specializableFunctions.TryGetValue(specVar.Name, out var specInfo)
+        // f may be a plain Var or a qualified stdlib reference (Ashes.Map.set → Ashes_Map_set).
+        if (ResolveSpecializableCalleeName(rootExpr) is { } specName
+            && _specializableFunctions.TryGetValue(specName, out var specInfo)
             && collectedArgs.Count == specInfo.ArgCount
             && collectedArgs[^1] is Expr.Var accArg
             && _linearSpecializationAccumulators.Contains(accArg.Name)
-            && Lookup(specVar.Name) is { } specBinding)
+            && Lookup(specName) is { } specBinding
+            && SpecializationRebuildsAccumulator(Prune(specBinding.Type), collectedArgs.Count))
         {
-            return LowerReuseSpecializedCall(specVar.Name, Prune(specBinding.Type), collectedArgs);
+            return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs);
         }
 
         // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
@@ -3009,6 +3350,13 @@ public sealed partial class Lowering
         // Inline a saturated helper call when a reuse token is live, OR unconditionally inside a
         // specialization (so every helper folds down to constructors and never leaves a call to a
         // top-level function the specialization didn't capture).
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
+            && rootExpr is Expr.Var dbgFn && _inlinableFunctions.TryGetValue(dbgFn.Name, out var dbgInl)
+            && dbgFn.Name.Contains("Map", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"[reuse] call {dbgFn.Name}: inSpec={_inSpecialization} tokens={_reuseTokens.Count} shadowed={_shadowedInlinables.ContainsKey(dbgFn.Name)} inProgress={_inliningInProgress.Contains(dbgFn.Name)} params={dbgInl.Params.Count} args={collectedArgs.Count}");
+        }
+
         if ((_reuseTokens.Count > 0 || _inSpecialization)
             && rootExpr is Expr.Var fnVar
             && !_shadowedInlinables.ContainsKey(fnVar.Name)
@@ -3084,10 +3432,12 @@ public sealed partial class Lowering
             {
                 int tcoPreRestoreEndSlot = NewLocal();
 
-                // An arg needs no copy-out at the reset if it's a copy type (inline) OR it's a
+                // An arg needs no copy-out at the reset if it's a copy type (inline), a resource
+                // handle (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), OR a
                 // fully-reusing specialized accumulator — rewritten in place below the watermark, it
                 // already survives a plain reset, which then reclaims the iteration's scaffolding.
                 bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
+                    || IsResourceHandleType(newArgTypes[i])
                     || (i < tco.ParamNames.Count && _resetSafeAccumulators.Contains(tco.ParamNames[i]));
 
                 if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
@@ -3171,6 +3521,15 @@ public sealed partial class Lowering
                 }
             }
 
+            // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
+            // pointer to the loop-body-entry watermark). The next-iteration arguments live in param slots
+            // (function-entry allocas, above this watermark) and the arena, so they survive. Without this,
+            // per-iteration stack scratch accumulates and overflows the stack at scale.
+            if (tco.StackPtrSlot >= 0)
+            {
+                Emit(new IrInst.RestoreStackPointer(tco.StackPtrSlot));
+            }
+
             // Jump back to loop start
             Emit(new IrInst.Jump(tco.BodyLabel));
 
@@ -3199,6 +3558,7 @@ public sealed partial class Lowering
                 IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                 IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
                 IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
                 IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
                 IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
                 IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
@@ -3231,6 +3591,8 @@ public sealed partial class Lowering
                 IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
                 IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
                 IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                 IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
@@ -3288,6 +3650,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
@@ -3319,6 +3682,8 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                    BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                     BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
@@ -4065,6 +4430,94 @@ public sealed partial class Lowering
         return res;
     }
 
+    /// <summary>
+    /// Peels leading intra-module alias bindings (<c>let helper = Ashes_Mod_helper in ...</c>, which the
+    /// import stitcher injects so a module body's unqualified references resolve) and substitutes those
+    /// alias names with their stitched targets throughout the remaining expression. The result is a
+    /// clean lambda that references top-level stitched names directly — which the reuse-specialization /
+    /// inlining registries are keyed by — so stdlib functions become eligible for in-place reuse.
+    /// Only used to build the registry copy; the original declaration value is left intact for normal
+    /// lowering. Throws on an unhandled Expr shape so the caller can skip registration (never miscompile).
+    /// </summary>
+    private static Expr StripModuleAliasPrefix(Expr value)
+    {
+        var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+        Expr body = value;
+        while (body is Expr.Let { Value: Expr.Var aliasTarget } aliasLet)
+        {
+            renames[aliasLet.Name] = aliasTarget.Name;
+            body = aliasLet.Body;
+        }
+
+        return renames.Count == 0 ? value : SubstituteVars(body, renames);
+    }
+
+    private static Expr SubstituteVars(Expr e, Dictionary<string, string> renames)
+    {
+        if (renames.Count == 0)
+        {
+            return e;
+        }
+
+        Expr S(Expr x) => SubstituteVars(x, renames);
+
+        // A binder shadows a renamed name within its scope: drop it from the rename set for the subtree.
+        T WithShadowed<T>(IEnumerable<string> bound, Func<Dictionary<string, string>, T> build)
+        {
+            var sub = renames.Where(kv => !bound.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            return build(sub);
+        }
+
+        switch (e)
+        {
+            case Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+                return e;
+            case Expr.Var v:
+                return renames.TryGetValue(v.Name, out var tgt) ? new Expr.Var(tgt) : e;
+            case Expr.Add b: return new Expr.Add(S(b.Left), S(b.Right));
+            case Expr.Subtract b: return new Expr.Subtract(S(b.Left), S(b.Right));
+            case Expr.Multiply b: return new Expr.Multiply(S(b.Left), S(b.Right));
+            case Expr.Divide b: return new Expr.Divide(S(b.Left), S(b.Right));
+            case Expr.BitwiseAnd b: return new Expr.BitwiseAnd(S(b.Left), S(b.Right));
+            case Expr.BitwiseOr b: return new Expr.BitwiseOr(S(b.Left), S(b.Right));
+            case Expr.BitwiseXor b: return new Expr.BitwiseXor(S(b.Left), S(b.Right));
+            case Expr.ShiftLeft b: return new Expr.ShiftLeft(S(b.Left), S(b.Right));
+            case Expr.ShiftRight b: return new Expr.ShiftRight(S(b.Left), S(b.Right));
+            case Expr.BitwiseNot b: return new Expr.BitwiseNot(S(b.Operand));
+            case Expr.GreaterThan b: return new Expr.GreaterThan(S(b.Left), S(b.Right));
+            case Expr.GreaterOrEqual b: return new Expr.GreaterOrEqual(S(b.Left), S(b.Right));
+            case Expr.LessThan b: return new Expr.LessThan(S(b.Left), S(b.Right));
+            case Expr.LessOrEqual b: return new Expr.LessOrEqual(S(b.Left), S(b.Right));
+            case Expr.Equal b: return new Expr.Equal(S(b.Left), S(b.Right));
+            case Expr.NotEqual b: return new Expr.NotEqual(S(b.Left), S(b.Right));
+            case Expr.ResultPipe b: return new Expr.ResultPipe(S(b.Left), S(b.Right));
+            case Expr.ResultMapErrorPipe b: return new Expr.ResultMapErrorPipe(S(b.Left), S(b.Right));
+            case Expr.Call c: return new Expr.Call(S(c.Func), S(c.Arg));
+            case Expr.TupleLit t: return new Expr.TupleLit(t.Elements.Select(S).ToList());
+            case Expr.ListLit l: return new Expr.ListLit(l.Elements.Select(S).ToList());
+            case Expr.Cons c: return new Expr.Cons(S(c.Head), S(c.Tail));
+            case Expr.If i: return new Expr.If(S(i.Cond), S(i.Then), S(i.Else));
+            case Expr.Await a: return new Expr.Await(S(a.Task));
+            case Expr.Lambda lam:
+                return WithShadowed([lam.ParamName], sub => new Expr.Lambda(lam.ParamName, SubstituteVars(lam.Body, sub)));
+            case Expr.Let l:
+                return new Expr.Let(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
+            case Expr.LetResult l:
+                return new Expr.LetResult(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
+            case Expr.LetRec l:
+                return WithShadowed([l.Name], sub => new Expr.LetRec(l.Name, SubstituteVars(l.Value, sub), SubstituteVars(l.Body, sub)));
+            case Expr.Match m:
+                return new Expr.Match(
+                    S(m.Value),
+                    m.Cases.Select(mc => WithShadowed(
+                        PatternBindings(mc.Pattern),
+                        sub => new MatchCase(mc.Pattern, SubstituteVars(mc.Body, sub), mc.Guard is null ? null : SubstituteVars(mc.Guard, sub)))).ToList(),
+                    m.Pos);
+            default:
+                throw new NotSupportedException($"SubstituteVars: unhandled {e.GetType().Name}");
+        }
+    }
+
     private bool TryLowerConstructorExpression(Expr expr, bool stackAllocate, out (int Temp, TypeRef Type) lowered)
     {
         if (expr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
@@ -4298,6 +4751,30 @@ public sealed partial class Lowering
     /// <c>acc</c> is a loop accumulator. These accumulators are deep-copied once at loop entry so the
     /// call can be routed to <c>f$reuse</c>. Walks calls + the if/let/match spine.
     /// </summary>
+    /// <summary>
+    /// Resolves a call root to the binding name used by the reuse registries: a plain <c>Var</c> yields
+    /// its name; a qualified stdlib/user-module reference (<c>Ashes.Map.set</c>) yields its stitched
+    /// top-level name (<c>Ashes_Map_set</c>). Returns null for intrinsics and non-name roots.
+    /// </summary>
+    private string? ResolveSpecializableCalleeName(Expr root)
+    {
+        switch (root)
+        {
+            case Expr.Var v:
+                return v.Name;
+            case Expr.QualifiedVar qv:
+                var resolvedModule = ResolveModuleAlias(qv.Module);
+                if (BuiltinRegistry.TryGetModule(resolvedModule, out var module) && module.Members.ContainsKey(qv.Name))
+                {
+                    return null; // intrinsic member — lowered directly, not a stitched function
+                }
+
+                return ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
+            default:
+                return null;
+        }
+    }
+
     private void CollectSpecializableCallArgs(Expr e, HashSet<string> paramNames, Dictionary<string, string> result)
     {
         switch (e)
@@ -4305,13 +4782,13 @@ public sealed partial class Lowering
             case Expr.Call call:
                 var callArgs = new List<Expr>();
                 var callRoot = CollectCallArgs(call, callArgs);
-                if (callRoot is Expr.Var fn
-                    && _specializableFunctions.TryGetValue(fn.Name, out var fnSpec)
+                if (ResolveSpecializableCalleeName(callRoot) is { } fnName
+                    && _specializableFunctions.TryGetValue(fnName, out var fnSpec)
                     && callArgs.Count == fnSpec.ArgCount
                     && callArgs[^1] is Expr.Var arg
                     && paramNames.Contains(arg.Name))
                 {
-                    result[arg.Name] = fn.Name;
+                    result[arg.Name] = fnName;
                 }
 
                 CollectSpecializableCallArgs(call.Func, paramNames, result);
@@ -4375,8 +4852,18 @@ public sealed partial class Lowering
         // Params whose argument was built by in-place reuse are themselves linear: a match-then-rebuild
         // on them in the helper body reuses the same cell (intermediate-value linearity).
         var linearParams = new List<string>();
+        // Params bound to a FRESH heap input of the enclosing specialization (e.g. makeNode's key/value
+        // param bound to the spec's newKey/newValue) inherit that fresh-input status, so a constructor
+        // field in the inlined body still materializes them into the persistent blob.
+        var freshParams = new List<string>();
         for (int i = 0; i < paramNames.Count; i++)
         {
+            if (_specFreshInputNames is not null && args[i] is Expr.Var fv
+                && _specFreshInputNames.Contains(fv.Name) && !_specFreshInputNames.Contains(paramNames[i]))
+            {
+                freshParams.Add(paramNames[i]);
+            }
+
             var (argTemp, argType) = LowerExpr(args[i]);
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, argTemp));
@@ -4397,7 +4884,9 @@ public sealed partial class Lowering
         _scopes.Push(inlineScope);
         _inliningInProgress.Add(fnName);
         foreach (var p in linearParams) _linearReuseNames.Add(p);
+        if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Add(p);
         var result = LowerExpr(body);
+        if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Remove(p);
         foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
@@ -4411,23 +4900,32 @@ public sealed partial class Lowering
     /// recursion reuses the unique subtrees). Returns the function label to call. The caller must only
     /// route a provably-unique argument here.
     /// </summary>
-    private string GetOrCreateReuseSpecialization(string name, TypeRef funcType)
+    private string GetOrCreateReuseSpecialization(string name, TypeRef funcType, IReadOnlyList<TypeRef> concreteParamTypes)
     {
-        if (_reuseSpecializations.TryGetValue(name, out var cached))
+        // Cache per concrete instantiation: the spec is monomorphized to the call's argument types, so a
+        // function used at two element types gets two specializations.
+        string cacheKey = name + "|" + string.Join(",", concreteParamTypes.Select(t => Pretty(Prune(t))));
+        if (_reuseSpecializations.TryGetValue(cacheKey, out var cached))
         {
             return cached;
         }
 
         var spec = _specializableFunctions[name];
-        string label = $"{name}__reuse";
-        _reuseSpecializations[name] = label;
+        string label = _reuseSpecializations.Count == 0 ? $"{name}__reuse" : $"{name}__reuse${_reuseSpecializations.Count}";
+        _reuseSpecializations[cacheKey] = label;
 
         var savedLinear = _specializingLinearParam;
         var savedReuseLabel = _specializingReuseLabel;
         var savedInSpec = _inSpecialization;
+        var savedConcrete = _specializationConcreteParamTypes;
+        var savedCursor = _specializationParamCursor;
+        var savedFreshInputs = _specFreshInputNames;
         _specializingLinearParam = spec.LinearParam;
         _specializingReuseLabel = null;
         _inSpecialization = true;
+        _specializationConcreteParamTypes = concreteParamTypes;
+        _specializationParamCursor = 0;
+        _specFreshInputNames = new HashSet<string>(CollectLambdaParams(spec.Lambda), StringComparer.Ordinal);
         // forcedLabel + selfName=name make recursive calls resolve to Binding.Self(label) → f$reuse.
         // LowerLambdaCore adds the function to _funcs and then emits an incidental closure into the
         // current _inst; we don't need that closure (we build our own at each call site), so discard
@@ -4446,11 +4944,29 @@ public sealed partial class Lowering
         _specializingLinearParam = savedLinear;
         _specializingReuseLabel = savedReuseLabel;
         _inSpecialization = savedInSpec;
+        _specializationConcreteParamTypes = savedConcrete;
+        _specializationParamCursor = savedCursor;
+        _specFreshInputNames = savedFreshInputs;
 
         var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => f.Label == reuseLabel) : null;
-        if (recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!))
+        bool fullyReusing = recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!);
+        if (fullyReusing)
         {
             _fullyReusingLabels.Add(label);
+        }
+
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+        {
+            var rf = recursiveFunc;
+            int toSpace = rf?.Instructions.Count(i => i is IrInst.AllocAdtToSpace) ?? -1;
+            int allocAdt = rf?.Instructions.Count(i => i is IrInst.AllocAdt) ?? -1;
+            int reusing = rf?.Instructions.Count(i => i is IrInst.AllocReusing) ?? -1;
+            Console.Error.WriteLine($"[reuse] spec {name} -> {label}, reuseLabel={reuseLabel ?? "<null>"}, fullyReusing={fullyReusing}, AllocAdtToSpace={toSpace} AllocAdt={allocAdt} AllocReusing={reusing} funcType={Pretty(Prune(funcType))}");
+            if (rf is not null && Environment.GetEnvironmentVariable("ASH_DBG_REUSE_IR") is not null)
+            {
+                System.IO.File.WriteAllLines($"/tmp/spec_{rf.Label}.txt", rf.Instructions.Select((ins, idx) => $"{idx}: {ins}"));
+                Console.Error.WriteLine($"[reuse] dumped {rf.Instructions.Count} instrs of {rf.Label} to /tmp/spec_{rf.Label}.txt");
+            }
         }
 
         return label;
@@ -4480,9 +4996,6 @@ public sealed partial class Lowering
                 case IrInst.CopyOutList:
                 case IrInst.CopyOutClosure:
                 case IrInst.CopyOutTcoListCell:
-                    return false;
-                case IrInst.MakeClosure mk when mk.FuncLabel != selfLabel:
-                case IrInst.MakeClosureStack mks when mks.FuncLabel != selfLabel:
                     return false;
             }
         }
@@ -4531,13 +5044,95 @@ public sealed partial class Lowering
     /// arguments in turn (the last being the uniquely-owned accumulator). <c>f$reuse</c> rewrites that
     /// tree in place.
     /// </summary>
+    // Whether a reuse specialization's rebuilt accumulator references only persistent (never-reset) memory,
+    // so the loop back-edge may reclaim the main arena each iteration without dangling anything. The tree's
+    // nodes are always persistent (to-space / in-place reuse) and its children are too; the only risk is a
+    // heap LEAF field pointing into per-iteration scratch. For the stdlib Map (MapTree(K, V)): the key is
+    // materialized to the persistent blob on insert and kept from the matched node on update, so a copy or
+    // Str/Bytes key is always persistent; the value is freshly produced on every update and only
+    // insert-materialized, so it is persistent only when it is a copy type. Other (non-Map) heap
+    // accumulators are treated conservatively as not-yet-persistent (correct, just not reset-reclaimed):
+    // the general fix is to materialize fresh heap leaf fields on the update path too.
+    private bool AccumulatorIsFullyPersistent(TypeRef accType)
+    {
+        if (Prune(accType) is not TypeRef.TNamedType named)
+        {
+            return false;
+        }
+
+        if (string.Equals(named.Symbol.Name, "MapTree", StringComparison.Ordinal) && named.TypeArgs.Count == 2)
+        {
+            // A field is persistent if it is a copy type, a Str/Bytes (materialized to the blob), or a tuple
+            // of copy-type elements (fixed-size copy to the blob). The key is additionally kept-on-update;
+            // the value is fresh on every update and is materialized on both insert and update.
+            return IsReuseMaterializableFieldType(Prune(named.TypeArgs[0]))
+                && IsReuseMaterializableFieldType(Prune(named.TypeArgs[1]));
+        }
+
+        return false;
+    }
+
+    // A reuse-node heap leaf field type the materialization can make persistent (blob): copy types (inline,
+    // nothing to do), Str/Bytes (dynamic copy), and tuples of copy-type elements (fixed-size shallow copy).
+    // Must match the materialization cases in LowerConstructorApplication.
+    private bool IsReuseMaterializableFieldType(TypeRef t) =>
+        BuiltinRegistry.IsCopyType(t)
+        || t is TypeRef.TStr or TypeRef.TBytes
+        || (t is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))));
+
+    // True only if a specializable function actually rebuilds its accumulator in place: its result
+    // type (after applying all <paramref name="argCount"/> args) is the same named ADT as its last
+    // parameter (the accumulator). A rewriter like Map.set (MapTree -> MapTree) qualifies; a pure
+    // reader like Map.get (MapTree -> Maybe) does not — routing a reader through the reuse spec would
+    // allocate its result cell (e.g. Some(value)) into the never-reset to-space, leaking one cell per
+    // call. Readers stay on the normal path, where their result lives in the reclaimed main arena.
+    private bool SpecializationRebuildsAccumulator(TypeRef funcType, int argCount)
+    {
+        var current = Prune(funcType);
+        TypeRef? lastParam = null;
+        for (int i = 0; i < argCount; i++)
+        {
+            if (current is not TypeRef.TFun fun)
+            {
+                return false;
+            }
+
+            lastParam = Prune(fun.Arg);
+            current = Prune(fun.Ret);
+        }
+
+        return lastParam is TypeRef.TNamedType paramNamed
+            && current is TypeRef.TNamedType resultNamed
+            && string.Equals(paramNamed.Symbol.Name, resultNamed.Symbol.Name, StringComparison.Ordinal);
+    }
+
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
     {
-        string label = GetOrCreateReuseSpecialization(name, funcType);
+        // Lower the arguments first to learn their concrete types: the generic funcType does not say
+        // whether the key/value are heap (Str) or copy (Int), and the specialization must be
+        // monomorphized to those types so heap fields are materialized into the persistent to-space.
+        var argTemps = new int[args.Count];
+        var concreteParamTypes = new List<TypeRef>(args.Count);
+        var curType = Prune(funcType);
+        for (int i = 0; i < args.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            argTemps[i] = argTemp;
+            if (curType is TypeRef.TFun tfun)
+            {
+                Unify(tfun.Arg, argType);
+                curType = Prune(tfun.Ret);
+            }
+
+            concreteParamTypes.Add(Prune(argType));
+        }
+
+        string label = GetOrCreateReuseSpecialization(name, funcType, concreteParamTypes);
         // If the specialization fully reuses, its result is the accumulator rewritten in place below
         // the watermark, so the loop back-edge may reset the arena (reclaiming this call's recursion
         // scaffolding) and keep the accumulator.
-        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar)
+        if (_fullyReusingLabels.Contains(label) && args[^1] is Expr.Var accVar
+            && AccumulatorIsFullyPersistent(concreteParamTypes[^1]))
         {
             _resetSafeAccumulators.Add(accVar.Name);
         }
@@ -4547,19 +5142,10 @@ public sealed partial class Lowering
         int closureTemp = NewTemp();
         Emit(new IrInst.MakeClosure(closureTemp, label, envPtr, 0));
 
-        // Apply the specialized closure to each argument in turn; each application yields the next
-        // curried closure (or the final result).
-        var curType = Prune(funcType);
+        // Apply the specialized closure to each (already-lowered) argument in turn.
         int current = closureTemp;
-        foreach (var argExpr in args)
+        foreach (var argTemp in argTemps)
         {
-            var (argTemp, argType) = LowerExpr(argExpr);
-            if (curType is TypeRef.TFun tfun)
-            {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
-            }
-
             int next = NewTemp();
             Emit(new IrInst.CallClosure(next, current, argTemp));
             current = next;

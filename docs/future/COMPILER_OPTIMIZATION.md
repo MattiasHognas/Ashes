@@ -3,7 +3,7 @@
 Internal compiler quality-of-implementation improvements.
 Nothing here changes the language specification.
 
-------------------------------------------------------------------------
+---
 
 ## Completed Work
 

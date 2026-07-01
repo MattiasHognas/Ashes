@@ -144,6 +144,7 @@ internal static partial class LlvmImageLinker
         int terminateProcessHintOffset = WriteHintName(rdataStream, 0, "TerminateProcess");
         int waitForSingleObjectHintOffset = WriteHintName(rdataStream, 0, "WaitForSingleObject");
         int getExitCodeProcessHintOffset = WriteHintName(rdataStream, 0, "GetExitCodeProcess");
+        int createThreadHintOffset = WriteHintName(rdataStream, 0, "CreateThread");
         var externHintOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var import in externImports)
         {
@@ -154,7 +155,7 @@ internal static partial class LlvmImageLinker
         }
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
         int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset];
         int[] crypt32Hints = [certOpenSystemStoreHintOffset, certEnumCertificatesInStoreHintOffset, certCloseStoreHintOffset];
@@ -263,6 +264,7 @@ internal static partial class LlvmImageLinker
         ulong terminateProcessIatVa = kernel32IatVa + 19 * 8;
         ulong waitForSingleObjectIatVa = kernel32IatVa + 20 * 8;
         ulong getExitCodeProcessIatVa = kernel32IatVa + 21 * 8;
+        ulong createThreadIatVa = kernel32IatVa + 22 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -337,6 +339,7 @@ internal static partial class LlvmImageLinker
             ["__imp_TerminateProcess"] = terminateProcessIatVa,
             ["__imp_WaitForSingleObject"] = waitForSingleObjectIatVa,
             ["__imp_GetExitCodeProcess"] = getExitCodeProcessIatVa,
+            ["__imp_CreateThread"] = createThreadIatVa,
             ["__chkstk"] = chkstkStubVa,
         };
         foreach (var (import, offset) in externIatOffsets)

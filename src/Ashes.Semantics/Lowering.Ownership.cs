@@ -583,6 +583,16 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// True if the type is a resource handle (FileHandle, Socket, Process, …). These are represented
+    /// as a scalar i64 fd/HANDLE with no heap payload, so a value of this type survives a TCO
+    /// back-edge arena reset trivially (nothing to copy out) and the reset never Drops it — Drop
+    /// happens only at scope exit / explicit close. This lets a read loop thread its handle without
+    /// blocking the per-iteration reset (e.g. a single-loop file fold stays constant-memory).
+    /// </summary>
+    private bool IsResourceHandleType(TypeRef type) =>
+        Prune(type) is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+
+    /// <summary>
     /// Determines whether the given type's heap representation can be safely copy-outed
     /// after a RestoreArenaState, and what kind of copy-out is needed.
     /// <para>
@@ -718,12 +728,30 @@ public sealed partial class Lowering
     private TypeRef ResolveFieldType(TypeRef fieldType, Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap)
     {
         var pruned = Prune(fieldType);
-        if (pruned is TypeRef.TTypeParam tp && typeParamMap is not null
-            && typeParamMap.TryGetValue(tp.Symbol, out var concrete))
+        if (typeParamMap is null)
         {
-            return Prune(concrete);
+            return pruned;
         }
-        return pruned;
+
+        // Substitute recursively, not just at the top level: a recursive ADT field such as MapTree's
+        // `MapTree(K, V)` subtrees must become MapTree(Str, Int) so a synthesized deep-copier recognises
+        // it as the self type and deep-copies its key/value fields, rather than leaving them as
+        // type-parameter passthroughs (which leaves a string key shallow-copied → dangling past a reset).
+        switch (pruned)
+        {
+            case TypeRef.TTypeParam tp:
+                return typeParamMap.TryGetValue(tp.Symbol, out var concrete) ? Prune(concrete) : pruned;
+            case TypeRef.TNamedType named when named.TypeArgs.Count > 0:
+                return named with { TypeArgs = named.TypeArgs.Select(a => ResolveFieldType(a, typeParamMap)).ToList() };
+            case TypeRef.TList list:
+                return new TypeRef.TList(ResolveFieldType(list.Element, typeParamMap));
+            case TypeRef.TTuple tuple:
+                return new TypeRef.TTuple(tuple.Elements.Select(e => ResolveFieldType(e, typeParamMap)).ToList());
+            case TypeRef.TFun fun:
+                return new TypeRef.TFun(ResolveFieldType(fun.Arg, typeParamMap), ResolveFieldType(fun.Ret, typeParamMap));
+            default:
+                return pruned;
+        }
     }
 
     /// <summary>

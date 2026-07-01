@@ -5,7 +5,7 @@ representation (IR). The IR is a flat, register-based instruction set
 defined in `Ashes.Semantics/Ir.cs`. The `Lowering` pass converts the
 typed AST into an `IrProgram`, which the LLVM backend consumes.
 
-------------------------------------------------------------------------
+---
 
 ## Program Structure
 
@@ -66,7 +66,7 @@ Maps a label to a string constant:
 Referenced by `LoadConstStr`. The backend allocates these on the heap
 as `[length:i64][bytes...]`.
 
-------------------------------------------------------------------------
+---
 
 ## Registers and Locals
 
@@ -81,7 +81,7 @@ Each instruction that produces a value writes to a `Target` temporary.
 Each instruction that consumes values reads from `Source`, `Left`,
 `Right`, or named parameter temporaries.
 
-------------------------------------------------------------------------
+---
 
 ## Instruction Reference
 
@@ -282,7 +282,7 @@ live temps and locals across the await point.
 | 48+ | Captures | Captured environment variables |
 | 48+N*8+ | Live vars | Live variable slots across await points |
 
-------------------------------------------------------------------------
+---
 
 ## Lowering Overview
 
@@ -306,7 +306,7 @@ The `Lowering` class transforms the typed AST into IR:
 5. **Let bindings** allocate a local slot (`StoreLocal`) and make it
    available in the body scope (`LoadLocal`).
 
-------------------------------------------------------------------------
+---
 
 ## Backend Consumption
 
@@ -320,7 +320,7 @@ The LLVM backend (`LlvmCodegen`) processes each `IrFunction`:
 4. The `Uses*` flags on `IrProgram` control which runtime helpers
    (print routines, string concatenation, etc.) are included.
 
-------------------------------------------------------------------------
+---
 
 ## Memory Layout Summary
 

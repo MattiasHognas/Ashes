@@ -58,6 +58,14 @@ internal static partial class LlvmCodegen
     private const ulong TcbSelfOffset = 0;
     private const ulong TcbHeapCursorOffset = 8;
     private const ulong TcbHeapEndOffset = 16;
+    // Persistent to-space arena cursor/end (see IrInst.AllocAdtToSpace). Lazily initialized (both 0).
+    private const ulong TcbToSpaceCursorOffset = 24;
+    private const ulong TcbToSpaceEndOffset = 32;
+    // Persistent blob region cursor/end: materialized heap leaf fields (Map keys/values) live here, kept
+    // separate from the to-space NODE arena so that arena never interleaves fixed-size nodes with
+    // variable-size blobs (interleaving corrupts the in-place reuse rebuild). Lazily initialized (both 0).
+    private const ulong TcbBlobCursorOffset = 40;
+    private const ulong TcbBlobEndOffset = 48;
     private const int MainTcbSizeBytes = 512;
     private const long LinuxErrWouldBlock = -11;
     private const long LinuxErrAlready = -114;
@@ -211,6 +219,13 @@ internal static partial class LlvmCodegen
         {
             string verifyError = Marshal.PtrToStringAnsi(verifyMsg) ?? "unknown error";
             LlvmApi.DisposeMessage(verifyMsg);
+            if (Environment.GetEnvironmentVariable("ASH_DBG_DUMP_IR") is not null)
+            {
+                nint irPtr = LlvmApi.PrintModuleToString(target.Module);
+                System.IO.File.WriteAllText("/tmp/ashes_bad_ir.ll", Marshal.PtrToStringAnsi(irPtr) ?? "");
+                LlvmApi.DisposeMessage(irPtr);
+            }
+
             throw new InvalidOperationException($"LLVM module verification failed: {verifyError}");
         }
 
@@ -353,6 +368,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileWriteBytes>(program)
                 || ProgramUsesInstruction<IrInst.FileOpen>(program)
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
+                || ProgramUsesInstruction<IrInst.FileReadLine>(program)
                 || ProgramUsesInstruction<IrInst.FileClose>(program)
                 || ProgramUsesInstruction<IrInst.Drop>(program));
         bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
@@ -443,6 +459,8 @@ internal static partial class LlvmCodegen
         // (single-threaded today).
         LlvmValueHandle heapCursorGlobal = default;
         LlvmValueHandle heapEndGlobal = default;
+        LlvmValueHandle toSpaceCursorGlobal = default;
+        LlvmValueHandle toSpaceEndGlobal = default;
         if (flavor != LlvmCodegenFlavor.LinuxX64)
         {
             heapCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_cursor");
@@ -451,6 +469,20 @@ internal static partial class LlvmCodegen
             heapEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_heap_end");
             LlvmApi.SetLinkage(heapEndGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(heapEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            // Persistent to-space arena (AllocAdtToSpace). Lazily initialized: both start at 0.
+            toSpaceCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_tospace_cursor");
+            LlvmApi.SetLinkage(toSpaceCursorGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(toSpaceCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            toSpaceEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_tospace_end");
+            LlvmApi.SetLinkage(toSpaceEndGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(toSpaceEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            // Persistent blob region (materialized Map key/value leaf fields). Lazily initialized: both 0.
+            LlvmValueHandle blobCursorGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_blob_cursor");
+            LlvmApi.SetLinkage(blobCursorGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(blobCursorGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            LlvmValueHandle blobEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_blob_end");
+            LlvmApi.SetLinkage(blobEndGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(blobEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
         if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
@@ -669,6 +701,30 @@ internal static partial class LlvmCodegen
 
         if (ProgramUsesInstruction<IrInst.ParallelFork>(program))
         {
+            if (flavor == LlvmCodegenFlavor.WindowsX64)
+            {
+                // Worker spawn/join on win-x64 uses these kernel32 imports (looked up by name in
+                // LlvmCodegenParallel). VirtualAlloc/VirtualFree are already created above for every
+                // win-x64 program; CreateThread is new, and WaitForSingleObject/CloseHandle may not
+                // exist yet if the program uses neither process nor file/socket IO.
+                LlvmValueHandle EnsureWindowsImport(string name)
+                {
+                    LlvmValueHandle existing = LlvmApi.GetNamedGlobal(target.Module, name);
+                    if (existing != default)
+                    {
+                        return existing;
+                    }
+
+                    LlvmValueHandle g = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), name);
+                    LlvmApi.SetLinkage(g, LlvmLinkage.External);
+                    return g;
+                }
+
+                EnsureWindowsImport("__imp_CreateThread");
+                EnsureWindowsImport("__imp_WaitForSingleObject");
+                EnsureWindowsImport("__imp_CloseHandle");
+            }
+
             EmitParallelRuntime(target, flavor, nounwindAttr);
         }
 
@@ -712,6 +768,8 @@ internal static partial class LlvmCodegen
             i32Ptr,
             heapCursorGlobal,
             heapEndGlobal,
+            toSpaceCursorGlobal,
+            toSpaceEndGlobal,
             windowsGetStdHandleImport,
             windowsWriteFileImport,
             windowsReadFileImport,
@@ -770,6 +828,8 @@ internal static partial class LlvmCodegen
                 i32Ptr,
                 heapCursorGlobal,
                 heapEndGlobal,
+                toSpaceCursorGlobal,
+                toSpaceEndGlobal,
                 windowsGetStdHandleImport,
                 windowsWriteFileImport,
                 windowsReadFileImport,
@@ -869,7 +929,7 @@ internal static partial class LlvmCodegen
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutList or IrInst.CopyOutClosure or IrInst.CopyOutTcoListCell;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.AllocAdtToSpace or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutArenaToSpace or IrInst.CopyOutList or IrInst.CopyOutClosure or IrInst.CopyOutTcoListCell;
     }
 
     private static void EmitFunctionBody(
@@ -884,6 +944,8 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32Ptr,
         LlvmValueHandle heapCursorGlobal,
         LlvmValueHandle heapEndGlobal,
+        LlvmValueHandle toSpaceCursorGlobal,
+        LlvmValueHandle toSpaceEndGlobal,
         LlvmValueHandle windowsGetStdHandleImport,
         LlvmValueHandle windowsWriteFileImport,
         LlvmValueHandle windowsReadFileImport,
@@ -1045,19 +1107,44 @@ internal static partial class LlvmCodegen
             new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
             flavor,
             usesProgramArgs,
-            isEntry);
-
-        if (flavor == LlvmCodegenFlavor.LinuxX64)
+            isEntry) with
         {
-            // Recover this thread's TCB base and address the arena cursor/end through it as
-            // ordinary pointers. The entry function sets up GS (arch_prctl) and the TCB
-            // self-pointer and knows the main-TCB address directly; every other function
-            // reads the base back from %gs:0.
-            LlvmValueHandle tcbBase = isEntry
-                ? EmitMainThreadTlsInit(state)
-                : EmitReadTcbBaseFromGs(state);
+            ToSpaceCursorSlot = toSpaceCursorGlobal,
+            ToSpaceEndSlot = toSpaceEndGlobal,
+            // Non-linux: the blob-region globals were created in module setup; look them up by name to
+            // avoid threading them through this (very large) parameter list. On linux they are repointed
+            // at the per-thread TCB just below, so the (null) lookup result here is overwritten.
+            BlobCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_cursor"),
+            BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
+        };
+
+        if (flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            // Recover this thread's TCB base and address the arena cursor/end (and to-space/blob)
+            // through it as ordinary pointers, so worker threads get their own arenas. On linux the
+            // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on win-x64
+            // the TCB pointer lives in TEB+0x28 (the OS provides the GS-based TEB, so no arch_prctl).
+            LlvmValueHandle tcbBase;
+            if (flavor == LlvmCodegenFlavor.LinuxX64)
+            {
+                tcbBase = isEntry ? EmitMainThreadTlsInit(state) : EmitReadTcbBaseFromGs(state);
+            }
+            else
+            {
+                tcbBase = isEntry ? EmitMainThreadTlsInitWindows(state) : EmitReadTcbBaseFromTeb(state);
+            }
             (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
-            state = state with { HeapCursorSlot = cursorSlot, HeapEndSlot = endSlot };
+            (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
+            (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
+            state = state with
+            {
+                HeapCursorSlot = cursorSlot,
+                HeapEndSlot = endSlot,
+                ToSpaceCursorSlot = toCursorSlot,
+                ToSpaceEndSlot = toEndSlot,
+                BlobCursorSlot = blobCursorSlot,
+                BlobEndSlot = blobEndSlot,
+            };
         }
 
         if (isEntry)
@@ -1131,6 +1218,7 @@ internal static partial class LlvmCodegen
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileOpen fileOpen => StoreTemp(state, fileOpen.Target, EmitFileOpen(state, LoadTemp(state, fileOpen.PathTemp))),
             IrInst.FileReadChunk fileReadChunk => StoreTemp(state, fileReadChunk.Target, EmitFileReadChunk(state, LoadTemp(state, fileReadChunk.HandleTemp), LoadTemp(state, fileReadChunk.CountTemp))),
+            IrInst.FileReadLine fileReadLine => StoreTemp(state, fileReadLine.Target, EmitFileReadLine(state, LoadTemp(state, fileReadLine.HandleTemp))),
             IrInst.FileClose fileClose => StoreTemp(state, fileClose.Target, EmitFileClose(state, LoadTemp(state, fileClose.HandleTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
@@ -1150,6 +1238,8 @@ internal static partial class LlvmCodegen
             IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(state, LoadTemp(state, bytesSingleton.ByteTemp))),
             IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
             IrInst.BytesGet bytesGet => StoreTemp(state, bytesGet.Target, EmitBytesGet(state, LoadTemp(state, bytesGet.BytesTemp), LoadTemp(state, bytesGet.IndexTemp))),
+            IrInst.BytesIndexOf bytesIndexOf => StoreTemp(state, bytesIndexOf.Target, EmitBytesIndexOf(state, LoadTemp(state, bytesIndexOf.BytesTemp), LoadTemp(state, bytesIndexOf.NeedleTemp), LoadTemp(state, bytesIndexOf.FromTemp))),
+            IrInst.BytesSubText bytesSubText => StoreTemp(state, bytesSubText.Target, EmitBytesSubText(state, LoadTemp(state, bytesSubText.BytesTemp), LoadTemp(state, bytesSubText.StartTemp), LoadTemp(state, bytesSubText.LenTemp))),
             IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
             IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
             IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
@@ -1281,9 +1371,12 @@ internal static partial class LlvmCodegen
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
+            IrInst.AllocAdtToSpace allocToSpace => StoreTemp(state, allocToSpace.Target, EmitAllocAdtToSpace(state, allocToSpace.Tag, allocToSpace.FieldCount)),
             IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target, EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp), allocReusing.Tag)),
             IrInst.AllocAdtStack allocAdtStack => StoreTemp(state, allocAdtStack.Target, EmitStackAllocAdt(state, allocAdtStack.Tag, allocAdtStack.FieldCount)),
             IrInst.SetAdtField setAdtField => StoreMemory(state, LoadTemp(state, setAdtField.Ptr), 8 + (setAdtField.FieldIndex * 8), LoadTemp(state, setAdtField.Source), $"set_adt_field_{setAdtField.FieldIndex}"),
+            IrInst.SaveStackPointer saveSp => EmitSaveStackPointer(state, saveSp.Slot),
+            IrInst.RestoreStackPointer restoreSp => EmitRestoreStackPointer(state, restoreSp.Slot),
             IrInst.GetAdtTag getAdtTag => StoreTemp(state, getAdtTag.Target, LoadMemory(state, LoadTemp(state, getAdtTag.Ptr), 0, $"get_adt_tag_{getAdtTag.Target}")),
             IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadMemory(state, LoadTemp(state, getAdtField.Ptr), 8 + (getAdtField.FieldIndex * 8), $"get_adt_field_{getAdtField.Target}")),
             IrInst.Jump jump => EmitJump(state, jump.Target),
@@ -1295,6 +1388,8 @@ internal static partial class LlvmCodegen
             IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot),
             IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot),
             IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
+            IrInst.CopyOutArenaToSpace copyOutTs => StoreTemp(state, copyOutTs.DestTemp, EmitCopyOutArenaToSpace(state, copyOutTs.SrcTemp, copyOutTs.StaticSizeBytes)),
+            IrInst.CopyFixedInto copyInto => EmitCopyFixedInto(state, copyInto.DestTemp, copyInto.SrcTemp, copyInto.SizeBytes),
             IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy)),
             IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
             IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
@@ -1402,6 +1497,15 @@ internal static partial class LlvmCodegen
         bool UsesProgramArgs,
         bool IsEntry)
     {
+        // Persistent "to-space" arena cursor/end (i64 slots), parallel to HeapCursorSlot/HeapEndSlot.
+        // Used by AllocAdtToSpace for genuinely-new cells in in-place reuse specializations. Lazily
+        // initialized: both start at 0, so the first allocation's `cursor + size > end` check grows the
+        // first chunk. Never reset by the TCO back-edge, so reused-loop inserts survive the reset.
+        public LlvmValueHandle ToSpaceCursorSlot { get; init; }
+        public LlvmValueHandle ToSpaceEndSlot { get; init; }
+        public LlvmValueHandle BlobCursorSlot { get; init; }
+        public LlvmValueHandle BlobEndSlot { get; init; }
+
         public LlvmBasicBlockHandle GetLabelBlock(string name) => LabelBlocks[name];
 
         public LlvmBasicBlockHandle GetOrCreateFallthroughBlock(int instructionIndex)
