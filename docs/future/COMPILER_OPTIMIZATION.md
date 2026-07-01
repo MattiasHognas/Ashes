@@ -29,7 +29,8 @@ All original audit findings have been addressed:
 | **Jump-table linking** | The image linkers apply switch jump-table relocations (`R_X86_64_64` in `.rela.rodata`, `IMAGE_REL_AMD64_ADDR64` in `.rdata`, defensive `R_AARCH64_ABS64`), so LLVM's O(1) table dispatch links and runs correctly; the `no-jump-tables` attribute was removed. |
 | **String-literal interning** | Identical string-literal `.rodata` globals are content-addressed and emitted once per module (`LlvmTargetContext.GetOrAddStringLiteralGlobal`), shared across all functions and internal call sites. Compile-time, bounded, leak-free. |
 | **Mutual-recursion TCO** | Eligible `let rec … and …` groups (same arity, identical parameter types, a cross-member tail call) are merged into one self-recursive `dispatch` function with thin per-member wrappers, so the existing single-function TCO turns mutual recursion into a loop. Ineligible groups keep the closure path. **Design constraint:** members can legally have different parameter types (`ping: Int → Str` tail-calls `pong: Str → Str`), which a single shared typed parameter list cannot merge without unifying incompatible types; hence the same-arity + identical-parameter-types gate (verified against each member's inferred type). Heterogeneous-parameter generalization would need distinct per-member slots (an IR-level slot-union loop) or opaque-coercion dispatch. |
-| **In-place reuse (Perceus-style, no runtime RC)** | Immutable recursive-ADT accumulators are rebuilt in place instead of reallocated: a one-time defensive deep copy at loop entry makes the accumulator uniquely owned, then matched-and-rebuilt-with-the-same-constructor cells are overwritten (`AllocReusing`). Covers direct accumulators, helper-rebuild inlining, recursive-function specialization, and the full `Ashes.Map.set` shape (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). Fresh heap leaf fields (Str/Bytes/tuple keys & values) are materialized into a persistent to-space/blob on insert and overwritten in place on update; a genuinely-new insert node also lands in to-space. Pure readers (result type ≠ the accumulator ADT, e.g. `Map.get : … → Maybe`) are kept off the reuse path so their result cell isn't stranded in the never-reset to-space. A conservative `IsFullyReusing` gate + `AccumulatorIsFullyPersistent` guard the per-iteration arena reset (extended to admit reset-safe accumulators + scalar resource-handle args). Result: string/int/tuple-valued `Map.set` folds are constant-memory. See roadmap **CO-2** for the remaining nested-re-entry case. |
+| **In-place reuse (Perceus-style, no runtime RC)** | Immutable recursive-ADT accumulators are rebuilt in place instead of reallocated: a one-time defensive deep copy at loop entry makes the accumulator uniquely owned, then matched-and-rebuilt-with-the-same-constructor cells are overwritten (`AllocReusing`). Covers direct accumulators, helper-rebuild inlining, recursive-function specialization, and the full `Ashes.Map.set` shape (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). Fresh heap leaf fields (Str/Bytes/tuple keys & values) are materialized into a persistent to-space/blob on insert and overwritten in place on update; a genuinely-new insert node also lands in to-space. Pure readers (result type ≠ the accumulator ADT, e.g. `Map.get : … → Maybe`) are kept off the reuse path so their result cell isn't stranded in the never-reset to-space. A conservative `IsFullyReusing` gate + `AccumulatorIsFullyPersistent` guard the per-iteration arena reset (extended to admit reset-safe accumulators + scalar resource-handle args). Result: string/int/tuple-valued `Map.set` folds are constant-memory. The nested-re-entry leak is addressed by the CO-2 elision below. |
+| **Move/linearity reuse-copy elision (CO-2)** | The specialization-path entry deep-copy is now **elided when provably safe**, killing the nested-re-entry leak (an outer loop threading an accumulator into an inner reuse fold no longer re-copies the growing structure per re-entry — `O(re-entries × size)` → constant). A whole-program, on-demand greatest-fixpoint move analysis (`Lowering.MoveAnalysis.cs`) proves the accumulator is uniquely owned at *every* external call site before skipping the copy; the copy stays on any uncertainty, so an incomplete proof can only leak, never corrupt. Predicate: at each call site the accumulator argument is a **move** — either the sole nullary constructor of its type (a seed whose cell reuse can never observably overwrite), or a reference to a move-safe accumulator parameter of the enclosing function that is **move-linear** there (used at most once on any execution path, never captured). Transitive and cycle-guarded; a fold/param is considered only if its name never escapes as a value (so the call-site census is complete). Elision preserves the machinery's exact precondition (a uniquely-owned entry accumulator), so it needs no reuse-internals reasoning. Verified: nested `Ashes.Map.set` re-entry constant at ~5.7 MB across 400–3200 batches (was 8→54 MB), all reuse correctness tests + a retained-accumulator soundness regression green on linux-x64 / win-x64 (wine) / linux-arm64 (qemu). Scope: the specialization (`f$reuse`) path; the direct-reuse prologue copy and non-nullary/higher-order seed shapes stay conservative (copy kept) pending the broader ownership milestone. |
 | **Deterministic resource safety** | File/socket/process handles are closed deterministically without GC/RC (Ground Rule 6), via an affine ownership model: recursive `Drop` for resource-bearing aggregates (`Result(_,FileHandle)`, `Some(Socket)`, tuple/list of resources), move-on-destructure and move-on-construction (no double-close), resource drops at the TCO back-edge (fixes the loop-over-files fd leak), `Process` reaping on drop, and deterministic close of resources captured by an escaping closure (a dropper at `closure+24` invoked when the closure is dropped). All runtime gaps closed & verified (fd-bounded under `ulimit -n 64`). |
 | **Use-after-close for match-arm-bound resources (CO-4)** | The static use-after-close check (`ASH006`) already tracks resources whether bound by `let` or by a `match` arm, but the `FileHandle` read intrinsics (`Ashes.File.readChunk`, `Ashes.File.readLine`) never consulted it, so a handle destructured from `Ok(fh)` and read after an explicit `Ashes.File.close` compiled silently (it stayed runtime-safe — the read after close returns an `Error`). Wired `CheckUseAfterDrop` into both file-read intrinsics, so a read after close on a match-arm-bound (or `let`-bound) `FileHandle` is now flagged at compile time, matching the existing socket/process behaviour. |
 | **Parallel tunables (CO-5)** | The two hard-coded parallelism knobs are now configurable, defaults unchanged. Per-worker stack size: the `--parallel-stack-size <size>` CLI flag (byte count or `K`/`M`/`G` suffix), threaded `BackendCompileOptions.ParallelWorkerStackBytes` → `LlvmTargetContext` → codegen; unset = 1 MiB on linux (`mmap`) and the OS default on win-x64 (`CreateThread`). Grain size for `map`/`reduce`: exposed as an explicit library parameter — `Ashes.Parallel.mapGrained(grain)` / `reduceGrained(grain)`, with `map`/`reduce` = grain 1 (the original split-to-singleton behavior). |
@@ -55,7 +56,7 @@ stable IDs.
 
 | ID | Item | Notes |
 |----|------|-------|
-| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Analysis-only — no sound elision implemented; correctness dominates.** See the detailed write-up below. In-place reuse makes the accumulator unique via a deep copy at the fold *function's* entry; that copy re-executes on every re-entry, so an outer loop threading an accumulator into an inner reuse fold re-copies the growing structure each step and leaks (~map-size per outer iteration). A single flat loop copies once (constant memory). The sound fix is **path-aware interprocedural linearity** — skip the copy only when the accumulator is provably moved (dead + unaliased) at *every* call site — which the current infrastructure cannot prove. Corruption-prone; the elision is intentionally **not** enabled. Re-verified on current `main` (leak scales `O(batches × map-size)`, flat fold constant); confirmed there is **no sound *and* useful local shortcut** (the only locally-provable case is the already-constant single-call fold), and the detailed write-up now carries the concrete census + move/alias + fixpoint pass the milestone must add. |
+| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for the specialization-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the nested-re-entry leak (`O(re-entries × size)` → constant) while keeping every reuse correctness test and a retained-accumulator soundness regression green on all three targets. See the detailed write-up below. Remaining under the broader ownership milestone: the direct-reuse prologue copy, non-nullary/higher-order/fresh-construction seeds, and non-`Ashes.Map` shapes (all conservatively keep the copy today). |
 | **CO-3** | **arm64 networking + parallelism coexistence** | The arm64 per-thread arena is real ELF TLS (`PT_TLS`). A networking program `dlopen`s rustls, whose *dynamic* TLS conflicts with adding a `PT_TLS` to the image, so networking arm64 programs keep the single-threaded BSS arena and `both` runs inline. Making both coexist needs a dynamic-TLS-compatible arena (e.g. a dedicated TLS module accessed via the DTV, or not clobbering `TPIDR_EL0`). |
 | **CO-6** | **Verify win-x64 parallelism + networking coexistence** | Non-networking win-x64 parallelism is verified (wine); the TEB `gs:0x28` arena has not been tested together with rustls-on-Windows TLS. May or may not have the CO-3 conflict. Validation task. |
 
@@ -63,9 +64,12 @@ stable IDs.
 
 ### CO-2 — detailed analysis (nested reuse re-entry leak)
 
-**Status: analysis-only.** No elision was implemented; a sound one requires interprocedural
-move/linearity analysis that the compiler does not yet have, and any weaker heuristic risks silent
-memory corruption. Correctness dominates, so the copy is deliberately left in place.
+**Status: implemented (conservative) for the specialization-reuse path.** A whole-program
+move/linearity analysis now elides the entry deep-copy when it can prove the accumulator is already
+uniquely owned at every external call site; the copy stays on any uncertainty, so the elision can
+only leak (never corrupt). The analysis and its soundness argument are in the *"Implemented elision"*
+section at the end; the material below documents the mechanism, the leak, and the requirements the
+elision was built to satisfy.
 
 **Where the entry deep-copy is emitted.** In `Lowering.LowerLambda` (the innermost-TCO branch,
 `isInnermostTco`), the compiler records accumulators that will be reused in place and, after the body
@@ -168,12 +172,52 @@ Backend dependency), computed over the AST *before* `LowerLambda` emits the prol
    remove the per-batch term; a genuinely-*new*-key-per-batch workload would still need the outer
    back-edge to reset that to-space. This must be confirmed empirically once the elision is enabled.
 
-**Blocker.** `Lowering.Ownership.cs` currently models only *affine ownership of resource handles*
-(files/sockets/processes) for deterministic `Drop`; it has (a) no general-ADT value linearity, (b) no
-intraprocedural liveness / last-use analysis for ordinary values, (c) no whole-program call-site
-census, and (d) no aliasing/escape analysis for non-resource values. All four are prerequisites for
-the "moved at every call site" proof above; without them the elision stays off. This item unblocks
-with that milestone.
+**Former blocker (now partly built).** `Lowering.Ownership.cs` models only *affine ownership of
+resource handles*. The elision below adds the four pieces it lacked — a self-contained value-level
+move analysis in `Lowering.MoveAnalysis.cs` — rather than extending the resource model: a
+whole-program call-site census, an intraprocedural path-aware move-linearity check, a transitive
+greatest-fixpoint, and a conservative seed rule. It covers the specialization path; the direct-reuse
+prologue copy and richer seed/aliasing shapes remain for the full ownership milestone.
+
+### CO-2 — implemented elision
+
+`Lowering.MoveAnalysis.cs` runs once over the fully-desugared program (which is a single nested
+let-chain holding the stitched stdlib bindings, the user's declarations, and the trailing
+expression). `Lowering.LowerLambda`, at the point it would register the specialization-path entry
+copy for accumulator `p` of fold `F` (known from `TcoContext.SelfName`), consults
+`IsReuseAccumulatorMoveSafe(F, p)` and skips the copy only when it returns true.
+
+**Predicate.** `IsParamMoveSafe(F, p)` (on-demand greatest fixpoint, memoized, cycles → false) holds
+iff `F`'s name never escapes as a value (so its call-site census is complete) and, at every external
+(non-self-recursive) call site, the argument bound to `p` is a **move**:
+
+- a **sole-nullary-constructor seed** — a value (following top-level value aliases, e.g.
+  `Ashes.Map.empty → Empty`) that is the *only* nullary constructor of its type; or
+- a **`Var v`** that is a parameter of the enclosing function, is **move-linear** there — used at most
+  once on any execution path (`MaxPathOccurrences ≤ 1`: branches take the max, sequential
+  sub-expressions sum, a nested-lambda capture or unmodeled node forces decline) and never captured —
+  and whose parameter is itself `IsParamMoveSafe` (the transitive, interprocedural step).
+
+Anything else keeps the copy.
+
+**Soundness.** The entry copy's *only* role is to give `f$reuse` a uniquely-owned accumulator to
+overwrite; proving the entry is already unique reproduces that exact precondition, so the elision
+needs no reasoning about reuse internals. Move-linearity guarantees no other live reference to the
+argument exists on the path that moves it. The sole-nullary seed is safe because its cell holds only
+its tag: the only reuse token it can yield is a 0-field token, consumed — in a well-typed program —
+to rebuild that same unique nullary constructor, writing an identical tag (a no-op), so it can never
+be observably mutated even when shared or retained (field-bearing seeds have no such guarantee and
+are rejected). Transitivity bottoms out at such seeds; the conservative default (copy stays) makes
+every unproven or unmodeled shape a *leak, never a corruption*.
+
+**Verified.** Nested `Ashes.Map.set` re-entry (300-key map, 400/800/1600/3200 batches) drops from
+`O(batches)` (8.0 / 14.4 / 27.7 / 54.1 MB) to a flat ~5.7 MB — the copy now runs once, not per
+re-entry. All seven `tests/reuse_*.ash` stay green (the three that would corrupt under a naive
+unconditional elision — a retained field-bearing accumulator — are correctly *declined*), plus a new
+`tests/reuse_move_elision_soundness.ash` that in one program elides a move-safe fold and declines a
+sibling fold whose accumulator is retained (`keep` reads 15, not the corrupted 902). Output is
+identical to the copy-in-place baseline on linux-x64 (native), win-x64 (wine), and linux-arm64
+(qemu). Full gate (build, C# + LSP tests, `test tests`, `dotnet format`) green.
 
 > **Adjacent bug found while building the repro (out of CO-2 scope, not fixed here):** a TCO loop
 > whose accumulator is a recursive ADT in a **non-last curried parameter position** miscompiles to a

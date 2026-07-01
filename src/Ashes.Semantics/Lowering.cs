@@ -316,6 +316,7 @@ public sealed partial class Lowering
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
         // name and all enclosing ones, never a later sibling.
         var body = DesugarTopLevel(valueItems, program.Body);
+        AnalyzeReuseCopyElision(body);
         return Lower(body);
     }
 
@@ -3111,7 +3112,20 @@ public sealed partial class Lowering
                     && TrySynthesizeAdtCopier(paramNamed) is not null)
                 {
                     _linearSpecializationAccumulators.Add(accName);
-                    reuseDefensiveCopy.Add((accL.Slot, accL.T));
+
+                    // Move/linearity elision: the entry deep-copy exists only to make the
+                    // accumulator uniquely owned so f$reuse may overwrite it in place. When the
+                    // whole-program move analysis proves the accumulator is already uniquely owned
+                    // at every external call site of this fold (moved, unaliased, seeded from a
+                    // never-overwritable value), the copy is redundant and re-executes on every
+                    // re-entry (the nested-reuse leak). Skip it only when provably safe; the
+                    // conservative default keeps the copy.
+                    bool elide = tco.SelfName.Length > 0
+                        && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                    if (!elide)
+                    {
+                        reuseDefensiveCopy.Add((accL.Slot, accL.T));
+                    }
                 }
             }
 
