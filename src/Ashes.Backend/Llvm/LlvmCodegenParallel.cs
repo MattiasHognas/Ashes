@@ -37,7 +37,7 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static void EmitParallelRuntime(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
-        if (flavor != LlvmCodegenFlavor.LinuxX64)
+        if (flavor != LlvmCodegenFlavor.LinuxX64 && flavor != LlvmCodegenFlavor.WindowsX64)
         {
             return;
         }
@@ -48,6 +48,15 @@ internal static partial class LlvmCodegen
         LlvmApi.SetInitializer(counter, LlvmApi.ConstInt(i64, 0, 0));
 
         EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
+    }
+
+    // Calls a kernel32 function imported by name (the __imp_* global holds the IAT slot pointer).
+    private static LlvmValueHandle EmitWindowsImportCall(LlvmCodegenState state, string importName, LlvmTypeHandle fnType, LlvmValueHandle[] args, string name)
+    {
+        LlvmValueHandle imp = LlvmApi.GetNamedGlobal(state.Target.Module, importName);
+        LlvmValueHandle fnPtr = LlvmApi.BuildLoad2(state.Target.Builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0), imp, name + "_ptr");
+        return LlvmApi.BuildCall2(state.Target.Builder, fnType, fnPtr, args, name);
     }
 
     /// <summary>
@@ -69,28 +78,57 @@ internal static partial class LlvmCodegen
         LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
         LlvmCodegenState state = CreateBareRuntimeState(target, fn, flavor);
 
-        // Point this thread's GS at the worker TCB the parent prepared (self-pointer + cursor/end
-        // already written), then address the arena through it like any other function.
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            // The bare runtime state has null Windows-import handles; the worker's own arena
+            // grow/free (EmitHeapGrow/EmitFreeOsMemory) needs VirtualAlloc/VirtualFree, which are
+            // always created for win-x64 — look them up by name (linux grows via the mmap syscall).
+            state = state with
+            {
+                WindowsVirtualAllocImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_VirtualAlloc"),
+                WindowsVirtualFreeImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_VirtualFree"),
+                WindowsExitProcessImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_ExitProcess"),
+            };
+        }
+
+        // Point this thread's per-thread arena at the worker TCB the parent prepared (cursor/end
+        // already written), then address the arena through it like any other function. linux: GS via
+        // arch_prctl; win-x64: publish the TCB pointer into TEB+0x28 (the OS provides the GS-based TEB).
         LlvmValueHandle tcb = LoadMemory(state, desc, ParallelDescWorkerTcb, "worker_tcb");
-        EmitLinuxSyscall(state, SyscallArchPrctl,
-            LlvmApi.ConstInt(state.I64, (ulong)ArchSetGs, 0), tcb, LlvmApi.ConstInt(state.I64, 0, 0), "worker_set_gs");
+        if (flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            EmitLinuxSyscall(state, SyscallArchPrctl,
+                LlvmApi.ConstInt(state.I64, (ulong)ArchSetGs, 0), tcb, LlvmApi.ConstInt(state.I64, 0, 0), "worker_set_gs");
+        }
+        else
+        {
+            EmitWriteTcbBaseToTeb(state, tcb);
+        }
+
         state = WithLinuxThreadArena(state);
 
         LlvmValueHandle unit = EmitUnitValue(state);
         LlvmValueHandle rightClosure = LoadMemory(state, desc, ParallelDescRightClosure, "worker_right");
         LlvmValueHandle result = EmitCallClosure(state, rightClosure, unit);
         StoreMemory(state, desc, ParallelDescResult, result, "worker_result");
-        // Publish done=1 (release; x86 stores are ordered) then wake the joining parent.
-        StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 1, 0), "worker_done");
-        EmitLinuxSyscall6(state, SyscallFutex,
-            desc,
-            LlvmApi.ConstInt(state.I64, (ulong)FutexWakePrivate, 0),
-            LlvmApi.ConstInt(state.I64, 1, 0),
-            LlvmApi.ConstInt(state.I64, 0, 0),
-            LlvmApi.ConstInt(state.I64, 0, 0),
-            LlvmApi.ConstInt(state.I64, 0, 0),
-            "worker_wake");
 
+        if (flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            // Publish done=1 (release; x86 stores are ordered) then wake the joining parent.
+            StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 1, 0), "worker_done");
+            EmitLinuxSyscall6(state, SyscallFutex,
+                desc,
+                LlvmApi.ConstInt(state.I64, (ulong)FutexWakePrivate, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "worker_wake");
+        }
+
+        // win-x64 needs no done flag / wake: the parent joins with WaitForSingleObject on the thread
+        // handle, which returns only after this function returns and the thread fully exits (a barrier),
+        // so the result store above is visible.
         LlvmApi.BuildRetVoid(target.Builder);
     }
 
@@ -100,7 +138,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, desc, ParallelDescRightClosure, rightClosure, "par_desc_right");
         StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 0, 0), "par_desc_done0");
 
-        if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
+        if (state.Flavor != LlvmCodegenFlavor.LinuxX64 && state.Flavor != LlvmCodegenFlavor.WindowsX64)
         {
             EmitParallelForkInline(state, desc, rightClosure);
             return desc;
@@ -121,7 +159,6 @@ internal static partial class LlvmCodegen
 
         // ── Spawn path ──────────────────────────────────────────────────────────────────────
         LlvmApi.PositionBuilderAtEnd(builder, spawnBlock);
-        LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack");
         LlvmValueHandle workerTcb = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)MainTcbSizeBytes, 0), "par_tcb");
         LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_chunk");
         // Worker TCB: self-pointer, cursor (chunk+8 past the prev-base header), end.
@@ -131,11 +168,29 @@ internal static partial class LlvmCodegen
         StoreMemory(state, workerTcb, (int)TcbHeapEndOffset,
             LlvmApi.BuildAdd(builder, chunk, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_chunk_end"), "par_tcb_end");
         StoreMemory(state, chunk, 0, LlvmApi.ConstInt(state.I64, 0, 0), "par_chunk_prevbase");
-        StoreMemory(state, desc, ParallelDescWorkerStack, stack, "par_desc_stack");
         StoreMemory(state, desc, ParallelDescWorkerTcb, workerTcb, "par_desc_tcb");
         StoreMemory(state, desc, ParallelDescMode, LlvmApi.ConstInt(state.I64, 1, 0), "par_desc_mode_worker");
-        LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack_top");
-        EmitCloneWorker(state, desc, stackTop);
+
+        if (state.Flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack");
+            StoreMemory(state, desc, ParallelDescWorkerStack, stack, "par_desc_stack");
+            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)ParallelStackBytes, 0), "par_stack_top");
+            EmitCloneWorker(state, desc, stackTop);
+        }
+        else
+        {
+            // win-x64: CreateThread allocates and manages the worker stack; the returned HANDLE is
+            // stored in the (otherwise-unused-on-win) worker-stack desc field for join + CloseHandle.
+            // HANDLE CreateThread(attrs=0, stackSize=0, start=__ashes_parallel_worker, param=desc, flags=0, tidOut=0).
+            LlvmValueHandle workerFn = LlvmApi.GetNamedFunction(state.Target.Module, ParallelWorkerFnName);
+            LlvmTypeHandle createThreadType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I8Ptr, state.I8Ptr, state.I64, state.I64]);
+            LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+            LlvmValueHandle handle = EmitWindowsImportCall(state, "__imp_CreateThread", createThreadType,
+                [zero, zero, workerFn, LlvmApi.BuildIntToPtr(builder, desc, state.I8Ptr, "par_desc_ptr"), zero, zero], "par_create_thread");
+            StoreMemory(state, desc, ParallelDescWorkerStack, handle, "par_desc_handle");
+        }
+
         LlvmApi.BuildBr(builder, mergeBlock);
 
         // ── Inline fallback path ────────────────────────────────────────────────────────────
@@ -161,6 +216,28 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitParallelJoin(LlvmCodegenState state, LlvmValueHandle desc)
     {
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            LlvmBuilderHandle winBuilder = state.Target.Builder;
+            // If the right thunk ran on a worker (mode != 0), block until the thread exits — that both
+            // synchronizes and makes the worker's result store visible; inline runs need no wait.
+            LlvmValueHandle mode = LoadMemory(state, desc, ParallelDescMode, "par_join_mode");
+            LlvmValueHandle isWorker = LlvmApi.BuildICmp(winBuilder, LlvmIntPredicate.Ne, mode, LlvmApi.ConstInt(state.I64, 0, 0), "par_join_is_worker");
+            var winWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_win_join_wait");
+            var winDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_win_join_done");
+            LlvmApi.BuildCondBr(winBuilder, isWorker, winWaitBlock, winDoneBlock);
+
+            LlvmApi.PositionBuilderAtEnd(winBuilder, winWaitBlock);
+            LlvmValueHandle handle = LoadMemory(state, desc, ParallelDescWorkerStack, "par_join_handle");
+            LlvmTypeHandle waitType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+            EmitWindowsImportCall(state, "__imp_WaitForSingleObject", waitType,
+                [handle, LlvmApi.ConstInt(state.I32, 0xFFFFFFFFUL, 0)], "par_wait");
+            LlvmApi.BuildBr(winBuilder, winDoneBlock);
+
+            LlvmApi.PositionBuilderAtEnd(winBuilder, winDoneBlock);
+            return LoadMemory(state, desc, ParallelDescResult, "par_join_result");
+        }
+
         if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
         {
             return LoadMemory(state, desc, ParallelDescResult, "par_join_result");
@@ -196,7 +273,7 @@ internal static partial class LlvmCodegen
 
     private static bool EmitParallelCleanup(LlvmCodegenState state, LlvmValueHandle desc)
     {
-        if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
+        if (state.Flavor != LlvmCodegenFlavor.LinuxX64 && state.Flavor != LlvmCodegenFlavor.WindowsX64)
         {
             return false;
         }
@@ -214,8 +291,19 @@ internal static partial class LlvmCodegen
         LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
             LlvmApi.GetNamedGlobal(state.Target.Module, ParallelActiveCounterName), state.I64, "par_cleanup_counter_addr");
         EmitAtomicFetchAdd(state, counterAddr, unchecked((ulong)-1L), "par_cleanup_release");
-        // Free the worker stack and TCB, then walk and free its arena chunks.
-        EmitFreeOsMemory(state, LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_stack"), ParallelStackBytes, "par_cleanup_stack");
+        // Reclaim the worker thread. linux: free the mmap'd stack; win-x64: close the thread HANDLE
+        // (the OS frees the CreateThread stack). Both then walk and free the worker's arena chunks + TCB.
+        if (state.Flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            EmitFreeOsMemory(state, LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_stack"), ParallelStackBytes, "par_cleanup_stack");
+        }
+        else
+        {
+            LlvmValueHandle handle = LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_handle");
+            LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(state.I32, [state.I64]);
+            EmitWindowsImportCall(state, "__imp_CloseHandle", closeHandleType, [handle], "par_cleanup_close");
+        }
+
         LlvmValueHandle workerTcb = LoadMemory(state, desc, ParallelDescWorkerTcb, "par_cleanup_tcb");
         EmitFreeWorkerArenaChunks(state, LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "par_cleanup_arena_end"));
         EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "par_cleanup_tcb");

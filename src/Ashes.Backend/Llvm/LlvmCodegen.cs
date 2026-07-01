@@ -219,6 +219,13 @@ internal static partial class LlvmCodegen
         {
             string verifyError = Marshal.PtrToStringAnsi(verifyMsg) ?? "unknown error";
             LlvmApi.DisposeMessage(verifyMsg);
+            if (Environment.GetEnvironmentVariable("ASH_DBG_DUMP_IR") is not null)
+            {
+                nint irPtr = LlvmApi.PrintModuleToString(target.Module);
+                System.IO.File.WriteAllText("/tmp/ashes_bad_ir.ll", Marshal.PtrToStringAnsi(irPtr) ?? "");
+                LlvmApi.DisposeMessage(irPtr);
+            }
+
             throw new InvalidOperationException($"LLVM module verification failed: {verifyError}");
         }
 
@@ -694,6 +701,30 @@ internal static partial class LlvmCodegen
 
         if (ProgramUsesInstruction<IrInst.ParallelFork>(program))
         {
+            if (flavor == LlvmCodegenFlavor.WindowsX64)
+            {
+                // Worker spawn/join on win-x64 uses these kernel32 imports (looked up by name in
+                // LlvmCodegenParallel). VirtualAlloc/VirtualFree are already created above for every
+                // win-x64 program; CreateThread is new, and WaitForSingleObject/CloseHandle may not
+                // exist yet if the program uses neither process nor file/socket IO.
+                LlvmValueHandle EnsureWindowsImport(string name)
+                {
+                    LlvmValueHandle existing = LlvmApi.GetNamedGlobal(target.Module, name);
+                    if (existing != default)
+                    {
+                        return existing;
+                    }
+
+                    LlvmValueHandle g = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), name);
+                    LlvmApi.SetLinkage(g, LlvmLinkage.External);
+                    return g;
+                }
+
+                EnsureWindowsImport("__imp_CreateThread");
+                EnsureWindowsImport("__imp_WaitForSingleObject");
+                EnsureWindowsImport("__imp_CloseHandle");
+            }
+
             EmitParallelRuntime(target, flavor, nounwindAttr);
         }
 
