@@ -73,19 +73,25 @@ Benchmarks (wall / peak RSS, `/proc/<pid>/VmHWM`, `1brc-perf`):
 | Rows | brc.ash (Str key + **tuple** value) | smap2 microbench (Str key + Int value, reuse fires) |
 |------|-------------------------------------|-----------------------------------------------------|
 | 100 000 | 0.43 s / 1.0 GB | — |
-| 1 000 000 | 4.0 s / 9.7 GB | 0.48 s / **406 MB** |
-| 10 000 000 | (OOM) | 4.7 s / **4.1 GB** (was: crash) |
+| 1 000 000 | 4.0 s / 9.7 GB | 0.41 s / **1 MB** (constant) |
+| 10 000 000 | (OOM) | 4.3 s / **1 MB** (constant; was: crash) |
 
-Status: the reuse now **runs correctly to 10M** for string-keyed maps (was a hard crash), but memory is
-still **linear** — ~410 B/row (smap2) and ~9.7 KB/row (brc). Two gaps remain for a genuinely *bounded* #2:
-1. **Loop reset-safety.** The reuse spec calls `compare`/`height`/`max` (non-self `MakeClosure`), so
-   `IsFullyReusing` conservatively returns false → the accumulator is not marked reset-safe → the
-   per-iteration arena scratch is never reclaimed. Those calls all return `Int` and never flow into the
-   tree, so they should not block reset-safety.
-2. **Tuple/list-value materialization.** brc's `Map.set` value is a 4-tuple; the insert-only heap-field
-   materialization only covers `TStr`/`TBytes`, so brc's reuse either can't be made reset-safe or would
-   dangle the tuple. Needs the tuple/list case (and a guard: never specialize on a not-yet-materializable
-   heap value type).
+Status: for a string-keyed, **copy-value** map (smap2), the reuse is now **correct, fast, and CONSTANT
+memory** (1 MB flat, 1M→10M) — FLAWS #2 (leak) and #3 (O(1)) met. Two things got it there: the TCO
+stack-leak fix (above) and reset-safety — `IsFullyReusing` no longer bails on the `compare`/`height`/`max`
+non-self calls (they return `Int` and never enter the tree), and the accumulator is marked reset-safe when
+its heap fields are provably persistent (`AccumulatorIsFullyPersistent`: MapTree key is
+materialized-on-insert + kept-on-update, value must be a copy type), so the per-iteration arena scratch is
+reclaimed.
+
+**brc itself is still ~9.7 KB/row** because its map value is a 4-tuple, and two pieces remain:
+1. **Reuse must fire for brc's shape.** `processLine` uses `map` in *both* `Map.get` and `Map.set`, so the
+   accumulator isn't seen as linear and no `set$reuse` is generated → brc uses the normal (leaky) `Map.set`.
+   Needs the reuse trigger to accept a borrow (`get`) before the consuming `set`.
+2. **Heap-value in-place reuse / materialization.** A tuple value is fresh on every update; making it
+   reset-safe needs either materializing the fresh value on the update path (bounded only if the superseded
+   value's storage is reused, else the blob leaks) or in-place value-payload reuse. Copy value types are
+   already handled.
 
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
