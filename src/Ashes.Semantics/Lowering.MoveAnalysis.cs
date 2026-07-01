@@ -54,6 +54,12 @@ public sealed partial class Lowering
 
     private bool _maAnalyzed;
 
+    // The fully-desugared program body. Used as the "enclosing body" for the local-let move check at
+    // top-level call sites (enclosing == ""), which have no registered function frame: a top-level
+    // `let seed = <fresh> in ... F(seed) ...` binds `seed` on this spine, and move-linearity over the
+    // whole program is the (stronger) proof that no other live reference exists.
+    private Expr? _maBody;
+
     // Names bound by more than one let/letrec in the desugared tree. A duplicated name cannot be
     // resolved unambiguously, so such names are never treated as move-safe (their pooled call sites
     // would be unsound); they are also treated as escaped.
@@ -74,6 +80,7 @@ public sealed partial class Lowering
         _maAmbiguous.Clear();
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
+        _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
 
@@ -327,16 +334,157 @@ public sealed partial class Lowering
             return true;
         }
 
-        if (arg is Expr.Var v
-            && _maFuncs.TryGetValue(enclosing, out var encInfo)
-            && encInfo.Params.Contains(v.Name)
-            && IsMoveLinear(v.Name, encInfo.Body)
-            && IsParamMoveSafe(enclosing, v.Name))
+        if (arg is Expr.Var v)
         {
-            return true;
+            bool haveFunc = _maFuncs.TryGetValue(enclosing, out var encInfo);
+
+            // (i) A move-linear reference to a move-safe accumulator parameter of the enclosing
+            // function (the transitive, interprocedural step).
+            if (haveFunc
+                && encInfo.Params.Contains(v.Name)
+                && IsMoveLinear(v.Name, encInfo.Body)
+                && IsParamMoveSafe(enclosing, v.Name))
+            {
+                return true;
+            }
+
+            // (ii) Richer aliasing (CO-2 increment): a `Var` that is NOT syntactically fresh at the
+            // call site, but is bound by a `let` LOCAL to the enclosing scope to a fully-fresh
+            // construction, and is move-linear here (used at most once on any path, never captured).
+            // The `let` confines the name's scope to this body, so move-linearity there proves no
+            // other live reference exists anywhere; the fresh construction proves the bound value is
+            // unaliased and free of internal sharing. Together the value is uniquely owned and
+            // dead-after-this-use — a sound move — even though the freshness is at the binding site
+            // rather than at the call site. Only accepted when the name is unambiguous program-wide (a
+            // single binding), so the located RHS is definitive. At a top-level call site (no
+            // registered function frame) the enclosing body is the whole desugared program; a
+            // top-level `let seed = <fresh>` lives on its spine and move-linearity over the whole
+            // program is the stronger proof of unique ownership.
+            Expr? encBody = haveFunc ? encInfo.Body : (enclosing.Length == 0 ? _maBody : null);
+            if (encBody is not null
+                && !_maAmbiguous.Contains(v.Name)
+                && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
+                && boundRhs is not null
+                && boundScope is not null
+                && IsFullyFreshConstruction(boundRhs)
+                // Move-linear within the binding's own scope (its `let` body): used at most once on
+                // any path there, never captured. Counting in the scope — not the whole enclosing
+                // body — is essential: the whole-body count would stop at this very definition
+                // (treating it as a shadow) and spuriously report zero uses.
+                && MaxPathOccurrences(v.Name, boundScope) <= 1)
+            {
+                return true;
+            }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Locates a non-recursive <c>let</c>/<c>let-result</c> binding of <paramref name="name"/> within
+    /// <paramref name="body"/> and returns its right-hand side together with the binding's <b>scope</b>
+    /// (the <c>let</c> body, over which <paramref name="name"/> is live). Returns <c>(null, null)</c>
+    /// when no such binding exists. Traverses control-flow structure but never descends into a nested
+    /// <c>Lambda</c> body — a nested lambda is a separate function scope, so a binding inside it is not
+    /// local to this function. Recursive (<c>let rec</c>) bindings are excluded: their RHS is
+    /// self-referential and never a fresh construction. Returning the scope (not the whole enclosing
+    /// body) is what lets the caller count uses correctly — a whole-body occurrence count would stop
+    /// at this very definition (treating it as a shadow) and report zero uses.
+    /// </summary>
+    private static (Expr? Rhs, Expr? Scope) TryFindLocalLet(string name, Expr body)
+    {
+        switch (body)
+        {
+            case Expr.Let l:
+                if (string.Equals(l.Name, name, StringComparison.Ordinal))
+                {
+                    return (l.Value, l.Body);
+                }
+
+                return FirstFound(TryFindLocalLet(name, l.Value), () => TryFindLocalLet(name, l.Body));
+
+            case Expr.LetResult lr:
+                if (string.Equals(lr.Name, name, StringComparison.Ordinal))
+                {
+                    return (lr.Value, lr.Body);
+                }
+
+                return FirstFound(TryFindLocalLet(name, lr.Value), () => TryFindLocalLet(name, lr.Body));
+
+            case Expr.LetRec lrec:
+                // A self-referential binding is never a fresh construction; only search its subtrees.
+                if (string.Equals(lrec.Name, name, StringComparison.Ordinal))
+                {
+                    return (null, null);
+                }
+
+                return FirstFound(TryFindLocalLet(name, lrec.Value), () => TryFindLocalLet(name, lrec.Body));
+
+            case Expr.If i:
+                return FirstFound(
+                    TryFindLocalLet(name, i.Cond),
+                    () => FirstFound(TryFindLocalLet(name, i.Then), () => TryFindLocalLet(name, i.Else)));
+
+            case Expr.Match m:
+                {
+                    var found = TryFindLocalLet(name, m.Value);
+                    if (found.Rhs is not null)
+                    {
+                        return found;
+                    }
+
+                    foreach (var c in m.Cases)
+                    {
+                        // A pattern binding of the same name shadows the let we are after in that arm.
+                        if (PatternBinds(c.Pattern, name))
+                        {
+                            continue;
+                        }
+
+                        found = TryFindLocalLet(name, c.Body);
+                        if (found.Rhs is not null)
+                        {
+                            return found;
+                        }
+
+                        if (c.Guard is not null)
+                        {
+                            found = TryFindLocalLet(name, c.Guard);
+                            if (found.Rhs is not null)
+                            {
+                                return found;
+                            }
+                        }
+                    }
+
+                    return (null, null);
+                }
+
+            case Expr.Call c:
+                return FirstFound(TryFindLocalLet(name, c.Func), () => TryFindLocalLet(name, c.Arg));
+
+            // A nested lambda is a separate function scope: do NOT descend (a binding inside it is not
+            // local to this function, and this function's `name` cannot be bound there).
+            case Expr.Lambda:
+                return (null, null);
+
+            default:
+                foreach (var child in EnumerateChildren(body))
+                {
+                    var found = TryFindLocalLet(name, child);
+                    if (found.Rhs is not null)
+                    {
+                        return found;
+                    }
+                }
+
+                return (null, null);
+        }
+    }
+
+    private static (Expr? Rhs, Expr? Scope) FirstFound((Expr? Rhs, Expr? Scope) first, System.Func<(Expr? Rhs, Expr? Scope)> second)
+    {
+        return first.Rhs is not null ? first : second();
     }
 
     /// <summary>
