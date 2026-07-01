@@ -54,7 +54,78 @@ stable IDs.
 | ID | Item | Notes |
 |----|------|-------|
 | **CO-1** | **Data-parallel `map`/`reduce` via monomorphization** | `Ashes.Parallel.both` forks only at a *concrete* result type (deep-copy-on-join needs the concrete type under uniform value representation). Inside polymorphic `map`/`reduce` (`lib/Ashes/Parallel.ash`) the element type is abstract, so they can't route through the parallel `both` and run **sequentially**. Monomorphizing the parallel path (or a type-directed deep-copy for abstract results) would make `map`/`reduce` genuinely data-parallel — the clean primitive for a sharded 1BRC. |
-| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | In-place reuse makes the accumulator unique via a deep copy at loop entry; that copy re-executes on every *re-entry*, so an outer loop threading an accumulator into an inner reuse fold re-copies the growing structure each step and leaks (repro: a set-only/get-then-set fold nested under an outer accumulator-threading loop ≈ 1 KB/row). A single flat loop avoids it (copied once). The sound fix is **path-aware interprocedural linearity**: skip the copy when the accumulator is provably moved (not aliased after the call) at every call site — the ownership/borrowing milestone. Corruption-prone; needs careful validation. |
+| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Analysis-only — no sound elision implemented; correctness dominates.** See the detailed write-up below. In-place reuse makes the accumulator unique via a deep copy at the fold *function's* entry; that copy re-executes on every re-entry, so an outer loop threading an accumulator into an inner reuse fold re-copies the growing structure each step and leaks (~map-size per outer iteration). A single flat loop copies once (constant memory). The sound fix is **path-aware interprocedural linearity** — skip the copy only when the accumulator is provably moved (dead + unaliased) at *every* call site — which the current infrastructure cannot prove. Corruption-prone; the elision is intentionally **not** enabled. |
 | **CO-3** | **arm64 networking + parallelism coexistence** | The arm64 per-thread arena is real ELF TLS (`PT_TLS`). A networking program `dlopen`s rustls, whose *dynamic* TLS conflicts with adding a `PT_TLS` to the image, so networking arm64 programs keep the single-threaded BSS arena and `both` runs inline. Making both coexist needs a dynamic-TLS-compatible arena (e.g. a dedicated TLS module accessed via the DTV, or not clobbering `TPIDR_EL0`). |
 | **CO-5** | **Parallel tunables** | Grain size for `map`/`reduce` and the fixed per-worker stack size (currently `mmap`/`CreateThread` defaults) are hard-coded; expose as optional parameters/config. Minor. |
 | **CO-6** | **Verify win-x64 parallelism + networking coexistence** | Non-networking win-x64 parallelism is verified (wine); the TEB `gs:0x28` arena has not been tested together with rustls-on-Windows TLS. May or may not have the CO-3 conflict. Validation task. |
+
+---
+
+### CO-2 — detailed analysis (nested reuse re-entry leak)
+
+**Status: analysis-only.** No elision was implemented; a sound one requires interprocedural
+move/linearity analysis that the compiler does not yet have, and any weaker heuristic risks silent
+memory corruption. Correctness dominates, so the copy is deliberately left in place.
+
+**Where the entry deep-copy is emitted.** In `Lowering.LowerLambda` (the innermost-TCO branch,
+`isInnermostTco`), the compiler records accumulators that will be reused in place and, after the body
+is lowered, emits a one-time defensive deep copy of each, splicing it in at `reuseInsertIndex`. That
+index is captured *before* the loop body label is emitted, so the copy sits at the **function's
+prologue**, not inside the loop. Two tagging paths feed it:
+
+- *Direct reuse* — the loop body itself matches the accumulator and rebuilds it with the same
+  constructor (a `field-bearing AllocReusing` fired).
+- *Specialization reuse* — the accumulator is passed as the last argument to a specializable
+  recursive function `f` (e.g. `Ashes.Map.set`), which is cloned to `f$reuse`; the accumulator is
+  deep-copied so `f$reuse` may overwrite its nodes in place.
+
+The copy loads the slot, calls `EmitDeepCopy`, stores it back, then the block is moved up to the
+prologue. Because it is in the prologue, a single flat TCO loop pays for it **once**.
+
+**Why nesting leaks.** An inner reuse fold is a *separate function*. When an outer loop threads an
+accumulator into it — `outer(...)(setFold(0)(n)(m))` — each outer iteration is a fresh *call* to the
+inner fold, so the inner fold's prologue copy runs again, deep-copying the whole (growing)
+accumulator. The copy lands in the persistent to-space/blob that in-place reuse never resets, so it
+is not reclaimed: total cost `O(outer-iterations × accumulator-size)`.
+
+Measured (nested `Ashes.Map.set` fold, ~map of 1024 keys, `outer` batches × 300 inner sets):
+
+| batches | flat single fold | nested (this shape) |
+|---|---|---|
+| 50 | — | 1.8 MB |
+| 200 | — | 4.4 MB |
+| 800 | — | 14.2 MB (≈ 16 KB / batch ≈ one full map copied per re-entry) |
+
+A flat fold of the same total work is constant (60 000 rows → 1.7 MB, 240 000 rows → 1.7 MB): the
+prologue copy ran once. In all cases the output is **correct** — this is a leak, not a miscompile.
+`tests/reuse_nested_reentry_correct.ash` is a small, green regression that guards the *correctness*
+of the nested-reuse shape (it does not, and cannot in the harness, assert peak RSS).
+
+**What a sound elision requires.** Elide the prologue copy for accumulator parameter `p` of fold
+function `F` only if, at **every** call site of `F`, the argument bound to `p` is *moved*: dead on
+all paths after the call **and** not reachable through any other live alias (a `let`-binding used
+later, a value captured into a closure/tuple/list, a second argument position, …). If any caller
+retains the accumulator, `f$reuse` overwriting its cells in place corrupts a still-live value —
+exactly the corruption the roadmap warns about. Proving move + non-aliasing across call sites is
+**path-aware interprocedural linearity**, and it is transitive (the caller's `p` is unique only if
+*its* own accumulator was unique, up the call chain). This is the ownership/borrowing milestone.
+
+Two viable implementation strategies, both deferred:
+
+1. *Definition-directed*: at `F`'s definition, prove all call sites move+own the arg, then drop the
+   prologue copy. Needs a whole-program call-site + aliasing pass.
+2. *Call-site specialization*: generate a no-copy `F$moved` clone and route only provably
+   move+own call sites to it (leaving the safe copy on the default entry). More local, but still
+   needs the per-call-site uniqueness proof.
+
+**Blocker.** `Lowering.Ownership.cs` currently models only *affine ownership of resource handles*
+(files/sockets/processes) for deterministic `Drop`; it has no general-ADT value linearity and no
+interprocedural aliasing pass. Without one, there is no way to prove the "moved at every call site"
+precondition, so the elision stays off. This item unblocks with that milestone.
+
+> **Adjacent bug found while building the repro (out of CO-2 scope, not fixed here):** a TCO loop
+> whose accumulator is a recursive ADT in a **non-last curried parameter position** miscompiles to a
+> SIGSEGV even at one iteration (the last-parameter form of the identical program is correct). This is
+> a per-iteration arena-reset / copy-out gap keyed on parameter position, independent of in-place
+> reuse (it reproduces with reuse never firing). Tracked separately; the CO-2 repro and regression
+> test keep the ADT accumulator in the last position to avoid it.
