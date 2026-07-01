@@ -86,6 +86,42 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_arm64_backend_llvm_should_run_both_and_https_in_one_image_coexisting()
+    {
+        // CO-3: an arm64 image that carries the `both` parallel runtime (PT_TLS + local-exec arena)
+        // AND dlopen's rustls for a real TLS handshake. The main-thread arena resolves through the
+        // loader-reserved PT_TLS slot (the entry prologue must not clobber the loader's TPIDR_EL0),
+        // and `both`'s deterministic fork/join computes correctly alongside the live TLS session.
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
+            """
+            let doubled =
+                match Ashes.Parallel.both(fun (u) -> 3 + 4)(fun (u) -> 5 + 6) with
+                    | (a, b) -> a + b
+            in Ashes.IO.print(Ashes.Text.fromInt(doubled) + "|" + (match await Ashes.Http.get("https://__HOST__:__PORT__/") with
+                | Ok(text) -> text
+                | Error(msg) -> msg))
+            """,
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096);
+                request.ShouldContain("GET / HTTP/1.1");
+                request.ShouldContain("Host: localhost");
+
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
+                await stream.WriteAsync(response);
+                await stream.FlushAsync();
+            },
+            host: "localhost");
+
+        result.Stdout.ShouldBe("18|hello from https\n");
+    }
+
+    [Test]
     public async Task Linux_arm64_backend_llvm_should_run_user_extern_imports()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
