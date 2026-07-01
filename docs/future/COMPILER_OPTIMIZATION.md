@@ -35,7 +35,7 @@ All original audit findings have been addressed:
 | **Use-after-close for match-arm-bound resources (CO-4)** | The static use-after-close check (`ASH006`) already tracks resources whether bound by `let` or by a `match` arm, but the `FileHandle` read intrinsics (`Ashes.File.readChunk`, `Ashes.File.readLine`) never consulted it, so a handle destructured from `Ok(fh)` and read after an explicit `Ashes.File.close` compiled silently (it stayed runtime-safe — the read after close returns an `Error`). Wired `CheckUseAfterDrop` into both file-read intrinsics, so a read after close on a match-arm-bound (or `let`-bound) `FileHandle` is now flagged at compile time, matching the existing socket/process behaviour. |
 | **Parallel tunables (CO-5)** | The two hard-coded parallelism knobs are now configurable, defaults unchanged. Per-worker stack size: the `--parallel-stack-size <size>` CLI flag (byte count or `K`/`M`/`G` suffix), threaded `BackendCompileOptions.ParallelWorkerStackBytes` → `LlvmTargetContext` → codegen; unset = 1 MiB on linux (`mmap`) and the OS default on win-x64 (`CreateThread`). Grain size for `map`/`reduce`: exposed as an explicit library parameter — `Ashes.Parallel.mapGrained(grain)` / `reduceGrained(grain)`, with `map`/`reduce` = grain 1 (the original split-to-singleton behavior). |
 | **Structured parallelism (`Ashes.Parallel.both`)** | Genuinely parallel fork/join of two pure thunks on all three targets, deterministic (result identical to sequential) and memory-bounded, via **per-thread bump arenas** + worker threads + deep-copy-on-join. Per-thread arena mechanism: linux-x64 a GS-segment TCB (`arch_prctl`); win-x64 the TEB `ArbitraryUserPointer` (`gs:0x28`); linux-arm64 real ELF TLS (`thread_local` arena cursors, `TPIDR_EL0`, `PT_TLS` + `R_AARCH64_TLSLE` relocs resolved in the in-house linker; the entry prologue sets `TPIDR_EL0` only when a loader has not — see **CO-3**). Threads: `clone`/`futex` (linux) / `CreateThread`/`WaitForSingleObject` (win); a `lock xadd`/`ldxr-stxr` worker counter caps concurrency and over-budget forks run inline. `both` forks only at a concrete result type (deep-copy-on-join needs it); abstract results run sequential. Worker-stack lifetime on linux is tied to true thread exit via `CLONE_CHILD_CLEARTID`: the kernel zeroes a ctid word and futex-wakes it only after the worker has fully left its stack, and the parent waits on that (non-private `FUTEX_WAIT`) before reclaiming the stack/TCB/arena — distinct from the result-ready word, so the join still consumes the result immediately. (win-x64 already gates reclamation on `WaitForSingleObject`, which waits for full exit.) |
-| **arm64 networking + parallelism coexistence (CO-3)** | The arm64 per-thread arena is real ELF TLS (`PT_TLS` + local-exec cursors) and is now enabled for **every** arm64 image, including dynamically linked (networking / extern) ones — so `both` can hand a worker its own arena even in a program that also `dlopen`s rustls. The apparent conflict was never in the TLS *layout*: a dynamically linked image's local-exec `PT_TLS` is reserved by the loader in the static-TLS block (at the same TPREL the in-house linker bakes in), independently of the DTV that backs the dlopen'd module's *dynamic* TLS. The only real hazard was the old entry prologue unconditionally `msr`-ing `TPIDR_EL0` to a private BSS block, which on a dynamic image clobbered the loader's thread pointer (breaking rustls/libc TLS). Fix: the prologue now reads `TPIDR_EL0` and self-initialises it **only when zero** (an unloaded static image); a dynamic image keeps the loader's pointer and resolves its arena cursors through the loader-reserved local-exec slot. Verified under `qemu-aarch64-static -L <sysroot>`: networking-only (HTTPS loopback, extern) still runs; a program linking rustls **and** using `both` runs correctly and memory-bounded (`PT_TLS` + dlopen'd rustls both present); parallelism forks genuinely (`clone`/`futex` observed via `qemu -strace`) in dynamically linked images. **Caveat (separate, pre-existing, target-independent):** because networking is `await`-driven, any `both` reachable from an async state machine currently runs *inline* on all three targets (confirmed on linux-x64), so a single execution does not fork `both` **while** a live TLS session runs — that coupling is orthogonal to the arm64 TLS/arena coexistence solved here (tracked as **CO-7**). |
+| **arm64 networking + parallelism coexistence (CO-3)** | The arm64 per-thread arena is real ELF TLS (`PT_TLS` + local-exec cursors) and is now enabled for **every** arm64 image, including dynamically linked (networking / extern) ones — so `both` can hand a worker its own arena even in a program that also `dlopen`s rustls. The apparent conflict was never in the TLS *layout*: a dynamically linked image's local-exec `PT_TLS` is reserved by the loader in the static-TLS block (at the same TPREL the in-house linker bakes in), independently of the DTV that backs the dlopen'd module's *dynamic* TLS. The only real hazard was the old entry prologue unconditionally `msr`-ing `TPIDR_EL0` to a private BSS block, which on a dynamic image clobbered the loader's thread pointer (breaking rustls/libc TLS). Fix: the prologue now reads `TPIDR_EL0` and self-initialises it **only when zero** (an unloaded static image); a dynamic image keeps the loader's pointer and resolves its arena cursors through the loader-reserved local-exec slot. Verified under `qemu-aarch64-static -L <sysroot>`: networking-only (HTTPS loopback, extern) still runs; a program linking rustls **and** using `both` runs correctly and memory-bounded (`PT_TLS` + dlopen'd rustls both present); parallelism forks genuinely (`clone`/`futex` observed via `qemu -strace`) in dynamically linked images. **Caveat (separate, pre-existing, target-independent):** a `both` does **not** temporally overlap an in-flight async I/O — the async runtime is synchronous/blocking, so a fork runs before or after a live TLS session, never concurrently with one. (The earlier wording here — that `both` "runs inline" in an async program — was a misdiagnosis: a concrete-result `both` forks normally regardless of async usage; see **CO-7** and its detailed analysis.) That temporal coupling is orthogonal to the arm64 TLS/arena coexistence solved here (tracked as **CO-7**). |
 | **win-x64 parallelism + networking coexistence (CO-6)** | The win-x64 per-thread arena is the TEB `ArbitraryUserPointer` scratch slot (`gs:0x28`), **not** PE thread-local storage, so — unlike arm64's real-ELF-`PT_TLS` arena (**CO-3**) — it does not collide with rustls's Windows TLS: Rust's std TLS goes through the standard PE `.tls` / `TlsAlloc` path (the TEB `ThreadLocalStoragePointer`), which never touches `ArbitraryUserPointer`. Consequently win-x64 keeps `both` genuinely forking in networking programs (the fork runtime is emitted unconditionally, with no networking gate). Empirically verified under Wine: a program that runs heavy `both` fork/join both before **and** after a full rustls loopback TLS handshake produces correct results on both sides with no crash/corruption (`tests/parallel_tls_coexist.ash`); the fork is genuine (~2.4× wall-clock speedup, two independent CPU-bound thunks: sequential ≈ 860 ms vs parallel ≈ 355 ms) and memory-bounded (peak RSS flat at ~27 MB across 300 → 30 000 outer iterations — ~2 M forks — on par with the linux-x64 baseline). No CO-3-style conflict exists on win-x64. |
 | **Data-parallel `map`/`reduce` (CO-1)** | `Ashes.Parallel.map`/`reduce` (and the grain-parameterized `mapGrained`/`reduceGrained`) are now genuinely data-parallel via **call-site monomorphization**: above the grain threshold their bodies split the list in half and evaluate the two halves through `both`, and a saturated call at a concrete element type generates a monomorphic self-recursive specialization whose `both` splits see a concrete result and fork (at or below `grain` they run the sequential `plSeqMap`/`plSeqReduce`). Used polymorphically or partially applied they degrade to a correct sequential evaluation (the polymorphic copy, whose `both` sees an abstract result). The specialization references the module's top-level list helpers by-label (static code, empty env) so nothing arena-allocated crosses a fork. Verified deterministic (result identical to sequential, incl. heap-`Str` deep-copy on join) and memory-bounded on all three targets (linux-x64 native, linux-arm64 qemu, win-x64 wine). |
 
@@ -59,7 +59,7 @@ stable IDs.
 | ID | Item | Notes |
 |----|------|-------|
 | **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds** and **non-`Ashes.Map` (user-ADT) direct-reuse folds**. See the detailed write-up below. Remaining under the broader ownership milestone: higher-order seeds, richer aliasing (a `let`-bound fresh value proven dead), and the interprocedural direct-reuse growing-accumulator shapes (all conservatively keep the copy today). |
-| **CO-7** | **`both` runs inline inside an async state machine** | Target-independent and pre-existing (observed on linux-x64, linux-arm64, and unaffected by the CO-3 change): any `Ashes.Parallel.both` reachable from an `await`-driven entry/state-machine currently lowers to the inline (sequential) path rather than forking a worker. Because all networking is `await`-driven, this means a single program does not fork `both` **while** a TLS/HTTP session is live — the arm64 arena/TLS layers coexist (CO-3), but the runtime scheduler does not yet overlap a fork with an in-flight async task. Making them overlap needs the async lowering to preserve `both`'s forkable (concrete-result) shape through the state-machine transform, plus a fork that is safe to interleave with the single-threaded async runtime. Design/validation task; no correctness regression (inline is always a correct fallback). |
+| **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). Design/validation task. |
 
 ---
 
@@ -259,3 +259,100 @@ folds over non-`Ashes.Map` recursive ADTs.
 > a per-iteration arena-reset / copy-out gap keyed on parameter position, independent of in-place
 > reuse (it reproduces with reuse never firing). Tracked separately; the CO-2 repro and regression
 > test keep the ADT accumulator in the last position to avoid it.
+
+### CO-7 — detailed analysis (`both` vs. the async runtime)
+
+**Status: design/validation complete; the original diagnosis was wrong, and there is no safe *and*
+verifiable runtime increment yet — the real fix is a scheduler milestone.** This section records the
+mechanism as it actually is on current `main`, corrects the roadmap's earlier "`both` lowers to
+inline inside an async state machine" claim, and lists the precise blockers.
+
+**Mechanism as built.**
+
+- *`Ashes.Parallel.both` lowering* (`Lowering.LowerParallelBoth`) is **async-agnostic**. It emits
+  `ParallelFork` / `ParallelJoin` / `ParallelCleanup` whenever `CanRunRightOnWorker(bType)` holds —
+  i.e. the right thunk's result is a concrete, deep-copyable type (scalar / `Str` / `Bytes` /
+  arena-reset list / tuple / non-resource ADT). An abstract (still-a-type-variable) result — e.g. a
+  self-recursive `both` whose return type is unresolved during lowering, as in `psum` — takes the
+  sequential `else` branch. This has nothing to do with async; it is the documented concrete-result
+  gate of the parallelism feature itself.
+- *The backend emits the fork runtime* (worker trampoline + active-worker counter,
+  `EmitParallelRuntime`) **iff** `ProgramUsesInstruction<IrInst.ParallelFork>(program)` — again with
+  no networking/async gate (arm64's arena is now always on, per CO-3; win-x64 never gated, per CO-6).
+- *The async runtime is eager and synchronous.* `async EXPR` = `Ashes.Async.task(EXPR)` lowers `EXPR`
+  **eagerly** and wraps the value in `CreateCompletedTask` — it does **not** build a coroutine.
+  `await` / `Ashes.Async.run` lower to `RunTask`, whose codegen (`EmitRunTask`) is a **blocking**
+  driver loop on the calling thread: leaf networking tasks (`CreateHttpGetTask`, `CreateTls*Task`, …)
+  are stepped and *waited on* inline (`EmitWaitForPendingLeafTask`).
+- *The suspending-coroutine path is dead code.* `StateMachineTransform.Transform` is called from
+  exactly one place, `Lowering.LowerCapturedStringTask`, which is **never called** — so `CreateTask`
+  and `CoroutineInfo` are never produced by any user lowering. The multi-state `stepBlock` of
+  `EmitRunTask` is therefore unreachable from user programs; only the leaf-task branch runs. No user
+  code is ever lowered *into* a state machine.
+
+**What this means for the roadmap claim.** "Any `both` reachable from an async state machine lowers
+to inline" is **not reproducible**, because (a) no user code is in a state machine, and (b) a
+concrete-result `both` forks regardless of async usage. Verified on linux-x64 by byte-scanning
+compiled binaries for the clone-flags immediate (`0x00250f00`) and the `lock xaddq` opcode
+(`f0 48 0f c1`) — the fork runtime's fingerprints:
+
+| program | forks? |
+|---|---|
+| concrete `both` alone | yes |
+| concrete `both` + `Ashes.Async.run(Ashes.Async.sleep 1)` | **yes (identical fork runtime)** |
+| concrete `both` lexically inside `async(let x = await … in …)` | **yes** |
+| self-recursive `psum` `both` (abstract result), async or not | no — concrete-result gate, *not* async |
+
+So the genuine, target-independent coupling is **temporal**: because the async runtime blocks the
+calling thread for the entire duration of a "live" TLS/HTTP session, a `both` fork happens strictly
+*before or after* that I/O, never *concurrently* with it. `tests/parallel_tls_coexist.ash` (CO-6)
+and the new `tests/parallel_async_coexist.ash` both show `both` forking around — but not during — an
+async I/O, correct and memory-bounded.
+
+**Can a fork be safely interleaved with the async runtime today?** The arena/TLS *layers* are already
+proven to coexist: a worker gets its own per-thread bump arena (GS-segment TCB on linux-x64, TEB
+`ArbitraryUserPointer` on win-x64, ELF `PT_TLS` local-exec cursors on linux-arm64 — CO-3/CO-6), and
+the right thunk is a pure closure whose result `CanRunRightOnWorker` restricts to arena-safe
+deep-copyable types, so it never aliases the main thread's rustls/socket state. The blocker is not
+safety of the arena — it is that **there is nothing to interleave with**: `RunTask` is synchronous,
+so there is no in-flight async task in the sense of a concurrently-progressing I/O while the main
+thread runs other code.
+
+**Why no safe verifiable increment was landed.**
+
+1. *Making a fork overlap in-flight I/O* requires a real non-blocking async scheduler: wire up the
+   currently-dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path, make the
+   networking leaf tasks non-blocking (epoll/IOCP/kqueue event loop), and let `RunTask` drive
+   suspensions cooperatively so the main thread can advance a `both` while an I/O is pending. That is
+   a milestone-sized runtime, not a conservative increment.
+2. *Preserving `both`'s forkable shape through the state-machine transform* is a **precondition** of
+   (1), not independently verifiable now: with the transform unreachable, any change to it is
+   untested dead code. When (1) is built it will need two things. **(a)** `StateMachineTransform`'s
+   liveness tables (`GetDefinedTemps` / `GetUsedTemps`) must learn `ParallelFork` (`DescTarget`),
+   `ParallelJoin` (`ResultTarget` / `DescTemp`), and `ParallelCleanup` (`DescTemp`) — they are absent
+   today, so a `both` descriptor/result live across an `await` split would be dropped from the
+   save/restore set and miscompile. **(b)** The lowering must guarantee a `both`'s
+   fork→join→cleanup stays **within a single coroutine segment** (no `await` between fork and join),
+   because the worker descriptor and worker arena are not part of the serialized state struct and
+   cannot survive a suspend/resume. `LowerParallelBoth` already emits fork+join+cleanup contiguously
+   with no intervening `await`, so this holds by construction — but it must be asserted, not assumed,
+   once coroutines carry user code.
+
+**Verifiable increment that *was* landed.** `tests/parallel_async_coexist.ash`: a portable (no
+loopback server) regression that runs two genuinely-forking concrete-result `both`s (heavy
+`sumRange` halves) before and after a synchronous `Ashes.Async.run` await, asserting every result
+equals the sequential value. It locks in the *correct* current behavior — fork runtime and async
+runtime coexist and produce correct, memory-bounded results on every target — and guards against a
+regression that would make async usage suppress the fork. (It cannot assert temporal overlap, which
+is impossible without the scheduler above.)
+
+**Remaining CO-7 work (blocker list).**
+
+1. A non-blocking async scheduler / event loop and non-blocking networking leaf tasks (the enabling
+   milestone; everything else depends on it).
+2. Wire the dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path so user
+   `async` code lowers to a genuine suspending coroutine.
+3. Extend `StateMachineTransform` liveness to the three `Parallel*` instructions (blocker-(2)(a)
+   above) and assert the fork→join→cleanup-within-one-segment invariant (blocker-(2)(b)).
+4. A test that observes *actual concurrent overlap* (a `both` worker making progress while an async
+   I/O is pending) — only meaningful once 1–3 exist.
