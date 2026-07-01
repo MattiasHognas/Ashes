@@ -1,6 +1,11 @@
 # Future Features
 
-Planned features and future work for the Ashes language and ecosystem.
+Planned features and future work for the Ashes language and ecosystem. **Shipped** features are
+documented in the normative docs under [`docs/`](../) — syntax/semantics in
+[LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md), library APIs in [STANDARD_LIBRARY.md](../STANDARD_LIBRARY.md),
+and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not here. (Text parsing,
+async TCP/HTTP, HTTPS/TLS, and brace-free records were landed and their design docs retired into
+those.)
 
 > 🔧 **In-progress work:** internal compiler optimizations — see
 > **[COMPILER_OPTIMIZATION.md](COMPILER_OPTIMIZATION.md)**. In-place reuse, deterministic resource
@@ -10,12 +15,8 @@ Planned features and future work for the Ashes language and ecosystem.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [Text Parsing Primitives](TEXT_PARSING_PRIMITIVES.md) | Landed | Landed as `Ashes.Text.uncons`, `Ashes.Text.parseInt`, and `Ashes.Text.parseFloat`; recursive user-space JSON parser smoke coverage proves the surface; follow-on text helpers remain deferred |
-| [Async Networking](ASYNC_NETWORKING.md) | Landed | Async-only TCP/HTTP inside `async`; core non-blocking runtime landed, separate packaged runtime remains deferred |
 | [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
 | [Compiler Optimization](COMPILER_OPTIMIZATION.md) | In progress | LLVM passes, memory management, codegen. Landed: the audit roadmap (decision-tree matching, string-literal interning, mutual-recursion TCO, jump-table relocations) **plus** Perceus-style in-place reuse, deterministic resource safety, and structured parallelism on all three targets. Remaining optimization backlog tracked there as `CO-1`…`CO-6` (data-parallel `map`/`reduce`, move/linearity analysis, arm64 networking+parallelism, use-after-close diagnostic, tunables) |
-| [HTTPS/TLS](HTTPS_TLS.md) | Landed | Transparent `https://` in `Ashes.Http` and the public `Ashes.Net.Tls` surface now ride on the hermetic `rustls` runtime across `linux-x64`, `linux-arm64`, and `win-x64` |
-| [Brace-Free Records](BRACE_FREE_RECORDS.md) | Landed | Curly-brace record declaration/construction/update forms replaced with pipe-style declarations, named constructor calls, and bare `with` updates; old `{ ... }` forms now report a migration diagnostic |
 | [Effects](EFFECTS.md) | Planned | Algebraic effect handlers — typed effect rows (`uses { ... }`), lexical handlers, optional `perform`, inferred operation/handler types, one-shot/tail-resumptive continuations. Basis for capabilities, DI/testability, typed errors, and async. Multi-shot deferred (no-GC) |
 | [Inline Modules](INLINE_MODULES.md) | Planned | Nested, named `module Name =` declarations inside a file — pure compile-time namespacing, no runtime representation; transparent inline ↔ file promotion |
 | Ashes.String | Landed | Standard library string utilities (`length`, `take`, `drop`, `substring`, `indexOf`, `startsWith`, `contains`, `split`, `join`, `trim`, `trimStart`, `trimEnd`, `isLetter`, `isDigit`, `isWhiteSpace`, `compare`) |

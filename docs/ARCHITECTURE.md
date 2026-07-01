@@ -196,6 +196,30 @@ releases. For rustls-ffi, update `RustlsFfiVersion` in
 `Directory.Build.props` and re-run `scripts/download-rustls-ffi.sh` to
 provision matching payloads.
 
+### Async & TLS runtime model
+
+Networking (TCP/HTTP) and TLS are **async-only**: the `Ashes.Http` / `Ashes.Net.Tcp`
+/ `Ashes.Net.Tls` APIs return `Task(E, A)` and are consumed via `async`/`await` /
+`Ashes.Async.run` (the `Task` type is the enforcement — misuse is an ordinary type
+error). Under the hood these lower to **non-blocking leaf tasks** driven by the
+coroutine/state-machine task runner (`StateMachineTransform.cs` + the LLVM task
+runner): each leaf task carries wait metadata and steps incrementally, returning
+*pending* on would-block and resuming on readiness — via `epoll` on Linux and
+`WSAPoll` on Windows. `Ashes.Async.all` / `race` step a shared task list and wake on
+any ready task. Networking crosses a per-module runtime ABI (`ashes_tcp_*`,
+`ashes_http_*`, `ashes_step_*_task` symbols) rather than calling backend helpers at
+each instruction site.
+
+TLS/HTTPS ride a **hermetic `rustls` runtime embedded per executable**: the vendored
+payload (`librustls.so` / `rustls.dll`, under `runtimes/`) is linked only into
+programs that use `https://` or `Ashes.Net.Tls`; the program writes and `dlopen`s
+(`LoadLibraryA`) it on first TLS use and resolves the `rustls_*` ABI. Certificate and
+hostname validation are **mandatory** — the platform verifier against system trust by
+default, with `SSL_CERT_FILE` as an explicit PEM-root override (used by loopback TLS
+tests). Payload-load or verifier-init failures return `Error(...)` rather than
+crashing. Deferred TLS scope: mutual TLS / client certs, custom trust (per-call CA
+bundles, pinning), server-side accept/listen, ALPN, HTTP/2, HTTP/3.
+
 ---
 
 ## Intermediate Representation
