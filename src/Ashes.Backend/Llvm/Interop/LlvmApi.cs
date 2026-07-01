@@ -251,6 +251,11 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMSetGlobalConstant")]
     public static partial void SetGlobalConstant(LlvmValueHandle global, int isConstant);
 
+    // Marks a global as thread-local. With the static reloc model on aarch64 this makes LLVM emit
+    // the local-exec TLS access sequence (mrs tpidr_el0 + TPREL add), which the ELF linker resolves.
+    [LibraryImport(Lib, EntryPoint = "LLVMSetThreadLocal")]
+    public static partial void SetThreadLocal(LlvmValueHandle global, int isThreadLocal);
+
     [LibraryImport(Lib, EntryPoint = "LLVMSetUnnamedAddr")]
     public static partial void SetUnnamedAddr(LlvmValueHandle global, int unnamedAddr);
 

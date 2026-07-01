@@ -393,6 +393,23 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
             || ProgramUsesInstruction<IrInst.Drop>(program);
+        // arm64 uses a real-ELF-TLS per-thread arena only when the program is neither dynamically
+        // linked via user extern libs nor uses networking: a networking program dlopen's rustls,
+        // whose dynamic TLS conflicts with adding a PT_TLS to the image. (usesNetworkingRuntimeAbi
+        // can't be reused — it also trips on Drop, which nearly every program uses.) Others keep the
+        // BSS-global arena (single-threaded; parallelism doesn't need networking).
+        bool arm64UsesTlsArena = flavor == LlvmCodegenFlavor.LinuxArm64
+            && GetExternLibraries(program).Count == 0
+            && !(ProgramUsesInstruction<IrInst.HttpGet>(program) || ProgramUsesInstruction<IrInst.HttpPost>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpConnect>(program) || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpReceive>(program) || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program) || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program) || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program) || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program) || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program) || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program));
+
         bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
             && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
@@ -483,6 +500,21 @@ internal static partial class LlvmCodegen
             LlvmValueHandle blobEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_blob_end");
             LlvmApi.SetLinkage(blobEndGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(blobEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+
+            // arm64 has no spare thread register (linux-x64 uses GS, win-x64 uses the TEB), so its
+            // per-thread arena is real ELF TLS: mark the six arena cursors thread-local and LLVM
+            // (static reloc → local-exec) emits the mrs tpidr_el0 + TPREL sequence the ELF linker
+            // resolves. Only for STATIC executables (no extern libs): a networking program dlopen's
+            // rustls, whose dynamic TLS conflicts with adding a PT_TLS to the image, so those keep
+            // the ordinary BSS-global arena (single-threaded — parallelism doesn't need networking).
+            // win-x64 keeps these as ordinary globals (overridden by the TEB-TCB slots).
+            if (arm64UsesTlsArena)
+            {
+                foreach (var g in new[] { heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal, blobCursorGlobal, blobEndGlobal })
+                {
+                    LlvmApi.SetThreadLocal(g, 1);
+                }
+            }
         }
         if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
@@ -812,6 +844,7 @@ internal static partial class LlvmCodegen
             windowsWaitForSingleObjectImport,
             windowsGetExitCodeProcessImport,
             isEntry: true,
+            arm64StaticSelfTls: arm64UsesTlsArena,
             debugContext: dbg);
 
         foreach (IrFunction function in program.Functions)
@@ -988,6 +1021,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsWaitForSingleObjectImport,
         LlvmValueHandle windowsGetExitCodeProcessImport,
         bool isEntry,
+        bool arm64StaticSelfTls = false,
         DebugInfoContext? debugContext = null)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
@@ -1145,6 +1179,13 @@ internal static partial class LlvmCodegen
                 BlobCursorSlot = blobCursorSlot,
                 BlobEndSlot = blobEndSlot,
             };
+        }
+
+        if (isEntry && arm64StaticSelfTls)
+        {
+            // Must run before the first arena access (EmitHeapChunkInit below) so TPIDR_EL0 points
+            // at the thread-local arena block on a static arm64 executable (no loader to do it).
+            EmitArm64MainThreadTlsSetup(state);
         }
 
         if (isEntry)
