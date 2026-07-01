@@ -101,8 +101,18 @@ So a set-only tuple-valued map is now fully bounded (#2/#3 met). Two things rema
 2. **Reuse must fire for brc's shape.** brc's `Map.set` lives in the `processLine` *helper*, not the loop
    body, so the loop's reuse analysis never sees the accumulator and no `set$reuse` is generated → brc still
    uses the normal (leaky) `Map.set` (9.7 KB/row). A synthetic get-then-set fold with the set *in the loop*
-   (`gsmap`) does fire the reuse; brc needs the same — either inline `processLine` into the loop or restructure
-   brc so the get+set are in the loop body (per the "restructure brc" task).
+   (`gsmap`) does fire the reuse.
+
+   **Tried:** inlining `processLine`'s get+set into `scanChunk`'s newline case. The reuse then fires
+   (`fullyReusing=True`), BUT it is a net regression (25 GB, no output): making `map` a reset-safe accumulator
+   makes the *whole* `scanChunk` loop reset-safe, so every other loop arg must survive the per-iteration reset
+   — including `rest`, the shrinking `Str` view of the chunk. Copying that view out each character is O(chunk²).
+   So brc can't just thread a shrinking view through a reset-safe map loop.
+
+   **Proper fix (the "restructure brc" task):** scan the chunk by an integer index `pos` (copy-type → reset-safe,
+   no copy-out) instead of a shrinking `rest` view, and take whole lines with `substring`/`indexOf`-from-`pos`
+   rather than a char-by-char `lineAcc + c` accumulation. Then the loop is reset-safe without the view-copy
+   blowup, the map reuse fires, and the get residual (#1) is the only thing left between brc and constant memory.
 
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
