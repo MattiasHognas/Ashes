@@ -86,6 +86,19 @@ public sealed partial class Lowering
     // Reach multiplicity cap: any count reaching this is folded into the poison flag (internal sharing).
     private const int ReachCap = 2;
 
+    // Per-binding synthetic identity token counter (reset at the start of each function's ResultReach
+    // pass). Every locally-introduced binding (a `let`/let-result value, a `match` pattern variable) is
+    // given a unique synthetic reach token summed into its env reach, so multiplicity is tracked for a
+    // *fresh* (non-parameter) heap value exactly as it is for a parameter: embedding the same bound name
+    // through two simultaneous heap positions (e.g. `let x = Node(...)(u)(...) in Node(x)(0)(x)`, or
+    // `[x, x]`) sums the token to the cap and poisons — the fresh value is internally shared, so not
+    // uniquely owned, and its entry copy (which exists precisely to unshare it) must stay. Tokens are
+    // stripped from the stored per-function summary (see ComputeResultReach): a count-1 token is a fresh
+    // internal cell escaping via a single path (harmless, confined), and a count-2 token has already set
+    // poison during the sum. Token keys are prefixed with '#', which no real identifier uses, so they can
+    // never collide with a parameter name and never reach IsResultAliasMove (which maps real params only).
+    private int _maReachToken;
+
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
     /// <see cref="IsReuseAccumulatorMoveSafe"/> over the fully desugared program expression (which
@@ -668,7 +681,8 @@ public sealed partial class Lowering
                     env[p] = (new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 }, false);
                 }
 
-                var computed = ResultReach(info.Body, env);
+                _maReachToken = 0;
+                var computed = StripSyntheticTokens(ResultReach(info.Body, env));
                 var merged = ReachJoin(_maResultReach[name], computed);
                 if (!ReachEquals(_maResultReach[name], merged))
                 {
@@ -780,6 +794,33 @@ public sealed partial class Lowering
         return true;
     }
 
+    // A fresh per-binding synthetic identity token, reach {token:1}. Summed into a binding's env reach so
+    // multiplicity of a fresh (non-parameter) heap value is tracked exactly as for a parameter.
+    private (Dictionary<string, int> Counts, bool Poison) TokenReach()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal) { ["#" + _maReachToken] = 1 };
+        _maReachToken++;
+        return (counts, false);
+    }
+
+    // Drops synthetic '#'-prefixed identity tokens from a summary (they are local to one function's
+    // ResultReach pass and must never be stored or reach IsResultAliasMove). Poison is preserved: a
+    // token that reached the cap already set poison during the sum before it is stripped here.
+    private static (Dictionary<string, int> Counts, bool Poison) StripSyntheticTokens(
+        (Dictionary<string, int> Counts, bool Poison) r)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            if (k.Length == 0 || k[0] != '#')
+            {
+                counts[k] = v;
+            }
+        }
+
+        return (counts, r.Poison);
+    }
+
     /// <summary>
     /// The result-reach of <paramref name="e"/> as the returned value of a function body: the set of the
     /// enclosing function's parameters (with multiplicity) the value may alias, plus a poison flag when
@@ -848,9 +889,9 @@ public sealed partial class Lowering
                 return MatchReach(m, env);
 
             case Expr.Let l:
-                return ResultReach(l.Body, ExtendEnv(env, l.Name, ResultReach(l.Value, env)));
+                return ResultReach(l.Body, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
             case Expr.LetResult lr:
-                return ResultReach(lr.Body, ExtendEnv(env, lr.Name, ResultReach(lr.Value, env)));
+                return ResultReach(lr.Body, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
             case Expr.LetRec lrec:
                 // A self-referential local binding is not modeled; treat any use of it as poison.
                 return ResultReach(lrec.Body, ExtendEnv(env, lrec.Name, ReachPoisoned()));
@@ -930,7 +971,7 @@ public sealed partial class Lowering
         return acc ?? ReachPoisoned();
     }
 
-    private static Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> BindPatternReach(
+    private Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> BindPatternReach(
         Pattern p,
         (Dictionary<string, int> Counts, bool Poison) scrut,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
@@ -945,7 +986,11 @@ public sealed partial class Lowering
         var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal);
         foreach (var n in names)
         {
-            env2[n] = scrut;
+            // Each pattern variable may alias the scrutinee (so it carries the scrutinee's reach) but is a
+            // distinct sub-value, so it also gets its own fresh identity token: two DIFFERENT pattern vars
+            // in one heap shape (`Node(l)(0)(r)`) stay disjoint, while the SAME pattern var used twice
+            // (`Node(l)(0)(l)`) sums its token to the cap and poisons — even when the scrutinee is fresh.
+            env2[n] = ReachSum(scrut, TokenReach());
         }
 
         return env2;
