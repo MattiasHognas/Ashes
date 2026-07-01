@@ -6,6 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmImageLinker
 {
     private const ulong ElfSectionFlagAlloc = 0x2;
+    private const ulong ElfSectionFlagTls = 0x400;
     private const uint SectionTypeRela = 4;
     private const uint SectionTypeNoBits = 8;
     private const uint SectionTypeRel = 9;
@@ -24,6 +25,7 @@ internal static partial class LlvmImageLinker
     private const uint ElfProgramTypeLoad = 1;
     private const uint ElfProgramTypeDynamic = 2;
     private const uint ElfProgramTypeInterp = 3;
+    private const uint ElfProgramTypeTls = 7;
     private const long ElfDynamicTagNull = 0;
     private const long ElfDynamicTagNeeded = 1;
     private const long ElfDynamicTagHash = 4;
@@ -452,6 +454,7 @@ internal static partial class LlvmImageLinker
 
         var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
         var allocatedSections = new List<ElfAllocatedSection>();
+        var tlsSections = new List<ElfTlsSection>();
         var debugSections = new List<ElfDebugSection>();
         var debugRelocationSections = new List<ElfSectionHeader>();
         for (int i = 0; i < sections.Length; i++)
@@ -499,6 +502,22 @@ internal static partial class LlvmImageLinker
                 continue;
             }
 
+            // Thread-local sections (.tdata/.tbss, SHF_TLS) are NOT placed at ordinary virtual
+            // addresses: they form the TLS initialization template addressed via PT_TLS + TPREL,
+            // so keep them out of the regular allocated-data layout. Only aarch64 emits these
+            // (its per-thread arena is real ELF TLS); other targets have no SHF_TLS sections.
+            if ((section.Flags & ElfSectionFlagTls) != 0)
+            {
+                tlsSections.Add(new ElfTlsSection(
+                    SectionIndex: i,
+                    InitBytes: section.Type == SectionTypeNoBits
+                        ? []
+                        : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                    Size: section.Size,
+                    Alignment: section.AddressAlign));
+                continue;
+            }
+
             allocatedSections.Add(new ElfAllocatedSection(
                 SectionIndex: i,
                 Bytes: section.Type == SectionTypeNoBits
@@ -523,6 +542,7 @@ internal static partial class LlvmImageLinker
             SymbolTable: symtab.Value,
             TextSectionIndex: textSectionIndex,
             AllocatedSections: allocatedSections,
+            TlsSections: tlsSections,
             DebugSections: debugSections,
             DebugRelocationSections: debugRelocationSections,
             AllocatedRelocationSections: allocatedRelocationSections);
@@ -1404,6 +1424,7 @@ internal static partial class LlvmImageLinker
         ElfSectionHeader SymbolTable,
         int TextSectionIndex,
         List<ElfAllocatedSection> AllocatedSections,
+        List<ElfTlsSection> TlsSections,
         List<ElfDebugSection> DebugSections,
         List<ElfSectionHeader> DebugRelocationSections,
         List<ElfSectionHeader> AllocatedRelocationSections);
@@ -1427,6 +1448,14 @@ internal static partial class LlvmImageLinker
     private readonly record struct ElfAllocatedSection(
         int SectionIndex,
         byte[] Bytes,
+        ulong Alignment);
+
+    // A thread-local section (.tdata/.tbss). InitBytes is the file image (empty for NOBITS .tbss);
+    // Size is its memory footprint. These form the PT_TLS template, addressed via TPREL, not a VA.
+    private readonly record struct ElfTlsSection(
+        int SectionIndex,
+        byte[] InitBytes,
+        ulong Size,
         ulong Alignment);
 
     private readonly record struct LaidOutElfSections(

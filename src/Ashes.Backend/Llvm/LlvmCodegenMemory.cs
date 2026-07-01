@@ -335,6 +335,47 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(state.Target.Builder, writeType, write, [tcbAddr], "");
     }
 
+    // Static arm64 executable: no dynamic loader runs, so nothing sets up TPIDR_EL0 / the thread's
+    // TLS block. Point TPIDR_EL0 at a zeroed BSS block that backs the thread-local arena (the
+    // cursors are addressed via TPREL = 16-byte TCB reserve + their block offset). MainTcbSizeBytes
+    // (512) easily covers the reserve + the six i64 cursors. Dynamic executables must NOT do this —
+    // there the loader owns TPIDR_EL0 (and the DTV for dlopen'd rustls's dynamic TLS).
+    private static void EmitArm64MainThreadTlsSetup(LlvmCodegenState state)
+    {
+        LlvmTypeHandle blockType = LlvmApi.ArrayType2(state.I8, (ulong)MainTcbSizeBytes);
+        LlvmValueHandle block = state.Target.GetOrAddNamedGlobal("__ashes_arm64_tls_block", () =>
+        {
+            LlvmValueHandle g = LlvmApi.AddGlobal(state.Target.Module, blockType, "__ashes_arm64_tls_block");
+            LlvmApi.SetInitializer(g, LlvmApi.ConstNull(blockType));
+            LlvmApi.SetLinkage(g, LlvmLinkage.Internal);
+            return g;
+        });
+        LlvmValueHandle blockAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, block, state.I64, "arm64_tls_block_addr");
+        EmitArm64SetThreadPointer(state, blockAddr);
+    }
+
+    // Sets TPIDR_EL0 (the aarch64 thread pointer) to the given block address. Used by the main entry
+    // (static executable) and by each parallel worker to point its thread-local arena at its own block.
+    private static void EmitArm64SetThreadPointer(LlvmCodegenState state, LlvmValueHandle blockAddr)
+    {
+        LlvmTypeHandle fnType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
+        LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType, "msr tpidr_el0, $0", "r", true, false);
+        LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
+    }
+
+    // Repoints a bare runtime state's six arena cursor slots at the arm64 thread-local globals, so
+    // reads/writes go through TP+tprel (this thread's TLS block). Used by the parallel worker after it
+    // sets TPIDR_EL0 to its own block.
+    private static LlvmCodegenState WithArm64ThreadLocalArenaSlots(LlvmCodegenState state) => state with
+    {
+        HeapCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_heap_cursor"),
+        HeapEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_heap_end"),
+        ToSpaceCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_tospace_cursor"),
+        ToSpaceEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_tospace_end"),
+        BlobCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_cursor"),
+        BlobEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_end"),
+    };
+
     // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
     // No arch_prctl — GS already addresses the OS-provided TEB on Windows x64.
     private static LlvmValueHandle EmitMainThreadTlsInitWindows(LlvmCodegenState state)

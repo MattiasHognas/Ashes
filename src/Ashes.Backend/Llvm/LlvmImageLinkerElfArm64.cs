@@ -26,6 +26,9 @@ internal static partial class LlvmImageLinker
     private const uint ElfRelocAArch64LdstImm12Lo12Nc64 = 286;
     private const uint ElfRelocAArch64LdstImm12Lo12Nc128 = 299;
     private const uint ElfRelocAArch64Ld64GotLo12Nc = 312;
+    // Local-exec TLS: patch the ADD immediate with the symbol's TPREL (offset from TPIDR_EL0).
+    private const uint ElfRelocAArch64TlsLeAddTprelHi12 = 549;
+    private const uint ElfRelocAArch64TlsLeAddTprelLo12Nc = 551;
 
     public static byte[] LinkLinuxArm64Executable(
         byte[] objectBytes,
@@ -36,6 +39,31 @@ internal static partial class LlvmImageLinker
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + (ulong)Arm64TrampolineLength;
         var parsed = ParseElfObject(objectBytes, entrySymbolName);
+
+        // aarch64 local-exec TLS layout (the per-thread arena). TP (TPIDR_EL0) points at a 16-byte
+        // TCB; the static TLS block follows, aligned. A symbol's TPREL = alignUp(16, maxAlign) +
+        // its offset within the block. The arena cursors are all zero-initialised, so every TLS
+        // section is .tbss (no file image) — reject .tdata rather than silently mislink it.
+        bool hasTls = parsed.TlsSections.Count > 0;
+        var tlsBlockOffsets = new Dictionary<int, ulong>();
+        ulong tlsMemSize = 0;
+        ulong tlsAlign = 1;
+        foreach (ElfTlsSection t in parsed.TlsSections)
+        {
+            if (t.InitBytes.Length > 0)
+            {
+                throw new InvalidOperationException("AArch64 TLS with initialized .tdata is not supported (arena cursors are zero-initialised .tbss).");
+            }
+
+            ulong a = Math.Max(1UL, t.Alignment);
+            tlsAlign = Math.Max(tlsAlign, a);
+            tlsMemSize = (tlsMemSize + a - 1) & ~(a - 1);
+            tlsBlockOffsets[t.SectionIndex] = tlsMemSize;
+            tlsMemSize += t.Size;
+        }
+
+        ulong tlsTprelBase = (16UL + tlsAlign - 1) & ~(tlsAlign - 1);
+
         List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed, externLibraries);
         int textFileOffset = PageSize;
         int codeLength = Arm64TrampolineLength + parsed.TextBytes.Length + imports.Count * Arm64ImportStubLength;
@@ -91,7 +119,9 @@ internal static partial class LlvmImageLinker
             parsed.TextSectionIndex,
             objectTextVa,
             laidOutData.SectionBaseVas,
-            externalSymbolVas);
+            externalSymbolVas,
+            tlsBlockOffsets,
+            tlsTprelBase);
 
         byte[] codeBytes = BuildArm64Trampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
@@ -101,7 +131,7 @@ internal static partial class LlvmImageLinker
         bool hasData = finalDataBytes.Length > 0;
         bool hasDebug = parsed.DebugSections.Count > 0;
         bool hasDynamicImports = imports.Count > 0;
-        int programHeaderCount = 1 + (hasData ? 1 : 0) + (hasDynamicImports ? 2 : 0);
+        int programHeaderCount = 1 + (hasData ? 1 : 0) + (hasDynamicImports ? 2 : 0) + (hasTls ? 1 : 0);
 
         int endOfLoadable = hasData
             ? dataFileOffset + finalDataBytes.Length
@@ -198,6 +228,22 @@ internal static partial class LlvmImageLinker
                 flags: 0x06,
                 type: ElfProgramTypeDynamic,
                 alignment: 8);
+        }
+
+        if (hasTls)
+        {
+            // PT_TLS: the initialization template the loader copies into each thread's TLS block.
+            // All arena cursors are zero-init (.tbss), so the file image is empty (fileSize 0) and
+            // memorySize is the total block size; the loader zero-fills it per thread. p_vaddr sits
+            // in the loaded data segment (unread since fileSize is 0).
+            WriteElf64ProgramHeader(output, programHeaderCount - 1,
+                fileOffset: (ulong)dataFileOffset,
+                virtualAddress: dataVa,
+                fileSize: 0,
+                memorySize: tlsMemSize,
+                flags: 0x04, // PF_R
+                type: ElfProgramTypeTls,
+                alignment: tlsAlign);
         }
 
         // Write .text content
@@ -387,7 +433,9 @@ internal static partial class LlvmImageLinker
         int textSectionIndex,
         ulong loadedTextVa,
         IReadOnlyDictionary<int, ulong> sectionBaseVas,
-        IReadOnlyDictionary<string, ulong>? externalSymbolVas = null)
+        IReadOnlyDictionary<string, ulong>? externalSymbolVas = null,
+        IReadOnlyDictionary<int, ulong>? tlsBlockOffsets = null,
+        ulong tlsTprelBase = 0)
     {
         byte[] strtab = ReadStringTable(objectBytes, ReadElfSectionHeader(objectBytes, (int)symtab.Link));
         var definedSymbolVas = BuildDefinedSymbolTable(objectBytes, symtab, strtab, textSectionIndex, loadedTextVa, sectionBaseVas);
@@ -412,6 +460,28 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)(info >> 32));
                 uint relocationType = unchecked((uint)info);
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
+
+                // Local-exec TLS: the symbol lives in a .tbss TLS section (no VA); resolve it to a
+                // TPREL offset and patch the ADD immediate (bits 21:10). HI12 takes bits [23:12],
+                // LO12_NC takes bits [11:0]. Handled here so it never reaches the VA resolver.
+                if (relocationType is ElfRelocAArch64TlsLeAddTprelHi12 or ElfRelocAArch64TlsLeAddTprelLo12Nc)
+                {
+                    if (tlsBlockOffsets is null || !tlsBlockOffsets.TryGetValue(symbol.SectionIndex, out ulong blockOffset))
+                    {
+                        throw new InvalidOperationException($"AArch64 TLS relocation references a symbol not in a TLS section (index {symbol.SectionIndex}).");
+                    }
+
+                    long tprel = checked((long)tlsTprelBase + (long)blockOffset + (long)symbol.Value + addend);
+                    uint imm12 = relocationType == ElfRelocAArch64TlsLeAddTprelHi12
+                        ? (uint)((tprel >> 12) & 0xFFF)
+                        : (uint)(tprel & 0xFFF);
+                    Span<byte> tlsPatch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                    uint tlsInsn = BinaryPrimitives.ReadUInt32LittleEndian(tlsPatch);
+                    tlsInsn = (tlsInsn & ~(0xFFFu << 10)) | (imm12 << 10);
+                    BinaryPrimitives.WriteUInt32LittleEndian(tlsPatch, tlsInsn);
+                    continue;
+                }
+
                 long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, externalSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
 

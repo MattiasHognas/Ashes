@@ -22,7 +22,7 @@ are structural limitations of the language / stdlib / memory model.
 | #2 | Hot-loop arena leak (Map accumulator) | **FIXED** — brc is now constant-memory (45 MB @ 1M, 49 MB @ 10M): in-place `Map.set` reuse + single-loop `File.readLine` fold + reset-safe resource handles |
 | #3 | No hash/mutable O(1) accumulator | **FIXED for the fold** — persistent `Map` with in-place reuse gives O(log K), constant-memory updates (HashMap also shipped) |
 | #4 | No constructible String ordering | **FIXED** |
-| #5 | No data parallelism | open — design-level milestone |
+| #5 | No data parallelism | **FIXED** — `Ashes.Parallel.both` genuinely parallel on all 3 targets (per-thread arenas: GS/TEB/ELF-TLS; clone-futex/CreateThread). Full data-parallel `map`/`reduce` still needs monomorphization |
 | #6 | Shipped-module ref unresolved in a function body | **FIXED** |
 | #7 | Char-by-char `uncons` is O(T²) (tail copied each step) | **FIXED** (zero-copy string views) |
 | #8 | Output fold is O(K²) (`acc + sep + entry` growing-string concat) | **FIXED** (tail-recursive divide-and-conquer `Ashes.String.join`) |
