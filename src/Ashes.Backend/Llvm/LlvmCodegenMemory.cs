@@ -315,6 +315,40 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "tcb_base");
     }
 
+    // win-x64 per-thread arena: the TCB base pointer lives in the TEB's ArbitraryUserPointer field
+    // (TEB+0x28, reached via the GS-based TEB), a slot Windows never uses and that is genuinely
+    // per-thread. This mirrors the linux GS:0 self-pointer approach — no TlsAlloc, no collision with a
+    // loaded runtime's TLS indices, and a cheap inline read that LLVM can hoist/CSE.
+    private const int WindowsTebArenaSlotOffset = 0x28;
+
+    private static LlvmValueHandle EmitReadTcbBaseFromTeb(LlvmCodegenState state)
+    {
+        LlvmTypeHandle readType = LlvmApi.FunctionType(state.I64, []);
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, $"movq %gs:{WindowsTebArenaSlotOffset}, $0", "=r", false, false);
+        return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "teb_tcb_base");
+    }
+
+    private static void EmitWriteTcbBaseToTeb(LlvmCodegenState state, LlvmValueHandle tcbAddr)
+    {
+        LlvmTypeHandle writeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
+        LlvmValueHandle write = LlvmApi.GetInlineAsm(writeType, $"movq $0, %gs:{WindowsTebArenaSlotOffset}", "r,~{memory}", true, false);
+        LlvmApi.BuildCall2(state.Target.Builder, writeType, write, [tcbAddr], "");
+    }
+
+    // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
+    // No arch_prctl — GS already addresses the OS-provided TEB on Windows x64.
+    private static LlvmValueHandle EmitMainThreadTlsInitWindows(LlvmCodegenState state)
+    {
+        LlvmTypeHandle tcbType = LlvmApi.ArrayType2(state.I8, (ulong)MainTcbSizeBytes);
+        LlvmValueHandle tcb = LlvmApi.AddGlobal(state.Target.Module, tcbType, "__ashes_main_tcb");
+        LlvmApi.SetLinkage(tcb, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(tcb, LlvmApi.ConstNull(tcbType));
+        LlvmValueHandle tcbAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, tcb, state.I64, "win_main_tcb_addr");
+        StoreMemory(state, tcbAddr, (int)TcbSelfOffset, tcbAddr, "win_tcb_self_ptr");
+        EmitWriteTcbBaseToTeb(state, tcbAddr);
+        return tcbAddr;
+    }
+
     /// <summary>
     /// Returns <paramref name="state"/> with its arena cursor/end slots repointed at the
     /// current thread's TCB on linux-x64; a no-op on other flavors (which keep module-global
@@ -323,12 +357,20 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmCodegenState WithLinuxThreadArena(LlvmCodegenState state)
     {
-        if (state.Flavor != LlvmCodegenFlavor.LinuxX64)
+        LlvmValueHandle tcbBase;
+        if (state.Flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            tcbBase = EmitReadTcbBaseFromGs(state);
+        }
+        else if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            tcbBase = EmitReadTcbBaseFromTeb(state);
+        }
+        else
         {
             return state;
         }
 
-        LlvmValueHandle tcbBase = EmitReadTcbBaseFromGs(state);
         (LlvmValueHandle cursor, LlvmValueHandle end) = BuildLinuxArenaSlots(state, tcbBase);
         return state with { HeapCursorSlot = cursor, HeapEndSlot = end };
     }

@@ -1087,15 +1087,21 @@ internal static partial class LlvmCodegen
             BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
         };
 
-        if (flavor == LlvmCodegenFlavor.LinuxX64)
+        if (flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.WindowsX64)
         {
-            // Recover this thread's TCB base and address the arena cursor/end through it as
-            // ordinary pointers. The entry function sets up GS (arch_prctl) and the TCB
-            // self-pointer and knows the main-TCB address directly; every other function
-            // reads the base back from %gs:0.
-            LlvmValueHandle tcbBase = isEntry
-                ? EmitMainThreadTlsInit(state)
-                : EmitReadTcbBaseFromGs(state);
+            // Recover this thread's TCB base and address the arena cursor/end (and to-space/blob)
+            // through it as ordinary pointers, so worker threads get their own arenas. On linux the
+            // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on win-x64
+            // the TCB pointer lives in TEB+0x28 (the OS provides the GS-based TEB, so no arch_prctl).
+            LlvmValueHandle tcbBase;
+            if (flavor == LlvmCodegenFlavor.LinuxX64)
+            {
+                tcbBase = isEntry ? EmitMainThreadTlsInit(state) : EmitReadTcbBaseFromGs(state);
+            }
+            else
+            {
+                tcbBase = isEntry ? EmitMainThreadTlsInitWindows(state) : EmitReadTcbBaseFromTeb(state);
+            }
             (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
             (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
             (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
