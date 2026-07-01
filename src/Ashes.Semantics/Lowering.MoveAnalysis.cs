@@ -99,6 +99,12 @@ public sealed partial class Lowering
     // never collide with a parameter name and never reach IsResultAliasMove (which maps real params only).
     private int _maReachToken;
 
+    // Recursion guard for over-application (CO-2d closure seeds): OverApplicationReach inlines a
+    // callee's body one level to see through a returned closure; a bounded depth caps any chain of
+    // nested over-applications (each level poisons past the cap — the sound direction).
+    private const int MaxOverAppDepth = 4;
+    private int _maOverAppDepth;
+
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
     /// <see cref="IsReuseAccumulatorMoveSafe"/> over the fully desugared program expression (which
@@ -1072,8 +1078,42 @@ public sealed partial class Lowering
 
         if (name is null
             || _maAmbiguous.Contains(name)
-            || !_maFuncs.TryGetValue(name, out var info)
-            || args.Count != info.Params.Count
+            || !_maFuncs.TryGetValue(name, out var info))
+        {
+            return ReachPoisoned();
+        }
+
+        // (CO-2d) Over-application: the callee returns a closure that is applied to the surplus
+        // arguments, e.g. `(makeBuilder(x))(n)` where `makeBuilder`'s body reduces to a lambda behind
+        // an if/match (so currying did not statically flatten it into one function). Model it by
+        // inlining the callee's body one level, binding each surplus argument to the returned lambda's
+        // parameter (capture-aware: a captured parameter embedded in the produced value is reached via
+        // its argument marker; a captured global or unmodeled capture poisons). The symbolic reach is
+        // over "@i" argument-position markers; substitute each marker's argument's reach and sum.
+        if (args.Count > info.Params.Count)
+        {
+            var over = OverApplicationReach(name, info, args);
+            if (over is not { } ov || ov.Poison)
+            {
+                return ReachPoisoned();
+            }
+
+            var acc = ReachBottom();
+            foreach (var (marker, mult) in ov.Counts)
+            {
+                int ai = ArgMarkerIndex(marker);
+                if (ai < 0 || ai >= args.Count)
+                {
+                    return ReachPoisoned();
+                }
+
+                acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env), mult));
+            }
+
+            return acc;
+        }
+
+        if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(name, out var summary)
             || summary.Poison)
         {
@@ -1131,8 +1171,36 @@ public sealed partial class Lowering
 
         if (name is null
             || _maAmbiguous.Contains(name)
-            || !_maFuncs.TryGetValue(name, out var info)
-            || args.Count != info.Params.Count
+            || !_maFuncs.TryGetValue(name, out var info))
+        {
+            return false;
+        }
+
+        // (CO-2d) Over-application through a returned closure: `(makeBuilder(x))(n)` is a move iff the
+        // over-application's symbolic result-reach is not poisoned and every argument position its
+        // result may alias is itself a move. A closure capturing a fresh/moved value is admitted; one
+        // capturing a retained value or a global is declined (poison / non-move argument).
+        if (args.Count > info.Params.Count)
+        {
+            var over = OverApplicationReach(name, info, args);
+            if (over is not { } ov || ov.Poison)
+            {
+                return false;
+            }
+
+            foreach (var (marker, _) in ov.Counts)
+            {
+                int ai = ArgMarkerIndex(marker);
+                if (ai < 0 || ai >= args.Count || !ArgIsMove(args[ai], enclosing))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(name, out var summary)
             || summary.Poison)
         {
@@ -1149,6 +1217,128 @@ public sealed partial class Lowering
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// (CO-2d) Symbolic result-reach of an <b>over-applied</b> call to registered function
+    /// <paramref name="name"/> — one whose surplus arguments are applied to a closure the callee
+    /// returns. Returns a reach over <c>"@i"</c> argument-position markers (with the callee's own
+    /// parameters mapped to their argument markers, so capture of a parameter is tracked), plus a
+    /// poison flag; <c>null</c> when not over-applied. Inlines the callee body one level, binding each
+    /// surplus argument to the returned lambda's parameter as it descends through the closure-producing
+    /// structure (a returned lambda, or lambdas behind if/match/let). Any other closure source (a
+    /// nested call result, an unmodeled node) poisons — the conservative default. Synthetic identity
+    /// tokens are stripped; the depth guard poisons a chain of nested over-applications.
+    /// </summary>
+    private (Dictionary<string, int> Counts, bool Poison)? OverApplicationReach(
+        string name,
+        (List<string> Params, Expr Body) info,
+        List<Expr> args)
+    {
+        if (args.Count <= info.Params.Count)
+        {
+            return null;
+        }
+
+        if (_maOverAppDepth >= MaxOverAppDepth)
+        {
+            return ReachPoisoned();
+        }
+
+        var symEnv = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+        for (int i = 0; i < info.Params.Count; i++)
+        {
+            symEnv[info.Params[i]] = (new Dictionary<string, int>(StringComparer.Ordinal) { ["@" + i] = 1 }, false);
+        }
+
+        var extra = new List<string>();
+        for (int j = info.Params.Count; j < args.Count; j++)
+        {
+            extra.Add("@" + j);
+        }
+
+        _maOverAppDepth++;
+        var reach = OverApplyReachSym(info.Body, extra, 0, symEnv);
+        _maOverAppDepth--;
+        return StripSyntheticTokens(reach);
+    }
+
+    /// <summary>
+    /// Descends through a closure-producing expression, binding the surplus argument markers
+    /// (<paramref name="extra"/>, indexed by <paramref name="idx"/>) to the parameters of the lambdas
+    /// it returns, until every surplus argument is consumed — at which point the fully-applied value is
+    /// the terminal ADT and its reach is taken by <see cref="ResultReach"/>. Control-flow arms join by
+    /// max. Any node that is not a returned lambda / control-flow structure while an argument is still
+    /// unconsumed (a nested call, an unmodeled node) poisons.
+    /// </summary>
+    private (Dictionary<string, int> Counts, bool Poison) OverApplyReachSym(
+        Expr body,
+        List<string> extra,
+        int idx,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        if (idx >= extra.Count)
+        {
+            // All surplus arguments consumed — the value is the terminal (ADT) result.
+            return ResultReach(body, env);
+        }
+
+        switch (body)
+        {
+            case Expr.Lambda lam:
+                {
+                    var env2 = ExtendEnv(
+                        env,
+                        lam.ParamName,
+                        (new Dictionary<string, int>(StringComparer.Ordinal) { [extra[idx]] = 1 }, false));
+                    return OverApplyReachSym(lam.Body, extra, idx + 1, env2);
+                }
+
+            case Expr.If i:
+                return ReachMax(
+                    OverApplyReachSym(i.Then, extra, idx, env),
+                    OverApplyReachSym(i.Else, extra, idx, env));
+
+            case Expr.Match m:
+                {
+                    var scrut = ResultReach(m.Value, env);
+                    (Dictionary<string, int> Counts, bool Poison)? acc = null;
+                    foreach (var c in m.Cases)
+                    {
+                        var env2 = BindPatternReach(c.Pattern, scrut, env);
+                        var arm = OverApplyReachSym(c.Body, extra, idx, env2);
+                        acc = acc is null ? arm : ReachMax(acc.Value, arm);
+                    }
+
+                    return acc ?? ReachPoisoned();
+                }
+
+            case Expr.Let l:
+                return OverApplyReachSym(
+                    l.Body, extra, idx, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
+            case Expr.LetResult lr:
+                return OverApplyReachSym(
+                    lr.Body, extra, idx, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
+            case Expr.LetRec lrec:
+                return OverApplyReachSym(
+                    lrec.Body, extra, idx, ExtendEnv(env, lrec.Name, ReachPoisoned()));
+
+            default:
+                // A closure produced by anything else (a nested call result, an unmodeled node) — not
+                // provably confined; poison keeps the copy.
+                return ReachPoisoned();
+        }
+    }
+
+    // Parses an "@i" argument-position marker back to its index, or -1 when not a marker.
+    private static int ArgMarkerIndex(string marker)
+    {
+        if (marker.Length < 2 || marker[0] != '@')
+        {
+            return -1;
+        }
+
+        return int.TryParse(marker.AsSpan(1), out var i) ? i : -1;
     }
 
     /// <summary>
