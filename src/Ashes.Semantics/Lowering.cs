@@ -172,6 +172,11 @@ public sealed partial class Lowering
     // into the to-space can fire. Null when not generating a spec.
     private IReadOnlyList<TypeRef>? _specializationConcreteParamTypes;
     private int _specializationParamCursor;
+    // Outer (non-accumulator) parameter names of the reuse specialization currently being lowered — e.g.
+    // compare/newKey/newValue for Map.set. A constructor field whose argument is one of these is a FRESH
+    // heap input (materialize it into the persistent blob so it survives the per-iteration reset); a field
+    // taken from the matched accumulator (a pattern binding) is already persistent and must not be re-copied.
+    private HashSet<string>? _specFreshInputNames;
 
     // Temps holding a value built by in-place reuse (an AllocReusing result) — already below the
     // watermark and used linearly. When such a value is the argument to an inlined helper, the
@@ -4835,8 +4840,18 @@ public sealed partial class Lowering
         // Params whose argument was built by in-place reuse are themselves linear: a match-then-rebuild
         // on them in the helper body reuses the same cell (intermediate-value linearity).
         var linearParams = new List<string>();
+        // Params bound to a FRESH heap input of the enclosing specialization (e.g. makeNode's key/value
+        // param bound to the spec's newKey/newValue) inherit that fresh-input status, so a constructor
+        // field in the inlined body still materializes them into the persistent blob.
+        var freshParams = new List<string>();
         for (int i = 0; i < paramNames.Count; i++)
         {
+            if (_specFreshInputNames is not null && args[i] is Expr.Var fv
+                && _specFreshInputNames.Contains(fv.Name) && !_specFreshInputNames.Contains(paramNames[i]))
+            {
+                freshParams.Add(paramNames[i]);
+            }
+
             var (argTemp, argType) = LowerExpr(args[i]);
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, argTemp));
@@ -4857,7 +4872,9 @@ public sealed partial class Lowering
         _scopes.Push(inlineScope);
         _inliningInProgress.Add(fnName);
         foreach (var p in linearParams) _linearReuseNames.Add(p);
+        if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Add(p);
         var result = LowerExpr(body);
+        if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Remove(p);
         foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
@@ -4890,11 +4907,13 @@ public sealed partial class Lowering
         var savedInSpec = _inSpecialization;
         var savedConcrete = _specializationConcreteParamTypes;
         var savedCursor = _specializationParamCursor;
+        var savedFreshInputs = _specFreshInputNames;
         _specializingLinearParam = spec.LinearParam;
         _specializingReuseLabel = null;
         _inSpecialization = true;
         _specializationConcreteParamTypes = concreteParamTypes;
         _specializationParamCursor = 0;
+        _specFreshInputNames = new HashSet<string>(CollectLambdaParams(spec.Lambda), StringComparer.Ordinal);
         // forcedLabel + selfName=name make recursive calls resolve to Binding.Self(label) → f$reuse.
         // LowerLambdaCore adds the function to _funcs and then emits an incidental closure into the
         // current _inst; we don't need that closure (we build our own at each call site), so discard
@@ -4915,6 +4934,7 @@ public sealed partial class Lowering
         _inSpecialization = savedInSpec;
         _specializationConcreteParamTypes = savedConcrete;
         _specializationParamCursor = savedCursor;
+        _specFreshInputNames = savedFreshInputs;
 
         var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => f.Label == reuseLabel) : null;
         bool fullyReusing = recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!);
@@ -5030,14 +5050,23 @@ public sealed partial class Lowering
 
         if (string.Equals(named.Symbol.Name, "MapTree", StringComparison.Ordinal) && named.TypeArgs.Count == 2)
         {
-            var key = Prune(named.TypeArgs[0]);
-            var value = Prune(named.TypeArgs[1]);
-            bool keyPersistent = BuiltinRegistry.IsCopyType(key) || key is TypeRef.TStr or TypeRef.TBytes;
-            return keyPersistent && BuiltinRegistry.IsCopyType(value);
+            // A field is persistent if it is a copy type, a Str/Bytes (materialized to the blob), or a tuple
+            // of copy-type elements (fixed-size copy to the blob). The key is additionally kept-on-update;
+            // the value is fresh on every update and is materialized on both insert and update.
+            return IsReuseMaterializableFieldType(Prune(named.TypeArgs[0]))
+                && IsReuseMaterializableFieldType(Prune(named.TypeArgs[1]));
         }
 
         return false;
     }
+
+    // A reuse-node heap leaf field type the materialization can make persistent (blob): copy types (inline,
+    // nothing to do), Str/Bytes (dynamic copy), and tuples of copy-type elements (fixed-size shallow copy).
+    // Must match the materialization cases in LowerConstructorApplication.
+    private bool IsReuseMaterializableFieldType(TypeRef t) =>
+        BuiltinRegistry.IsCopyType(t)
+        || t is TypeRef.TStr or TypeRef.TBytes
+        || (t is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))));
 
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
     {

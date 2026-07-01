@@ -609,7 +609,6 @@ public sealed partial class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
-        bool toSpaceNode = false;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
@@ -631,7 +630,6 @@ public sealed partial class Lowering
             // in place, staying in to-space). See IrInst.AllocAdtToSpace / IsFullyReusing.
             Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
             _reuseResultTemps.Add(ptrTemp);
-            toSpaceNode = true;
         }
         else
         {
@@ -640,16 +638,29 @@ public sealed partial class Lowering
         for (int i = 0; i < argTemps.Count; i++)
         {
             int fieldTemp = argTemps[i];
-            // A genuinely-new (to-space) node is the only place a fresh heap LEAF field — a String/Bytes
-            // map key, materialized once per distinct key on insert — must itself be made persistent, or
-            // it dangles past the reset (the node survives in to-space but its key would point into
-            // reclaimed scratch). Reused (AllocReusing) nodes keep their already-persistent fields, so
-            // this never re-copies existing keys on the rebuild spine — it stays bounded by distinct keys.
-            if (toSpaceNode && Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBytes)
+            // A FRESH heap leaf field of a reuse-built node (a Map key/value produced from the spec's
+            // newKey/newValue input, on insert OR update) must be copied into the persistent blob, or it
+            // dangles past the per-iteration reset (the node survives, but the field would point into
+            // reclaimed scratch). Fields taken from the matched accumulator (pattern bindings) are already
+            // persistent and are NOT copied — identified by the field argument being one of the spec's
+            // fresh-input names (see _specFreshInputNames, propagated through inlined helpers).
+            if (_inSpecialization && _specFreshInputNames is not null
+                && args[i] is Expr.Var fieldVar && _specFreshInputNames.Contains(fieldVar.Name))
             {
-                int persistentField = NewTemp();
-                Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
-                fieldTemp = persistentField;
+                var pruned = Prune(argTypes[i]);
+                if (pruned is TypeRef.TStr or TypeRef.TBytes)
+                {
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                    fieldTemp = persistentField;
+                }
+                else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
+                {
+                    // Tuple of copy-type elements: a fixed-size shallow copy fully materializes it.
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, tup.Elements.Count * 8));
+                    fieldTemp = persistentField;
+                }
             }
 
             Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));

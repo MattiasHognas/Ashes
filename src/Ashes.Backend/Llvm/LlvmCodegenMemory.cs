@@ -629,6 +629,18 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCopyOutArenaToSpace(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
     {
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+        if (staticSizeBytes > 0)
+        {
+            // Fixed-size shallow copy into the blob region (e.g. a tuple of copy-type elements: a flat
+            // memcpy fully materializes it — there are no nested heap fields to follow).
+            LlvmBuilderHandle builder = state.Target.Builder;
+            LlvmValueHandle dest = EmitAlloc(state, staticSizeBytes, state.BlobCursorSlot, state.BlobEndSlot);
+            LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "blob_copy_src");
+            LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "blob_copy_dest");
+            EmitCopyBytes(state, destBytes, srcBytes, LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0), "blob_copy");
+            return dest;
+        }
+
         return EmitCopyOutStringValue(state, srcPtr, state.BlobCursorSlot, state.BlobEndSlot);
     }
 
