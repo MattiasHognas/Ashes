@@ -539,6 +539,12 @@ directly, and helper functions are available from the shipped `Ashes.Result` mod
 Generic ADTs declare their type parameters explicitly after the type name.
 For migration compatibility, code may omit explicit type parameters and rely on
 constructor payload names, but canonical Ashes source should declare them explicitly.
+When type parameters are omitted, a payload naming the declaring type itself (a
+self-recursive field, e.g. `Node(Tree, Int, Tree)`) or a primitive type (`Int`,
+`Bool`, `Str`, `Bytes`, `Float`) is a concrete field type, **not** an inferred type
+parameter; only genuinely unbound payload names are treated as implicit parameters.
+This lets a self-recursive ADT be built by a recursive function (`let rec build n =
+… Node(build(n - 1)) …`) without the self-referential field being over-generalized.
 
 Rules:
 
