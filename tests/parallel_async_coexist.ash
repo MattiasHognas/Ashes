@@ -1,0 +1,33 @@
+// expect: 499999500000|slept|499999500000
+// Structured-parallelism (`both`) + the async runtime coexist and stay correct
+// (roadmap CO-7). Two genuinely-forking `both`s (concrete Int result, so they
+// spawn a worker) run before and after a synchronous `Ashes.Async.run` await;
+// every result must match the sequential value. Portable (no loopback server),
+// so it guards fork-runtime / async-runtime coexistence on every target. The
+// async runtime is synchronous/blocking, so the fork does not temporally
+// overlap the in-flight task — it runs before and after it, never concurrently
+// (the remaining CO-7 gap: overlap needs a non-blocking scheduler).
+import Ashes.Parallel
+import Ashes.Text
+import Ashes.IO
+import Ashes.Async
+let rec sumRange lo hi acc = 
+    if lo >= hi
+    then acc
+    else sumRange(lo + 1)(hi)(acc + lo)
+
+let halves = 
+    fun (u) -> 
+        match Ashes.Parallel.both(fun (v) -> sumRange(0)(500000)(0))(fun (v) -> sumRange(500000)(1000000)(0)) with
+            | (a, b) -> a + b
+
+let before = halves(0)
+
+let slept = 
+    match Ashes.Async.run(async(let ok = await Ashes.Async.sleep(1)
+    in "slept")) with
+        | Ok(text) -> text
+        | Error(err) -> err
+
+let after = halves(0)
+in Ashes.IO.print(Ashes.Text.fromInt(before) + "|" + slept + "|" + Ashes.Text.fromInt(after))
