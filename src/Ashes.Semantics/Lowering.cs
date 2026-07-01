@@ -3336,7 +3336,8 @@ public sealed partial class Lowering
             && collectedArgs.Count == specInfo.ArgCount
             && collectedArgs[^1] is Expr.Var accArg
             && _linearSpecializationAccumulators.Contains(accArg.Name)
-            && Lookup(specName) is { } specBinding)
+            && Lookup(specName) is { } specBinding
+            && SpecializationRebuildsAccumulator(Prune(specBinding.Type), collectedArgs.Count))
         {
             return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs);
         }
@@ -5073,6 +5074,32 @@ public sealed partial class Lowering
         BuiltinRegistry.IsCopyType(t)
         || t is TypeRef.TStr or TypeRef.TBytes
         || (t is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))));
+
+    // True only if a specializable function actually rebuilds its accumulator in place: its result
+    // type (after applying all <paramref name="argCount"/> args) is the same named ADT as its last
+    // parameter (the accumulator). A rewriter like Map.set (MapTree -> MapTree) qualifies; a pure
+    // reader like Map.get (MapTree -> Maybe) does not — routing a reader through the reuse spec would
+    // allocate its result cell (e.g. Some(value)) into the never-reset to-space, leaking one cell per
+    // call. Readers stay on the normal path, where their result lives in the reclaimed main arena.
+    private bool SpecializationRebuildsAccumulator(TypeRef funcType, int argCount)
+    {
+        var current = Prune(funcType);
+        TypeRef? lastParam = null;
+        for (int i = 0; i < argCount; i++)
+        {
+            if (current is not TypeRef.TFun fun)
+            {
+                return false;
+            }
+
+            lastParam = Prune(fun.Arg);
+            current = Prune(fun.Ret);
+        }
+
+        return lastParam is TypeRef.TNamedType paramNamed
+            && current is TypeRef.TNamedType resultNamed
+            && string.Equals(paramNamed.Symbol.Name, resultNamed.Symbol.Name, StringComparison.Ordinal);
+    }
 
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args)
     {

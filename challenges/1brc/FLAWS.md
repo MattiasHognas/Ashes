@@ -145,7 +145,16 @@ orthogonal and both real:
     (module-global buffer, like the stdin `readLine` fix) so the loop threads only the accumulator, or
     (ii) a compiler move/linearity analysis that skips the entry deep-copy when the accumulator is
     provably moved (not aliased by the caller after the call) — the ownership milestone.
-  - **(B) The get-then-set ~16 B/row residual** — unchanged from below; dominates once (A) is solved.
+  - **(B) The get-then-set ~16 B/row residual** — **FIXED.** Root cause: `Ashes.Map.get` returns
+    `Maybe(V)`, not `MapTree`, so it rebuilds nothing — yet because `map` was deep-copied to a linear
+    accumulator for the *set*, the *get* call was also routed to a reuse specialization, and inside a
+    spec every fresh cell (here the `Some(value)` result) is allocated into the never-reset to-space →
+    one leaked cell per row. Fix (`Lowering.cs`, `SpecializationRebuildsAccumulator`): only route a call
+    to a reuse spec when the function's result type is the same named ADT as its accumulator (last)
+    parameter — i.e. it actually rewrites the tree (`MapTree -> MapTree`). Pure readers (`MapTree ->
+    Maybe`) stay on the normal path, where their result lives in the reclaimed main arena. A get-then-set
+    fold (even using the fetched value) is now **1 MB flat at 10M** (was 154 MB); the single-loop stdin
+    brc is **7 MB at 10M** (was 159 MB). Regression-covered by `tests/reuse_lookup_then_update_bounded.ash`.
 
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
