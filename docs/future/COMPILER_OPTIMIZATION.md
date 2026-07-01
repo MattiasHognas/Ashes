@@ -30,7 +30,7 @@ All original audit findings have been addressed:
 | **String-literal interning** | Identical string-literal `.rodata` globals are content-addressed and emitted once per module (`LlvmTargetContext.GetOrAddStringLiteralGlobal`), shared across all functions and internal call sites. Compile-time, bounded, leak-free. |
 | **Mutual-recursion TCO** | Eligible `let rec … and …` groups (same arity, identical parameter types, a cross-member tail call) are merged into one self-recursive `dispatch` function with thin per-member wrappers, so the existing single-function TCO turns mutual recursion into a loop. Ineligible groups keep the closure path. **Design constraint:** members can legally have different parameter types (`ping: Int → Str` tail-calls `pong: Str → Str`), which a single shared typed parameter list cannot merge without unifying incompatible types; hence the same-arity + identical-parameter-types gate (verified against each member's inferred type). Heterogeneous-parameter generalization would need distinct per-member slots (an IR-level slot-union loop) or opaque-coercion dispatch. |
 | **In-place reuse (Perceus-style, no runtime RC)** | Immutable recursive-ADT accumulators are rebuilt in place instead of reallocated: a one-time defensive deep copy at loop entry makes the accumulator uniquely owned, then matched-and-rebuilt-with-the-same-constructor cells are overwritten (`AllocReusing`). Covers direct accumulators, helper-rebuild inlining, recursive-function specialization, and the full `Ashes.Map.set` shape (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). Fresh heap leaf fields (Str/Bytes/tuple keys & values) are materialized into a persistent to-space/blob on insert and overwritten in place on update; a genuinely-new insert node also lands in to-space. Pure readers (result type ≠ the accumulator ADT, e.g. `Map.get : … → Maybe`) are kept off the reuse path so their result cell isn't stranded in the never-reset to-space. A conservative `IsFullyReusing` gate + `AccumulatorIsFullyPersistent` guard the per-iteration arena reset (extended to admit reset-safe accumulators + scalar resource-handle args). Result: string/int/tuple-valued `Map.set` folds are constant-memory. The nested-re-entry leak is addressed by the CO-2 elision below. |
-| **Move/linearity reuse-copy elision (CO-2)** | The specialization-path entry deep-copy is now **elided when provably safe**, killing the nested-re-entry leak (an outer loop threading an accumulator into an inner reuse fold no longer re-copies the growing structure per re-entry — `O(re-entries × size)` → constant). A whole-program, on-demand greatest-fixpoint move analysis (`Lowering.MoveAnalysis.cs`) proves the accumulator is uniquely owned at *every* external call site before skipping the copy; the copy stays on any uncertainty, so an incomplete proof can only leak, never corrupt. Predicate: at each call site the accumulator argument is a **move** — either the sole nullary constructor of its type (a seed whose cell reuse can never observably overwrite), or a reference to a move-safe accumulator parameter of the enclosing function that is **move-linear** there (used at most once on any execution path, never captured). Transitive and cycle-guarded; a fold/param is considered only if its name never escapes as a value (so the call-site census is complete). Elision preserves the machinery's exact precondition (a uniquely-owned entry accumulator), so it needs no reuse-internals reasoning. Verified: nested `Ashes.Map.set` re-entry constant across 400–3200 batches (was 8→54 MB), all reuse correctness tests + two retained-accumulator soundness regressions (specialization and direct-reuse) green on linux-x64 / win-x64 (wine) / linux-arm64 (qemu). Scope: the specialization (`f$reuse`) path **and** the direct-reuse prologue copy, with **fully-fresh-construction / non-nullary seeds**, **user-ADT (non-`Ashes.Map`) shapes**, **richer aliasing** (a `let`-bound fresh value proven dead-after-use by intraprocedural move-linearity — the freshness need no longer be syntactic at the call site), and **higher-order seeds** (a seed produced by a **result-fresh function call**, incl. a recursive builder, proven uniquely-owned-for-any-arguments by a per-function result-freshness greatest fixpoint over the constructor's resolved field types) all now admitted; only functions whose result is *not* provably fresh — an identity/`wrap` that returns/embeds a heap parameter, or an opaque/stdlib call like `Ashes.Map.set` that returns its accumulator — stay conservative (copy kept) pending the broader ownership milestone. Measured wins: a nested direct-reuse fold seeded by a 1023-node `let`-bound fresh tree over 20 000 batches, peak RSS 4.7 MB → 3.2 MB (richer aliasing); a nested direct-reuse fold seeded by a recursive builder's 32 767-node result over 400 batches, peak RSS 504 MB → 4.7 MB (higher-order seed — the threaded accumulator persists across batches, so its per-batch entry copy is a genuine `O(batches × size)` term), output identical in both. |
+| **Move/linearity reuse-copy elision (CO-2)** | The reuse entry deep-copy (the specialization `f$reuse` path and the direct-reuse prologue) is elided when a whole-program move analysis (`Lowering.MoveAnalysis.cs`) proves the accumulator is uniquely owned at every external call site; the copy stays on any uncertainty, so it can only leak, never corrupt. An accumulator argument is a **move** when it is a sole-nullary seed, a fully-fresh construction, a move-linear reference to a move-safe accumulator parameter, a `let`-bound fresh value proven dead-after-use, or a **registered-function call admitted by the result-reachability (may-alias) summary**. That summary (`ComputeResultReach`, a monotone least fixpoint) records, per function, which of its own parameters the result may alias (per-parameter multiplicity capped at 2 — internal sharing poisons via hierarchical **path tokens** + per-binding identity tokens) plus a **poison** flag; `f(args)` is a move iff not poisoned and every reached parameter's argument is itself a move (`IsResultAliasMove`). Covers **result-fresh builders** (reach {}, incl. recursive `let rec build`), **`wrap`-style result-alias builders** (reach {x}), **higher-order / closure-produced seeds** (capture-aware over-application reach), and **`Ashes.Map.set`-shape reuse-rewriting results** (nested-rec-return registration; reach {map,key,value}). Remaining conservative (the correct boundary short of full ownership): a result the summary *poisons* — reaches a global or an unmodeled shape. Measured: nested `Map.set` re-entry `O(batches×size)`→constant; a recursive-builder-seeded fold 504 MB→4.7 MB; a `Map.set`-result-seeded fold ≈2× (200k-key). Full soundness argument, extensions, and test list in the *CO-2 reference* section below. |
 | **Deterministic resource safety** | File/socket/process handles are closed deterministically without GC/RC (Ground Rule 6), via an affine ownership model: recursive `Drop` for resource-bearing aggregates (`Result(_,FileHandle)`, `Some(Socket)`, tuple/list of resources), move-on-destructure and move-on-construction (no double-close), resource drops at the TCO back-edge (fixes the loop-over-files fd leak), `Process` reaping on drop, and deterministic close of resources captured by an escaping closure (a dropper at `closure+24` invoked when the closure is dropped). All runtime gaps closed & verified (fd-bounded under `ulimit -n 64`). |
 | **Use-after-close for match-arm-bound resources (CO-4)** | The static use-after-close check (`ASH006`) already tracks resources whether bound by `let` or by a `match` arm, but the `FileHandle` read intrinsics (`Ashes.File.readChunk`, `Ashes.File.readLine`) never consulted it, so a handle destructured from `Ok(fh)` and read after an explicit `Ashes.File.close` compiled silently (it stayed runtime-safe — the read after close returns an `Error`). Wired `CheckUseAfterDrop` into both file-read intrinsics, so a read after close on a match-arm-bound (or `let`-bound) `FileHandle` is now flagged at compile time, matching the existing socket/process behaviour. |
 | **Parallel tunables (CO-5)** | The two hard-coded parallelism knobs are now configurable, defaults unchanged. Per-worker stack size: the `--parallel-stack-size <size>` CLI flag (byte count or `K`/`M`/`G` suffix), threaded `BackendCompileOptions.ParallelWorkerStackBytes` → `LlvmTargetContext` → codegen; unset = 1 MiB on linux (`mmap`) and the OS default on win-x64 (`CreateThread`). Grain size for `map`/`reduce`: exposed as an explicit library parameter — `Ashes.Parallel.mapGrained(grain)` / `reduceGrained(grain)`, with `map`/`reduce` = grain 1 (the original split-to-singleton behavior). |
@@ -58,33 +58,19 @@ stable IDs.
 
 | ID | Item | Notes |
 |----|------|-------|
-| **CO-2** | **Skip the redundant reuse entry deep-copy for a moved accumulator (move/linearity analysis)** | **Implemented (conservative) for both the specialization-reuse path and the direct-reuse path.** The redundant entry deep-copy is elided when a whole-program move analysis proves the accumulator is uniquely owned (moved, unaliased, transitively down to a sole-nullary seed **or a syntactically fully-fresh construction**) at *every* external call site; the copy stays on any uncertainty, so the analysis can only leak, never corrupt. This removes the specialization-path nested-re-entry leak (`O(re-entries × size)` → constant) and the direct-reuse startup/residual copy, while keeping every reuse correctness test and two retained-accumulator soundness regressions (one per path) green on all three targets. The same predicate now also admits **fresh-construction / non-nullary seeds**, **non-`Ashes.Map` (user-ADT) direct-reuse folds**, and **richer aliasing** — a `Var` bound by a `let` (locally, or on the top-level spine) to a fully-fresh construction and proven **dead-after-this-use by intraprocedural move-linearity**, so freshness no longer has to be syntactic *at the call site*. It further admits **higher-order seeds and `wrap`-style result-alias builders** — a seed produced by a **registered-function call** admitted by the **result-reachability (may-alias) summary** (`ComputeResultReach` / `IsResultAliasMove`): a per-function monotone least fixpoint recording a conservative over-approximation of which of a function's own parameters its result may alias (a per-parameter multiplicity, capped at 2 — internal sharing poisons, tracked for fresh let/pattern-bound heap values too via a per-binding synthetic identity token) plus a poison flag (a global/unmodeled/aliased result is not confined). A call `f(a₁…aₙ)` is a move iff `f`'s summary is not poisoned and, for every parameter its result may reach, the argument bound to it is itself a move. This subsumes the earlier result-freshness rule as the **empty-reach special case** (reach {} + not poisoned = uniquely-owned-and-fresh for any arguments), covering recursive builders such as `let rec build n = if n <= 0 then Leaf else Node(build(n - 1))(n)(Leaf)`, and **generalizes** it to builders that return/embed a heap parameter — `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is now a move and `wrap(<retained>)` is not. See the detailed write-up below. Remaining under the broader ownership milestone: a seed whose result-alias summary is *poisoned* — an opaque/stdlib call (e.g. `Ashes.Map.set`) whose result may be aliased or reuse-rewritten, or a result reaching a global — which needs full return-value ownership reasoning. Conservatively keeps the copy where unproven. |
 | **CO-7** | **`both` does not temporally overlap an in-flight async task** | Re-investigated (see detailed analysis below); the original "`both` lowers to inline inside an async state machine" framing was a **misdiagnosis**. A concrete-result `Ashes.Parallel.both` **does** fork a worker in an async/networking program — verified on linux-x64 that a genuinely-forking `both` emits the identical `clone`/`lock xadd` fork runtime with or without `Ashes.Async.run` in the same program (`tests/parallel_async_coexist.ash`). The real, target-independent coupling is **temporal, not a lowering gate**: Ashes' async runtime is *eager and synchronous* (`async EXPR` = eager eval + `CreateCompletedTask`; `await`/`Ashes.Async.run` = `RunTask`, a blocking driver on the calling thread), and there is **no live suspending-coroutine path** (`StateMachineTransform` + its sole caller `LowerCapturedStringTask`, the only emitter of `CreateTask`/`CoroutineInfo`, are unreachable dead code). So a `both` fork runs *before or after* a blocking async I/O, never concurrently with one — and a `both` can never sit *inside* a state machine because no user code is lowered into one. Closing the temporal gap needs a genuine non-blocking async scheduler (wire up the dead state-machine path + an event loop), a much larger milestone. No correctness issue exists today (fork + async coexist and are memory-bounded). **Increment landed:** the state-machine transform's `Parallel*` liveness + fork/join/cleanup-within-one-segment invariant (the one blocker that was independently verifiable without the scheduler) is now implemented and directly unit-tested (`StateMachineTransformTests`), so it is no longer untested dead code. Remaining blockers: the non-blocking scheduler, wiring the coroutine path to user code, and the concurrent-overlap test. Design/validation + partial implementation task. See the **subtask decomposition** below. |
+| **CO-8** | **`Ashes.Map` stack-overflows on sorted-key insertion at scale** | Inserting monotonically-increasing keys into an `Ashes.Map` (a `Map.set` fold) `SIGSEGV`s at scale (~12k+ keys) at low RSS — a stack overflow, reproducible on `main`, independent of the CO-2 reuse work (it reproduces with elision on or off; both crash identically). Symptom of a degenerate/unbalanced tree or depth-recursive helper on ordered input: AVL balancing should keep height `O(log n)`, so either the rotations are not firing for the in-order case or a `set`/`get`/`balance` helper recurses on depth rather than height. Found while benchmarking CO-2c. Fix: restore logarithmic height on ordered insertion (confirm `balance`/rotate triggers) and/or make the deep-recursion path iterative. Regression: a large in-order insert that today crashes. |
+| **CO-9** | **TCO accumulator that is a recursive ADT in a non-last curried parameter position (reported miscompile)** | Reported while building the CO-2 repro: a TCO loop whose recursive-ADT accumulator sits in a **non-last** curried parameter position miscompiled to a `SIGSEGV` even at one iteration (the last-parameter form was correct) — a per-iteration arena-reset / copy-out gap keyed on parameter position, independent of in-place reuse. **Not reproduced on current `main`** in a later probe (a two-arg loop with the recursive ADT first ran correctly), so it may already be fixed or need a more specific shape. Re-confirm with a targeted repro before fixing; if live, the fix is in the TCO back-edge copy-out (`Lowering.cs`), which should not assume the copy-out-eligible heap accumulator is the last argument. |
 
 ---
 
 ## Subtask decomposition (single-workload slices)
 
-The two open roadmap items each bottom out on a milestone (CO-2 → return-value ownership reasoning;
-CO-7 → a non-blocking async runtime), so neither closes in one pass. The slices below each have a
-single failing→passing verification endpoint sized for one focused work session, and together they
-cover the feature fully. Dependencies are stated; the marked spine is the minimal fully-covering path.
-
-### CO-2 remaining — results of non-result-fresh functions
-
-The only gap left is proving an *arbitrary* function's result is uniquely owned. A conservative
-**may-alias result summary** captures the real cases (identity/`wrap` builders, `Ashes.Map.set`-shape
-reuse functions) without the full ownership model. The elision stays sound-by-default: an unproven
-result keeps the copy (a leak, never a corruption).
-
-| ID | Slice | Endpoint / verification | Deps | Risk |
-|----|-------|-------------------------|------|------|
-| **CO-2a** | **Result-reachability (may-alias) summary.** Per registered function, a monotone fixpoint computing the set of parameters (plus a "may reach a global" flag) the result value may be reachable-through / alias. Over-approximate; self-contained, no wiring. | Unit tests on hand-built ASTs: `identity`→{p0}, `wrap x = Node(x, 0, Leaf)`→{p0}, fresh `build n`→{}, a result that reaches a top-level binding→{global}. | — | low |
-| **CO-2b** | **Admit "result aliases a moved argument" seeds.** Extend `ArgIsMove` / `IsFreshResultCall`: a call `f(a₁…aₙ)` is a move iff the result-reach set excludes globals and every parameter in it is bound to a move at this site (recursive via the existing move analysis). Closes `wrap`-style builders. | `tests/reuse_result_alias_move_elision.ash`: a `wrap(freshMove)` seed elides; a `wrap(retained)` sibling declines (soundness discriminator). | CO-2a | low–med |
-| **CO-2c** ✅ | **Stdlib reuse-rewriting results (`Ashes.Map.set`-shape).** Apply the summary to functions that return *and* reuse-rewrite their accumulator: the result is a move when the accumulator argument is a move (a fresh/`empty` map). **Landed** — needed three summary extensions (below): a **hierarchical path-token** reach so destructure-then-rebuild helpers (`balance`/rotate) stop falsely reporting internal sharing, **nested-rec-return** registration so `set`'s inner `go(acc)` recursion is analyzable (its result reaches `{map, newKey, newValue}`, not poison), and treating a **bare-`Var` nullary-constructor pattern** (`\| Empty ->`) as binding nothing. | `tests/reuse_map_set_seed_move_elision.ash` (elides), `tests/reuse_map_set_seed_retained_declines.ash` (declines, reads uncorrupted original); peak-RSS A/B measured out-of-band (≈2× reduction, below). | CO-2a, CO-2b | med (touches the specialization machinery) |
-| **CO-2d** | **Closure / function-valued seeds — DONE.** Extends the result-reach summary to see through a seed produced by a **closure the currying did not statically flatten** (a lambda returned from behind an `if`/`match`/`let`, so the producer is a 1-arg function whose *result* is a closure) and its **over-application** (`(makeBuilder(x))(n)`). `OverApplicationReach` inlines the callee one level, binding each surplus argument to the returned lambda's parameter; capture-aware — a captured parameter embedded in the produced value is reached via its argument marker (`wrap`-style), a captured global or any unmodeled capture poisons (keep copy). Verified by `tests/reuse_closure_seed_move_elision.ash`: a no-capture closure seed (reach {}) and a closure capturing a **fresh-move** value both **elide**; a closure returning a **retained** capture directly **declines** (`keep` reads 7, not the corrupted 207), confirmed at the direct-reuse elide decision (`grow/t elide=True`, `bump/t elide=False`). | CO-2a | med |
-
-**Fully-covering spine:** CO-2a → CO-2b → CO-2c (CO-2d, the completeness tail, is **done** — see below).
+The remaining open roadmap item (CO-7) bottoms out on a milestone (a non-blocking async runtime), so it
+does not close in one pass. The slices below each have a single failing→passing verification endpoint
+sized for one focused work session, and together they cover the feature fully. Dependencies are stated;
+the marked spine is the minimal fully-covering path. (CO-2's own decomposition is complete — all of its
+slices landed; see the Completed Work table and the *CO-2 reference* section.)
 
 ### CO-7 remaining — genuine temporal overlap of `both` with in-flight async I/O
 
@@ -109,402 +95,90 @@ via `both`. A CPU-bound coroutine stalling the loop is exactly what `both` offlo
 
 ---
 
-### CO-2 — detailed analysis (nested reuse re-entry leak)
+### CO-2 — reference (move/linearity reuse-copy elision)
 
-**Status: implemented (conservative) for both the specialization-reuse and direct-reuse paths.** A
-whole-program move/linearity analysis now elides the entry deep-copy (on either path) when it can
-prove the accumulator is already uniquely owned at every external call site — with the seed base case
-extended from a sole-nullary constructor to any *syntactically fully-fresh construction*; the copy
-stays on any uncertainty, so the elision can only leak (never corrupt). The analysis and its
-soundness argument are in the *"Implemented elision"* section at the end; the material below documents
-the mechanism, the leak, and the requirements the elision was built to satisfy.
+**Fully implemented** (see the Completed Work table). This section records the mechanism, the soundness
+argument, and the regression tests; the code is `Lowering.MoveAnalysis.cs`.
 
-**Where the entry deep-copy is emitted.** In `Lowering.LowerLambda` (the innermost-TCO branch,
-`isInnermostTco`), the compiler records accumulators that will be reused in place and, after the body
-is lowered, emits a one-time defensive deep copy of each, splicing it in at `reuseInsertIndex`. That
-index is captured *before* the loop body label is emitted, so the copy sits at the **function's
-prologue**, not inside the loop. Two tagging paths feed it:
+**Where the copy is.** `Lowering.LowerLambda` (innermost-TCO branch) emits a one-time defensive deep copy
+of each in-place-reused accumulator into the function prologue — for the *direct-reuse* path (the loop
+body rebuilds the accumulator with the same constructor) and the *specialization* path (the accumulator
+is threaded into a specializable recursive function `f` cloned to `f$reuse`). Its sole role is to hand
+the reuse machinery a **uniquely-owned** accumulator to overwrite. When an outer loop threads a *growing*
+accumulator into an inner reuse fold, that prologue copy re-executes per re-entry and lands in the
+never-reset to-space — an `O(re-entries × size)` leak. Eliding the copy when the accumulator is *already*
+uniquely owned removes the leak and reproduces the machinery's exact precondition, so it needs no
+reuse-internals reasoning.
 
-- *Direct reuse* — the loop body itself matches the accumulator and rebuilds it with the same
-  constructor (a `field-bearing AllocReusing` fired).
-- *Specialization reuse* — the accumulator is passed as the last argument to a specializable
-  recursive function `f` (e.g. `Ashes.Map.set`), which is cloned to `f$reuse`; the accumulator is
-  deep-copied so `f$reuse` may overwrite its nodes in place.
+**Move predicate** (`IsReuseAccumulatorMoveSafe` → `IsParamMoveSafe`, on-demand greatest fixpoint;
+conservative default = keep the copy). A fold's accumulator parameter is move-safe iff the fold's name
+never escapes as a value (a complete call-site census) and, at every external call site, the argument is
+a **move**:
 
-The copy loads the slot, calls `EmitDeepCopy`, stores it back, then the block is moved up to the
-prologue. Because it is in the prologue, a single flat TCO loop pays for it **once**.
+- a **sole-nullary-constructor seed** — its cell holds only a tag; reuse rewrites the identical tag (a
+  no-op even when shared);
+- a **fully-fresh construction** — no variable reference except sole-nullary leaves, so unique by
+  construction;
+- a **move-linear reference** to a move-safe accumulator parameter of the enclosing function (used at
+  most once on any path, never captured — the transitive, interprocedural step);
+- a **`let`-bound fresh value proven dead-after-use** (fresh RHS + move-linear in the binding's scope);
+- a **registered-function call admitted by the result-reachability summary** (below).
 
-**Why nesting leaks.** An inner reuse fold is a *separate function*. When an outer loop threads an
-accumulator into it — `outer(...)(setFold(0)(n)(m))` — each outer iteration is a fresh *call* to the
-inner fold, so the inner fold's prologue copy runs again, deep-copying the whole (growing)
-accumulator. The copy lands in the persistent to-space/blob that in-place reuse never resets, so it
-is not reclaimed: total cost `O(outer-iterations × accumulator-size)`.
+**Result-reachability (may-alias) summary** (`ComputeResultReach`, a monotone least fixpoint over all
+registered functions). Per function it over-approximates which of *its own parameters* the result may
+alias — a per-parameter multiplicity capped at 2 — plus a **poison** flag ("result not provably confined
+to parameters"). Structural transfer: literals / copy-typed scalars reach {}; a bare parameter reaches
+{itself}; a sole-nullary constructor reaches {}; a global/top-level reference, a non-sole nullary, a
+partial application, or an unmodeled node **poisons**; `if`/`match` join arms by **max** (a match's
+scrutinee reach flows into its pattern bindings); a constructor application **sums** its **heap-typed**
+fields (copy-typed fields hold inline scalars — ignored); a call substitutes the callee's reached
+parameters with the argument reaches. **Summing is what makes internal sharing poison** — a cell reachable
+through two simultaneously-live positions is exactly what the entry copy exists to unshare.
 
-**Re-measured on current `main` (peak RSS via `wait4`/`ru_maxrss`), nested `Ashes.Map.set` fold,
-map of 300 keys, `outer` batches × 300 inner sets:**
+Four refinements make it precise enough for real code without ever under-claiming reach:
 
-| batches | nested (this shape) |
-|---|---|
-| 400 | 8.0 MB |
-| 800 | 14.4 MB |
-| 1600 | 27.7 MB |
-| 3200 | 54.1 MB |
+- **Hierarchical path tokens** (CO-2c): destructuring field `i` yields a *distinct sub-cell* token `k/i`,
+  so a destructure-then-rebuild helper (`balance`, `makeNode(left)(key)(value)(right)`) re-embedding a
+  value's *disjoint* children reaches `{map}` cleanly instead of a false `{map:2}`. Poison still fires on
+  the cap (same cell twice) or a proper path **ancestor/descendant** pair (a value co-embedded with its
+  own sub-cell). Stored summaries collapse tokens to root parameter names.
+- **Per-binding identity tokens**: every `let`/pattern binding also gets a fresh `'#'`-rooted token, so a
+  *fresh* (non-parameter) value embedded twice (`let x = … in Node(x)(0)(x)`, `[x, x]`, …) still poisons;
+  distinct bindings get distinct tokens (disjoint sub-values stay disjoint); a bare `Var` pattern naming
+  a constructor (`| Empty ->`) binds nothing.
+- **Nested-rec-return registration** (CO-2c): the `Ashes.Map.set` shape (`fun … -> let rec go = fun acc
+  -> B in go`) is registered with the accumulator as a real trailing parameter and its `go(x)` self-call
+  resolved against the function's own growing summary, so `set`'s result reaches `{map, newKey, newValue}`.
+- **Over-application reach** (CO-2d): a closure the currying did not flatten (a lambda returned from
+  behind `if`/`match`/`let`) applied to surplus arguments is modeled by inlining the callee one level and
+  binding surplus args to the returned lambda's parameters — capture-aware, over `"@i"` argument markers.
 
-Peak RSS ≈ doubles when `batches` doubles → confirmed `O(batches × map-size)` (≈ one full map
-deep-copied per re-entry, ~16 KB/batch, never reclaimed). A flat fold of the *same total inner work*
-(15 000 / 240 000 / 960 000 `set`s into a 300-key map) is **flat at 5.7 MB** — the prologue copy ran
-exactly once. Output is **correct** in every case (300 distinct keys) — this is a leak, not a
-miscompile. `tests/reuse_nested_reentry_correct.ash` is a small, green regression that guards the
-*correctness* of the nested-reuse shape (it does not, and cannot in the harness, assert peak RSS).
+**Wiring** (`IsResultAliasMove`): a saturated call `f(a₁…aₙ)` is a move iff `f`'s summary is not poisoned
+and, for every parameter its result may reach, the argument bound to it is itself a move (recursively).
+The empty-reach case is a **result-fresh** function — a move for any arguments — covering recursive
+builders (`let rec build n = if n <= 0 then Leaf else Node(build(n - 1))(n)(Leaf)`); a non-empty reach
+covers `wrap`-style and `Map.set`-shape builders when the reached arguments are moves.
 
-**What a sound elision requires.** Elide the prologue copy for accumulator parameter `p` of fold
-function `F` only if, at **every** call site of `F`, the argument bound to `p` is *moved*: dead on
-all paths after the call **and** not reachable through any other live alias (a `let`-binding used
-later, a value captured into a closure/tuple/list, a second argument position, …). If any caller
-retains the accumulator, `f$reuse` overwriting its cells in place corrupts a still-live value —
-exactly the corruption the roadmap warns about. Proving move + non-aliasing across call sites is
-**path-aware interprocedural linearity**, and it is transitive (the caller's `p` is unique only if
-*its* own accumulator was unique, up the call chain). This is the ownership/borrowing milestone.
+**Soundness.** The elision reproduces the reuse machinery's precondition (a uniquely-owned accumulator).
+The load-bearing invariant is that **a value admitted as a move is a proper tree** (the move rules poison
+internal sharing), so path-disjointness ⟹ cell-disjointness at every elision site. The summary is a sound
+over-approximation with a conservative default (poison → keep the copy), so every unproven or unmodeled
+shape is a *leak, never a corruption*. The direct-reuse path additionally keeps the *pure-reader* guard
+(a move-safe fold that only reuses a dead nullary leaf reverts that reuse to a fresh allocation).
 
-**Why there is no sound *and useful* local shortcut (finding from the re-measurement).** The one
-case provable purely intraprocedurally — a fold whose accumulator has exactly **one external call
-site** passing a **syntactically fresh** allocation (a nullary/`empty` constructor or a fresh ctor
-application, provably unaliased) — is precisely the flat single-call fold, which **already runs the
-prologue copy once and is already constant-memory** (5.7 MB above, independent of work). Eliding its
-copy saves one `O(size)` copy at *startup* for **zero** steady-state memory benefit. Every
-leak-relevant shape is a fold called *inside a loop*, and a loop-called fold's accumulator argument
-is by construction the enclosing loop's *threaded* accumulator (e.g. `m` in
-`outer(...)(setFold(0)(n)(m))`) — semantically moved (`m` is dead after the call, its slot is
-overwritten by the result), but provably so only by the transitive whole-program argument above.
-Concretely, `setFold`'s two call sites both pass a move: `outer`'s body passes `m` (dead after), and
-`setFold`'s self-recursion passes the fresh `set(...)` result — yet proving `m` is a move needs
-`outer`'s own accumulator to be unique, which needs `outer`'s caller (`outer(0)(30)(empty)`, fresh)
-to move it, up the chain. **So the leak is genuinely elidable, but only with the interprocedural,
-transitive proof — no local increment both is sound and removes the leak.**
+**Tests** (all green; each retained/aliased sibling is correctly *declined*, reading its uncorrupted
+value): `reuse_move_elision_soundness.ash`, `reuse_direct_move_elision.ash`,
+`reuse_letbound_fresh_move_elision.ash`, `reuse_higher_order_seed_move_elision.ash`,
+`reuse_result_alias_move_elision.ash`, `reuse_internal_sharing_declines.ash`,
+`reuse_closure_seed_move_elision.ash`, `reuse_map_set_seed_move_elision.ash`,
+`reuse_map_set_seed_retained_declines.ash`, and the correctness guard `reuse_nested_reentry_correct.ash`.
 
-Two viable implementation strategies, both deferred:
-
-1. *Definition-directed*: at `F`'s definition, prove all call sites move+own the arg, then drop the
-   prologue copy. Needs a whole-program call-site + aliasing pass.
-2. *Call-site specialization*: generate a no-copy `F$moved` clone and route only provably
-   move+own call sites to it (leaving the safe copy on the default entry). Preferred — it keeps the
-   defensive copy on any unproven or newly-added call site, so a proof gap degrades to a (correct)
-   leak, never to corruption.
-
-**Concrete minimal pass the milestone must add (design sketch).** A Semantics-phase analysis (no
-Backend dependency), computed over the AST *before* `LowerLambda` emits the prologue copy:
-
-1. *Call-site census* — one whole-program walk building, per candidate fold `F` and its accumulator
-   parameter `p`, the list of `(enclosingFunction, argExpr)` for every saturated call to `F`.
-   Lowering already discovers the candidate set and its reuse-call args
-   (`_specializableFunctions`, `CollectSpecializableCallArgs`, `CollectCtorMatchedScrutinees`);
-   extend that to record *all* syntactic call sites, not only the ones inside the fold being lowered.
-2. *Local move/alias check per call site* — the arg passed to `p` is a **move** iff it is either
-   (i) a syntactically fresh allocation (ctor application or literal — unaliased by construction), or
-   (ii) a `Var v` that is (a) a `let`/parameter binding, (b) **dead** on every path after this call
-   in the enclosing function body (no later occurrence — an intraprocedural last-use/liveness check
-   over the AST, buildable from the existing free-variable/occurrence scans), and (c) **not aliased**
-   — never captured by a closure, stored into a tuple/list/ADT that outlives the call, returned, or
-   passed to a second parameter position that retains it.
-3. *Transitive fixpoint* — `p` is move-safe iff every call-site arg is a move by (2), where a
-   `Var v` of kind (ii) additionally requires `v`'s own defining parameter (when `v` is itself an
-   accumulator parameter of the enclosing function `G`) to be move-safe. Solve as a monotone
-   greatest-fixpoint: assume all candidate params move-safe, retract any param with a call-site arg
-   that fails the local check or references an already-retracted param, iterate to fixpoint.
-   **Conservative default is not-move-safe** (copy stays), so an incomplete analysis never corrupts.
-4. *Wiring* — for a fold whose accumulator param is move-safe at every site, suppress the prologue
-   `EmitDeepCopy` via strategy 2 (`F$moved` clone routed only from proven sites). Re-measure: the
-   dominant leak term is the entry deep-copy, but the reuse path also materialises fresh leaf fields
-   (Str/Bytes/tuple keys/values) into a **persistent to-space that in-place reuse never resets** — for
-   a repeated-key workload that to-space is bounded to one map, so eliding the entry copy should
-   remove the per-batch term; a genuinely-*new*-key-per-batch workload would still need the outer
-   back-edge to reset that to-space. This must be confirmed empirically once the elision is enabled.
-
-**Former blocker (now partly built).** `Lowering.Ownership.cs` models only *affine ownership of
-resource handles*. The elision below adds the four pieces it lacked — a self-contained value-level
-move analysis in `Lowering.MoveAnalysis.cs` — rather than extending the resource model: a
-whole-program call-site census, an intraprocedural path-aware move-linearity check, a transitive
-greatest-fixpoint, and a conservative seed rule (sole-nullary constructor, fully-fresh construction,
-`let`-bound fresh value proven dead, **or a result-fresh function call** — a per-function
-result-freshness greatest fixpoint that reads constructor field types). It covers both the
-specialization path and the direct-reuse prologue copy; only seeds from functions whose result is not
-provably fresh (identity/`wrap`, or opaque/stdlib calls that return their accumulator) remain for the
-full ownership milestone.
-
-### CO-2 — implemented elision
-
-`Lowering.MoveAnalysis.cs` runs once over the fully-desugared program (which is a single nested
-let-chain holding the stitched stdlib bindings, the user's declarations, and the trailing
-expression). `Lowering.LowerLambda`, at the point it would register **either** the specialization-path
-entry copy **or** the direct-reuse entry copy for accumulator `p` of fold `F` (known from
-`TcoContext.SelfName`), consults `IsReuseAccumulatorMoveSafe(F, p)` and skips the copy only when it
-returns true. Both entry copies share the same precondition — a uniquely-owned accumulator — so the
-same predicate governs both.
-
-**Predicate.** `IsParamMoveSafe(F, p)` (on-demand greatest fixpoint, memoized, cycles → false) holds
-iff `F`'s name never escapes as a value (so its call-site census is complete) and, at every external
-(non-self-recursive) call site, the argument bound to `p` is a **move**:
-
-- a **sole-nullary-constructor seed** — a value (following top-level value aliases, e.g.
-  `Ashes.Map.empty → Empty`) that is the *only* nullary constructor of its type; or
-- a **syntactically fully-fresh construction** (`IsFullyFreshConstruction`) — a saturated data-constructor
-  application, scalar/string literal, or tuple/list/cons/record literal whose every sub-expression is
-  itself fully fresh, and which contains **no variable reference** anywhere (no bare `Var`/`QualifiedVar`
-  except a sole-nullary-constructor leaf, and no `Call` to a non-constructor). Such a value is a fresh
-  tree with no internal sharing, reachable only through this one argument reference; or
-- a **`Var v`** that is a parameter of the enclosing function, is **move-linear** there — used at most
-  once on any execution path (`MaxPathOccurrences ≤ 1`: branches take the max, sequential
-  sub-expressions sum, a nested-lambda capture or unmodeled node forces decline) and never captured —
-  and whose parameter is itself `IsParamMoveSafe` (the transitive, interprocedural step); or
-
-- **(richer aliasing)** a **`Var v`** that is *not* syntactically fresh at the call site but is bound by
-  a non-recursive `let` — either inside the enclosing function body or, at a top-level call site, on
-  the desugared program's top-level spine — to a **fully-fresh construction**, and is **move-linear in
-  that binding's own scope** (the `let` body). `TryFindLocalLet` locates the binding and returns its
-  RHS *and* its scope; the occurrence count is taken over the **scope**, not the whole enclosing body,
-  because a whole-body count would stop at this very definition (treating it as a shadow) and
-  spuriously report zero uses. Accepted only when the name is unambiguous program-wide (a single
-  binding, so the located RHS is definitive) and the search never descends into a nested lambda (a
-  separate function scope). This is the "let-bound fresh value proven dead" case: the `let` confines
-  the name's scope, so move-linearity there proves no other live reference exists anywhere, and the
-  fresh RHS proves the value is unaliased and free of internal sharing; or
-
-- **(result-alias / higher-order seed)** a saturated **call to a registered function** admitted by the
-  **result-reachability (may-alias) summary** (`IsResultAliasMove` over `_maResultReach`), either written
-  directly at the call site — its result reachable only through this one argument reference — or
-  `let`-bound and move-linear in its scope (the richer-aliasing path above, generalized from a fresh
-  *construction* to a builder *call*). The summary (`ComputeResultReach`, a monotone **least** fixpoint
-  over all registered functions) records, per function, a conservative **over-approximation** of which of
-  its own parameters the result may be reachable-through / alias — as a per-parameter multiplicity capped
-  at 2 — plus a **poison** flag meaning the result is not provably confined to those parameters. It is a
-  structural may-analysis mirroring the reach of the returned value: literals and copy-typed
-  scalar/arith/comparison results reach {}; a bare parameter reaches {that param}; a **sole-nullary**
-  constructor reaches {}; a bare global/top-level reference, a non-sole nullary or partially-applied
-  constructor, a `QualifiedVar`, or any unmodeled node **poisons**; an `if`/`match` joins its arms by max
-  (a match's scrutinee reach flows into each arm's **pattern** bindings — a pattern variable may alias the
-  scrutinee, so an arm returning one reaches whatever the scrutinee reaches); a saturated
-  data-constructor application **sums** the reach of its **heap-typed** fields (a **copy-typed** field —
-  `Int`/`Bool`/`Float`/… by the constructor's resolved `ParameterTypes` — holds its value inline and
-  cannot alias a cell the fold overwrites, so it is ignored); and a saturated call to another registered
-  function substitutes the argument bound to each parameter that callee's result may reach, scaled by its
-  multiplicity, and sums (a poisoned/ambiguous/mis-arity/unresolved callee poisons). Summing is what
-  makes **internal sharing** poison: a value reachable through two simultaneous heap positions poisons,
-  because moving such an argument would leave two live aliases the reuse fold's entry copy exists
-  precisely to unshare. Cell identities are **hierarchical path tokens** (CO-2c): a parameter `p` seeds
-  reach `{p:1}` (its name is its own root token), and destructuring a value's field `i` yields a
-  **distinct sub-cell** token — every token `k` in the scrutinee's reach becomes `k/i`, so field paths
-  nest (`map/4/1`) and distinct fields stay disjoint siblings (`map/1`, `map/2`). Poison fires when a
-  summed token hits the cap (the same cell twice) **or** when two simultaneously-live tokens are in a
-  proper path **ancestor/descendant** relation (a value co-embedded with one of its own sub-cells,
-  `Node(map)(0)(left)` → `{map, map/1}`). This is what lets a **destructure-then-rebuild** helper —
-  `balance`, `rotateLeft`, `makeNode(left)(key)(value)(right)` — reach `{map}` cleanly instead of falsely
-  summing four `{map:1}` copies to `{map:2}`: its parts are disjoint siblings, not the same cell reused.
-  Every locally-introduced binding (a `let`/let-result value, a `match` pattern variable) additionally
-  gets a **fresh `'#'`-rooted identity token** summed into its env reach, so a **fresh (non-parameter)**
-  value used twice still poisons even with no parameter root: `let x = Node(Leaf)(u)(Leaf) in Node(x)(0)(x)`
-  sums that token to the cap (as do `[x, x]`, `(x, x)`, `Cons(x, …x…)`, and a fresh scrutinee's pattern
-  variable used twice, `match fresh with Node(l,_,_) -> Node(l)(0)(l)`). Distinct bindings get **distinct**
-  tokens, so disjoint sub-values stay disjoint (`Node(l)(0)(r)` does not poison), and branch arms **max**
-  rather than sum, so a fresh value used once per `if`/`match` arm does not poison. A bare **`Var`
-  pattern whose name is a data constructor** is a **nullary-constructor pattern** (`| Empty ->`), not a
-  binding: it is left unbound, so `| Empty -> makeNode(Empty)(k)(v)(Empty)` resolves `Empty` as the
-  sole-nullary constant (reach {}) rather than binding the scrutinee to "Empty" and using it twice.
-  Tokens are collapsed to their **root parameter name** in the stored per-function summary (a `'#'`-rooted
-  token drops; `map/1` and `map/2` collapse to `map` at presence, a genuine same-cell double having already
-  set poison), so a stored summary's keys are exactly parameter names — never reaching the wiring below,
-  which maps real parameters only. **Nested-rec-return** functions (the `Ashes.Map.set` shape: a chain of
-  outer-parameter lambdas whose innermost body is `let rec go = (fun acc -> B) in go`) are registered with
-  the accumulator as a real trailing parameter and body `B`, and the inner `go(x)` self-call is resolved
-  against the function's own growing summary (accumulator ↦ reach(x), outer params held at identity) — so
-  `set`'s result reach computes as `{map, newKey, newValue}` (the accumulator plus the inserted key/value),
-  admitted as a move exactly when all three arguments are moves (`empty`/fresh map, and — for `Int` keys —
-  literal keys/values, which are moves). The
-  **wiring** (`IsResultAliasMove`): a saturated call `f(a₁…aₙ)` is a move iff `f`'s summary is **not
-  poisoned** and, for **every** parameter `p` in `f`'s reach set, the argument bound to `p` here is itself
-  a move (recursively via `ArgIsMove`). This subsumes the earlier result-freshness rule as the
-  **empty-reach special case** — a function whose result reaches {} and is not poisoned is result-fresh
-  (uniquely-owned, freshly-allocated *for any arguments*: the loop over reached parameters is vacuous, so
-  the call is a move unconditionally), covering **recursive builders** (`let rec build n = if n <= 0 then
-  Leaf else Node(build(n - 1))(n)(Leaf)`, reach {}). It **generalizes** to `wrap`-style builders that the
-  old rule declined: `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is a move and
-  `wrap(<retained>)` is not — the builder that returns/embeds a heap parameter is now admitted exactly
-  when that parameter's argument is a move, rather than declined outright. (Recognizing a recursive
-  builder's concrete field types — recursive `Tree`, primitive `Int` — depends on the companion fix that
-  stops migration-compat implicit type-parameter inference from over-generalizing self-referential and
-  primitive payloads; before it, such a builder failed the occurs check outright.)
-
-Anything else keeps the copy. A bare (non-constructor) `Var` is deliberately **never** treated as a
-fresh construction *at the call site* even when it is `let`-bound to a fresh allocation, because a name
-may be shared (`let x = Node(..) in f(x) ... g(x)`); a `let`-bound fresh value qualifies only through
-the retention-aware move-linear path above (used at most once in its scope, never captured), which
-rejects exactly that shared shape.
-
-**Soundness.** The entry copy's *only* role is to give the reuse machinery (the `f$reuse` clone, or
-the direct-reuse loop body) a uniquely-owned accumulator to overwrite; proving the entry is already
-unique reproduces that exact precondition, so the elision needs no reasoning about reuse internals.
-Move-linearity guarantees no other live reference to the argument exists on the path that moves it.
-The sole-nullary seed is safe because its cell holds only its tag: the only reuse token it can yield
-is a 0-field token, consumed — in a well-typed program — to rebuild that same unique nullary
-constructor, writing an identical tag (a no-op), so it can never be observably mutated even when
-shared or retained. A fully-fresh construction is safe by uniqueness-of-construction: every cell it
-reaches is freshly allocated by this very expression (the only shared cells it may contain are
-sole-nullary leaves, which are no-op-safe as above), so nothing else can observe an in-place
-overwrite. The **let-bound fresh** case combines the two: the fresh RHS gives
-uniqueness-of-construction (no aliasing, no internal sharing), and move-linearity *in the binding's
-scope* gives dead-after-this-use with no other live reference — so the value is uniquely owned at the
-move exactly as if the construction had been written inline. Transitivity bottoms out at seeds/fresh
-constructions; the conservative default (copy stays) makes every unproven or unmodeled shape a *leak,
-never a corruption*. The direct-reuse
-elision additionally keeps the existing *pure-reader* guard: a move-safe fold that matches its
-accumulator but only reuses a dead nullary leaf (result type ≠ accumulator, e.g. a lookup) still
-reverts that nullary reuse to a fresh allocation, so its returned cell is never a reused accumulator
-cell that the caller's arena could later reclaim.
-
-**Verified.** Nested `Ashes.Map.set` re-entry (300-key map, 400/800/1600/3200 batches) is flat
-(constant memory) — the specialization-path copy runs once, not per re-entry. All thirteen
-`tests/reuse_*.ash` stay green (the ones that would corrupt under a naive unconditional elision — a
-retained field-bearing accumulator — are correctly *declined*): `tests/reuse_move_elision_soundness.ash`
-elides a move-safe specialization fold and declines a sibling whose accumulator is retained (`keep`
-reads 15, not the corrupted 902); `tests/reuse_direct_move_elision.ash` does the same for the
-**direct-reuse** path with a **fully-fresh non-nullary construction** seed (`outer` seeded with
-`Node(Leaf)(0)(Leaf)` inline), declining a retained sibling (`keep` reads 1, not the corrupted 201);
-and the new `tests/reuse_letbound_fresh_move_elision.ash` exercises the **richer-aliasing** rule —
-`outer` is seeded through a `let`-bound name (`let seed = Node(Leaf)(0)(Leaf)`) that is fresh and
-move-linear, so its copy is elided even though the freshness is at the binding site not the call site,
-while a sibling `bump` whose `let`-bound fresh value is *retained* (referenced twice) is correctly
-declined (`keep` reads 1, not the corrupted 201). Output is identical to the copy-in-place baseline.
-Full gate (build, C# + LSP tests, `test tests`, `dotnet format`) green on linux-x64 and win-x64
-(wine); the analysis is a target-independent Semantics-phase decision, so it emits the identical
-copy/no-copy IR on linux-arm64.
-
-**Measured value of the direct-reuse increment (honest).** A *direct-reuse* accumulator is
-rebuilt-in-place at **constant size** within its own loop — that is the whole point of the
-transform — so, unlike the growing `Map.set` accumulator, it does not accumulate across outer
-re-entries. Its per-re-entry entry deep-copy is therefore `O(bounded-size)`, and most of it is
-already reclaimed by the outer loop's per-iteration arena reset. Eliding it removes a redundant
-startup copy and a small residual (a nested single-node direct-reuse fold measured
-`1.37 / 1.36 / 1.35 / 1.62 MB` at 400/800/1600/3200 batches, versus `1.37 / 1.37 / 1.63 / 1.87 MB`
-before), but there is no `O(batches × size)` term to remove because a direct-reuse accumulator cannot
-grow. The genuinely `O(batches × size)`-leaking shape remains the specialization path, already
-handled. The fresh-construction seed rule broadens *which* folds qualify (any fold seeded by a fresh
-allocation rather than only a nullary `empty`), which chiefly matters for user-defined direct-reuse
-folds over non-`Ashes.Map` recursive ADTs.
-
-**Measured value of the richer-aliasing increment (honest).** The increment broadens *which* seeds
-qualify: a fresh allocation introduced through a `let` binding (locally, or on the top-level spine)
-and proven dead-after-use, rather than only one written syntactically inline at the call site. For the
-canonical growing `Ashes.Map.set` workload it changes no steady-state number — that accumulator is
-seeded by the *nullary* `Ashes.Map.empty`, which the seed rule already elided — so the `O(batches ×
-size)` specialization leak was already gone. Its measurable effect is on direct-reuse folds that were
-previously declined purely because their fresh seed was introduced via a `let`: a nested single-node
-`grow`/`outer` fold seeded by `let seed = Node(Leaf)(0)(Leaf)` over 20 000 batches with a **1023-node**
-`let`-bound fresh tree measured **peak RSS 4.7 MB → 3.2 MB** (elision off → on), output identical
-(`40001`) — the per-re-entry entry deep-copy of the seed structure is removed. As with the earlier
-direct-reuse increment there is no `O(batches × size)` term to remove (a direct-reuse accumulator
-cannot grow); the increment eliminates a redundant per-re-entry copy of a constant-size structure.
-
-**CO-2c — stdlib reuse-rewriting result seeds (`Ashes.Map.set`-shape).** The result-reach summary now
-computes `Ashes.Map.set`'s reach as `{map, newKey, newValue}` (not poison), so a fold seeded by a
-`Ashes.Map.set(...)` **result** — where the accumulator argument and (for `Int` keys) the key/value are
-moves — is admitted as a move and the fold's entry deep-copy is elided. Reaching this required three
-soundness-preserving summary extensions, each an *over*-approximation (only ever adds poison versus the
-true disjoint-partition reach): (1) **hierarchical path tokens** so `balance`/`rotateLeft`/`rotateRight`
-and the chained `makeNode(left)(key)(value)(right)` rebuilds — which destructure `map` and re-embed its
-*disjoint* children — reach `{map}` instead of a false `{map:2}` internal-sharing poison; (2)
-**nested-rec-return** registration so `set`'s inner `let rec go = fun map -> … in go` is analyzable with
-the accumulator as a real parameter and the `go(x)` self-call resolved to `set`'s own growing summary;
-and (3) a **bare-`Var` nullary-constructor pattern** (`| Empty ->`) binding nothing, so the empty arm's
-`makeNode(Empty)(k)(v)(Empty)` does not bind the scrutinee to "Empty" and use it twice. Verified by two
-new discriminators, both green: `tests/reuse_map_set_seed_move_elision.ash` — an `outer` loop re-seeding
-an inner `Map.set` reuse fold from `Ashes.Map.set(...)(m)` each re-entry — **elides** the inner fold's
-entry copy (output `5 40`, identical to the copy-in-place baseline); and
-`tests/reuse_map_set_seed_retained_declines.ash` — a `Map.set` result that is **retained** (`keep = w`
-read after `bump(3)(w)`) — is correctly **declined** (the move admission is gated on move-linearity, not
-merely on the seed being a `Map.set` result), so `keep` reads the uncorrupted original `100`, not the
-in-place-overwritten `999` (output `100 999`, not `999 999`). Peak-RSS A/B on a nested set-result-seeded
-fold (inner reuse fold re-seeded from `Ashes.Map.set(0)(0)(m)` per outer round, so its entry copy of the
-threaded map re-executes only when *not* elided), measured with `/usr/bin/time -v` "Maximum resident set
-size", elision **on vs off** (the latter forced by reverting `set`'s reach to poison): **50 000-key
-base × 3000 rounds → 6.5 MB vs 11.8 MB**; **200 000-key base × 4000 rounds → 21.6 MB vs 43.1 MB**
-(≈2× reduction). This is the first shape where the entry copy is `O(size)` in a *large* structure that
-re-executes per re-entry, so eliding it roughly halves peak RSS; the un-elided baseline additionally
-SIGSEGVs on the repeated deep-copy path, which the elision sidesteps. Full gate green (build; 1313 C# +
-52 LSP tests; `test tests` 379 passed / 39 skipped; `dotnet format`).
-
-**Higher-order seeds + result-alias builders — landed.** A seed produced by a function *result* (not a
-data-constructor tree or a `let`-bound construction) — e.g. `let s = build(n) in fold(s)`,
-`fold(build(n))`, or `fold(wrap(<moved>))` — is now admitted via the **result-reachability (may-alias)
-summary** (`ComputeResultReach` / `IsResultAliasMove`) described in the *implemented elision* section.
-The summary is a monotone least fixpoint recording, per function, which of its own parameters its result
-may alias (a per-parameter multiplicity, capped at 2) plus a poison flag; a call `f(<args>)` is a move
-iff `f`'s summary is not poisoned and every parameter its result may reach is bound to an argument that
-is itself a move. This **subsumes** the previous result-freshness summary (a function whose result
-reaches {} and is not poisoned is result-fresh — uniquely-owned-and-freshly-allocated for any arguments,
-because it embeds a heap argument only into copy-typed constructor fields and never returns/embeds a heap
-parameter into a heap field), covering **recursive builders** (`let rec build n = if n <= 0 then Leaf
-else Node(build(n - 1))(n)(Leaf)`, reach {}), and **generalizes** it to `wrap`-style builders the old
-rule declined outright — `let wrap x = Node(x)(0)(Leaf)` reaches {x}, so `wrap(<moved>)` is now a move
-and `wrap(<retained>)` is not. This is the "return-value ownership reasoning" the roadmap deferred, in a
-self-contained, conservative form (a per-function result-alias summary that reads the constructor's
-resolved field types), rather than the full ownership milestone.
-
-Measured on a nested direct-reuse `grow`/`outer` fold whose accumulator is seeded by the result of a
-recursive builder — a 32 767-node balanced tree (`build(15)`) threaded through 400 batches into
-`grow` — **peak RSS 504 MB → 4.7 MB** (elision off → on), output identical (`415`). Here the entry
-deep-copy genuinely carries an `O(batches × tree-size)` term: because the threaded accumulator must
-persist across batches, each batch's full-tree entry copy is copied-out and survives, so eliding it is
-a ~110× reduction, not merely a constant-size startup saving. Verified sound by
-`tests/reuse_higher_order_seed_move_elision.ash`, which elides two folds seeded by result-fresh calls
-(a direct seed and a `let`-bound move-linear seed) and **declines** two soundness discriminators — a
-retained let-bound fresh-result seed (`keep` reads 3, not the corrupted 203) and an identity builder
-`pick t = t` (reach {t}) whose seed argument is retained (`keepP` reads 7, not the corrupted 57) — and by
-`tests/reuse_result_alias_move_elision.ash`, the **result-alias `wrap`-builder** discriminator: a direct
-`grow`/`outer` fold seeded by `wrap(3)(Node(Leaf)(5)(Leaf))` (the reached parameter bound to a
-fully-fresh construction, a move) is **elided** (root 15), while a sibling `bump` seeded by a **retained**
-let-bound `wrap(7)(…)` result is **declined** (`keep` reads 7, not the corrupted 207); and by
-`tests/reuse_internal_sharing_declines.ash`, the **internal-sharing** guard: a fold seeded by a builder
-whose result embeds a *fresh* cell twice (`let x = Node(Leaf)(k)(Leaf) in Node(x)(0)(x)`) is **declined**
-(the per-binding token sums to the cap and poisons the builder), so its unsharing entry copy is kept. The
-`grow/t elide=True` / `bump/t elide=False` / `sgrow/t elide=False` splits were confirmed at the
-direct-reuse elide decision (and a fresh value used once per branch arm stays `elide=True` — not
-over-rejected).
-
-**Closure / function-valued seeds (CO-2d) — landed.** The result-reach summary now also sees through a
-seed produced by a **closure the currying did not statically flatten**. A curried multi-argument binding
-(`let f x n = …`) is flattened by `CollectLambdaParams`/`GetInnermostBody` into a single multi-param
-function, so `f(x)(n)` is an ordinary saturated call the summary already handled — *not* a closure seed.
-A genuine closure seed arises only when a lambda is **returned from behind an `if`/`match`/`let`**, so the
-producer is a 1-arg function whose *result* is a closure, and the seed is that closure **over-applied**:
-`let makeBuilder flag = if flag then (fun (n) -> Node(Leaf)(n)(Leaf)) else (fun (n) -> Leaf)` with seed
-`(makeBuilder(true))(n)`. `OverApplicationReach` models the surplus application by inlining the callee's
-body **one level** and binding each surplus argument to the parameter of the lambda the body returns,
-descending through the closure-producing structure (a returned `Lambda`, or lambdas behind `if`/`match`/
-`let`); the reach is computed over `"@i"` argument-position markers so both the wiring (`IsResultAliasMove`
-— every reached marker's argument must be a move) and the fixpoint (`CallReach` — substitute each marker's
-argument reach) share one computation. It is **capture-aware**: the callee's own parameters are seeded to
-their argument markers, so a captured parameter embedded in the produced value (`makeCap cap = … Node(cap)
-(n)(Leaf) …`, reach {cap}) is a move exactly when that captured argument is a move; a captured global, an
-internally-shared capture, or any unmodeled closure source (a nested call result) **poisons** (keep copy).
-A bounded recursion depth caps a chain of nested over-applications (poison past the cap). Verified by
-`tests/reuse_closure_seed_move_elision.ash`: a **no-capture** closure seed (`(makeFresh(true))(5)`, reach
-{}) and a closure capturing a **fresh-move** value (`(makeCap(Node(Leaf)(20)(Leaf)))(0)`, reach {cap} with
-`cap` a move) both **elide** the inner direct-reuse fold's entry copy (`grow/t elide=True`), while a
-closure returning a **retained** capture directly (`(makeId(shared))(0)`, the seed *is* `shared`, which is
-retained) is **declined** (`bump/t elide=False`) and the retained `shared` reads its original 7, not the
-corrupted 207.
-
-Still genuinely deferred: a seed produced by a function whose result-alias summary is **poisoned** — one
-that returns a value reaching a global/top-level binding, is internally shared, or is an opaque/stdlib
-call whose result may be aliased or reuse-rewritten (e.g. `Ashes.Map.set`, which returns its accumulator
-argument). Proving such a result uniquely owned needs the full return-value ownership reasoning of the
-broader ownership milestone. It conservatively keeps the copy (a leak, never corruption).
-
-> **Adjacent bug found while building the repro (out of CO-2 scope, not fixed here):** a TCO loop
-> whose accumulator is a recursive ADT in a **non-last curried parameter position** miscompiles to a
-> SIGSEGV even at one iteration (the last-parameter form of the identical program is correct). This is
-> a per-iteration arena-reset / copy-out gap keyed on parameter position, independent of in-place
-> reuse (it reproduces with reuse never firing). Tracked separately; the CO-2 repro and regression
-> test keep the ADT accumulator in the last position to avoid it.
+**Measured wins.** Nested `Ashes.Map.set` re-entry `O(batches × size)` → constant (was 8→54 MB across
+400–3200 batches). Recursive-builder-seeded direct-reuse fold (32 767-node tree × 400 batches):
+504 MB → 4.7 MB (the threaded accumulator persists, so the per-batch entry copy is a genuine
+`O(batches × size)` term). `Ashes.Map.set`-result-seeded fold: ≈2× (200 000-key base × 4000 rounds,
+43 → 22 MB). Direct-reuse / richer-aliasing seeds remove only a constant-size startup copy (a direct-reuse
+accumulator cannot grow, so there is no `O(batches × size)` term there).
 
 ### CO-7 — detailed analysis (`both` vs. the async runtime)
 
