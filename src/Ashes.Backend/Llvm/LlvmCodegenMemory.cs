@@ -335,11 +335,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(state.Target.Builder, writeType, write, [tcbAddr], "");
     }
 
-    // Static arm64 executable: no dynamic loader runs, so nothing sets up TPIDR_EL0 / the thread's
-    // TLS block. Point TPIDR_EL0 at a zeroed BSS block that backs the thread-local arena (the
-    // cursors are addressed via TPREL = 16-byte TCB reserve + their block offset). MainTcbSizeBytes
-    // (512) easily covers the reserve + the six i64 cursors. Dynamic executables must NOT do this —
-    // there the loader owns TPIDR_EL0 (and the DTV for dlopen'd rustls's dynamic TLS).
+    // arm64 main-thread arena setup, safe for both static and dynamic executables. The per-thread
+    // arena cursors are local-exec TLS (TPREL = 16-byte TCB reserve + their block offset). Who owns
+    // TPIDR_EL0 differs by link kind:
+    //   * Static executable (pure compute / parallelism): no loader runs, so the kernel leaves
+    //     TPIDR_EL0 zero. We point it at a zeroed BSS block that backs the arena — MainTcbSizeBytes
+    //     (512) easily covers the 16-byte reserve + the six i64 cursors.
+    //   * Dynamic executable (networking dlopen's rustls; user externs): the loader already set up
+    //     TPIDR_EL0 and the static-TLS block (reserving this image's PT_TLS at the same TPREL the
+    //     linker baked in), and its DTV backs the dlopen'd module's dynamic TLS. We must NOT clobber
+    //     it — doing so breaks rustls/libc thread-local access.
+    // Rather than predict the link kind at codegen time, branch on TPIDR_EL0 at runtime: a loader
+    // always leaves it non-zero, an unloaded static image leaves it zero. This makes the same entry
+    // prologue correct for both, so networking (dynamic) and parallelism (which needs the TLS arena
+    // to give each `both` worker its own arena) coexist on arm64.
     private static void EmitArm64MainThreadTlsSetup(LlvmCodegenState state)
     {
         LlvmTypeHandle blockType = LlvmApi.ArrayType2(state.I8, (ulong)MainTcbSizeBytes);
@@ -351,7 +360,12 @@ internal static partial class LlvmCodegen
             return g;
         });
         LlvmValueHandle blockAddr = LlvmApi.BuildPtrToInt(state.Target.Builder, block, state.I64, "arm64_tls_block_addr");
-        EmitArm64SetThreadPointer(state, blockAddr);
+        // if (TPIDR_EL0 == 0) TPIDR_EL0 = blockAddr;  — keep a loader-provided thread pointer intact.
+        LlvmTypeHandle fnType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
+        LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType,
+            "mrs x9, tpidr_el0\n\tcbnz x9, 1f\n\tmsr tpidr_el0, $0\n\t1:",
+            "r,~{x9}", true, false);
+        LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
     }
 
     // Sets TPIDR_EL0 (the aarch64 thread pointer) to the given block address. Used by the main entry
