@@ -410,11 +410,12 @@ public sealed class ArenaDeallocationTests
 
         // Find the tail-call jump back: RestoreArenaState + ReclaimArenaChunks followed by Jump to body label
         bool foundTcoRestore = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
-                && insts[i + 2] is IrInst.Jump j
+                && insts[i + 2] is IrInst.RestoreStackPointer
+                && insts[i + 3] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 foundTcoRestore = true;
@@ -422,7 +423,7 @@ public sealed class ArenaDeallocationTests
             }
         }
         foundTcoRestore.ShouldBeTrue(
-            "TCO loop with copy-type args should emit RestoreArenaState + ReclaimArenaChunks before jumping back.");
+            "TCO loop with copy-type args should emit RestoreArenaState + ReclaimArenaChunks + RestoreStackPointer before jumping back.");
     }
 
     [Test]
@@ -443,11 +444,12 @@ public sealed class ArenaDeallocationTests
         var save = (IrInst.SaveArenaState)insts[bodyLabelIdx + 1];
 
         // Find RestoreArenaState + ReclaimArenaChunks before the jump back
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState restore
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
-                && insts[i + 2] is IrInst.Jump j
+                && insts[i + 2] is IrInst.RestoreStackPointer
+                && insts[i + 3] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 restore.CursorLocalSlot.ShouldBe(save.CursorLocalSlot,
@@ -479,7 +481,7 @@ public sealed class ArenaDeallocationTests
 
         // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
         bool foundCopyOutSequence = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
                 && insts[i + 1] is IrInst.CopyOutArena copyOut
@@ -587,11 +589,12 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         bool foundTcoRestore = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is IrInst.RestoreArenaState
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
-                && insts[i + 2] is IrInst.Jump j
+                && insts[i + 2] is IrInst.RestoreStackPointer
+                && insts[i + 3] is IrInst.Jump j
                 && j.Target.Contains("_body"))
             {
                 foundTcoRestore = true;
@@ -599,7 +602,7 @@ public sealed class ArenaDeallocationTests
             }
         }
         foundTcoRestore.ShouldBeTrue(
-            "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks before jump-back.");
+            "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks + RestoreStackPointer before jump-back.");
     }
 
     // --- Extended TCO copy-out ---
@@ -751,7 +754,7 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         bool found = false;
-        for (int i = 0; i < insts.Count - 2; i++)
+        for (int i = 0; i < insts.Count - 3; i++)
         {
             if (insts[i] is not IrInst.RestoreArenaState)
             {

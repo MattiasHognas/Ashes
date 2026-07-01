@@ -57,6 +57,36 @@ reads any size (whole-file `readText` capped at 1 MiB and OOM'd past ~50k). Outp
 1M (41 343 entries == unique stations; md5-stable vs whole-file on 30k). The remaining limiter for
 much larger inputs is the residual #2 linear leak (needs the hot-loop arena reset).
 
+## Performance pass (2026-07-01) — TCO stack-leak fix + string-keyed in-place reuse
+
+Landed the compiler side of the in-place-reuse milestone (#2/#3) and, in the process, found and fixed a
+**general TCO stack leak**: a tail-call loop body makes dynamic stack allocations each iteration
+(per-iteration string/syscall scratch — `fromInt`, `compare`), and a TCO back-edge *jumps* rather than
+*returns*, so those `alloca`s never free and pile up until the 8 MB stack overflows. Fix: mirror the
+per-iteration arena reset for the stack — `llvm.stacksave` at the loop header, `llvm.stackrestore` at the
+back-edge (`IrInst.SaveStackPointer`/`RestoreStackPointer`). This is what made a **string-keyed** `Map.set`
+fold reach scale at all; before, it crashed (SIGSEGV) at ~250–270k rows. Same class as the old `readLine`
+TCO segfault.
+
+Benchmarks (wall / peak RSS, `/proc/<pid>/VmHWM`, `1brc-perf`):
+
+| Rows | brc.ash (Str key + **tuple** value) | smap2 microbench (Str key + Int value, reuse fires) |
+|------|-------------------------------------|-----------------------------------------------------|
+| 100 000 | 0.43 s / 1.0 GB | — |
+| 1 000 000 | 4.0 s / 9.7 GB | 0.48 s / **406 MB** |
+| 10 000 000 | (OOM) | 4.7 s / **4.1 GB** (was: crash) |
+
+Status: the reuse now **runs correctly to 10M** for string-keyed maps (was a hard crash), but memory is
+still **linear** — ~410 B/row (smap2) and ~9.7 KB/row (brc). Two gaps remain for a genuinely *bounded* #2:
+1. **Loop reset-safety.** The reuse spec calls `compare`/`height`/`max` (non-self `MakeClosure`), so
+   `IsFullyReusing` conservatively returns false → the accumulator is not marked reset-safe → the
+   per-iteration arena scratch is never reclaimed. Those calls all return `Int` and never flow into the
+   tree, so they should not block reset-safety.
+2. **Tuple/list-value materialization.** brc's `Map.set` value is a 4-tuple; the insert-only heap-field
+   materialization only covers `TStr`/`TBytes`, so brc's reuse either can't be made reset-safe or would
+   dangle the tuple. Needs the tuple/list case (and a guard: never specialize on a not-yet-materializable
+   heap value type).
+
 ### #2a — the real hot-loop blowup was a reuse defensive-copy bug (FIXED)
 
 The design assumed the O(N²) blowup was `Map.set` superseded-node sharing. Empirically it was not:

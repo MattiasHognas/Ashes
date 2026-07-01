@@ -516,6 +516,7 @@ public static class StateMachineTransform
             IrInst.Alloc i => [i.Target],
             IrInst.AllocStack i => [i.Target],
             IrInst.AllocAdt i => [i.Target],
+            IrInst.AllocAdtToSpace i => [i.Target],
             IrInst.AllocAdtStack i => [i.Target],
             IrInst.GetAdtTag i => [i.Target],
             IrInst.GetAdtField i => [i.Target],

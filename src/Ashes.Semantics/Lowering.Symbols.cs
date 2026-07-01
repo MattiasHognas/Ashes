@@ -538,6 +538,14 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
         }
+        else if (_inSpecialization)
+        {
+            // Fresh nullary cell (e.g. an Empty leaf of a node Map.set creates for a new key) inside an
+            // in-place reuse specialization: allocate in the persistent to-space so it survives the
+            // loop's per-iteration arena reset. See LowerConstructorApplication / IrInst.AllocAdtToSpace.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, 0));
+            _reuseResultTemps.Add(ptrTemp);
+        }
         else
         {
             Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
@@ -585,6 +593,7 @@ public sealed partial class Lowering
         // This catches mismatches when the same type parameter appears in multiple positions
         // (e.g., Pair(T, T) applied to arguments of different types).
         var argTemps = new List<int>(args.Count);
+        var argTypes = new List<TypeRef>(args.Count);
         for (int i = 0; i < args.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
@@ -592,6 +601,7 @@ public sealed partial class Lowering
 
             var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
             Unify(parameterType, argType);
+            argTypes.Add(Prune(argType));
             MarkResourceArgMoved(args[i]);
         }
 
@@ -599,6 +609,7 @@ public sealed partial class Lowering
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
+        bool toSpaceNode = false;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
@@ -611,13 +622,37 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
         }
+        else if (_inSpecialization)
+        {
+            // Genuinely-new cell with no reuse token inside an in-place reuse specialization — e.g. the
+            // node Map.set creates for a NEW key. Allocate it in the persistent to-space so it survives
+            // the loop's per-iteration arena reset (the reset only reclaims the main arena). The cell is
+            // uniquely owned, so it is also a linear reuse result (a rebuild by balance/rotate reuses it
+            // in place, staying in to-space). See IrInst.AllocAdtToSpace / IsFullyReusing.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
+            _reuseResultTemps.Add(ptrTemp);
+            toSpaceNode = true;
+        }
         else
         {
             Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
         }
         for (int i = 0; i < argTemps.Count; i++)
         {
-            Emit(new IrInst.SetAdtField(ptrTemp, i, argTemps[i]));
+            int fieldTemp = argTemps[i];
+            // A genuinely-new (to-space) node is the only place a fresh heap LEAF field — a String/Bytes
+            // map key, materialized once per distinct key on insert — must itself be made persistent, or
+            // it dangles past the reset (the node survives in to-space but its key would point into
+            // reclaimed scratch). Reused (AllocReusing) nodes keep their already-persistent fields, so
+            // this never re-copies existing keys on the rebuild spine — it stays bounded by distinct keys.
+            if (toSpaceNode && Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBytes)
+            {
+                int persistentField = NewTemp();
+                Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                fieldTemp = persistentField;
+            }
+
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
         }
 
         return (ptrTemp, resultType);

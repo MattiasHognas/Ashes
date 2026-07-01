@@ -108,6 +108,17 @@ public abstract record IrInst
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
+    /// Like <see cref="AllocAdt"/> but allocates in the persistent "to-space" arena instead of the
+    /// main per-iteration arena. Emitted for a genuinely-new cell (no reuse token) inside an in-place
+    /// reuse specialization — e.g. the fresh node a <c>Map.set</c> creates for a new key. The main
+    /// arena's TCO back-edge reset never reclaims to-space, so the new cell survives the reset while the
+    /// reset still reclaims the iteration's scaffolding/scratch. To-space is never reset during the loop
+    /// (it holds part of the live accumulator); it is bounded by the number of genuinely-new cells
+    /// (≈distinct keys), not by iterations. See <see cref="IrInst.AllocAdt"/> and REUSE_ANALYSIS.md.
+    /// </summary>
+    public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
+
+    /// <summary>
     /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
     /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
     /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
@@ -117,6 +128,11 @@ public abstract record IrInst
     public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
     // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
+    // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to
+    // it at each back-edge so dynamic stack allocations in the loop body (e.g. per-iteration string/syscall
+    // scratch buffers) are freed every iteration instead of accumulating until the stack overflows.
+    public sealed record SaveStackPointer(int Slot) : IrInst;
+    public sealed record RestoreStackPointer(int Slot) : IrInst;
     // GetAdtTag: Target = *(Ptr + 0)
     public sealed record GetAdtTag(int Target, int Ptr) : IrInst;
     // GetAdtField: Target = *(Ptr + 8 + FieldIndex*8)
@@ -252,6 +268,14 @@ public abstract record IrInst
     /// </para>
     /// </summary>
     public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+
+    /// <summary>
+    /// Like <see cref="CopyOutArena"/> but the fresh copy is allocated in the persistent to-space
+    /// (see <see cref="AllocAdtToSpace"/>) instead of the main arena. Used to materialize a heap-typed
+    /// value (e.g. a String map key) that an in-place reuse specialization stores into the accumulator,
+    /// so it survives the loop's per-iteration reset alongside the reused/to-space node.
+    /// </summary>
+    public sealed record CopyOutArenaToSpace(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
 
     /// <summary>
     /// Describes how head values are handled during deep list copy-out.
