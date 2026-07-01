@@ -153,9 +153,22 @@ orthogonal and both real:
     arg (general — helps any socket/process/file read loop). **Result: brc is now constant-memory —
     45 MB @ 1M and 49 MB @ 10M** (was 9.7 GB @ 1M / OOM @ 10M), output byte-identical to baseline.
     Tests: `tests/file_readline.ash`.
-  - (ii, not taken) A compiler move/linearity analysis that skips the entry deep-copy when the
-    accumulator is provably moved (not aliased after the call) — the ownership milestone — would fix
-    the *general* nested-re-entry pattern (not just brc's file loop). Still worthwhile; left open.
+  - **(ii) General nested-re-entry fix — the move/linearity milestone (OPEN, deferred).** The entry
+    deep-copy (`Lowering.cs` ~3013, `reuseDefensiveCopy`) makes the loop accumulator uniquely owned so
+    in-place reuse is sound. It re-executes on every re-entry, so an *outer* loop that threads the
+    accumulator into an *inner* reuse fold re-copies the growing tree each outer step (repro: a set-only
+    or get-then-set fold nested under an outer accumulator-threading loop — `gsstream`, still **978 MB
+    @ 1M**). Skipping the copy is sound only if the accumulator is provably unaliased at the call site.
+    A syntactic "argument variable used exactly once" check is *not* enough: the accumulator is used
+    once **per control-flow path** (`if c>=250 then m else stream(c+1)(scan(...)(m))` uses `m` in both
+    arms), so a sound analysis must be **path-aware and interprocedural** — a whole-program fixpoint
+    marking a function's accumulator parameter "owned" iff at every call site the argument is a
+    per-path-linear, last-used value rooted (through unique hops / reuse results) at a fresh
+    construction. That is the ownership/borrowing milestone (`Lowering.Ownership.cs`,
+    `docs/future/FUTURE_FEATURES.md`); this reuse+arena code is corruption-prone, and an unsound skip
+    silently miscompiles (in-place mutation of a live alias), so it is intentionally **not** hacked in.
+    Note: brc no longer needs it (its file fold is a single loop after (A)); it remains the right fix
+    for the general pattern and for letting `streamLoop`-style code be constant without `readLine`.
   - **(B) The get-then-set ~16 B/row residual** — **FIXED.** Root cause: `Ashes.Map.get` returns
     `Maybe(V)`, not `MapTree`, so it rebuilds nothing — yet because `map` was deep-copied to a linear
     accumulator for the *set*, the *get* call was also routed to a reuse specialization, and inside a
