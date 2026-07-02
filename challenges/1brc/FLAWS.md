@@ -220,7 +220,37 @@ Halved the 10k-row runtime (was ~45 % of it).
 in-place-reuse work are complete; brc folds the whole file in a single `Ashes.File.readLine` loop
 with in-place `Map.set` reuse and is constant-memory. The general in-place-reuse follow-up (the
 nested-re-entry deep-copy) is tracked as `CO-2` in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md) (since landed — see
+the 2026-07-02 pass below).
+
+## Performance pass (2026-07-02) — constant-memory to 100M rows
+
+Re-benchmarked the current `brc.ash` (`-O2`; `hyperfine` warm timing, peak RSS from
+`/usr/bin/time -v`) after the move/linearity reuse-copy-elision milestone (`CO-2`, item (ii) above)
+and the follow-up TCO reuse-correctness fixes (`CO-8` back-edge reset stability, `CO-9` param-slot
+mapping) all landed:
+
+| Rows | Time | Peak RSS | Stations |
+|------|------|----------|----------|
+| 100 000 | 147 ms ± 3 ms | 45 MB | 37 191 |
+| 1 000 000 | 1.32 s ± 0.01 s | 50 MB | 41 343 |
+| 10 000 000 | 12.96 s ± 0.05 s | 50 MB | 41 343 |
+| 100 000 000 | 2 m 10 s (single run) | 50 MB | 41 343 |
+
+**Memory is flat (~45–50 MB) across a 1000× range in rows** — the residual leaks the earlier passes
+chased are gone, and brc stays constant-memory well past the 10M where the earliest table OOM'd. **Time
+is linear** (~10× per 10× rows, ≈1.3 µs/row), so the full 1e9-row / 15.5 GB input should finish in
+~21–22 min at the same ~50 MB.
+
+Correctness re-verified: the 41 343 stations exactly match `cut -d';' -f1 measurements | sort -u`. The
+leading empty-name entry (`{=…`) is faithful, not a bug — the generator emits some malformed
+empty-station lines (23 in the 1M subset; none in the 100k subset, which is why it has no empty entry
+and only 37 191 stations), and brc aggregates them under `""`. Non-ASCII names (`A Coruña`,
+`’s-Hertogenbosch`) sort by byte order (#4).
+
+Net: #1–#9 are closed and brc runs the challenge correctly and constant-memory at every size tested.
+The general reuse follow-up (`CO-2`) deferred in the 2026-07-01 pass has since landed, and the
+`CO-8`/`CO-9` reuse-correctness fixes cause no regression here.
 
 ---
 
