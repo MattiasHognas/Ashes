@@ -18,6 +18,7 @@ public static class BuiltinRegistry
         WriteLine,
         ReadLine,
         FileReadText,
+        FileReadAllBytes,
         FileWriteText,
         FileExists,
         FileOpen,
@@ -176,6 +177,7 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
+                    ["readAllBytes"] = new("readAllBytes", BuiltinValueKind.FileReadAllBytes, IsCallable: true, Arity: 1),
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
