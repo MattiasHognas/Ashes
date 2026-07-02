@@ -265,7 +265,8 @@ actionable pieces became `CO-10`…`CO-14` and have all **landed** (see the *Com
 widening for byte-level integer parsing (`CO-11`), SIMD `memchr` scan (`CO-13`), zero-copy `mmap` input
 (`CO-12`), a data-parallel chunked fold + loop-invariant reset-safety making it constant-memory
 (`CO-14` / `CO-10`) — together the parallel `brc` now runs the full 1e9-row challenge in ~2m36s. A
-smaller reuse-*eligibility* generalization (`HashMap.set`) remains unaddressed.
+smaller reuse-*eligibility* generalization (`HashMap.set`) remains — tracked as `CO-15` in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
 
 ---
 
