@@ -1,5 +1,6 @@
-// Data-parallel 1BRC. Reads the whole file into a Bytes with Ashes.File.readAllBytes (uncapped on
-// Linux via a standalone mmap), splits it into per-core (bytes, lo, hi) chunks at newline boundaries,
+// Data-parallel 1BRC. Maps the whole file into a zero-copy Bytes view with Ashes.File.mmap (no read or
+// copy; the mapping is shared read-only across worker threads and its pages fault in in parallel), then
+// splits it into per-core (bytes, lo, hi) chunks at newline boundaries,
 // folds each chunk into a partial station Map on a worker thread (Ashes.Parallel.reduce forks via
 // `both` at the concrete Map result type), and merges the partial Maps. The result is identical to the
 // sequential fold (purity makes it order-independent). foldChunk is a top-level, non-capturing function
@@ -149,7 +150,7 @@ let rec formatAll pairs acc =
         | h :: t -> formatAll(t)(formatEntry(h) :: acc)
 
 let run path = 
-    match Ashes.File.readAllBytes(path) with
+    match Ashes.File.mmap(path) with
         | Error(_e) -> "{}"
         | Ok(bytes) -> 
             let len = Ashes.Bytes.length(bytes)

@@ -148,6 +148,8 @@ public abstract record IrInst
     public sealed record FileReadText(int Target, int PathTemp) : IrInst;
 
     public sealed record FileReadAllBytes(int Target, int PathTemp) : IrInst;
+
+    public sealed record FileMmap(int Target, int PathTemp) : IrInst;
     public sealed record FileWriteText(int Target, int PathTemp, int TextTemp) : IrInst;
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
     public sealed record FileOpen(int Target, int PathTemp) : IrInst;

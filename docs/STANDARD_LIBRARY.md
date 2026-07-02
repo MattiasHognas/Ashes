@@ -34,10 +34,14 @@ These types are always available without imports:
 - `readText(path)` returning `Result(Str, Str)` — UTF-8-validated; caps at 1 MiB.
 - `readAllBytes(path)` returning `Result(Str, Bytes)` — read a whole file into a `Bytes` with no UTF-8
   validation. Uncapped on Linux (the buffer is a standalone `mmap`, so it can exceed one arena chunk);
-  on Windows it currently shares the `readText` buffer and so caps at the same 1 MiB. Enables
-  random-access / chunked processing (e.g. a data-parallel fold that splits the input at record
-  boundaries — see `challenges/1brc/brc_parallel.ash`). The buffer is read-only and program-lifetime;
-  fields sliced from it (`Bytes.subText`) are copied into the arena as usual.
+  on Windows it currently shares the `readText` buffer and so caps at the same 1 MiB. The buffer is
+  read-only and program-lifetime; fields sliced from it (`Bytes.subText`) are copied into the arena.
+- `mmap(path)` returning `Result(Str, Bytes)` — memory-map a file read-only and return a **zero-copy**
+  `Bytes` **view** over the mapping (no read, no copy). On Linux the pages fault in on access, so a
+  data-parallel fold that touches different chunks faults them in **in parallel**, and the mapping is
+  shared read-only across worker threads. The mapping is program-lifetime, so slices/views into it stay
+  valid. On Windows this falls back to the capped `readAllBytes` read. Preferred over `readAllBytes` for
+  random-access / chunked processing (e.g. `challenges/1brc/brc_parallel.ash`).
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `writeBytes(path, bytes)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
