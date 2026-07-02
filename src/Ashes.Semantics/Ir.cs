@@ -626,6 +626,12 @@ public static class TaskStructLayout
     public const long WaitTlsWantRead = 3;
     /// <summary>The task is waiting for a TLS write path to make progress.</summary>
     public const long WaitTlsWantWrite = 4;
+    /// <summary>The task is waiting for a sleep timer to elapse (cooperative sleep suspension).
+    /// The remaining milliseconds live in <see cref="SleepDurationMs"/> of the sleeping leaf task
+    /// (the task itself when it is a bare sleep leaf, or its <see cref="AwaitedTask"/> when a coroutine
+    /// is suspended on one). The scheduler waits until the earliest such deadline instead of blocking
+    /// on each sleep inline, so sibling tasks make progress while one sleeps.</summary>
+    public const long WaitTimer = 5;
 }
 
 public sealed record IrFunction(

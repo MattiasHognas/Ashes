@@ -463,6 +463,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), statusSlot);
 
         LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sleep");
+        LlvmBasicBlockHandle sleepElapsedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sleep_elapsed");
+        LlvmBasicBlockHandle sleepPendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sleep_pending");
         LlvmBasicBlockHandle checkTcpConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_connect");
         LlvmBasicBlockHandle tcpConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_connect");
         LlvmBasicBlockHandle checkTcpSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_send");
@@ -494,14 +496,30 @@ internal static partial class LlvmCodegen
             prefix + "_is_sleep");
         LlvmApi.BuildCondBr(builder, isSleep, sleepBlock, checkTcpConnectBlock);
 
+        // Cooperative sleep: instead of blocking the whole thread on nanosleep, a sleeping leaf yields.
+        // SleepDurationMs holds the remaining milliseconds. While > 0 the leaf stays pending with
+        // WaitKind = WaitTimer, so the scheduler advances sibling tasks and waits only until the
+        // earliest deadline (decrementing SleepDurationMs there). Once the remaining time has elapsed,
+        // the leaf completes with Ok(0) — matching the old blocking result.
         LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
         LlvmValueHandle sleepMs = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, prefix + "_sleep_ms");
-        EmitNanosleep(state, sleepMs);
+        LlvmValueHandle sleepElapsed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, sleepMs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_sleep_elapsed_cmp");
+        LlvmApi.BuildCondBr(builder, sleepElapsed, sleepElapsedBlock, sleepPendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sleepElapsedBlock);
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
             EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), prefix + "_sleep_result");
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_sleep_done");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitNone, 0), prefix + "_sleep_clear_wait");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sleepPendingBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0), prefix + "_sleep_mark_timer");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, checkTcpConnectBlock);
@@ -669,8 +687,9 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
         LlvmBasicBlockHandle notDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_not_done");
         LlvmBasicBlockHandle leafBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_leaf");
+        LlvmBasicBlockHandle resolveAwaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_resolve_await");
+        LlvmBasicBlockHandle stepAwaitedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step_awaited");
         LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle suspendedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_suspended");
         LlvmBasicBlockHandle awaitedDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_awaited_done");
         LlvmBasicBlockHandle leafPendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_leaf_pending");
         LlvmBasicBlockHandle awaitedPendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_awaited_pending");
@@ -686,12 +705,35 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, notDoneBlock);
         LlvmValueHandle isLeaf = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, prefix + "_is_leaf");
-        LlvmApi.BuildCondBr(builder, isLeaf, leafBlock, stepBlock);
+        LlvmApi.BuildCondBr(builder, isLeaf, leafBlock, resolveAwaitBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
         LlvmValueHandle leafStatus = EmitStepLeafTask(state, taskPtr, prefix + "_leaf_step");
         LlvmValueHandle leafCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, leafStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_leaf_completed");
         LlvmApi.BuildCondBr(builder, leafCompleted, doneBlock, leafPendingBlock);
+
+        // Coroutine: if it is parked on an awaited sub-task from a previous suspend, resolve that
+        // sub-task BEFORE resuming — the coroutine's resume reads the awaited result out of ResultSlot
+        // blindly, so it must not run until the result is actually ready. (The single-task RunTask
+        // driver enforces this by looping on the leaf; the list driver returns to the scheduler between
+        // steps, so it re-checks the awaited task on every re-entry via AwaitedTask != 0.)
+        LlvmApi.PositionBuilderAtEnd(builder, resolveAwaitBlock);
+        LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
+        LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaitedTask, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_awaited");
+        LlvmApi.BuildCondBr(builder, hasAwaited, stepAwaitedBlock, stepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, stepAwaitedBlock);
+        LlvmValueHandle awaitedStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [awaitedTask], prefix + "_awaited_status");
+        LlvmValueHandle awaitedCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaitedStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_awaited_completed");
+        LlvmApi.BuildCondBr(builder, awaitedCompleted, awaitedDoneBlock, awaitedPendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, awaitedDoneBlock);
+        EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_after_await");
+        LlvmValueHandle awaitedResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, prefix + "_awaited_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, awaitedResult, prefix + "_awaited_result_store");
+        // Consume the awaited task so the next resume runs the coroutine rather than re-stepping it.
+        StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_awaited_consumed");
+        LlvmApi.BuildBr(builder, stepBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_before_step");
@@ -706,19 +748,9 @@ internal static partial class LlvmCodegen
             [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
             prefix + "_step_status");
         LlvmValueHandle suspended = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stepStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_is_suspended");
-        LlvmApi.BuildCondBr(builder, suspended, suspendedBlock, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, suspendedBlock);
-        LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
-        LlvmValueHandle awaitedStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [awaitedTask], prefix + "_awaited_status");
-        LlvmValueHandle awaitedCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaitedStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_awaited_completed");
-        LlvmApi.BuildCondBr(builder, awaitedCompleted, awaitedDoneBlock, awaitedPendingBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, awaitedDoneBlock);
-        EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_after_await");
-        LlvmValueHandle awaitedResult = LoadMemory(state, awaitedTask, TaskStructLayout.ResultSlot, prefix + "_awaited_result");
-        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, awaitedResult, prefix + "_awaited_result_store");
-        LlvmApi.BuildBr(builder, stepBlock);
+        // On suspend the coroutine has stored a fresh AwaitedTask; loop back so that awaited task is
+        // resolved (and, if already complete, the coroutine immediately resumes).
+        LlvmApi.BuildCondBr(builder, suspended, checkBlock, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafPendingBlock);
         LlvmApi.BuildBr(builder, doneBlock);
@@ -921,8 +953,14 @@ internal static partial class LlvmCodegen
         // over the i1 values (1 > 0 only when hasPending is set and hasRunnable is clear).
         LlvmValueHandle shouldWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, hasPending, hasRunnable, prefix + "_should_wait");
         LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait");
+        // When no socket wait is needed, fall through to the timer path: if any task is parked on a
+        // cooperative sleep (WaitKind == WaitTimer) and nothing is immediately runnable, wait once until
+        // the earliest sleep deadline rather than busy-looping. Socket-pending waits take priority (the
+        // epoll/poll wait already bounds its own blocking); a mixed socket+timer wait uses the socket
+        // path this round and re-evaluates timers on the next scan.
+        LlvmBasicBlockHandle timerCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_timer_check");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, doneBlock);
+        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, timerCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
         if (IsLinuxFlavor(state.Flavor))
@@ -1020,8 +1058,124 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, doneBlock);
 
+        // --- Timer path: cooperative sleep wait ---
+        LlvmApi.PositionBuilderAtEnd(builder, timerCheckBlock);
+        EmitCooperativeTimerWait(state, taskListPtr, hasRunnable, prefix + "_timer", doneBlock);
+
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, waitResultSlot, prefix + "_wait_result");
+    }
+
+    /// <summary>
+    /// Cooperative sleep wait. Scans the pending task list for tasks parked on a sleep timer
+    /// (<c>WaitKind == WaitTimer</c>) — the remaining milliseconds live in the sleeping leaf's
+    /// <c>SleepDurationMs</c> (the task itself when it is a bare sleep leaf, or its <c>AwaitedTask</c>
+    /// when a coroutine is suspended on one). If any exist and nothing is immediately runnable, it
+    /// sleeps once (<see cref="EmitNanosleep"/>) until the earliest deadline, then decrements every
+    /// timer task's remaining by that amount so the elapsed ones complete on the next scheduler step
+    /// while the others keep counting down. All control-flow paths branch to <paramref name="continuation"/>.
+    /// </summary>
+    private static void EmitCooperativeTimerWait(
+        LlvmCodegenState state,
+        LlvmValueHandle taskListPtr,
+        LlvmValueHandle hasRunnable,
+        string prefix,
+        LlvmBasicBlockHandle continuation)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_min_slot");
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_slot");
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cursor_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0), minSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+        LlvmApi.BuildStore(builder, taskListPtr, cursorSlot);
+
+        LlvmBasicBlockHandle scanCheck = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scan_check");
+        LlvmBasicBlockHandle scanBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scan_body");
+        LlvmBasicBlockHandle scanTimer = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scan_timer");
+        LlvmBasicBlockHandle afterScan = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_scan");
+        LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_sleep");
+        LlvmBasicBlockHandle decCheck = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dec_check");
+        LlvmBasicBlockHandle decBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dec_body");
+        LlvmBasicBlockHandle decTimer = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dec_timer");
+
+        LlvmValueHandle timerKind = LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0);
+        LlvmValueHandle sleepingState = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateSleeping), 1);
+        LlvmValueHandle completedState = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1);
+
+        // Pass 1: find the minimum remaining sleep and count the timer tasks.
+        LlvmApi.BuildBr(builder, scanCheck);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scanCheck);
+        LlvmValueHandle scanCursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, prefix + "_scan_cursor");
+        LlvmValueHandle scanDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCursor, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_scan_done");
+        LlvmApi.BuildCondBr(builder, scanDone, afterScan, scanBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scanBody);
+        LlvmValueHandle scanTask = LoadMemory(state, scanCursor, 0, prefix + "_scan_task");
+        LlvmValueHandle scanTail = LoadMemory(state, scanCursor, 8, prefix + "_scan_tail");
+        LlvmApi.BuildStore(builder, scanTail, cursorSlot);
+        LlvmValueHandle scanWaitKind = LoadMemory(state, scanTask, TaskStructLayout.WaitKind, prefix + "_scan_wait_kind");
+        LlvmValueHandle scanStateIdx = LoadMemory(state, scanTask, TaskStructLayout.StateIndex, prefix + "_scan_state");
+        LlvmValueHandle scanIsTimerKind = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanWaitKind, timerKind, prefix + "_scan_is_timer_kind");
+        // A completed task may still carry a stale WaitKind; exclude it so its zero remaining does not
+        // poison the earliest-deadline computation into a no-op wait.
+        LlvmValueHandle scanNotDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, scanStateIdx, completedState, prefix + "_scan_not_done");
+        LlvmValueHandle scanIsTimer = LlvmApi.BuildAnd(builder, scanIsTimerKind, scanNotDone, prefix + "_scan_is_timer");
+        LlvmApi.BuildCondBr(builder, scanIsTimer, scanTimer, scanCheck);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scanTimer);
+        LlvmValueHandle scanIsDirect = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanStateIdx, sleepingState, prefix + "_scan_is_direct");
+        LlvmValueHandle scanAwaited = LoadMemory(state, scanTask, TaskStructLayout.AwaitedTask, prefix + "_scan_awaited");
+        LlvmValueHandle scanLeaf = LlvmApi.BuildSelect(builder, scanIsDirect, scanTask, scanAwaited, prefix + "_scan_leaf");
+        LlvmValueHandle scanRem = LoadMemory(state, scanLeaf, TaskStructLayout.SleepDurationMs, prefix + "_scan_rem");
+        LlvmValueHandle scanCurMin = LlvmApi.BuildLoad2(builder, state.I64, minSlot, prefix + "_scan_cur_min");
+        LlvmValueHandle scanIsLess = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, scanRem, scanCurMin, prefix + "_scan_is_less");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, scanIsLess, scanRem, scanCurMin, prefix + "_scan_new_min"), minSlot);
+        LlvmValueHandle scanCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_scan_count");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, scanCount, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_scan_count_next"), countSlot);
+        LlvmApi.BuildBr(builder, scanCheck);
+
+        // Decide whether to sleep: only when a timer task exists and nothing is immediately runnable
+        // (1 > 0 over the i1 values, exactly as the socket-wait decision above).
+        LlvmApi.PositionBuilderAtEnd(builder, afterScan);
+        LlvmValueHandle timerCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_timer_count");
+        LlvmValueHandle hasTimers = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, timerCount, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_timers");
+        LlvmValueHandle shouldSleep = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, hasTimers, hasRunnable, prefix + "_should_sleep");
+        LlvmApi.BuildCondBr(builder, shouldSleep, sleepBlock, continuation);
+
+        // Sleep once until the earliest deadline, then decrement every timer task's remaining by it.
+        LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
+        LlvmValueHandle minRemaining = LlvmApi.BuildLoad2(builder, state.I64, minSlot, prefix + "_min_remaining");
+        EmitNanosleep(state, minRemaining);
+        LlvmApi.BuildStore(builder, taskListPtr, cursorSlot);
+        LlvmApi.BuildBr(builder, decCheck);
+
+        LlvmApi.PositionBuilderAtEnd(builder, decCheck);
+        LlvmValueHandle decCursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, prefix + "_dec_cursor");
+        LlvmValueHandle decDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, decCursor, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_dec_done");
+        LlvmApi.BuildCondBr(builder, decDone, continuation, decBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, decBody);
+        LlvmValueHandle decTask = LoadMemory(state, decCursor, 0, prefix + "_dec_task");
+        LlvmValueHandle decTail = LoadMemory(state, decCursor, 8, prefix + "_dec_tail");
+        LlvmApi.BuildStore(builder, decTail, cursorSlot);
+        LlvmValueHandle decWaitKind = LoadMemory(state, decTask, TaskStructLayout.WaitKind, prefix + "_dec_wait_kind");
+        LlvmValueHandle decStateIdx = LoadMemory(state, decTask, TaskStructLayout.StateIndex, prefix + "_dec_state");
+        LlvmValueHandle decIsTimerKind = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, decWaitKind, timerKind, prefix + "_dec_is_timer_kind");
+        LlvmValueHandle decNotDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, decStateIdx, completedState, prefix + "_dec_not_done");
+        LlvmValueHandle decIsTimer = LlvmApi.BuildAnd(builder, decIsTimerKind, decNotDone, prefix + "_dec_is_timer");
+        LlvmApi.BuildCondBr(builder, decIsTimer, decTimer, decCheck);
+
+        LlvmApi.PositionBuilderAtEnd(builder, decTimer);
+        LlvmValueHandle decIsDirect = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, decStateIdx, sleepingState, prefix + "_dec_is_direct");
+        LlvmValueHandle decAwaited = LoadMemory(state, decTask, TaskStructLayout.AwaitedTask, prefix + "_dec_awaited");
+        LlvmValueHandle decLeaf = LlvmApi.BuildSelect(builder, decIsDirect, decTask, decAwaited, prefix + "_dec_leaf");
+        LlvmValueHandle decRem = LoadMemory(state, decLeaf, TaskStructLayout.SleepDurationMs, prefix + "_dec_rem");
+        LlvmValueHandle decNewRem = LlvmApi.BuildSub(builder, decRem, minRemaining, prefix + "_dec_new_rem");
+        StoreMemory(state, decLeaf, TaskStructLayout.SleepDurationMs, decNewRem, prefix + "_dec_store");
+        LlvmApi.BuildBr(builder, decCheck);
     }
 
     /// <summary>
@@ -1415,10 +1569,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle readishWait = LlvmApi.BuildOr(builder, isReadWait, isTlsReadWait, prefix + "_readish_wait");
         LlvmValueHandle writeishWait = LlvmApi.BuildOr(builder, isWriteWait, isTlsWriteWait, prefix + "_writeish_wait");
         LlvmValueHandle shouldWait = LlvmApi.BuildOr(builder, readishWait, writeishWait, prefix + "_should_wait");
+        LlvmValueHandle isTimerWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0),
+            prefix + "_is_timer_wait");
 
         LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait_block");
+        // A lone sleeping leaf (no sibling to interleave with) simply sleeps its full remaining time,
+        // then zeroes it so the next step completes it. This preserves the old blocking behavior for a
+        // single task while the cooperative list scheduler handles interleaving siblings.
+        LlvmBasicBlockHandle timerCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_timer_check");
+        LlvmBasicBlockHandle timerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_timer_block");
         LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_continue");
-        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, continueBlock);
+        LlvmApi.BuildCondBr(builder, shouldWait, waitBlock, timerCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, timerCheckBlock);
+        LlvmApi.BuildCondBr(builder, isTimerWait, timerBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, timerBlock);
+        LlvmValueHandle leafRemaining = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, prefix + "_timer_remaining");
+        EmitNanosleep(state, leafRemaining);
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_zero");
+        LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
         if (IsLinuxFlavor(state.Flavor))
