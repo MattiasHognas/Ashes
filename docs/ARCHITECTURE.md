@@ -210,6 +210,31 @@ any ready task. Networking crosses a per-module runtime ABI (`ashes_tcp_*`,
 `ashes_http_*`, `ashes_step_*_task` symbols) rather than calling backend helpers at
 each instruction site.
 
+#### Task frames and memory
+
+A `Task` value is a heap **state struct** allocated by `CreateTask` through the
+ordinary arena bump allocator — the same per-thread arena as every other owned
+value. The struct holds a fixed header (state index, coroutine function pointer,
+result slot, awaited-task pointer, scheduler chaining/wait metadata) followed by
+the coroutine's captured environment and one slot per variable that is live
+across an `await`. `StateMachineTransform` splits the async body at each
+`AwaitTask` into numbered states (N awaits produce N+1 states) and inserts
+save/restore sequences, so suspension serializes the live temps into the struct
+and resumption reloads them — **no machine stack survives across an `await`**;
+a suspended task costs its state struct, not a stack frame.
+
+Task memory is reclaimed by the same ownership-scope watermark mechanism as any
+other arena allocation: there is no per-task free. Spawning many tasks bump-
+allocates one struct each, and that memory returns when an enclosing ownership
+scope resets the arena (subject to the usual conservative escape rules in
+`Lowering.Ownership.cs`). Task execution is **single-threaded on the calling
+thread** — `Ashes.Async.run` / `all` / `race` step the task list on the thread
+that invoked them (concurrency, not parallelism), so all task allocations land
+in the caller's arena and never alias another thread's heap. One structural
+restriction follows from the layout: a parallel fork/join (`Ashes.Parallel.both`)
+must not straddle an `await`, because the worker descriptor and worker arena are
+not serialized into the state struct; the transform asserts this.
+
 TLS/HTTPS ride a **hermetic `rustls` runtime embedded per executable**: the vendored
 payload (`librustls.so` / `rustls.dll`, under `runtimes/`) is linked only into
 programs that use `https://` or `Ashes.Net.Tls`; the program writes and `dlopen`s
@@ -357,6 +382,26 @@ no reference counting:
 This model is still arena-based and non-GC, but it is no longer a single
 never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
 and whole OS chunks can be returned once they fall out of scope.
+
+### Stacks
+
+The arena serves heap values; call frames use the ordinary machine stack, and
+the compiler does not install guard handlers — exhausting a stack faults the
+process (SIGSEGV on Linux, stack-overflow exception on Windows). Tail-recursive
+loops (including eligible `let rec ... and ...` groups, which lowering merges
+into a single dispatch loop) run in constant stack space; only non-tail
+recursion depth is bounded by these sizes:
+
+- **Main thread, Linux (x64/arm64).** The ELF images do not override the
+  platform stack, so the main thread gets the OS default (`RLIMIT_STACK`,
+  commonly 8 MiB).
+- **Main thread, win-x64.** The PE optional header reserves 8 MiB
+  (`SizeOfStackReserve`, 4 KiB initially committed). The reserve can be
+  overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
+  environment variable read by the PE linker.
+- **Parallel workers.** `Ashes.Parallel` workers get 1 MiB by default —
+  `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
+  the `--parallel-stack-size` CLI flag.
 
 ---
 
