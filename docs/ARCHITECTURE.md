@@ -318,7 +318,7 @@ race on the shared heap-cursor globals:
   state); the join copies the result back into the caller's arena.
 - This coexists with dynamically linked (networking) images: the arm64 prologue
   self-initialises `TPIDR_EL0` only when the loader left it zero, so a `dlopen`d
-  rustls keeps the loader's thread pointer (CO-3/CO-6).
+  rustls keeps the loader's thread pointer.
 
 ### In-place reuse (Perceus-style, no runtime RC)
 
@@ -337,7 +337,7 @@ no reference counting:
   owned before reuse begins. A whole-program **move/linearity analysis**
   (`Lowering.MoveAnalysis.cs`) elides that entry copy when it can prove the
   accumulator is already uniquely owned at every call site — conservatively, so
-  an incomplete proof can only leak, never corrupt (CO-2).
+  an incomplete proof can only leak, never corrupt.
 
 ### Runtime layouts
 

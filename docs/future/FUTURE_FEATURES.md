@@ -7,13 +7,6 @@ and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not he
 async TCP/HTTP, HTTPS/TLS, and brace-free records were landed and their design docs retired into
 those.)
 
-> 🔧 **In-progress work:** internal compiler optimizations — see
-> **[COMPILER_OPTIMIZATION.md](COMPILER_OPTIMIZATION.md)**. In-place reuse, deterministic resource
-> safety, and structured parallelism (all three targets, incl. verified win-x64 parallelism +
-> rustls-TLS coexistence) are landed; the remaining optimization backlog (the move/linearity
-> analysis and arm64 networking+parallelism coexistence) lives there under stable IDs `CO-2` and
-> `CO-3`.
-
 | Feature | Status | Description |
 |---------|--------|-------------|
 | [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
