@@ -1666,6 +1666,46 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.File.readAllBytes(path) : Result(Str, Bytes) — read a whole file into a Bytes with no UTF-8
+    // validation. On Linux the read is uncapped (sized by the file); on Windows it currently shares the
+    // fixed readText buffer and so caps at the same limit. Enables random-access / chunked processing
+    // (e.g. a data-parallel fold that splits the input at record boundaries).
+    private Binding.Intrinsic CreateFileReadAllBytesBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileReadAllBytes,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())))
+        );
+    }
+
+    private (int, TypeRef) LowerFileReadAllBytes(Expr pathArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(pathArg);
+        var (pathTemp, pathType) = LowerExpr(pathArg);
+        var loweredType = Prune(pathType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (pathTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.readAllBytes() expects Str but got {Pretty(loweredType)}.");
+            return (pathTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileReadAllBytes(target, pathTemp));
+        return (target, CreateStringResultType(new TypeRef.TBytes()));
+    }
+
     private Binding.Intrinsic CreateFileWriteTextBinding()
     {
         return new Binding.Intrinsic(

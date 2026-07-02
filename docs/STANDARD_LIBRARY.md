@@ -31,7 +31,13 @@ These types are always available without imports:
 
 ### `Ashes.File`
 
-- `readText(path)` returning `Result(Str, Str)`
+- `readText(path)` returning `Result(Str, Str)` — UTF-8-validated; caps at 1 MiB.
+- `readAllBytes(path)` returning `Result(Str, Bytes)` — read a whole file into a `Bytes` with no UTF-8
+  validation. Uncapped on Linux (the buffer is a standalone `mmap`, so it can exceed one arena chunk);
+  on Windows it currently shares the `readText` buffer and so caps at the same 1 MiB. Enables
+  random-access / chunked processing (e.g. a data-parallel fold that splits the input at record
+  boundaries — see `challenges/1brc/brc_parallel.ash`). The buffer is read-only and program-lifetime;
+  fields sliced from it (`Bytes.subText`) are copied into the arena as usual.
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `writeBytes(path, bytes)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`

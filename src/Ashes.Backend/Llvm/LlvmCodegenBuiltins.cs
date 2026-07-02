@@ -148,11 +148,13 @@ internal static partial class LlvmCodegen
             return global;
         });
 
-    private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef)
+    // rawBytes: read the file as raw Bytes — no UTF-8 validation, and (on Linux) no size cap. Used by
+    // Ashes.File.readAllBytes. readText passes rawBytes: false (UTF-8-validated, capped).
+    private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
     {
         return IsLinuxFlavor(state.Flavor)
-            ? EmitLinuxFileReadText(state, pathRef)
-            : EmitWindowsFileReadText(state, pathRef);
+            ? EmitLinuxFileReadText(state, pathRef, rawBytes)
+            : EmitWindowsFileReadText(state, pathRef, rawBytes);
     }
 
     private static LlvmValueHandle EmitFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
@@ -590,7 +592,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildSub(state.Target.Builder, byteValue, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_value");
     }
 
-    private static LlvmValueHandle EmitLinuxFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef)
+    private static LlvmValueHandle EmitLinuxFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle pathCstr = EmitStringToCString(state, pathRef, "fs_read_path");
@@ -655,12 +657,27 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, seekStartFailed, maybeCloseErrorBlock, allocBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, allocBlock);
-        LlvmValueHandle exceedsLimit = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, fileLength, LlvmApi.ConstInt(state.I64, MaxFileReadBytes, 0), "fs_read_exceeds_limit");
         var withinLimitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_read_within_limit");
-        LlvmApi.BuildCondBr(builder, exceedsLimit, maybeCloseErrorBlock, withinLimitBlock);
+        if (rawBytes)
+        {
+            // readAllBytes: no cap — the allocation is sized by the file, which the caller opted into.
+            LlvmApi.BuildBr(builder, withinLimitBlock);
+        }
+        else
+        {
+            LlvmValueHandle exceedsLimit = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, fileLength, LlvmApi.ConstInt(state.I64, MaxFileReadBytes, 0), "fs_read_exceeds_limit");
+            LlvmApi.BuildCondBr(builder, exceedsLimit, maybeCloseErrorBlock, withinLimitBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, withinLimitBlock);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, fileLength, LlvmApi.ConstInt(state.I64, 8, 0), "fs_read_total_bytes"));
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, fileLength, LlvmApi.ConstInt(state.I64, 8, 0), "fs_read_total_bytes");
+        // readAllBytes may read a file far larger than one arena chunk (the bump arena's chunks are a
+        // fixed size and a single allocation can't exceed one), so the whole-file buffer is a standalone
+        // OS mapping (mmap) rather than an arena allocation. It is a read-only, program-lifetime buffer
+        // (fields sliced out of it are copied into the arena as usual), so it is never arena-reclaimed.
+        LlvmValueHandle stringRef = rawBytes
+            ? EmitAllocateOsMemory(state, totalBytes, "fs_read_raw_buf")
+            : EmitAllocDynamic(state, totalBytes);
         StoreMemory(state, stringRef, 0, fileLength, "fs_read_len");
         LlvmApi.BuildStore(builder, stringRef, stringSlot);
         LlvmApi.BuildStore(builder, fileLength, remainingSlot);
@@ -691,13 +708,21 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, readCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, utf8CheckBlock);
-        LlvmValueHandle utf8Valid = EmitValidateUtf8(
-            state,
-            GetStringBytesPointer(state, LlvmApi.BuildLoad2(builder, state.I64, stringSlot, "fs_read_string_value"), "fs_read_utf8_ptr"),
-            LoadStringLength(state, LlvmApi.BuildLoad2(builder, state.I64, stringSlot, "fs_read_string_len_value"), "fs_read_utf8_len"),
-            "fs_read_utf8");
-        LlvmValueHandle isUtf8Valid = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_is_utf8_valid");
-        LlvmApi.BuildCondBr(builder, isUtf8Valid, closeOkBlock, closeInvalidBlock);
+        if (rawBytes)
+        {
+            // readAllBytes: arbitrary bytes are valid, no UTF-8 check.
+            LlvmApi.BuildBr(builder, closeOkBlock);
+        }
+        else
+        {
+            LlvmValueHandle utf8Valid = EmitValidateUtf8(
+                state,
+                GetStringBytesPointer(state, LlvmApi.BuildLoad2(builder, state.I64, stringSlot, "fs_read_string_value"), "fs_read_utf8_ptr"),
+                LoadStringLength(state, LlvmApi.BuildLoad2(builder, state.I64, stringSlot, "fs_read_string_len_value"), "fs_read_utf8_len"),
+                "fs_read_utf8");
+            LlvmValueHandle isUtf8Valid = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_is_utf8_valid");
+            LlvmApi.BuildCondBr(builder, isUtf8Valid, closeOkBlock, closeInvalidBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitLinuxSyscall(
@@ -975,7 +1000,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_exists_result_value");
     }
 
-    private static LlvmValueHandle EmitWindowsFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef)
+    private static LlvmValueHandle EmitWindowsFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle pathCstr = EmitStringToCString(state, pathRef, "fs_read_path");
@@ -1022,13 +1047,22 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, readSucceeded, utf8Block, closeErrorBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, utf8Block);
-        LlvmValueHandle utf8Valid = EmitValidateUtf8(
-            state,
-            GetStringBytesPointer(state, stringRef, "fs_read_win_utf8_ptr"),
-            LoadStringLength(state, stringRef, "fs_read_win_utf8_len"),
-            "fs_read_win_utf8");
-        LlvmValueHandle isUtf8Valid = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_win_is_utf8_valid");
-        LlvmApi.BuildCondBr(builder, isUtf8Valid, closeOkBlock, closeInvalidBlock);
+        if (rawBytes)
+        {
+            // readAllBytes: no UTF-8 check (Windows still uses the fixed readText buffer, so it caps at
+            // the same size — a linux-only uncapped path today).
+            LlvmApi.BuildBr(builder, closeOkBlock);
+        }
+        else
+        {
+            LlvmValueHandle utf8Valid = EmitValidateUtf8(
+                state,
+                GetStringBytesPointer(state, stringRef, "fs_read_win_utf8_ptr"),
+                LoadStringLength(state, stringRef, "fs_read_win_utf8_len"),
+                "fs_read_win_utf8");
+            LlvmValueHandle isUtf8Valid = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_win_is_utf8_valid");
+            LlvmApi.BuildCondBr(builder, isUtf8Valid, closeOkBlock, closeInvalidBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitWindowsCloseHandle(state, LlvmApi.BuildLoad2(builder, state.I64, handleSlot, "fs_read_close_handle"), "fs_read_close_ok");
