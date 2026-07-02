@@ -51,6 +51,7 @@ internal static partial class LlvmImageLinker
             ["getenv"] = "libc.so.6",
             ["getpid"] = "libc.so.6",
             ["strlen"] = "libc.so.6",
+            ["memchr"] = "libc.so.6",
         };
 
     private const int ElfHeaderSize = 64;

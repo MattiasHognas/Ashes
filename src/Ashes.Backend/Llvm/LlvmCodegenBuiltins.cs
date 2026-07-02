@@ -7183,6 +7183,29 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fromNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, fromVal, zero, "bytes_idx_from_neg");
         LlvmValueHandle fromStart = LlvmApi.BuildSelect(builder, fromNeg, zero, fromVal, "bytes_idx_from_start");
 
+        // On Linux, delegate the scan to libc memchr — glibc's is SIMD-optimized (SSE2/AVX2), far faster
+        // than a byte-at-a-time loop for the common delimiter scans (finding ';' / '\n' in bulk parsing).
+        // memchr never reads past the given length, and we clamp `from` into [0, len] so the length passed
+        // is non-negative. Windows keeps the freestanding scalar loop below (no libc memchr wired there).
+        if (state.Target.TargetTriple.Contains("linux", StringComparison.Ordinal))
+        {
+            // Clamp fromStart up to len so `len - fromStart` (memchr's size_t length) can't underflow.
+            LlvmValueHandle fromPastEnd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, fromStart, len, "bytes_idx_from_pastend");
+            LlvmValueHandle scanStart = LlvmApi.BuildSelect(builder, fromPastEnd, len, fromStart, "bytes_idx_scan_start");
+            LlvmValueHandle scanPtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [scanStart], "bytes_idx_scan_ptr");
+            LlvmValueHandle scanLen = LlvmApi.BuildSub(builder, len, scanStart, "bytes_idx_scan_len");
+            // memchr's needle is an int whose low byte is compared; zero-extend our u8 to i32.
+            LlvmValueHandle needle32 = LlvmApi.BuildZExt(builder, needle8, state.I32, "bytes_idx_needle32");
+            LlvmTypeHandle memchrType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I32, state.I64]);
+            LlvmValueHandle found = EmitLinuxImportedCall(state, "memchr", memchrType, [scanPtr, needle32, scanLen], "bytes_idx_memchr");
+            LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, found, LlvmApi.ConstNull(state.I8Ptr), "bytes_idx_isnull");
+            LlvmValueHandle foundInt = LlvmApi.BuildPtrToInt(builder, found, state.I64, "bytes_idx_found_int");
+            LlvmValueHandle dataInt = LlvmApi.BuildPtrToInt(builder, dataPtr, state.I64, "bytes_idx_data_int");
+            LlvmValueHandle foundIdx = LlvmApi.BuildSub(builder, foundInt, dataInt, "bytes_idx_found_idx");
+            LlvmValueHandle negOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0);
+            return LlvmApi.BuildSelect(builder, isNull, negOne, foundIdx, "bytes_idx_result_val");
+        }
+
         LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "bytes_idx_slot");
         LlvmApi.BuildStore(builder, fromStart, idxSlot);
 
