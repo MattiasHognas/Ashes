@@ -252,6 +252,18 @@ Net: #1–#9 are closed and brc runs the challenge correctly and constant-memory
 The general reuse follow-up (`CO-2`) deferred in the 2026-07-01 pass has since landed, and the
 `CO-8`/`CO-9` reuse-correctness fixes cause no regression here.
 
+**Why still ~50–1000× off the fastest cross-language entries (analysis + one experiment).** Rewriting
+brc to use `Ashes.HashMap` (theoretically O(1)-ish, integer-hash compares) instead of the ordered
+`Ashes.Map` made it **2.6× slower and 200× larger (10.1 GB @ 1M)** — because the in-place-reuse
+specialization is wired only to `Map.set`, so `HashMap.set` allocates a fresh tree per row *and*
+re-hashes the whole key twice. So the program is already near the frontier of what the current
+compiler/stdlib allow; the remaining gap is compiler/stdlib/runtime work, not the `.ash`. The concrete,
+actionable pieces are now filed as open roadmap tasks `CO-10`…`CO-14` in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md): generalize
+in-place reuse beyond `Map.set` (`CO-10`), a `u8`→`Int` widening so byte-level integer parsing is
+expressible (`CO-11`), zero-copy string/bytes views + `mmap` input (`CO-12`), SIMD for the hot byte
+loops (`CO-13`), and a data-parallel chunked fold for multicore (`CO-14`).
+
 ---
 
 ## #1 — No buffered or streaming file IO  — ✅ FIXED

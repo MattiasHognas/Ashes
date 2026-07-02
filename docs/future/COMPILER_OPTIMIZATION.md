@@ -55,10 +55,25 @@ All original audit findings have been addressed:
 
 ## Roadmap — remaining optimization work
 
-All roadmap items are complete — see the *Completed Work* table above. The last open item, CO-7
-(a cooperative async runtime so `both` overlaps in-flight I/O), landed across the slices recorded in
-the *Subtask decomposition* below; its historical design/validation notes are kept in the *CO-7 —
-detailed analysis* section for reference.
+The original audit and CO-1…CO-9 all landed (see *Completed Work*; CO-7's historical notes are in the
+*CO-7 — detailed analysis* section). The items below were surfaced by a throughput analysis of the 1BRC
+challenge (`challenges/1brc/FLAWS.md`, 2026-07-02): `brc.ash` is now correct and constant-memory but
+~50–1000× slower than the fastest cross-language entries, and — confirmed by experiment — the gap is
+almost entirely in the compiler / stdlib / runtime, not the program (swapping the ordered `Ashes.Map`
+for `Ashes.HashMap` made it *2.6× slower and 200× larger*, because only `Map.set` gets the in-place
+reuse). Each row is a concrete, independently workable improvement, referenced by a stable ID.
+
+| ID | Item | Notes |
+|----|------|-------|
+| **CO-10** | **Generalize in-place-reuse eligibility beyond the `Map.set` shape** | The constant-memory in-place-reuse specialization (`f$reuse`) fires only for functions whose structure `TryGetNestedRecReturn`/the single-param-`let rec` check recognizes (`Lowering.cs` ~423–449) — in practice `Ashes.Map.set` (a `fun … -> fun m -> <nested single-param recursion over m>`) and single-param `let rec` folds. `Ashes.HashMap.set` is **not** recognized (its body computes `hashKey` before recursing, so it is registered *inlinable*, not *specializable*), so it reuses nothing and allocates a fresh tree every iteration: the 1BRC `HashMap` variant measured **10.1 GB @ 1M and 2.6× slower** vs 50 MB / 1× for the `Map` version. Broaden the structural detection — see through a leading `let h = … in`, and admit an accumulator that is the last of several curried params rebuilt by a nested recursion — so any AVL/tree-rebuild fold qualifies. Endpoint: a `HashMap.set` fold is constant-memory at 1M/10M, with a microbench + test. **Biggest single lever for hash-keyed workloads.** Risk: med (reuse analysis — CO-8/CO-9 territory). |
+| **CO-11** | **`u8` → `Int` widening so byte-level integer parsing is expressible** | `Ashes.Bytes.get` returns `u8`, and there is no conversion to `Int` for arithmetic — `b - 48`, `acc * 10 + …` fail with `ASH002 '-' requires Int-Int …, got u8 and Int`. So parsing an integer straight from bytes is impossible; code must slice the field into a `Str` and `parseInt` (allocating per row). Add an explicit widening intrinsic (e.g. `Ashes.UInt.toInt` / a `u8`→`Int` zext), covering `getU16Le`/`getU32Le`/`getU64Le` results too. Endpoint: a `.ash` that parses an integer via `Bytes.get` compiles and runs; a test. Risk: low. |
+| **CO-12** | **Zero-copy string/bytes views (borrowed slices; `mmap` input)** | Bulk parsing copies every line and field into an owned heap `Str`: `File.readLine` materializes each line, and each `Bytes.subText`/`String.substring` copies a field — so a fold over N lines does O(N) allocations (constant-memory only because the arena resets each iteration; the *traffic* remains). The fastest 1BRC entries `mmap` the file and treat fields as `(pointer, length)` slices — zero copy. Add a borrowed byte/string **view** (a range over an existing `Bytes`/`Str`, no copy) whose backing the ownership/borrow model keeps alive, and/or an `mmap`-backed whole-file `Bytes` view. Endpoint: a large-file field-slicing fold with no per-row allocation; measured allocation/time drop. Risk: high (ties into the ownership/borrow milestone — slice lifetime vs. backing buffer). |
+| **CO-13** | **Vectorize the hot byte loops (`indexOf` / `compare` / `hash` scan)** | The stdlib byte loops that dominate a scan-heavy workload — `Ashes.Bytes.indexOf` (memchr), `Ashes.String.compare`, `Ashes.Bytes.hash`, char-by-char scanning — are scalar; the LLVM backend is not auto-vectorizing them, while fast 1BRC entries find delimiters and compare with SWAR/AVX (8–64 bytes per instruction). Either shape these loops so LLVM's loop-vectorizer fires (confirm via disassembly) or add SIMD-width byte intrinsics (a vectorized `indexOf`, a SWAR compare). Endpoint: measured scan/compare throughput improvement with vector ops visible in the emitted code. Risk: med–high (codegen). |
+| **CO-14** | **Data-parallel chunked fold (mergeable parallel reduce over a byte range / file)** | A streaming fold like 1BRC's `streamLoop` is single-threaded; `Ashes.Parallel.both` forks two thunks but there is no ergonomic way to split a large input into per-core chunks, fold each on a worker, and merge — and the data-parallel `map`/`reduce` (CO-1) is list-oriented, not chunked-byte. Add a chunked parallel reduce (`Ashes.Parallel.reduceChunks`-style): split a `Bytes`/file range into per-core sub-ranges at record boundaries, fold each with a user function on a worker (per-thread arena + deep-copy-on-join — already built), and merge with a user combiner. Endpoint: a 1BRC-shaped fold scales ~linearly with cores; an N-worker speedup test. Risk: high. |
+
+Rough impact order for the 1BRC workload: **CO-10** (kills the hash-map leak) and **CO-11** (cheap byte
+parse) are the low-hanging, program-visible wins; **CO-14** (multicore) is the largest raw speedup;
+**CO-12** / **CO-13** (zero-copy + SIMD) are the deeper single-core constant-factor work.
 
 ---
 
