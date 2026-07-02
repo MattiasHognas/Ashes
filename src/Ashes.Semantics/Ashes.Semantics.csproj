@@ -21,6 +21,8 @@
       LogicalName="Ashes.Semantics.StdLib.Ashes.Map.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\HashMap.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.HashMap.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\HashTrie.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.HashTrie.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Parallel.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Parallel.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Maybe.ash"

@@ -147,6 +147,10 @@ public static class BuiltinRegistry
                 "Ashes.HashMap",
                 "Ashes.Semantics.StdLib.Ashes.HashMap.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.HashTrie"] = new(
+                "Ashes.HashTrie",
+                "Ashes.Semantics.StdLib.Ashes.HashTrie.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Parallel"] = new(
                 "Ashes.Parallel",
                 "Ashes.Semantics.StdLib.Ashes.Parallel.ash",
