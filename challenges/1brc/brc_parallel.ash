@@ -92,11 +92,9 @@ let rec foldLines bytes pos hi map =
                             in 
                                 let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
                                 in 
-                                    let map2 = 
-                                        match Ashes.Map.get(Ashes.String.compare)(name)(map) with
-                                            | None -> Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map)
-                                            | Some(existing) -> Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map)
-                                    in foldLines(bytes)(lineEnd + 1)(hi)(map2)
+                                    match Ashes.Map.get(Ashes.String.compare)(name)(map) with
+                                        | None -> foldLines(bytes)(lineEnd + 1)(hi)(Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map))
+                                        | Some(existing) -> foldLines(bytes)(lineEnd + 1)(hi)(Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
 
 let foldChunk triple = 
     match triple with
