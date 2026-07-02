@@ -5,9 +5,11 @@ The [One Billion Row Challenge](https://github.com/gunnarmorling/1brc) reads ~1e
 It exercises exactly the things Ashes is weakest at: bulk IO, mutable/hashed
 accumulation, ordering, and a long-running hot loop under a non-GC arena.
 
-[`brc.ash`](brc.ash) is a *correct* implementation for ASCII station names at a
-modest row count (verified against a hand-computed fixture). It is **not** viable
-for the real input. This document is the point of the exercise: what broke, where,
+[`brc.ash`](brc.ash) is a *correct* implementation (verified against a hand-computed
+fixture; UTF-8 station names sort by byte order). It started out **not** viable for
+the real input — every flaw below was found while getting it there — and now runs the
+full 1e9-row input (`brc_parallel.ash` does it in ~2m36s; see [`README.md`](README.md)
+for current benchmarks). This document is the point of the exercise: what broke, where,
 and why. File/line references are into the compiler at the time of writing.
 
 Some findings are **compiler bugs discovered while writing this program**; the rest
@@ -29,10 +31,10 @@ are structural limitations of the language / stdlib / memory model.
 | #9 | `+` with two unresolved operands eagerly defaults to Int | **FIXED** (deferred AddInt/ConcatStr + monomorphic `+`-vars) |
 
 Each section below records the original finding and what changed to fix it. **All flaws are now
-fixed** (brc is correct and constant-memory on all three targets). The compiler-side follow-up work
-that remains — the pieces beyond the 1BRC exercise itself — is tracked in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md) under IDs `CO-1`…`CO-6`
-(data-parallel `map`/`reduce`, the move/linearity analysis, arm64 networking+parallelism, etc.).
+fixed** (brc is correct and constant-memory on all three targets). The compiler-side improvements this
+exercise drove — data-parallel `map`/`reduce`, the move/linearity analysis, arm64/win-x64
+networking+parallelism coexistence, and more — have all **landed**; see the *Completed Work* record in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
 
 ## Performance pass (2026-06-30) — benchmark + remaining work
 
@@ -257,12 +259,35 @@ brc to use `Ashes.HashMap` (theoretically O(1)-ish, integer-hash compares) inste
 `Ashes.Map` made it **2.6× slower and 200× larger (10.1 GB @ 1M)** — because the in-place-reuse
 specialization is wired only to `Map.set`, so `HashMap.set` allocates a fresh tree per row *and*
 re-hashes the whole key twice. So the program is already near the frontier of what the current
-compiler/stdlib allow; the remaining gap is compiler/stdlib/runtime work, not the `.ash`. The concrete,
-actionable pieces are now filed as open roadmap tasks `CO-10`…`CO-14` in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md): generalize
-in-place reuse beyond `Map.set` (`CO-10`), a `u8`→`Int` widening so byte-level integer parsing is
-expressible (`CO-11`), zero-copy string/bytes views + `mmap` input (`CO-12`), SIMD for the hot byte
-loops (`CO-13`), and a data-parallel chunked fold for multicore (`CO-14`).
+compiler/stdlib allow; the gap was compiler/stdlib/runtime work, not the `.ash`. The concrete,
+actionable pieces became `CO-10`…`CO-14` and have all **landed** (see the *Completed Work* record in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md)): a `u8`→`Int`
+widening for byte-level integer parsing (`CO-11`), SIMD `memchr` scan (`CO-13`), zero-copy `mmap` input
+(`CO-12`), a data-parallel chunked fold + loop-invariant reset-safety making it constant-memory
+(`CO-14` / `CO-10`) — together the parallel `brc` now runs the full 1e9-row challenge in ~2m36s. A
+smaller reuse-*eligibility* generalization (`HashMap.set`) remains — tracked as `CO-15` in
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
+
+## Performance pass (2026-07-02) — data-parallel `brc` reaches the full 1e9-row challenge
+
+`brc_parallel.ash` shards the file across cores: `Ashes.File.mmap` (zero-copy read) → newline-aligned
+`(bytes, lo, hi)` chunks → per-core `Ashes.Parallel.reduce`/`both` fold → merge the partial maps. The
+loop-invariant reset-safety fix (`CO-10`) makes each worker's fold constant-memory, so the parallel path
+finally scales past ~15M rows (before it, the per-worker maps leaked and 1e9 needed ~120 GB — OOM).
+Byte-identical output to the sequential `brc`. Measured with `hyperfine` (warm cache) on a 32-core Linux
+x64 box; the parallel variant caps at 8 workers.
+
+| Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` |
+|------|----------------------|-----------------------------|
+| 10,000,000 | 12.8 s / 50 MB | 2.6 s / 1.6 GB |
+| 100,000,000 | 2 m 07 s / 50 MB | 16.9 s / 2.9 GB |
+| **1,000,000,000** (full challenge) | ~21 min / 50 MB | **2 m 36 s** / 15.9 GB — 41,343 stations, ≈6.4 M rows/s |
+
+**The 1BRC ultimate goal — 1e9 rows — now runs in 2 m 36 s at 15.9 GB, correct**, on a commodity 60 GB
+box, in a pure/immutable/no-GC functional language compiled to a standalone native binary. The tradeoff:
+the sequential fold is constant-memory (~50 MB at any size) but single-core and scales anywhere; the
+parallel fold is ~5–8× faster (near the 8-worker cap) but holds the mapped file plus per-worker maps in
+RAM. See [`README.md`](README.md) for how to reproduce.
 
 ---
 
@@ -457,9 +482,10 @@ tasks (`Task`/`await`), not data-parallel CPU work.
 **Fix:** `Ashes.Parallel.both` is now a genuinely parallel fork/join of two pure thunks
 on all three targets (per-thread bump arenas + worker threads + deep-copy-on-join,
 deterministic and memory-bounded) — see the structured-parallelism entry in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md). brc
-itself still folds sequentially; sharding it with `both` (and full data-parallel
-`map`/`reduce`, roadmap `CO-1`) is the remaining challenge-level work.
+[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md), and full
+data-parallel `map`/`reduce` (`CO-1`) landed. brc is now sharded across cores: `brc_parallel.ash`
+splits the file into per-core chunks and folds each on a worker (`CO-14`), constant-memory per worker
+(`CO-10`) — running the full 1e9-row challenge in ~2m36s.
 
 ## #6 — Compiler bug: a shipped-module reference inside a function body fails to resolve  — ✅ FIXED
 

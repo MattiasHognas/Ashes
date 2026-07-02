@@ -213,8 +213,9 @@ Structured, deterministic parallelism over **pure** functions (see
 `docs/future/COMPILER_OPTIMIZATION.md`). Every result is identical to the sequential
 equivalent. `both` is a **genuinely parallel** fork/join primitive on all three targets
 (per-thread arenas + worker threads + deep-copy-on-join), forking at concrete result types
-and running sequentially for abstract ones. `map`/`reduce` currently run sequentially
-(their element type is abstract inside the polymorphic body — roadmap CO-1).
+and running sequentially for abstract ones. `map`/`reduce` fork at concrete element types via
+call-site monomorphization, degrading to a (correct) sequential evaluation when used polymorphically
+or partially applied.
 
 - `both(left)(right)` returning `(A, B)` — fork/join two pure thunks `(Unit -> A)`, `(Unit -> B)`
 - `map(f)(list)` returning `List(B)` — order-preserving map, split-and-fork shaped
