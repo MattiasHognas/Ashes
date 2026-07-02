@@ -65,6 +65,7 @@ public static class BuiltinRegistry
         BytesGetU16Le,
         BytesGetU32Le,
         BytesGetU64Le,
+        UIntToInt,
         FileWriteBytes,
         IoReadExact,
         TextByteLength,
@@ -218,6 +219,13 @@ public static class BuiltinRegistry
                     ["getU16Le"] = new("getU16Le", BuiltinValueKind.BytesGetU16Le, IsCallable: true, Arity: 2),
                     ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
                     ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)
+                }),
+            ["Ashes.UInt"] = new(
+                "Ashes.UInt",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",

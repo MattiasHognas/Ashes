@@ -2457,6 +2457,47 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.UInt.toInt : u8 -> Int (the value type of the partially-applied reference). A saturated
+    // call accepts any unsigned width (u8/u16/u32/u64) — the width is checked in LowerUIntToInt, which
+    // does not go through this scheme.
+    private Binding.Intrinsic CreateUIntToIntBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.UIntToInt,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TUInt(8), new TypeRef.TInt()))
+        );
+    }
+
+    // Ashes.UInt.toInt(x) : Int — widen an unsigned integer to a signed Int. Every uN is stored as a
+    // width-masked i64, so reinterpreting it as Int is value-preserving for u8/u16/u32 (and a
+    // bit-reinterpret for u64); no runtime instruction is needed, just a retype.
+    private (int, TypeRef) LowerUIntToInt(Expr arg)
+    {
+        using var argDiagnosticSpan = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (argTemp, pruned);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            // A bare `Ashes.UInt.toInt(x)` with an otherwise-unconstrained argument defaults to u8 (the
+            // common case: a byte from Ashes.Bytes.get).
+            Unify(pruned, new TypeRef.TUInt(8));
+            pruned = new TypeRef.TUInt(8);
+        }
+
+        if (pruned is not TypeRef.TUInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.UInt.toInt() expects an unsigned integer (u8/u16/u32/u64) but got {Pretty(pruned)}.");
+            return (argTemp, new TypeRef.TInt());
+        }
+
+        return (argTemp, new TypeRef.TInt());
+    }
+
     private Binding.Intrinsic CreateBytesGetBinding()
     {
         return new Binding.Intrinsic(
