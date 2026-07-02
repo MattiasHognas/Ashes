@@ -3069,12 +3069,27 @@ public sealed partial class Lowering
                     RecordLocalDebugInfo(localSlot, capName, scope[capName].Type);
                     // Override binding to use local slot
                     scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
-                    tco.ParamSlots.Add(localSlot);
                 }
             }
 
-            // The arg slot is also a TCO param (last in the chain)
-            tco.ParamSlots.Add(argSlot);
+            // Build ParamSlots in PARAMETER (declaration/application) order, so ParamSlots[i] is the slot
+            // of the i-th curried parameter — which is also the i-th collected back-edge argument. The
+            // captured params were just bound to fresh locals in capture-DISCOVERY order (the order free
+            // variables appear in the body), which need not match declaration order; indexing the slots by
+            // capture order stored each back-edge argument into the wrong parameter's slot (a swap that
+            // corrupts both when, e.g., a string and a list parameter are captured in reverse order).
+            // Every parameter — including the innermost, bound to argSlot — resolves through the scope.
+            foreach (var pname in tco.ParamNames)
+            {
+                if (scope.TryGetValue(pname, out var pBinding) && pBinding is Binding.Local pLocal)
+                {
+                    tco.ParamSlots.Add(pLocal.Slot);
+                }
+                else
+                {
+                    throw new InvalidOperationException($"TCO parameter '{pname}' has no local slot for the back-edge.");
+                }
+            }
 
             // In-place reuse: mark accumulators that are deconstructed in the loop body as
             // linear (so the body's match→construct lowering reuses their nodes in place) and record
