@@ -268,6 +268,27 @@ widening for byte-level integer parsing (`CO-11`), SIMD `memchr` scan (`CO-13`),
 smaller reuse-*eligibility* generalization (`HashMap.set`) remains — tracked as `CO-15` in
 [docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
 
+## Performance pass (2026-07-02) — data-parallel `brc` reaches the full 1e9-row challenge
+
+`brc_parallel.ash` shards the file across cores: `Ashes.File.mmap` (zero-copy read) → newline-aligned
+`(bytes, lo, hi)` chunks → per-core `Ashes.Parallel.reduce`/`both` fold → merge the partial maps. The
+loop-invariant reset-safety fix (`CO-10`) makes each worker's fold constant-memory, so the parallel path
+finally scales past ~15M rows (before it, the per-worker maps leaked and 1e9 needed ~120 GB — OOM).
+Byte-identical output to the sequential `brc`. Measured with `hyperfine` (warm cache) on a 32-core Linux
+x64 box; the parallel variant caps at 8 workers.
+
+| Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` |
+|------|----------------------|-----------------------------|
+| 10,000,000 | 12.8 s / 50 MB | 2.6 s / 1.6 GB |
+| 100,000,000 | 2 m 07 s / 50 MB | 16.9 s / 2.9 GB |
+| **1,000,000,000** (full challenge) | ~21 min / 50 MB | **2 m 36 s** / 15.9 GB — 41,343 stations, ≈6.4 M rows/s |
+
+**The 1BRC ultimate goal — 1e9 rows — now runs in 2 m 36 s at 15.9 GB, correct**, on a commodity 60 GB
+box, in a pure/immutable/no-GC functional language compiled to a standalone native binary. The tradeoff:
+the sequential fold is constant-memory (~50 MB at any size) but single-core and scales anywhere; the
+parallel fold is ~5–8× faster (near the 8-worker cap) but holds the mapped file plus per-worker maps in
+RAM. See [`README.md`](README.md) for how to reproduce.
+
 ---
 
 ## #1 — No buffered or streaming file IO  — ✅ FIXED
