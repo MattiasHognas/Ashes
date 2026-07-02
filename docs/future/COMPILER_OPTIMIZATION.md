@@ -84,7 +84,7 @@ via `both`. A CPU-bound coroutine stalling the loop is exactly what `both` offlo
 
 | ID | Slice | Endpoint / verification | Deps | Risk |
 |----|-------|-------------------------|------|------|
-| **CO-7a-1** | **Make the coroutine path live (semantics-preserving).** Wire `LowerCapturedStringTask` / `CreateTask` / `StateMachineTransform` so user `async`/`await` lowers to a suspending coroutine, while `RunTask` stays a *blocking* driver — behavior identical, but now through the state machine (turns today's dead code live). | Existing async tests pass, now routed through the coroutine path (a transform-coverage assertion / binary byte-scan proves the state machine is exercised). | — (builds on done blocker 3) | med (codegen + coroutine ABI) |
+| **CO-7a-1** — **DONE** | **Make the coroutine path live (semantics-preserving).** ~~Wire `LowerCapturedStringTask` / `CreateTask` / `StateMachineTransform` so user `async`/`await` lowers to a suspending coroutine, while `RunTask` stays a *blocking* driver — behavior identical, but now through the state machine (turns today's dead code live).~~ **Landed:** `Ashes.Async.task(E)` (i.e. `async(E)`) whose body contains an `await` now lowers via `LowerCapturedStringTask` into a coroutine (free vars captured; body's `await` → `IrInst.AwaitTask` suspension via a new `_inCoroutineBody` flag; `StateMachineTransform` splits it), returning `CreateTask` instead of `CreateCompletedTask`. `RunTask` (blocking) drives the state machine — behavior identical. Await-free `async(E)` stays the eager pre-completed task. | Existing async tests pass, now routed through the coroutine path. **`AsyncCoroutinePathTests`** asserts an await-bearing `async` produces a coroutine function with `StateCount > 1` + a `CreateTask` (the state machine is exercised), while an await-free `async` stays `CreateCompletedTask` with no coroutine. Full gate green (C# 1315, LSP 52, 382 e2e). | — (builds on done blocker 3) | med (codegen + coroutine ABI) |
 | **CO-7a-2** | **Cooperative scheduler + timer queue (non-networking).** Replace the blocking driver with a cooperative loop over a ready/timer queue; make `Ashes.Async.sleep` a real timer suspension. | `tests/async_sleep_interleave.ash`: two tasks provably interleave (B advances while A sleeps) — impossible today. | CO-7a-1 | med–high |
 | **CO-7b-1** | **linux epoll networking leaf tasks.** Make `CreateHttpGetTask` / `CreateTls*Task` non-blocking on linux, integrated so an I/O-pending task yields to the loop. | Loopback HTTPS where a second task runs while the request is in flight. | CO-7a-2 | high (per-platform I/O) |
 | **CO-7b-2** | **win-x64 IOCP / overlapped networking.** Same for Windows, verified under Wine. | Wine loopback overlap test. | CO-7a-2 | high |
@@ -281,9 +281,14 @@ is impossible without the scheduler above.)
    loop** (see the *Subtask decomposition* above for the rationale vs. a thread pool). Sliced into
    **CO-7a-2** (cooperative scheduler + timer queue) and **CO-7b-1/2/3** (per-target non-blocking
    networking leaf tasks).
-2. Wire the dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path so user
+2. ~~Wire the dead `StateMachineTransform` / `CreateTask` / `LowerCapturedStringTask` path so user
    `async` code lowers to a genuine suspending coroutine. Sliced as **CO-7a-1** (make the coroutine
-   path live, semantics-preserving).
+   path live, semantics-preserving).~~ **DONE (CO-7a-1)** — an `async(E)` with an `await` now builds a
+   coroutine through `LowerCapturedStringTask` (captures its free vars, lowers the body with `await` →
+   `AwaitTask` under a new `_inCoroutineBody` flag, runs `StateMachineTransform`, emits `CreateTask`);
+   `RunTask` blockingly drives the state machine, so behavior is identical. Await-free tasks stay eager.
+   Verified by `AsyncCoroutinePathTests` (coroutine + `StateCount > 1` + `CreateTask`) with the whole
+   async e2e suite still green. The scheduler that makes suspension *non-blocking* is still blocker (1).
 3. ~~Extend `StateMachineTransform` liveness to the three `Parallel*` instructions (blocker-(2)(a)
    above) and assert the fork→join→cleanup-within-one-segment invariant (blocker-(2)(b)).~~
    **DONE** — `GetDefinedTemps`/`GetUsedTemps` now cover `ParallelFork`/`ParallelJoin`/`ParallelCleanup`,
