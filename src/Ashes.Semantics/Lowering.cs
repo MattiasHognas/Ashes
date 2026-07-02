@@ -111,6 +111,112 @@ public sealed partial class Lowering
     // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
     private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
 
+    // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
+    private readonly Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> _reuseTokenFieldBindings = new();
+    private readonly Dictionary<int, int> _reuseBindingSeenBySlot = new();
+    private readonly Dictionary<int, string> _reuseTrackedSlotNames = new();
+
+    private static int CountNameOccurrences(object? node, string name)
+    {
+        if (node is null or string)
+        {
+            return 0;
+        }
+
+        int count = node is Expr.Var v && string.Equals(v.Name, name, StringComparison.Ordinal) ? 1 : 0;
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                count += CountNameOccurrences(tuple[i], name);
+            }
+
+            return count;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
+            {
+                count += CountNameOccurrences(item, name);
+            }
+
+            return count;
+        }
+
+        if (node is not (Expr or Pattern or MatchCase))
+        {
+            return 0;
+        }
+
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                count += CountNameOccurrences(prop.GetValue(node), name);
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Branch adjustment for the CO-23 seen-counters: references in a mutually-exclusive
+    /// sibling branch can never execute after a constructor in THIS branch, so they are
+    /// pre-credited as seen while the branch lowers and reverted afterwards.</summary>
+    private Dictionary<int, int>? BeginExclusiveBranch(IEnumerable<Expr> otherBranches)
+    {
+        if (_reuseTrackedSlotNames.Count == 0)
+        {
+            return null;
+        }
+
+        // Snapshot the seen-counters: on exit the whole map is restored, rolling back BOTH the
+        // sibling credits below AND this branch's own increments — a sibling branch (or code after
+        // the join) must not observe references that only execute on this path. Inside the branch,
+        // sibling references are pre-credited as seen (they can never execute after a constructor
+        // on this path).
+        var snapshot = new Dictionary<int, int>(_reuseBindingSeenBySlot);
+        foreach (var (slot, name) in _reuseTrackedSlotNames)
+        {
+            int credit = 0;
+            foreach (var other in otherBranches)
+            {
+                credit += CountNameOccurrences(other, name);
+            }
+
+            if (credit > 0)
+            {
+                _reuseBindingSeenBySlot[slot] = _reuseBindingSeenBySlot.GetValueOrDefault(slot) + credit;
+            }
+        }
+
+        return snapshot;
+    }
+
+    private void EndExclusiveBranch(Dictionary<int, int>? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return;
+        }
+
+        _reuseBindingSeenBySlot.Clear();
+        foreach (var kv in snapshot)
+        {
+            _reuseBindingSeenBySlot[kv.Key] = kv.Value;
+        }
+    }
+
+
     // Non-recursive top-level functions, by name → (param names, body). When such a function is
     // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
     // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
@@ -1385,6 +1491,11 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerVar(Expr.Var v)
     {
         var b = Lookup(v.Name);
+        if (_reuseBindingSeenBySlot.Count > 0 && b is Binding.Local seenLocal
+            && _reuseBindingSeenBySlot.ContainsKey(seenLocal.Slot))
+        {
+            _reuseBindingSeenBySlot[seenLocal.Slot]++;
+        }
 
         if (b is null && (_inSpecialization || _inParallelSpecialization) && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
@@ -2902,7 +3013,9 @@ public sealed partial class Lowering
         var reuseTokensAtIf = new List<(int, int)>(_reuseTokens);
 
         int slot = NewLocal();
+        var thenCredits = BeginExclusiveBranch([iff.Else]);
         var (tTemp, tType) = LowerExpr(iff.Then);
+        EndExclusiveBranch(thenCredits);
         var thenType = Prune(tType);
         Emit(new IrInst.StoreLocal(slot, tTemp));
 
@@ -2913,7 +3026,9 @@ public sealed partial class Lowering
         _reuseTokens.AddRange(reuseTokensAtIf);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        var elseCredits = BeginExclusiveBranch([iff.Then]);
         var (eTemp, eType) = LowerExpr(iff.Else);
+        EndExclusiveBranch(elseCredits);
         var elseType = Prune(eType);
         Emit(new IrInst.StoreLocal(slot, eTemp));
 

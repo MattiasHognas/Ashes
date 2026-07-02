@@ -107,11 +107,7 @@ let upsertHashed hash key missValue onHit =
                     else TrieLeaf(h2)(k2)(v2)(go(next))
                 else 
                     let ds = firstDiffShift(hash)(h2)(0)
-                    in 
-                        let keep = TrieLeaf(h2)(k2)(v2)(next)
-                        in 
-                            let fresh = TrieLeaf(hash)(key)(missValue)(TrieEmpty)
-                            in splitPair(ds)(hash >> ds & 15)(fresh)(h2 >> ds & 15)(keep)
+                    in splitPair(ds)(hash >> ds & 15)(TrieLeaf(hash)(key)(missValue)(TrieEmpty))(h2 >> ds & 15)(TrieLeaf(h2)(k2)(v2)(next))
             | TrieNode16(s, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15) -> 
                 let nib = hash >> s & 15
                 in 

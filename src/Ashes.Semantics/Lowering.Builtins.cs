@@ -668,6 +668,12 @@ public sealed partial class Lowering
 
         _inst.Clear();
         _nextTempSlot = 0;
+        var savedReuseTokenFieldBindings = new Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>>(_reuseTokenFieldBindings);
+        var savedReuseBindingSeen = new Dictionary<int, int>(_reuseBindingSeenBySlot);
+        var savedReuseTrackedSlotNames = new Dictionary<int, string>(_reuseTrackedSlotNames);
+        _reuseTokenFieldBindings.Clear();
+        _reuseBindingSeenBySlot.Clear();
+        _reuseTrackedSlotNames.Clear();
         _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
@@ -713,6 +719,12 @@ public sealed partial class Lowering
         _inst.Clear();
         _inst.AddRange(savedInst);
         _nextTempSlot = savedTemp;
+        _reuseTokenFieldBindings.Clear();
+        foreach (var kv in savedReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;
+        _reuseBindingSeenBySlot.Clear();
+        foreach (var kv in savedReuseBindingSeen) _reuseBindingSeenBySlot[kv.Key] = kv.Value;
+        _reuseTrackedSlotNames.Clear();
+        foreach (var kv in savedReuseTrackedSlotNames) _reuseTrackedSlotNames[kv.Key] = kv.Value;
         _nextLocalSlot = savedLocal;
         _localNames.Clear();
         _localTypes.Clear();
