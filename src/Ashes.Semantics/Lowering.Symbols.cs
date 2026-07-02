@@ -665,10 +665,13 @@ public sealed partial class Lowering
             // newKey/newValue input, on insert OR update) must be copied into the persistent blob, or it
             // dangles past the per-iteration reset (the node survives, but the field would point into
             // reclaimed scratch). Fields taken from the matched accumulator (pattern bindings) are already
-            // persistent and are NOT copied — identified by the field argument being one of the spec's
-            // fresh-input names (see _specFreshInputNames, propagated through inlined helpers).
+            // persistent and are NOT copied — identified by the field argument being a variable that is
+            // not one of the spec's fresh-input names (see _specFreshInputNames, propagated through
+            // inlined helpers). Any non-variable field expression (a value computed in the arm, e.g. an
+            // upsert's onHit(value) call) is fresh arena scratch and must be materialized as well —
+            // over-materializing an already-persistent value only costs a copy, never correctness.
             if (_inSpecialization && _specFreshInputNames is not null
-                && args[i] is Expr.Var fieldVar && _specFreshInputNames.Contains(fieldVar.Name))
+                && (args[i] is not Expr.Var fieldVar || _specFreshInputNames.Contains(fieldVar.Name)))
             {
                 var pruned = Prune(argTypes[i]);
                 if (pruned is TypeRef.TStr or TypeRef.TBytes)

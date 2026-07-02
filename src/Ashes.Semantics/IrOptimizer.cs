@@ -16,6 +16,14 @@ public static class IrOptimizer
         var optimizedEntry = OptimizeFunction(program.EntryFunction);
         var optimizedFuncs = program.Functions.Select(OptimizeFunction).ToList();
 
+        // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
+        // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
+        // dead MakeClosures are already resolved, and needs whole-program non-allocation
+        // summaries for known callees.
+        var nonAllocating = ComputeNonAllocatingFunctions(optimizedEntry, optimizedFuncs);
+        optimizedEntry = StripRedundantArenaBrackets(optimizedEntry, nonAllocating);
+        optimizedFuncs = optimizedFuncs.Select(f => StripRedundantArenaBrackets(f, nonAllocating)).ToList();
+
         return program with
         {
             EntryFunction = optimizedEntry,
@@ -29,6 +37,7 @@ public static class IrOptimizer
 
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
         instructions = ElideTrivialBorrows(instructions);
+        instructions = DevirtualizeKnownClosureCalls(instructions);
         instructions = FoldConstants(instructions);
         instructions = ReduceIdentitiesAndStrength(instructions);
         instructions = ElideUnreachableCode(instructions);
@@ -39,6 +48,214 @@ public static class IrOptimizer
         {
             Instructions = instructions,
         };
+    }
+
+    // ── Redundant arena-bracket elision ─────────────────────────────────
+    // Lowering brackets every function body and every copy-type-returning helper call in
+    // SaveArenaState / RestoreArenaState / ReclaimArenaChunks. For a region that provably
+    // performs no arena allocation the bracket is pure overhead — worse, the reclaim's chunk
+    // loop (a syscall loop with a dynamic stack slot) makes tiny accessors like Map.height
+    // ineligible for LLVM inlining. Two eliminations, both conservative:
+    //  (a) whole function: if every instruction of a function is non-allocating (direct calls
+    //      only to non-allocating functions, via a whole-program fixpoint), every arena
+    //      bracket instruction in it is a no-op and is removed;
+    //  (b) straight-line caller regions: a Save…Restore(+Reclaim) triple with no label, jump,
+    //      or potentially-allocating instruction between save and restore is removed.
+    // Anything not on the explicit non-allocating whitelist (indirect calls, externs,
+    // intrinsics that build values, copy-outs, allocs) keeps its brackets.
+
+    private static bool IsNonAllocatingInst(IrInst inst, HashSet<string> nonAllocatingFns) => inst switch
+    {
+        IrInst.LoadConstInt or IrInst.LoadConstFloat or IrInst.LoadConstBool or IrInst.LoadConstStr
+            or IrInst.LoadLocal or IrInst.StoreLocal or IrInst.LoadEnv
+            or IrInst.LoadMemOffset or IrInst.StoreMemOffset
+            or IrInst.AddInt or IrInst.SubInt or IrInst.MulInt or IrInst.DivInt or IrInst.DivUInt
+            or IrInst.AndInt or IrInst.OrInt or IrInst.XorInt or IrInst.ShlInt or IrInst.ShrInt
+            or IrInst.AddFloat or IrInst.SubFloat or IrInst.MulFloat or IrInst.DivFloat
+            or IrInst.CmpIntGt or IrInst.CmpIntGe or IrInst.CmpIntLt or IrInst.CmpIntLe
+            or IrInst.CmpUIntGt or IrInst.CmpUIntGe or IrInst.CmpUIntLt or IrInst.CmpUIntLe
+            or IrInst.CmpIntEq or IrInst.CmpIntNe
+            or IrInst.CmpFloatGt or IrInst.CmpFloatGe or IrInst.CmpFloatLt or IrInst.CmpFloatLe
+            or IrInst.CmpFloatEq or IrInst.CmpFloatNe
+            or IrInst.CmpStrEq or IrInst.CmpStrNe
+            or IrInst.LoadFuncAddr or IrInst.GetAdtTag or IrInst.GetAdtField or IrInst.SetAdtField
+            or IrInst.Borrow
+            or IrInst.BytesLength or IrInst.BytesGet or IrInst.BytesCompare or IrInst.BytesIndexOf
+            or IrInst.BytesHash or IrInst.BytesGetU16Le or IrInst.BytesGetU32Le or IrInst.BytesGetU64Le
+            or IrInst.TextByteLength
+            or IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks
+            or IrInst.SaveStackPointer or IrInst.RestoreStackPointer
+            or IrInst.Label or IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag or IrInst.Return
+            => true,
+        IrInst.CallKnown ck => nonAllocatingFns.Contains(ck.FuncLabel),
+        _ => false,
+    };
+
+    private static HashSet<string> ComputeNonAllocatingFunctions(IrFunction entry, IReadOnlyList<IrFunction> functions)
+    {
+        // Least fixpoint: start from "every function might be non-allocating", knock out any
+        // whose body contains a non-whitelisted instruction or a known call to a knocked-out
+        // callee, and iterate until stable. The entry function is never a callee, so it is not
+        // in the candidate set.
+        var candidates = new HashSet<string>(functions.Select(f => f.Label), StringComparer.Ordinal);
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var f in functions)
+            {
+                if (!candidates.Contains(f.Label))
+                {
+                    continue;
+                }
+
+                foreach (var inst in f.Instructions)
+                {
+                    if (!IsNonAllocatingInst(inst, candidates))
+                    {
+                        candidates.Remove(f.Label);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    private static IrFunction StripRedundantArenaBrackets(IrFunction function, HashSet<string> nonAllocatingFns)
+    {
+        var instructions = function.Instructions;
+
+        // (a) Whole-function elision: nothing in this function can move the arena cursor, so
+        // every save/restore/reclaim in it observes and restores an unchanged arena.
+        bool wholeFunction = nonAllocatingFns.Contains(function.Label);
+        if (!wholeFunction)
+        {
+            // The entry function has no label in the candidate set; check it directly.
+            wholeFunction = instructions.All(i => IsNonAllocatingInst(i, nonAllocatingFns));
+        }
+
+        if (wholeFunction)
+        {
+            if (!instructions.Any(i => i is IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks))
+            {
+                return function;
+            }
+
+            var stripped = instructions
+                .Where(i => i is not (IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks))
+                .ToList();
+            return function with { Instructions = stripped };
+        }
+
+        // (b) Straight-line region elision within an allocating function.
+        var toRemove = new HashSet<int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.SaveArenaState save)
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < instructions.Count; j++)
+            {
+                var inst = instructions[j];
+                if (inst is IrInst.RestoreArenaState restore
+                    && restore.CursorLocalSlot == save.CursorLocalSlot
+                    && restore.EndLocalSlot == save.EndLocalSlot)
+                {
+                    toRemove.Add(i);
+                    toRemove.Add(j);
+                    if (j + 1 < instructions.Count
+                        && instructions[j + 1] is IrInst.ReclaimArenaChunks reclaim
+                        && reclaim.SavedEndSlot == save.EndLocalSlot
+                        && reclaim.PreRestoreEndSlot == restore.PreRestoreEndSlot)
+                    {
+                        toRemove.Add(j + 1);
+                    }
+
+                    break;
+                }
+
+                // Any control flow, allocation, or unknown instruction ends the attempt.
+                if (inst is IrInst.Label or IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag
+                    || !IsNonAllocatingInst(inst, nonAllocatingFns))
+                {
+                    break;
+                }
+            }
+        }
+
+        if (toRemove.Count == 0)
+        {
+            return function;
+        }
+
+        var result = new List<IrInst>(instructions.Count - toRemove.Count);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (!toRemove.Contains(i))
+            {
+                result.Add(instructions[i]);
+            }
+        }
+
+        return function with { Instructions = result };
+    }
+
+    // ── Known-closure devirtualization ──────────────────────────────────
+    // A CallClosure whose closure temp is produced by MakeClosure/MakeClosureStack with a
+    // statically-known function label becomes a direct CallKnown of that label with the
+    // closure's captured env pointer. The indirect call through the closure struct's code
+    // pointer is opaque to LLVM, so callees like tiny accessors could never be inlined; a
+    // direct call inlines normally. Safety: only single-definition temps are rewritten (a
+    // unique definition dominates every use in well-formed IR), and the env temp must itself
+    // be single-definition so its value at the call site equals the value stored into the
+    // closure at construction. Closures whose target is also stored/escapes elsewhere keep
+    // their MakeClosure (dead-code elimination removes it only when no use remains).
+
+    private static List<IrInst> DevirtualizeKnownClosureCalls(List<IrInst> instructions)
+    {
+        // Count definitions per temp; remember the defining instruction of single-def temps.
+        var defCount = new Dictionary<int, int>();
+        var singleDef = new Dictionary<int, IrInst>();
+        foreach (var inst in instructions)
+        {
+            foreach (var d in StateMachineTransform.GetDefinedTemps(inst))
+            {
+                defCount[d] = defCount.GetValueOrDefault(d) + 1;
+                singleDef[d] = inst;
+            }
+        }
+
+        bool changed = false;
+        var result = new List<IrInst>(instructions.Count);
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.CallClosure cc
+                && defCount.GetValueOrDefault(cc.ClosureTemp) == 1
+                && singleDef.TryGetValue(cc.ClosureTemp, out var def))
+            {
+                (string Label, int EnvTemp)? known = def switch
+                {
+                    IrInst.MakeClosure mk => (mk.FuncLabel, mk.EnvPtrTemp),
+                    IrInst.MakeClosureStack mks => (mks.FuncLabel, mks.EnvPtrTemp),
+                    _ => null,
+                };
+                if (known is { } k && defCount.GetValueOrDefault(k.EnvTemp) == 1)
+                {
+                    result.Add(new IrInst.CallKnown(cc.Target, k.Label, k.EnvTemp, cc.ArgTemp) { Location = cc.Location });
+                    changed = true;
+                    continue;
+                }
+            }
+
+            result.Add(inst);
+        }
+
+        return changed ? result : instructions;
     }
 
     // ── Trivial borrow elision ──────────────────────────────────────────
@@ -191,6 +408,7 @@ public static class IrOptimizer
             IrInst.MakeClosure mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.MakeClosureStack mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
+            IrInst.CallKnown ck => ck with { EnvTemp = R(ck.EnvTemp), ArgTemp = R(ck.ArgTemp) },
             IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
             IrInst.CallExtern c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
@@ -228,7 +446,9 @@ public static class IrOptimizer
             IrInst.BytesLength b => b with { BytesTemp = R(b.BytesTemp) },
             IrInst.BytesGet b => b with { BytesTemp = R(b.BytesTemp), IndexTemp = R(b.IndexTemp) },
             IrInst.BytesIndexOf b => b with { BytesTemp = R(b.BytesTemp), NeedleTemp = R(b.NeedleTemp), FromTemp = R(b.FromTemp) },
+            IrInst.BytesCompare b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesSubText b => b with { BytesTemp = R(b.BytesTemp), StartTemp = R(b.StartTemp), LenTemp = R(b.LenTemp) },
+            IrInst.BytesSubView b => b with { BytesTemp = R(b.BytesTemp), StartTemp = R(b.StartTemp), LenTemp = R(b.LenTemp) },
             IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
             IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
@@ -919,6 +1139,21 @@ public static class IrOptimizer
                 continue;
             }
 
+            // Remove closure constructions whose target is never read — a pure arena/stack
+            // allocation plus stores into that fresh allocation, observable by nothing once the
+            // pointer is unused. Devirtualization routinely strands these.
+            if (inst is IrInst.MakeClosure mc && !usedTemps.Contains(mc.Target))
+            {
+                changed = true;
+                continue;
+            }
+
+            if (inst is IrInst.MakeClosureStack mcs && !usedTemps.Contains(mcs.Target))
+            {
+                changed = true;
+                continue;
+            }
+
             result.Add(inst);
         }
 
@@ -1082,6 +1317,7 @@ public static class IrOptimizer
             case IrInst.MakeClosure mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.MakeClosureStack mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.CallClosure cc: usedTemps.Add(cc.ClosureTemp); usedTemps.Add(cc.ArgTemp); break;
+            case IrInst.CallKnown ck: usedTemps.Add(ck.EnvTemp); usedTemps.Add(ck.ArgTemp); break;
             case IrInst.ToCString c: usedTemps.Add(c.StrTemp); break;
             case IrInst.CallExtern c:
                 foreach (var argTemp in c.ArgTemps) usedTemps.Add(argTemp);
@@ -1117,7 +1353,9 @@ public static class IrOptimizer
             case IrInst.BytesLength b: usedTemps.Add(b.BytesTemp); break;
             case IrInst.BytesGet b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.IndexTemp); break;
             case IrInst.BytesIndexOf b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.NeedleTemp); usedTemps.Add(b.FromTemp); break;
+            case IrInst.BytesCompare b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
             case IrInst.BytesSubText b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.StartTemp); usedTemps.Add(b.LenTemp); break;
+            case IrInst.BytesSubView b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.StartTemp); usedTemps.Add(b.LenTemp); break;
             case IrInst.BytesAppend b: usedTemps.Add(b.LeftTemp); usedTemps.Add(b.RightTemp); break;
             case IrInst.BytesAppendByte b: usedTemps.Add(b.BytesTemp); usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;

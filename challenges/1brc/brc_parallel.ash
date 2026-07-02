@@ -3,12 +3,19 @@
 // splits it into per-core (bytes, lo, hi) chunks at newline boundaries,
 // folds each chunk into a partial station Map on a worker thread (Ashes.Parallel.reduce forks via
 // `both` at the concrete Map result type), and merges the partial Maps. The result is identical to the
-// sequential fold (purity makes it order-independent). foldChunk is a top-level, non-capturing function
-// (bytes travels through the chunk tuple, never a closure capture) so nothing arena-allocated crosses a
-// fork. The file path is the first argument.
+// sequential fold (purity makes it order-independent). Per row the fold takes a zero-copy
+// Ashes.Bytes.subView of the station name (the mmap backing is program-lifetime, and Map storage
+// materializes keys into the persistent blob) and threads it through upsertMeasurement — a
+// user-defined single-traversal min/max/sum/count upsert in the Ashes.Map.set shape, which the
+// compiler reuse-specializes to rewrite the accumulator tree in place at constant memory per worker.
+// The worker cap defaults to the machine's core count (detected at program start; override with
+// --parallel-workers). foldChunk is a top-level, non-capturing function (bytes travels through the
+// chunk tuple, never a closure capture) so nothing arena-allocated crosses a fork. The file path is
+// the first argument.
 import Ashes.IO
 import Ashes.File
 import Ashes.Map
+import Ashes.Map.MapTree
 import Ashes.Text
 import Ashes.String
 import Ashes.Bytes
@@ -66,6 +73,33 @@ let updateStats existing tenths =
                     else mx
                 in (newMin, newMax, sm + tenths, ct + 1)
 
+let upsertMeasurement newKey tenths = 
+    (let rec go map = 
+        match map with
+            | Empty -> Ashes.Map.makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
+            | Node(_height, left, key, value, right) -> 
+                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                in 
+                    if ordering == 0
+                    then 
+                        match value with
+                            | (mn, mx, sm, ct) -> 
+                                let newMin = 
+                                    if tenths < mn
+                                    then tenths
+                                    else mn
+                                in 
+                                    let newMax = 
+                                        if tenths > mx
+                                        then tenths
+                                        else mx
+                                    in Ashes.Map.makeNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
+                    else 
+                        if ordering <= -1
+                        then Ashes.Map.balance(Ashes.Map.makeNode(go(left))(key)(value)(right))
+                        else Ashes.Map.balance(Ashes.Map.makeNode(left)(key)(value)(go(right)))
+    in go)
+
 let rec foldLines bytes pos hi map = 
     if pos >= hi
     then map
@@ -88,36 +122,33 @@ let rec foldLines bytes pos hi map =
                         if sep >= lineEnd
                         then foldLines(bytes)(lineEnd + 1)(hi)(map)
                         else 
-                            let name = Ashes.Bytes.subText(bytes)(pos)(sep - pos)
+                            let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
                             in 
                                 let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
-                                in 
-                                    match Ashes.Map.get(Ashes.String.compare)(name)(map) with
-                                        | None -> foldLines(bytes)(lineEnd + 1)(hi)(Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map))
-                                        | Some(existing) -> foldLines(bytes)(lineEnd + 1)(hi)(Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
+                                in foldLines(bytes)(lineEnd + 1)(hi)(upsertMeasurement(name)(tenths)(map))
 
 let foldChunk triple = 
     match triple with
         | (bytes, lo, hi) -> foldLines(bytes)(lo)(hi)(Ashes.Map.empty)
 
+let mergeValues a b = 
+    match a with
+        | (mnA, mxA, smA, ctA) -> 
+            match b with
+                | (mnB, mxB, smB, ctB) -> 
+                    let mn = 
+                        if mnB < mnA
+                        then mnB
+                        else mnA
+                    in 
+                        let mx = 
+                            if mxB > mxA
+                            then mxB
+                            else mxA
+                        in (mn, mx, smA + smB, ctA + ctB)
+
 let mergeStation acc key value = 
-    match value with
-        | (mnB, mxB, smB, ctB) -> 
-            match Ashes.Map.get(Ashes.String.compare)(key)(acc) with
-                | None -> Ashes.Map.set(Ashes.String.compare)(key)(value)(acc)
-                | Some(existing) -> 
-                    match existing with
-                        | (mnA, mxA, smA, ctA) -> 
-                            let mn = 
-                                if mnB < mnA
-                                then mnB
-                                else mnA
-                            in 
-                                let mx = 
-                                    if mxB > mxA
-                                    then mxB
-                                    else mxA
-                                in Ashes.Map.set(Ashes.String.compare)(key)((mn, mx, smA + smB, ctA + ctB))(acc)
+    Ashes.Map.upsertStr(key)(value)(fun (existing) -> mergeValues(existing)(value))(acc)
 
 let merge a b = Ashes.Map.foldLeft(mergeStation)(a)(b)
 
@@ -153,7 +184,7 @@ let run path =
         | Ok(bytes) -> 
             let len = Ashes.Bytes.length(bytes)
             in 
-                let chunks = buildChunks(bytes)(len)(0)(8)([])
+                let chunks = buildChunks(bytes)(len)(0)(32)([])
                 in 
                     let final = Ashes.Parallel.reduce(merge)(Ashes.Map.empty)(foldChunk)(chunks)
                     in 

@@ -54,6 +54,7 @@ The following options are accepted by **compile**, **run**, **repl**, and **test
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
 | `--target-cpu <cpu>` | string | `generic` / `x86-64` | No | Target a specific CPU microarchitecture (e.g. `skylake`, `znver3`, `apple-m1`). Use `native` to auto-detect the host CPU. Default is safe generic codegen for the target arch. |
 | `--parallel-stack-size <size>` | size | `1M` | No | Per-worker stack size for structured parallelism (`Ashes.Parallel`). Accepts a byte count or a `K`/`M`/`G` suffix (e.g. `2M`, `1048576`); must be positive. On linux this sets the mmap'd worker-stack length; on win-x64 it is passed to `CreateThread` (unset leaves the OS default). |
+| `--parallel-workers <n>` | int | core count | No | Max concurrent workers for structured parallelism. Must be positive. When unset, the compiled program detects the machine's core count once at first fork (linux: `sched_getaffinity` popcount, so `taskset`/cgroup masks are respected; win-x64: `GetSystemInfo`), falling back to 8 if detection fails. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 
 The following option is accepted by **compile** and **run** only:
@@ -98,10 +99,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -197,10 +198,10 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
 ```
 
 #### Arguments

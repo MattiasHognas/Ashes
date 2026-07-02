@@ -34,6 +34,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
     table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
+    table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
@@ -214,6 +215,19 @@ static long ParseParallelStackSize(string value)
     }
 
     return amount * multiplier;
+}
+
+// Parses the --parallel-workers value: a positive worker count. When the flag is absent the
+// compiled program detects the machine's core count at startup instead.
+static long ParseParallelWorkers(string value)
+{
+    if (!long.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long count)
+        || count <= 0)
+    {
+        throw new CliUsageException("--parallel-workers expects a positive worker count.");
+    }
+
+    return count;
 }
 
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
@@ -544,6 +558,7 @@ async Task<int> RunCompileAsync(string[] a)
     string? projectPath = null;
     string? targetCpu = null;
     long? parallelStackBytes = null;
+    long? parallelWorkers = null;
 
     for (int i = 0; i < a.Length; i++)
     {
@@ -552,6 +567,7 @@ async Task<int> RunCompileAsync(string[] a)
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
@@ -584,7 +600,7 @@ async Task<int> RunCompileAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes, parallelWorkers);
 
     var sw = Stopwatch.StartNew();
     byte[] image;
@@ -670,6 +686,7 @@ async Task<int> RunRunAsync(string[] a)
     string? projectPath = null;
     string? targetCpu = null;
     long? parallelStackBytes = null;
+    long? parallelWorkers = null;
 
     for (int i = 0; i < cliArgs.Length; i++)
     {
@@ -677,6 +694,7 @@ async Task<int> RunRunAsync(string[] a)
         if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
         if (arg == "--parallel-stack-size" && i + 1 < cliArgs.Length) { parallelStackBytes = ParseParallelStackSize(cliArgs[++i]); continue; }
+        if (arg == "--parallel-workers" && i + 1 < cliArgs.Length) { parallelWorkers = ParseParallelWorkers(cliArgs[++i]); continue; }
         if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
@@ -706,7 +724,7 @@ async Task<int> RunRunAsync(string[] a)
     }
 
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes, parallelWorkers);
     byte[] image;
     if (project is null)
     {
@@ -760,6 +778,7 @@ async Task<int> RunReplAsync(string[] a)
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     string? targetCpu = null;
     long? parallelStackBytes = null;
+    long? parallelWorkers = null;
 
     for (int i = 0; i < a.Length; i++)
     {
@@ -767,12 +786,13 @@ async Task<int> RunReplAsync(string[] a)
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         throw new CliUsageException("Unknown argument.");
     }
 
     target ??= BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
     var sessionBindings = new List<ReplBinding>();
 
     AnsiConsole.Write(new Rule("[bold]Ashes REPL[/]").RuleStyle("grey").LeftJustified());
@@ -935,6 +955,7 @@ int RunTest(string[] a)
     string? projectPath = null;
     string? targetCpu = null;
     long? parallelStackBytes = null;
+    long? parallelWorkers = null;
     var paths = new List<string>();
 
     for (int i = 0; i < a.Length; i++)
@@ -943,6 +964,7 @@ int RunTest(string[] a)
         if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
         if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
         if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -955,7 +977,7 @@ int RunTest(string[] a)
 
     var project = ResolveProject(projectPath, null, null);
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes);
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
 
     return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions);
 }

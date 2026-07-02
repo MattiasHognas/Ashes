@@ -9,8 +9,9 @@
 // This program is a flaw-finding exercise (see challenges/FLAWS.md). Several of
 // the flaws it originally exposed have since been fixed in the compiler, and this
 // version uses those fixes:
-//   * #4: stations are ordered with Ashes.String.compare (a correct UTF-8 total
-//     order), so multibyte names sort correctly and never collide/merge.
+//   * #4: stations are ordered by UTF-8 byte order (Ashes.Map.getStr/setStr compare keys
+//     with the Ashes.Bytes.compare memcmp intrinsic), so multibyte names sort correctly
+//     and never collide/merge.
 //   * #6: Ashes.Map/Ashes.String are called directly inside functions.
 //
 // The whole file is folded in a SINGLE loop over Ashes.File.readLine, which reads one line at a
@@ -107,9 +108,9 @@ let rec streamLoop handle map =
                                     in 
                                         let tenths = parseTenths(rest)
                                         in 
-                                            match Ashes.Map.get(Ashes.String.compare)(name)(map) with
-                                                | None -> streamLoop(handle)(Ashes.Map.set(Ashes.String.compare)(name)((tenths, tenths, tenths, 1))(map))
-                                                | Some(existing) -> streamLoop(handle)(Ashes.Map.set(Ashes.String.compare)(name)(updateStats(existing)(tenths))(map))
+                                            match Ashes.Map.getStr(name)(map) with
+                                                | None -> streamLoop(handle)(Ashes.Map.setStr(name)((tenths, tenths, tenths, 1))(map))
+                                                | Some(existing) -> streamLoop(handle)(Ashes.Map.setStr(name)(updateStats(existing)(tenths))(map))
 
 let collectEntry acc key value = 
     match value with

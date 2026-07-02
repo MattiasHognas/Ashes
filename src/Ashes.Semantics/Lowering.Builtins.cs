@@ -779,7 +779,9 @@ public sealed partial class Lowering
         IntrinsicKind.FileWriteBytes => 2,
         IntrinsicKind.BytesGet => 2,
         IntrinsicKind.BytesIndexOf => 3,
+        IntrinsicKind.BytesCompare => 2,
         IntrinsicKind.BytesSubText => 3,
+        IntrinsicKind.BytesSubView => 3,
         IntrinsicKind.BytesAppend => 2,
         IntrinsicKind.BytesAppendByte => 2,
         IntrinsicKind.BytesGetU16Le => 2,
@@ -2162,6 +2164,25 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
+    private (int, TypeRef) LowerBytesCompare(Expr leftArg, Expr rightArg)
+    {
+        var (leftTemp, leftOk) = LowerBytesArgument(leftArg, "Ashes.Bytes.compare()");
+        if (!leftOk)
+        {
+            return (leftTemp, new TypeRef.TInt());
+        }
+
+        var (rightTemp, rightOk) = LowerBytesArgument(rightArg, "Ashes.Bytes.compare()");
+        if (!rightOk)
+        {
+            return (rightTemp, new TypeRef.TInt());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesCompare(target, leftTemp, rightTemp));
+        return (target, new TypeRef.TInt());
+    }
+
     private (int, TypeRef) LowerBytesSubText(Expr bytesArg, Expr startArg, Expr lenArg)
     {
         var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subText()");
@@ -2184,6 +2205,31 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesSubText(target, bytesTemp, startTemp, lenTemp));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerBytesSubView(Expr bytesArg, Expr startArg, Expr lenArg)
+    {
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subView()");
+        if (!bytesOk)
+        {
+            return (bytesTemp, new TypeRef.TStr());
+        }
+
+        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Bytes.subView() start");
+        if (!startOk)
+        {
+            return (startTemp, new TypeRef.TStr());
+        }
+
+        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Bytes.subView() length");
+        if (!lenOk)
+        {
+            return (lenTemp, new TypeRef.TStr());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesSubView(target, bytesTemp, startTemp, lenTemp));
         return (target, new TypeRef.TStr());
     }
 
@@ -2597,6 +2643,17 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.Bytes.compare : Bytes -> Bytes -> Int. Three-way lexicographic byte comparison:
+    // -1 / 0 / 1 for less / equal / greater. A memcmp over min(len) with a length tie-break —
+    // one call per comparison instead of a byte-at-a-time loop.
+    private Binding.Intrinsic CreateBytesCompareBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesCompare,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TInt())))
+        );
+    }
+
     // Ashes.Bytes.subText : Bytes -> Int -> Int -> Str. Copies `len` bytes starting at `start`
     // into a fresh Str ([length][bytes]). O(len). The caller must ensure the range lies on valid
     // UTF-8 boundaries (splitting at ASCII delimiters like ';'/'\n' always does). Together with
@@ -2605,6 +2662,19 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.BytesSubText,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))))
+        );
+    }
+
+    // Ashes.Bytes.subView : Bytes -> Int -> Int -> Str. A zero-copy VIEW of `len` bytes starting
+    // at `start` (bounds-clamped like subText, O(1), no byte copy). The backing bytes must outlive
+    // the view; a view stored into a structure is materialized by the copy-out/blob paths, and a
+    // view over an Ashes.File.mmap mapping is valid for the program's lifetime. Same UTF-8
+    // boundary caveat as subText.
+    private Binding.Intrinsic CreateBytesSubViewBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesSubView,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))))
         );
     }

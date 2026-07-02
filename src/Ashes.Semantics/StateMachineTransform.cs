@@ -506,7 +506,7 @@ public static class StateMachineTransform
     /// IMPORTANT: When adding new IrInst types, you MUST add a case here
     /// and in GetUsedTemps to ensure correct liveness analysis across await points.
     /// </summary>
-    private static IEnumerable<int> GetDefinedTemps(IrInst inst)
+    internal static IEnumerable<int> GetDefinedTemps(IrInst inst)
     {
         return inst switch
         {
@@ -550,6 +550,7 @@ public static class StateMachineTransform
             IrInst.MakeClosure i => [i.Target],
             IrInst.MakeClosureStack i => [i.Target],
             IrInst.CallClosure i => [i.Target],
+            IrInst.CallKnown i => [i.Target],
             IrInst.ToCString i => [i.Target],
             IrInst.CallExtern i => [i.Target],
             IrInst.Alloc i => [i.Target],
@@ -584,7 +585,9 @@ public static class StateMachineTransform
             IrInst.BytesLength i => [i.Target],
             IrInst.BytesGet i => [i.Target],
             IrInst.BytesIndexOf i => [i.Target],
+            IrInst.BytesCompare i => [i.Target],
             IrInst.BytesSubText i => [i.Target],
+            IrInst.BytesSubView i => [i.Target],
             IrInst.BytesAppend i => [i.Target],
             IrInst.BytesAppendByte i => [i.Target],
             IrInst.BytesFromList i => [i.Target],
@@ -669,6 +672,7 @@ public static class StateMachineTransform
             IrInst.MakeClosure mc => [mc.EnvPtrTemp],
             IrInst.MakeClosureStack mc => [mc.EnvPtrTemp],
             IrInst.CallClosure cc => [cc.ClosureTemp, cc.ArgTemp],
+            IrInst.CallKnown ck => [ck.EnvTemp, ck.ArgTemp],
             IrInst.ToCString c => [c.StrTemp],
             IrInst.CallExtern c => c.ArgTemps,
             IrInst.SetAdtField sf => [sf.Ptr, sf.Source],
@@ -702,7 +706,9 @@ public static class StateMachineTransform
             IrInst.BytesLength i => [i.BytesTemp],
             IrInst.BytesGet i => [i.BytesTemp, i.IndexTemp],
             IrInst.BytesIndexOf i => [i.BytesTemp, i.NeedleTemp, i.FromTemp],
+            IrInst.BytesCompare i => [i.LeftTemp, i.RightTemp],
             IrInst.BytesSubText i => [i.BytesTemp, i.StartTemp, i.LenTemp],
+            IrInst.BytesSubView i => [i.BytesTemp, i.StartTemp, i.LenTemp],
             IrInst.BytesAppend i => [i.LeftTemp, i.RightTemp],
             IrInst.BytesAppendByte i => [i.BytesTemp, i.ByteTemp],
             IrInst.BytesFromList i => [i.ListTemp],
