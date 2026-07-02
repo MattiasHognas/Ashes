@@ -336,6 +336,63 @@ use-after-close and double-close checking.
 in the spec; [Memory Model](docs/ARCHITECTURE.md#memory-model) in the
 architecture guide.*
 
+**Does Ashes require a runtime?**
+No. `.ash` source compiles directly to a standalone native executable — there
+is no VM, garbage collector, interpreter, runtime library, or hidden scheduler
+that ships alongside the binary. The standard library is ordinary Ashes code
+compiled into the executable, and the compiler emits object code and links it
+itself (no external assembler or linker). The result is a single native binary
+with zero runtime dependencies.
+*Details: [Compiler Architecture](docs/ARCHITECTURE.md#memory-model) and
+[Linking](docs/ARCHITECTURE.md#linking).*
+
+**How can immutable data be efficient?**
+Ashes does not copy a value on every "update". Immutable values are freely
+shared (never defensively copied), so `x` and a derived `y` transparently share
+their common structure. On top of that the compiler rebuilds recursive values
+**in place** where it can prove the old version is dead — a Perceus-style reuse
+with no reference counting — so an accumulator threaded through a loop stays
+constant-memory instead of allocating a new copy each step. Note this is done
+without any hidden mutable storage: the standard library is written in pure
+Ashes, and the "in-place" rewrite is a provably-safe compiler transform, not a
+mutable data structure.
+*Details:
+[In-place reuse](docs/ARCHITECTURE.md#in-place-reuse-perceus-style-no-runtime-rc)
+in the architecture guide; [Evaluation Strategy](docs/LANGUAGE_SPEC.md#15-evaluation-strategy)
+in the spec.*
+
+**Does purity make programs slower?**
+Usually the opposite. Because functions have no side effects and values never
+mutate, the compiler can reorder, deduplicate, and eliminate work freely, and
+can safely share structure and reuse memory in place — optimizations that are
+unsound in a language with aliased mutable state. Purity is also what makes the
+data-parallel fold behind the compiler's own benchmarks correct: partial
+results merge order-independently because there is nothing to race on.
+*Details: [Evaluation Strategy](docs/LANGUAGE_SPEC.md#15-evaluation-strategy) in
+the spec; the [compiler-optimization record](docs/future/COMPILER_OPTIMIZATION.md).*
+
+**Can Ashes produce competitive native code?**
+That is the goal, and it is actively benchmarked. The pipeline lowers the typed
+AST to its own IR, applies whole-program analyses (move/linearity, in-place
+reuse, known-call devirtualization, generic monomorphization), then emits LLVM
+IR and uses LLVM's optimizer and code generator for the final native object.
+The [`challenges/`](challenges/) directory tracks this with a 1BRC
+implementation and the Computer Language Benchmarks Game programs (n-body,
+mandelbrot, fannkuch-redux, k-nucleotide, and more).
+*Details: [Compiler Architecture](docs/ARCHITECTURE.md) and the
+[optimization arc](docs/future/COMPILER_OPTIMIZATION.md).*
+
+**How are the collections implemented?**
+Everything is persistent (immutable, structure-sharing):
+- `List` is a singly-linked cons list — never an array.
+- `Ashes.Array` is an indexed sequence backed by a persistent balanced tree, so
+  `get`/`set` are `O(log n)` and `set` returns a new array sharing most nodes.
+- `Ashes.Map` is a persistent AVL tree; `Ashes.HashMap` is an AVL tree ordered
+  by `(hash, key)` (no caller-supplied ordering needed); `Ashes.HashTrie` is a
+  persistent 16-ary hash trie — the lower-constant-factor alternative at scale.
+
+*Details: [Standard Library](docs/STANDARD_LIBRARY.md#shipped-helper-modules).*
+
 **Won't recursion-as-iteration overflow the stack?**
 No — tail calls compile to constant-stack loops, including cross-member tail
 calls in eligible `let rec ... and ...` groups. Only non-tail recursion
@@ -354,6 +411,14 @@ in the spec;
 [Per-thread arenas](docs/ARCHITECTURE.md#per-thread-arenas-structured-parallelism)
 in the architecture guide.*
 
+**Why don't I write ownership annotations?**
+Ownership is entirely inferred. The compiler determines where each value is
+created, shared, and destroyed; the language surface exposes only immutable
+values. There is no move keyword, no borrow operator (`&x`), no lifetimes, and
+no use-after-move errors — ownership exists purely as a compile-time
+implementation detail behind deterministic cleanup.
+*Details: [Ownership Model](docs/LANGUAGE_SPEC.md#17-ownership-model).*
+
 **Where do async tasks allocate?**
 A `Task` is a small heap state struct on the calling thread's arena, holding
 the coroutine's captures and the variables live across each `await` — no
@@ -363,6 +428,30 @@ reclamation, and tasks execute single-threaded on the caller's thread.
 *Details: [Async/Await](docs/LANGUAGE_SPEC.md#19-asyncawait) in the spec;
 [Task frames and memory](docs/ARCHITECTURE.md#task-frames-and-memory) in the
 architecture guide.*
+
+**If everything is pure, how do files, networking, and printing work?**
+Through built-in functions under the reserved `Ashes` modules — `Ashes.IO`,
+`Ashes.File`, `Ashes.Net`, `Ashes.Http`, `Ashes.Process`. Ashes is strictly and
+sequentially evaluated, so these effects happen in a well-defined order, and the
+purity contract is specifically about values: no function mutates an existing
+binding or value in place. Networking and TLS additionally return `Task(E, A)`
+and are consumed via `await`. A general algebraic-effects system (handlers for
+`Clock`, `Random`, `FileSystem`, and the like) is designed but not yet
+implemented.
+*Details: [`Ashes.IO`](docs/STANDARD_LIBRARY.md#ashesio) and the built-in
+modules in the standard library; the planned
+[effects system](docs/future/EFFECTS.md).*
+
+**Why not just use Rust?**
+Different target. Rust gives you explicit ownership, mutation, and low-level
+control. Ashes deliberately hides all of that: a purely functional model with
+Hindley–Milner type inference, immutable values, and inferred deterministic
+memory management — native performance and no GC, but without asking the
+programmer to reason about ownership or lifetimes. If you want manual control
+over mutation and memory layout, reach for Rust; if you want a small pure
+functional language that still compiles to a dependency-free native binary,
+that is what Ashes is for.
+*Details: [Design Principles](#design-principles) above.*
 
 ---
 
