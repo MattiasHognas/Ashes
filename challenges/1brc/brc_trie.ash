@@ -71,32 +71,32 @@ let rec foldLines bytes pos hi map =
     if pos >= hi
     then map
     else 
-        let sep = Ashes.Bytes.indexOf(bytes)(59)(pos)
-        in 
-            let nlRaw = 
-                if sep < 0
-                then Ashes.Bytes.indexOf(bytes)(10)(pos)
-                else Ashes.Bytes.indexOf(bytes)(10)(sep + 1)
-            in 
-                let lineEnd = 
-                    if nlRaw < 0
-                    then hi
-                    else 
-                        if nlRaw > hi
-                        then hi
-                        else nlRaw
-                in 
+        match Ashes.Bytes.scanHash(bytes)(59)(pos) with
+            | (sep, nameHash) -> 
+                let nlRaw = 
                     if sep < 0
-                    then foldLines(bytes)(lineEnd + 1)(hi)(map)
-                    else 
-                        if sep >= lineEnd
+                    then Ashes.Bytes.indexOf(bytes)(10)(pos)
+                    else Ashes.Bytes.indexOf(bytes)(10)(sep + 1)
+                in 
+                    let lineEnd = 
+                        if nlRaw < 0
+                        then hi
+                        else 
+                            if nlRaw > hi
+                            then hi
+                            else nlRaw
+                    in 
+                        if sep < 0
                         then foldLines(bytes)(lineEnd + 1)(hi)(map)
                         else 
-                            let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
-                            in 
-                                let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
+                            if sep >= lineEnd
+                            then foldLines(bytes)(lineEnd + 1)(hi)(map)
+                            else 
+                                let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
                                 in 
-                                    foldLines(bytes)(lineEnd + 1)(hi)(Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(name))(name)((tenths, tenths, tenths, 1))(fun (old) -> updateStats(old)(tenths))(map))
+                                    let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
+                                    in 
+                                        foldLines(bytes)(lineEnd + 1)(hi)(Ashes.HashTrie.upsertHashed(nameHash)(name)((tenths, tenths, tenths, 1))(fun (old) -> updateStats(old)(tenths))(map))
 
 let foldChunk triple = 
     match triple with

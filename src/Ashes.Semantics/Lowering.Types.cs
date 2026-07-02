@@ -112,6 +112,7 @@ public sealed partial class Lowering
         BytesGet,
         BytesIndexOf,
         BytesCompare,
+        BytesScanHash,
         BytesSubText,
         BytesSubView,
         BytesAppend,

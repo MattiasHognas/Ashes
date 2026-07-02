@@ -792,6 +792,7 @@ public sealed partial class Lowering
         IntrinsicKind.BytesGet => 2,
         IntrinsicKind.BytesIndexOf => 3,
         IntrinsicKind.BytesCompare => 2,
+        IntrinsicKind.BytesScanHash => 3,
         IntrinsicKind.BytesSubText => 3,
         IntrinsicKind.BytesSubView => 3,
         IntrinsicKind.BytesAppend => 2,
@@ -2220,6 +2221,32 @@ public sealed partial class Lowering
         return (target, new TypeRef.TStr());
     }
 
+    private (int, TypeRef) LowerBytesScanHash(Expr bytesArg, Expr needleArg, Expr fromArg)
+    {
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.scanHash()");
+        var resultType = new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()]);
+        if (!bytesOk)
+        {
+            return (bytesTemp, resultType);
+        }
+
+        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Bytes.scanHash() needle");
+        if (!needleOk)
+        {
+            return (needleTemp, resultType);
+        }
+
+        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Bytes.scanHash() from");
+        if (!fromOk)
+        {
+            return (fromTemp, resultType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.BytesScanHash(target, bytesTemp, needleTemp, fromTemp));
+        return (target, resultType);
+    }
+
     private (int, TypeRef) LowerBytesSubView(Expr bytesArg, Expr startArg, Expr lenArg)
     {
         var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subView()");
@@ -2675,6 +2702,19 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.BytesSubText,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))))
+        );
+    }
+
+    // Ashes.Bytes.scanHash : Bytes -> Int -> Int -> (Int, Int). One fused pass from `from`: scans
+    // for the needle byte while accumulating the FNV-1a hash of the bytes before it. Returns
+    // (index of the needle or -1, hash of [from, index) — or of [from, len) when not found). The
+    // hash matches Ashes.Bytes.hash of the same range, so it keys Ashes.HashTrie directly. Saves
+    // the separate memchr and hash passes over per-record fields in scan loops.
+    private Binding.Intrinsic CreateBytesScanHashBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesScanHash,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()])))))
         );
     }
 

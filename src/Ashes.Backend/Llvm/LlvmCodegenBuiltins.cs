@@ -7368,6 +7368,66 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bytes_idx_result_val");
     }
 
+    // Ashes.Bytes.scanHash(bytes)(needle)(from) : (Int, Int) — one fused pass: index of the first
+    // needle byte at or after `from` (or -1), and the FNV-1a hash of the bytes scanned before it
+    // (identical to Ashes.Bytes.hash over that range). FNV is inherently sequential, so the fused
+    // scalar loop costs what the hash pass alone would; the separate memchr pass disappears.
+    private static LlvmValueHandle EmitBytesScanHash(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle needleVal, LlvmValueHandle fromVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, bytesRef, "bytes_sh_len");
+        LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_sh_data");
+        LlvmValueHandle needle8 = LlvmApi.BuildTrunc(builder, needleVal, state.I8, "bytes_sh_needle");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
+        LlvmValueHandle fromNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, fromVal, zero, "bytes_sh_from_neg");
+        LlvmValueHandle fromStart = LlvmApi.BuildSelect(builder, fromNeg, zero, fromVal, "bytes_sh_from");
+
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "bytes_sh_idx");
+        LlvmValueHandle hashSlot = LlvmApi.BuildAlloca(builder, state.I64, "bytes_sh_hash");
+        LlvmValueHandle foundSlot = LlvmApi.BuildAlloca(builder, state.I64, "bytes_sh_found");
+        LlvmApi.BuildStore(builder, fromStart, idxSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 14695981039346656037UL, 0), hashSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), foundSlot);
+
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_check");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_body");
+        var hitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_hit");
+        var stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_step");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "bytes_sh_i");
+        LlvmValueHandle more = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, idx, len, "bytes_sh_more");
+        LlvmApi.BuildCondBr(builder, more, bodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [idx], "bytes_sh_ptr");
+        LlvmValueHandle curByte = LlvmApi.BuildLoad2(builder, state.I8, bytePtr, "bytes_sh_byte");
+        LlvmValueHandle eq = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curByte, needle8, "bytes_sh_eq");
+        LlvmApi.BuildCondBr(builder, eq, hitBlock, stepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, hitBlock);
+        LlvmApi.BuildStore(builder, idx, foundSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
+        LlvmValueHandle h = LlvmApi.BuildLoad2(builder, state.I64, hashSlot, "bytes_sh_h");
+        LlvmValueHandle byte64 = LlvmApi.BuildZExt(builder, curByte, state.I64, "bytes_sh_b64");
+        LlvmValueHandle hx = LlvmApi.BuildXor(builder, h, byte64, "bytes_sh_hx");
+        LlvmValueHandle hm = LlvmApi.BuildMul(builder, hx, LlvmApi.ConstInt(state.I64, 1099511628211UL, 0), "bytes_sh_hm");
+        LlvmApi.BuildStore(builder, hm, hashSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_sh_next"), idxSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmValueHandle tuplePtr = EmitAlloc(state, 16);
+        StoreMemory(state, tuplePtr, 0, LlvmApi.BuildLoad2(builder, state.I64, foundSlot, "bytes_sh_found_v"), "bytes_sh_t0");
+        StoreMemory(state, tuplePtr, 8, LlvmApi.BuildLoad2(builder, state.I64, hashSlot, "bytes_sh_hash_v"), "bytes_sh_t1");
+        return tuplePtr;
+    }
+
     // Ashes.Bytes.compare(left)(right) : Int — three-way lexicographic byte order, normalized to
     // -1/0/1. One memcmp over min(len) plus a length tie-break, instead of a byte-at-a-time loop.
     // Uses the module's freestanding memcmp (present on every target); LLVM lowers small
