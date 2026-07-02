@@ -365,6 +365,7 @@ internal static partial class LlvmCodegen
         bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.WindowsX64
             && (ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileReadAllBytes>(program)
+                || ProgramUsesInstruction<IrInst.FileMmap>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteBytes>(program)
@@ -1259,6 +1260,7 @@ internal static partial class LlvmCodegen
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileReadAllBytes fileReadAllBytes => StoreTemp(state, fileReadAllBytes.Target, EmitFileReadText(state, LoadTemp(state, fileReadAllBytes.PathTemp), rawBytes: true)),
+            IrInst.FileMmap fileMmap => StoreTemp(state, fileMmap.Target, EmitFileMmap(state, LoadTemp(state, fileMmap.PathTemp))),
             IrInst.FileOpen fileOpen => StoreTemp(state, fileOpen.Target, EmitFileOpen(state, LoadTemp(state, fileOpen.PathTemp))),
             IrInst.FileReadChunk fileReadChunk => StoreTemp(state, fileReadChunk.Target, EmitFileReadChunk(state, LoadTemp(state, fileReadChunk.HandleTemp), LoadTemp(state, fileReadChunk.CountTemp))),
             IrInst.FileReadLine fileReadLine => StoreTemp(state, fileReadLine.Target, EmitFileReadLine(state, LoadTemp(state, fileReadLine.HandleTemp))),

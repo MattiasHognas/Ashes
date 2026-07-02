@@ -68,6 +68,7 @@ public sealed partial class Lowering
         ReadLine,
         FileReadText,
         FileReadAllBytes,
+        FileMmap,
         FileOpen,
         FileReadChunk,
         FileReadLine,

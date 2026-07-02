@@ -1678,6 +1678,46 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.File.mmap(path) : Result(Str, Bytes) — memory-map the whole file read-only and return a
+    // zero-copy Bytes view over it (no read/copy). The mapping is program-lifetime, so fields sliced out
+    // of it stay valid; on a data-parallel fold each worker faults in its own chunk's pages, so the I/O
+    // is parallelized for free. On Windows this currently falls back to the capped readAllBytes read.
+    private Binding.Intrinsic CreateFileMmapBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileMmap,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())))
+        );
+    }
+
+    private (int, TypeRef) LowerFileMmap(Expr pathArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(pathArg);
+        var (pathTemp, pathType) = LowerExpr(pathArg);
+        var loweredType = Prune(pathType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (pathTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.mmap() expects Str but got {Pretty(loweredType)}.");
+            return (pathTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FileMmap(target, pathTemp));
+        return (target, CreateStringResultType(new TypeRef.TBytes()));
+    }
+
     private (int, TypeRef) LowerFileReadAllBytes(Expr pathArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);

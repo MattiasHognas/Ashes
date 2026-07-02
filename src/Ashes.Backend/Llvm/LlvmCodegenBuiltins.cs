@@ -157,6 +157,94 @@ internal static partial class LlvmCodegen
             : EmitWindowsFileReadText(state, pathRef, rawBytes);
     }
 
+    // Ashes.File.mmap(path) : Result(Str, Bytes) — map the whole file read-only and return a zero-copy
+    // Bytes view over the mapping (no read/copy). On Windows this falls back to the capped readAllBytes
+    // read (no file mapping wired there yet).
+    private static LlvmValueHandle EmitFileMmap(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        return IsLinuxFlavor(state.Flavor)
+            ? EmitLinuxFileMmap(state, pathRef)
+            : EmitWindowsFileReadText(state, pathRef, rawBytes: true);
+    }
+
+    private static LlvmValueHandle EmitLinuxFileMmap(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle pathCstr = EmitStringToCString(state, pathRef, "fs_mmap_path");
+        LlvmValueHandle fdSlot = LlvmApi.BuildAlloca(builder, state.I64, "fs_mmap_fd");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "fs_mmap_result");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), fdSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+        var openBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_open");
+        var seekBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_seek");
+        var emptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_empty");
+        var emptyOkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_empty_ok");
+        var mapBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_map");
+        var okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_ok");
+        var closeErrBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_close_err");
+        var errBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_err");
+        var contBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_mmap_cont");
+
+        LlvmApi.BuildBr(builder, openBlock);
+
+        // open(path, O_RDONLY, 0)
+        LlvmApi.PositionBuilderAtEnd(builder, openBlock);
+        LlvmValueHandle fd = EmitLinuxSyscall(state, SyscallOpen,
+            LlvmApi.BuildPtrToInt(builder, pathCstr, state.I64, "fs_mmap_path_ptr"),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "fs_mmap_open_call");
+        LlvmApi.BuildStore(builder, fd, fdSlot);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, fd, LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_open_failed"), errBlock, seekBlock);
+
+        // lseek(fd, 0, SEEK_END) -> length
+        LlvmApi.PositionBuilderAtEnd(builder, seekBlock);
+        LlvmValueHandle len = EmitLinuxSyscall(state, SyscallLseek, fd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 2, 0), "fs_mmap_seek_call");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, len, LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_seek_failed"), closeErrBlock, emptyBlock);
+
+        // An empty file can't be mmap'd (length 0) — return an empty owned Bytes.
+        LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_is_empty"), emptyOkBlock, mapBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emptyOkBlock);
+        EmitLinuxSyscall(state, SyscallClose, fd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_empty_close");
+        LlvmApi.BuildStore(builder, EmitResultOk(state, EmitHeapStringLiteral(state, "")), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        // mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0)
+        LlvmApi.PositionBuilderAtEnd(builder, mapBlock);
+        LlvmValueHandle ptr = EmitLinuxSyscall6(state, SyscallMmap,
+            LlvmApi.ConstInt(state.I64, 0, 0),                          // addr = NULL
+            len,                                                          // length
+            LlvmApi.ConstInt(state.I64, 1, 0),                          // PROT_READ
+            LlvmApi.ConstInt(state.I64, 2, 0),                          // MAP_PRIVATE
+            fd,                                                           // fd
+            LlvmApi.ConstInt(state.I64, 0, 0),                          // offset
+            "fs_mmap_call");
+        // The raw mmap syscall returns -errno in [-4095, -1] on failure (huge unsigned).
+        LlvmValueHandle mapFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, ptr, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-4096L)), 0), "fs_mmap_map_failed");
+        LlvmApi.BuildCondBr(builder, mapFailed, closeErrBlock, okBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        // The mapping survives the fd being closed; keep the mapping for the program's lifetime.
+        EmitLinuxSyscall(state, SyscallClose, fd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_ok_close");
+        LlvmValueHandle view = EmitStringView(state, LlvmApi.BuildIntToPtr(builder, ptr, state.I8Ptr, "fs_mmap_ptr"), len, "fs_mmap_view");
+        LlvmApi.BuildStore(builder, EmitResultOk(state, view), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, closeErrBlock);
+        EmitLinuxSyscall(state, SyscallClose, LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_mmap_err_fd"), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_err_close");
+        LlvmApi.BuildBr(builder, errBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, errBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileReadFailedMessage)), resultSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_mmap_result_value");
+    }
+
     private static LlvmValueHandle EmitFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
     {
         return IsLinuxFlavor(state.Flavor)
