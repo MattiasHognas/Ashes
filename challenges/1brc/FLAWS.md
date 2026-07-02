@@ -5,9 +5,11 @@ The [One Billion Row Challenge](https://github.com/gunnarmorling/1brc) reads ~1e
 It exercises exactly the things Ashes is weakest at: bulk IO, mutable/hashed
 accumulation, ordering, and a long-running hot loop under a non-GC arena.
 
-[`brc.ash`](brc.ash) is a *correct* implementation for ASCII station names at a
-modest row count (verified against a hand-computed fixture). It is **not** viable
-for the real input. This document is the point of the exercise: what broke, where,
+[`brc.ash`](brc.ash) is a *correct* implementation (verified against a hand-computed
+fixture; UTF-8 station names sort by byte order). It started out **not** viable for
+the real input — every flaw below was found while getting it there — and now runs the
+full 1e9-row input (`brc_parallel.ash` does it in ~2m36s; see [`README.md`](README.md)
+for current benchmarks). This document is the point of the exercise: what broke, where,
 and why. File/line references are into the compiler at the time of writing.
 
 Some findings are **compiler bugs discovered while writing this program**; the rest
@@ -263,7 +265,7 @@ actionable pieces became `CO-10`…`CO-14` and have all **landed** (see the *Com
 widening for byte-level integer parsing (`CO-11`), SIMD `memchr` scan (`CO-13`), zero-copy `mmap` input
 (`CO-12`), a data-parallel chunked fold + loop-invariant reset-safety making it constant-memory
 (`CO-14` / `CO-10`) — together the parallel `brc` now runs the full 1e9-row challenge in ~2m36s. A
-smaller reuse-*eligibility* generalization (`HashMap.set`) remains — see `FUTURE_FEATURES.md`.
+smaller reuse-*eligibility* generalization (`HashMap.set`) remains unaddressed.
 
 ---
 
