@@ -289,6 +289,22 @@ internal static partial class LlvmCodegen
                 dbg.SetDebugLocation(builder, loc, scope.Value);
             }
         }
+        else if (instruction is IrInst.CallKnown)
+        {
+            // LLVM's verifier requires every direct call to a function carrying debug info to
+            // carry a !dbg location itself. A devirtualized CallKnown may have no source
+            // location (the CallClosure it replaced was synthetic), so give it an artificial
+            // line-0 location in the enclosing function's scope instead of clearing.
+            var scope = dbg.GetSubprogram(functionLabel);
+            if (scope is not null)
+            {
+                dbg.SetDebugLocation(builder, new SourceLocation("", 0, 0), scope.Value);
+            }
+            else
+            {
+                dbg.ClearDebugLocation(builder);
+            }
+        }
         else
         {
             dbg.ClearDebugLocation(builder);

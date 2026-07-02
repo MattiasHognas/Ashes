@@ -8,8 +8,8 @@ accumulation, ordering, and a long-running hot loop under a non-GC arena.
 [`brc.ash`](brc.ash) is a *correct* implementation (verified against a hand-computed
 fixture; UTF-8 station names sort by byte order). It started out **not** viable for
 the real input — every flaw below was found while getting it there — and now runs the
-full 1e9-row input (`brc_parallel.ash` does it in ~2m36s; see [`README.md`](README.md)
-for current benchmarks). This document is the point of the exercise: what broke, where,
+full 1e9-row input (`brc_parallel.ash` does it in ~25 s after the 2026-07-03
+compiler-optimization arc; see [`README.md`](README.md) for current benchmarks). This document is the point of the exercise: what broke, where,
 and why. File/line references are into the compiler at the time of writing.
 
 Some findings are **compiler bugs discovered while writing this program**; the rest

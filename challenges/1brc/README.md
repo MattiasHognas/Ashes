@@ -15,8 +15,8 @@ A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, origina
   size). Correct and unbounded, single-core.
 - **`brc_parallel.ash`** — data-parallel: `mmap`s the whole file (`Ashes.File.mmap`, zero-copy), splits
   it into per-core chunks at newline boundaries, folds each on a worker thread
-  (`Ashes.Parallel.reduce` / `both`), and merges the partial maps. Uses all cores up to an 8-worker
-  cap; output is byte-identical to the sequential version (purity makes the fold order-independent).
+  (`Ashes.Parallel.reduce` / `both`), and merges the partial maps. Uses all cores (the worker cap
+  defaults to the detected core count); output is byte-identical to the sequential version (purity makes the fold order-independent).
 
 Output is the canonical `{Station=min/mean/max, ...}` form, sorted by station name; correct for UTF-8
 station names (multibyte names sort by byte order).
@@ -59,14 +59,19 @@ The file path is the program's first argument.
 
 ### Benchmarks
 
-Measured with `hyperfine` (warm page cache) on a 32-core Linux x64 box; the parallel variant caps at
-8 workers. Both variants produce **byte-identical** output.
+Measured with `hyperfine` (warm page cache) on a 32-core Linux x64 box; the parallel worker cap
+defaults to the core count (override with `--parallel-workers`). Both variants produce **byte-identical** output.
 
 | Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` |
 |------|----------------------|-----------------------------|
-| 10,000,000 | 12.8 s / 50 MB | **2.6 s** / 1.6 GB |
-| 100,000,000 | 2 m 07 s / 50 MB | **16.9 s** / 2.9 GB |
-| **1,000,000,000** (full challenge) | ~21 min / 50 MB | **2 m 36 s** / 15.9 GB — 41,343 stations, ≈6.4 M rows/s |
+| 10,000,000 | 6.5 s / 52 MB | **0.96 s** / 5.1 GB |
+| 100,000,000 | ~65 s / 52 MB | **3.1 s** / 5.6 GB |
+| **1,000,000,000** (full challenge) | ~11 min / 52 MB | **24.7 s** / 18.7 GB — 41,343 stations, ≈40 M rows/s |
+
+(Previous compiler generation, for reference: sequential 12.8 s @10M; parallel 2 m 36 s @1e9 at an
+8-worker cap. The 2026-07-03 optimization arc — memcmp `Bytes.compare`, closure devirtualization,
+arena-bracket elision, `Map.getStr/setStr`/user `upsertMeasurement` reuse, `Bytes.subView`, and a
+core-count worker cap — is recorded in `docs/future/COMPILER_OPTIMIZATION.md`.)
 
 The tradeoff: the sequential fold is constant-memory (streams the file, reclaims each iteration in
 place) and scales to any size on tiny RAM but is single-core; the parallel fold is ~5–8× faster (near

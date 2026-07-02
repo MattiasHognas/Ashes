@@ -71,6 +71,21 @@ let get compare searchKey =
                         else go(right)
     in go)
 
+let getStr searchKey = 
+    (let rec go map = 
+        match map with
+            | Empty -> None
+            | Node(_height, left, key, value, right) -> 
+                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(searchKey))(Ashes.Bytes.fromText(key))
+                in 
+                    if ordering == 0
+                    then Some(value)
+                    else 
+                        if ordering <= -1
+                        then go(left)
+                        else go(right)
+    in go)
+
 let contains compare searchKey map = 
     match get(compare)(searchKey)(map) with
         | None -> false
@@ -85,6 +100,36 @@ let set compare newKey newValue =
                 in 
                     if ordering == 0
                     then makeNode(left)(key)(newValue)(right)
+                    else 
+                        if ordering <= -1
+                        then balance(makeNode(go(left))(key)(value)(right))
+                        else balance(makeNode(left)(key)(value)(go(right)))
+    in go)
+
+let setStr newKey newValue = 
+    (let rec go map = 
+        match map with
+            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
+            | Node(_height, left, key, value, right) -> 
+                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                in 
+                    if ordering == 0
+                    then makeNode(left)(key)(newValue)(right)
+                    else 
+                        if ordering <= -1
+                        then balance(makeNode(go(left))(key)(value)(right))
+                        else balance(makeNode(left)(key)(value)(go(right)))
+    in go)
+
+let upsertStr newKey missValue onHit = 
+    (let rec go map = 
+        match map with
+            | Empty -> makeNode(Empty)(newKey)(missValue)(Empty)
+            | Node(_height, left, key, value, right) -> 
+                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                in 
+                    if ordering == 0
+                    then makeNode(left)(key)(onHit(value))(right)
                     else 
                         if ordering <= -1
                         then balance(makeNode(go(left))(key)(value)(right))

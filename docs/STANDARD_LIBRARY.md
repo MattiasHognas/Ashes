@@ -70,11 +70,19 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `indexOf(bytes)(needle)(from)` returning `Int` — index of the first byte equal to `needle` (an
   `Int` byte value) at or after `from`, or `-1` if none. O(len − from), no allocation — a memchr for
   scanning a buffer by integer position without materializing views.
+- `compare(left)(right)` returning `Int` — three-way lexicographic byte order, normalized to
+  `-1`/`0`/`1`. One `memcmp` over the common prefix plus a length tie-break — far faster than a
+  byte-at-a-time loop. With `fromText` this underlies `Ashes.String.compare`.
 - `subText(bytes)(start)(len)` returning `Str` — copy `len` bytes starting at `start` into a fresh
   `Str`. O(len); the range is clamped into the source so it never reads out of bounds. The caller
   must ensure the range lies on valid UTF-8 boundaries (slicing at ASCII delimiters like `;`/`\n`
   always does). With `indexOf` this lets a buffer be scanned by integer index instead of a shrinking
   `Str` view.
+- `subView(bytes)(start)(len)` returning `Str` — a zero-copy VIEW over the same range `subText`
+  would copy (O(1), no byte copy; same clamping and UTF-8 caveat). The backing bytes must outlive
+  the view: a view over an `Ashes.File.mmap` mapping is valid for the program's lifetime, and a
+  view stored into a structure (e.g. a `Map` key) is materialized by the copy-out/blob paths.
+  Prefer it for transient per-record slices in hot scan loops.
 - `append(left, right)` returning `Bytes` — concatenate two sequences
 - `appendByte(bytes, byte)` returning `Bytes` — append one byte
 - `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
@@ -195,8 +203,16 @@ Immutable indexed array backed by a persistent balanced tree.
 - `empty` — empty immutable map
 - `isEmpty(map)` returning `Bool` — whether the map has no entries
 - `get(compare)(key)(map)` returning `Maybe(V)`
+- `getStr(key)(map)` returning `Maybe(V)` — `Str`-keyed lookup ordered by UTF-8 byte order
+  (`Ashes.Bytes.compare` inline; no comparator closure, so it is markedly faster than
+  `get(Ashes.String.compare)`)
 - `contains(compare)(key)(map)` returning `Bool`
 - `set(compare)(key)(value)(map)` returning a new map value
+- `setStr(key)(value)(map)` returning a new map value — `Str`-keyed `set`, same ordering and
+  performance rationale as `getStr`
+- `upsertStr(key)(missValue)(onHit)(map)` returning a new map value — single-traversal
+  insert-or-update: inserts `missValue` when `key` is absent, else replaces the stored value with
+  `onHit(oldValue)`. Halves the tree work of a `getStr`-then-`setStr` pair in accumulation loops.
 - `insert(compare)(key)(value)(map)` returning a new map value
 - `size(map)` returning `Int`
 - `foldLeft(folder)(state)(map)` returning the folded state in key order

@@ -328,6 +328,7 @@ public sealed partial class Lowering
 
         CollectTopLevelBindingNames(valueItems);
         RegisterInlinableFunctions(valueItems);
+        RegisterEntryBodyFunctions(program.Body);
         if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
         {
             Console.Error.WriteLine($"[reuse] specializable funcs: {string.Join(", ", _specializableFunctions.Keys)}");
@@ -449,6 +450,142 @@ public sealed partial class Lowering
                 && Strip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
             {
                 _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Registers functions bound in the entry expression's leading let-chain for the same reuse
+    /// registries as flat top-level items. When the import stitcher combines modules with the user
+    /// program, the user's top-level declarations arrive as a nested let-pyramid in the program
+    /// BODY (not as TopLevelItems), so without this walk user-defined functions could never be
+    /// reuse-specialized or helper-inlined — only stitched module (Ashes_*) functions could.
+    /// Shadow safety: the registries are name-keyed, so a name bound more than once anywhere in
+    /// the body (any let/lambda/pattern binder) is never registered.
+    /// </summary>
+    private void RegisterEntryBodyFunctions(Expr body)
+    {
+        var binderCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        CountBinders(body, binderCounts);
+
+        var cur = body;
+        while (true)
+        {
+            switch (cur)
+            {
+                case Expr.Let letExpr:
+                    RegisterEntryFunction(letExpr.Name, isRecursive: false, letExpr.Value, binderCounts);
+                    cur = letExpr.Body;
+                    continue;
+                case Expr.LetRec letRecExpr:
+                    RegisterEntryFunction(letRecExpr.Name, isRecursive: true, letRecExpr.Value, binderCounts);
+                    cur = letRecExpr.Body;
+                    continue;
+                default:
+                    return;
+            }
+        }
+    }
+
+    private void RegisterEntryFunction(string name, bool isRecursive, Expr value, Dictionary<string, int> binderCounts)
+    {
+        if (binderCounts.GetValueOrDefault(name) != 1
+            || _specializableFunctions.ContainsKey(name)
+            || _inlinableFunctions.ContainsKey(name)
+            || value is not Expr.Lambda lam)
+        {
+            return;
+        }
+
+        // A reuse specialization is generated in an isolated scope, where only stitched top-level
+        // bindings (module functions — inlined or called by-label) and intrinsics resolve. An entry
+        // function that references any OTHER user binding (a lexical sibling) would fail to lower
+        // inside its spec, so only self-contained functions are registered.
+        var free = FreeVars(lam, new HashSet<string>(StringComparer.Ordinal) { name });
+        if (!free.All(_topLevelBindingNames.Contains))
+        {
+            return;
+        }
+
+        // Only the SPECIALIZABLE shapes are registered from the entry body — never the inlinable
+        // helper set. A module helper's free names are other module bindings, resolvable by-label
+        // from any inline site; a user helper's body may reference arbitrary earlier user bindings
+        // that are not in scope at an inline site inside another function or specialization.
+        if (!isRecursive)
+        {
+            if (TryGetNestedRecReturn(lam, out var nestedParam, out var nestedArgCount))
+            {
+                _specializableFunctions[name] = (lam, nestedParam, nestedArgCount);
+            }
+        }
+        else if (lam.Body is not Expr.Lambda)
+        {
+            // Single-parameter recursive function — a direct reuse-specialization candidate.
+            _specializableFunctions[name] = (lam, lam.ParamName, 1);
+        }
+    }
+
+    /// <summary>
+    /// Counts every binder occurrence (let / let rec / lambda parameter / match-pattern variable)
+    /// by name across an expression tree. Walks record properties reflectively so new Expr shapes
+    /// are covered by default.
+    /// </summary>
+    private static void CountBinders(object? node, Dictionary<string, int> counts)
+    {
+        if (node is null or string)
+        {
+            return;
+        }
+
+        void Bump(string n) => counts[n] = counts.GetValueOrDefault(n) + 1;
+        switch (node)
+        {
+            case Expr.Let l: Bump(l.Name); break;
+            case Expr.LetResult lr: Bump(lr.Name); break;
+            case Expr.LetRec lrec: Bump(lrec.Name); break;
+            case Expr.Lambda lam: Bump(lam.ParamName); break;
+            case Pattern.Var pv: Bump(pv.Name); break;
+        }
+
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                CountBinders(tuple[i], counts);
+            }
+
+            return;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
+            {
+                CountBinders(item, counts);
+            }
+
+            return;
+        }
+
+        if (node is not (Expr or Pattern or MatchCase))
+        {
+            return;
+        }
+
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                CountBinders(prop.GetValue(node), counts);
             }
         }
     }
@@ -1515,7 +1652,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BytesLength => LowerQualifiedBuiltinFunctionReference(name, CreateBytesLengthBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGet => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerQualifiedBuiltinFunctionReference(name, CreateBytesIndexOfBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerQualifiedBuiltinFunctionReference(name, CreateBytesCompareBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSubTextBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSubViewBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerQualifiedBuiltinFunctionReference(name, CreateBytesAppendByteBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerQualifiedBuiltinFunctionReference(name, CreateBytesFromListBinding().S.Body),
@@ -3729,14 +3868,19 @@ public sealed partial class Lowering
             Console.Error.WriteLine($"[reuse] call {dbgFn.Name}: inSpec={_inSpecialization} tokens={_reuseTokens.Count} shadowed={_shadowedInlinables.ContainsKey(dbgFn.Name)} inProgress={_inliningInProgress.Contains(dbgFn.Name)} params={dbgInl.Params.Count} args={collectedArgs.Count}");
         }
 
+        // The callee may be a plain Var (module code, where the stitcher already rewrote member
+        // references to flat names) or a qualified stdlib reference from user code
+        // (Ashes.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
+        // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
+        // isolated scope where only inline/by-label resolution works.
         if ((_reuseTokens.Count > 0 || _inSpecialization)
-            && rootExpr is Expr.Var fnVar
-            && !_shadowedInlinables.ContainsKey(fnVar.Name)
-            && !_inliningInProgress.Contains(fnVar.Name)
-            && _inlinableFunctions.TryGetValue(fnVar.Name, out var inlinable)
+            && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
+            && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
+            && !_inliningInProgress.Contains(inlineName)
+            && _inlinableFunctions.TryGetValue(inlineName, out var inlinable)
             && inlinable.Params.Count == collectedArgs.Count)
         {
-            return InlineCall(fnVar.Name, inlinable.Params, inlinable.Body, collectedArgs);
+            return InlineCall(inlineName, inlinable.Params, inlinable.Body, collectedArgs);
         }
 
         // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
@@ -3977,7 +4121,9 @@ public sealed partial class Lowering
                 IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
                 IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                IntrinsicKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                IntrinsicKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                 IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
@@ -4071,7 +4217,9 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                    BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                    BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                     BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
@@ -5258,8 +5406,12 @@ public sealed partial class Lowering
         var freshParams = new List<string>();
         for (int i = 0; i < paramNames.Count; i++)
         {
-            if (_specFreshInputNames is not null && args[i] is Expr.Var fv
-                && _specFreshInputNames.Contains(fv.Name) && !_specFreshInputNames.Contains(paramNames[i]))
+            // A param is a fresh heap input when its argument names a fresh input of the enclosing
+            // specialization OR is a non-variable expression (a value computed in the arm — e.g. an
+            // upsert's onHit(value) — which lives in per-iteration arena scratch). See the matching
+            // materialization rule in LowerConstructorApplication.
+            if (_specFreshInputNames is not null && !_specFreshInputNames.Contains(paramNames[i])
+                && (args[i] is not Expr.Var fv || _specFreshInputNames.Contains(fv.Name)))
             {
                 freshParams.Add(paramNames[i]);
             }
@@ -5419,15 +5571,93 @@ public sealed partial class Lowering
             }
         }
 
+        // Local-slot dataflow, for values that pass through a let/inlined-arg slot: slot → number
+        // of stores, and slot → the temps its loads produce.
+        var slotStores = new Dictionary<int, int>();
+        var slotLoads = new Dictionary<int, List<int>>();
         foreach (var inst in f.Instructions)
         {
             switch (inst)
             {
-                case IrInst.Alloc alloc when readers.TryGetValue(alloc.Target, out var rs)
-                    && rs.Any(r => r is not (IrInst.MakeClosure or IrInst.MakeClosureStack)):
+                case IrInst.StoreLocal sl:
+                    slotStores[sl.Slot] = slotStores.GetValueOrDefault(sl.Slot) + 1;
+                    break;
+                case IrInst.LoadLocal ll:
+                    if (!slotLoads.TryGetValue(ll.Slot, out var loads))
+                    {
+                        slotLoads[ll.Slot] = loads = new List<int>();
+                    }
+
+                    loads.Add(ll.Target);
+                    break;
+            }
+        }
+
+        // A fresh in-arm value (e.g. an upsert's stats tuple) is SAFELY consumed when every reader
+        // either writes INTO it, reads a field FROM it, materializes it into persistent storage
+        // (CopyFixedInto / CopyOutArenaToSpace), captures it in a closure env (the closure itself is
+        // checked below), or moves it through a single-store local slot whose every load is itself
+        // safely consumed. Anything else (a SetAdtField storing the raw pointer as a node field, a
+        // call, a return) means per-iteration scratch could escape, so the reset is disqualified.
+        bool SafelyConsumed(int temp, int depth)
+        {
+            if (!readers.TryGetValue(temp, out var rs))
+            {
+                return true;
+            }
+
+            foreach (var r in rs)
+            {
+                switch (r)
+                {
+                    case IrInst.MakeClosure:
+                    case IrInst.MakeClosureStack:
+                        continue;
+                    case IrInst.SetAdtField sa when sa.Ptr == temp:
+                        continue;
+                    case IrInst.GetAdtField gf when gf.Ptr == temp:
+                        continue;
+                    case IrInst.StoreMemOffset sm when sm.BasePtr == temp:
+                        continue;
+                    case IrInst.LoadMemOffset lm when lm.BasePtr == temp:
+                        continue;
+                    case IrInst.CopyFixedInto cfi when cfi.SrcTemp == temp:
+                        continue;
+                    case IrInst.CopyOutArenaToSpace co when co.SrcTemp == temp:
+                        continue;
+                    case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && SafelyConsumed(b.Target, depth + 1):
+                        continue;
+                    case IrInst.StoreLocal sl when depth < 4
+                        && slotStores.GetValueOrDefault(sl.Slot) == 1
+                        && (!slotLoads.TryGetValue(sl.Slot, out var loads)
+                            || loads.All(lt => SafelyConsumed(lt, depth + 1))):
+                        continue;
+                    default:
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        foreach (var inst in f.Instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.Alloc alloc when !SafelyConsumed(alloc.Target, 0):
+                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+                    {
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected: {alloc} readers: {string.Join(" | ", readers.GetValueOrDefault(alloc.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
+                    }
+
                     return false;
                 case IrInst.MakeClosure mk when readers.TryGetValue(mk.Target, out var rs)
                     && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mk.Target):
+                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+                    {
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", rs.Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
+                    }
+
                     return false;
                 case IrInst.MakeClosureStack mks when readers.TryGetValue(mks.Target, out var rs)
                     && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mks.Target):

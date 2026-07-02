@@ -98,6 +98,10 @@ public abstract record IrInst
     /// deterministically when the closure is dropped.</summary>
     public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
     public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
+    // Devirtualized closure call: the callee label is statically known (the closure temp was
+    // produced by a MakeClosure with this label), so codegen emits a direct call the LLVM
+    // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
+    public sealed record CallKnown(int Target, string FuncLabel, int EnvTemp, int ArgTemp) : IrInst;
 
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
@@ -175,7 +179,9 @@ public abstract record IrInst
     public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
     public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
     public sealed record BytesIndexOf(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
+    public sealed record BytesCompare(int Target, int LeftTemp, int RightTemp) : IrInst;
     public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
+    public sealed record BytesSubView(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
     public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
     public sealed record BytesFromList(int Target, int ListTemp) : IrInst;

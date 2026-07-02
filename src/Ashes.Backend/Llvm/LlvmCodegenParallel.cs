@@ -34,7 +34,8 @@ internal static partial class LlvmCodegen
     // is the mmap'd worker-stack length; on win-x64 CreateThread gets the OS default (dwStackSize=0)
     // unless the tunable is set.
     internal const long DefaultParallelWorkerStackBytes = 1L * 1024 * 1024; // 1 MiB worker stack
-    private const long ParallelWorkerCap = 8;                  // max concurrent workers
+    // Fallback worker cap when runtime core-count detection fails (and the historical fixed cap).
+    private const long ParallelWorkerCapFallback = 8;
 
     /// <summary>Resolved per-worker stack size (bytes) for the linux mmap'd worker stack.</summary>
     private static long ParallelStackBytesFor(LlvmCodegenState state) =>
@@ -46,6 +47,8 @@ internal static partial class LlvmCodegen
     private const long ParallelCloneFlags = 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x40000 | 0x200000;
     private const string ParallelWorkerFnName = "__ashes_parallel_worker";
     private const string ParallelActiveCounterName = "__ashes_parallel_active";
+    private const string ParallelCapGlobalName = "__ashes_parallel_cap";
+    private const string ParallelCapFnName = "__ashes_parallel_cap_get";
 
     /// <summary>
     /// Emits the parallelism runtime (the shared active-worker counter and the worker trampoline)
@@ -64,6 +67,100 @@ internal static partial class LlvmCodegen
         LlvmApi.SetInitializer(counter, LlvmApi.ConstInt(i64, 0, 0));
 
         EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
+        EmitParallelWorkerCapFn(target, flavor, nounwindAttr);
+    }
+
+    /// <summary>
+    /// Emits <c>__ashes_parallel_cap_get() : i64</c> — the max-concurrent-workers cap used by the
+    /// fork gate. Detects the machine's core count once (lazily, cached in a global): on linux a
+    /// <c>sched_getaffinity</c> popcount (respects taskset/cgroup masks), on win-x64
+    /// <c>GetSystemInfo().dwNumberOfProcessors</c>. Falls back to the historical cap of 8 when
+    /// detection reports nothing. A fixed <c>--parallel-workers</c> value bypasses this entirely
+    /// (the fork gate compares against the constant instead).
+    /// </summary>
+    private static void EmitParallelWorkerCapFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmValueHandle capGlobal = LlvmApi.AddGlobal(target.Module, i64, ParallelCapGlobalName);
+        LlvmApi.SetLinkage(capGlobal, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(capGlobal, LlvmApi.ConstInt(i64, 0, 0));
+
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, ParallelCapFnName, LlvmApi.FunctionType(i64, []));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction, nounwindAttr);
+
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmBasicBlockHandle detectBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "detect");
+        LlvmBasicBlockHandle cachedBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "cached");
+        LlvmBuilderHandle builder = target.Builder;
+
+        LlvmApi.PositionBuilderAtEnd(builder, entry);
+        LlvmCodegenState state = CreateBareRuntimeState(target, fn, flavor);
+        LlvmValueHandle cached = LlvmApi.BuildLoad2(builder, i64, capGlobal, "cap_cached");
+        LlvmValueHandle isSet = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, cached, LlvmApi.ConstInt(i64, 0, 0), "cap_is_set");
+        LlvmApi.BuildCondBr(builder, isSet, cachedBlock, detectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cachedBlock);
+        LlvmApi.BuildRet(builder, cached);
+
+        LlvmApi.PositionBuilderAtEnd(builder, detectBlock);
+        LlvmValueHandle detected;
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            // SYSTEM_INFO is 48 bytes; dwNumberOfProcessors is the DWORD at offset 32.
+            LlvmValueHandle infoBuf = EmitStackAlloc(state, 64, "cap_sysinfo");
+            LlvmTypeHandle getSystemInfoType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [state.I8Ptr]);
+            EmitWindowsImportCall(state, "__imp_GetSystemInfo", getSystemInfoType,
+                [LlvmApi.BuildIntToPtr(builder, infoBuf, state.I8Ptr, "cap_sysinfo_ptr")], "cap_get_system_info");
+            LlvmValueHandle packed = LoadMemory(state, infoBuf, 32, "cap_nproc_packed");
+            detected = LlvmApi.BuildAnd(builder, packed, LlvmApi.ConstInt(i64, 0xFFFFFFFFUL, 0), "cap_nproc");
+        }
+        else
+        {
+            // sched_getaffinity(0, 128, mask): the kernel writes the calling thread's allowed-CPU
+            // mask (128 bytes covers 1024 CPUs). The buffer is pre-zeroed, and on failure nothing
+            // is written, so a straight popcount of all 16 words yields 0 → the fallback below.
+            const int maskBytes = 128;
+            LlvmValueHandle maskBuf = EmitStackAlloc(state, maskBytes, "cap_cpu_mask");
+            for (int w = 0; w < maskBytes / 8; w++)
+            {
+                StoreMemory(state, maskBuf, w * 8, LlvmApi.ConstInt(i64, 0, 0), $"cap_mask_zero_{w}");
+            }
+
+            EmitLinuxSyscall(state, SyscallSchedGetaffinity,
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, maskBytes, 0),
+                maskBuf,
+                "cap_getaffinity");
+
+            // SWAR popcount of each mask word, summed.
+            LlvmValueHandle c55 = LlvmApi.ConstInt(i64, 0x5555555555555555UL, 0);
+            LlvmValueHandle c33 = LlvmApi.ConstInt(i64, 0x3333333333333333UL, 0);
+            LlvmValueHandle c0F = LlvmApi.ConstInt(i64, 0x0F0F0F0F0F0F0F0FUL, 0);
+            LlvmValueHandle c01 = LlvmApi.ConstInt(i64, 0x0101010101010101UL, 0);
+            LlvmValueHandle total = LlvmApi.ConstInt(i64, 0, 0);
+            for (int w = 0; w < maskBytes / 8; w++)
+            {
+                LlvmValueHandle x = LoadMemory(state, maskBuf, w * 8, $"cap_mask_{w}");
+                LlvmValueHandle sh1 = LlvmApi.BuildAnd(builder, LlvmApi.BuildLShr(builder, x, LlvmApi.ConstInt(i64, 1, 0), $"cap_p1s_{w}"), c55, $"cap_p1a_{w}");
+                x = LlvmApi.BuildSub(builder, x, sh1, $"cap_p1_{w}");
+                LlvmValueHandle lo2 = LlvmApi.BuildAnd(builder, x, c33, $"cap_p2l_{w}");
+                LlvmValueHandle hi2 = LlvmApi.BuildAnd(builder, LlvmApi.BuildLShr(builder, x, LlvmApi.ConstInt(i64, 2, 0), $"cap_p2s_{w}"), c33, $"cap_p2h_{w}");
+                x = LlvmApi.BuildAdd(builder, lo2, hi2, $"cap_p2_{w}");
+                x = LlvmApi.BuildAnd(builder, LlvmApi.BuildAdd(builder, x, LlvmApi.BuildLShr(builder, x, LlvmApi.ConstInt(i64, 4, 0), $"cap_p4s_{w}"), $"cap_p4a_{w}"), c0F, $"cap_p4_{w}");
+                x = LlvmApi.BuildLShr(builder, LlvmApi.BuildMul(builder, x, c01, $"cap_p8m_{w}"), LlvmApi.ConstInt(i64, 56, 0), $"cap_pc_{w}");
+                total = LlvmApi.BuildAdd(builder, total, x, $"cap_total_{w}");
+            }
+
+            detected = total;
+        }
+
+        // Detection reporting zero (failed syscall, empty mask) falls back to the historical cap.
+        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, detected, LlvmApi.ConstInt(i64, 0, 0), "cap_detect_zero");
+        LlvmValueHandle resolved = LlvmApi.BuildSelect(builder, isZero,
+            LlvmApi.ConstInt(i64, (ulong)ParallelWorkerCapFallback, 0), detected, "cap_resolved");
+        LlvmApi.BuildStore(builder, resolved, capGlobal);
+        LlvmApi.BuildRet(builder, resolved);
     }
 
     // Calls a kernel32 function imported by name (the __imp_* global holds the IAT slot pointer).
@@ -204,8 +301,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
             LlvmApi.GetNamedGlobal(state.Target.Module, ParallelActiveCounterName), state.I64, "par_counter_addr");
         LlvmValueHandle prevActive = EmitAtomicFetchAdd(state, counterAddr, 1, "par_claim");
+        // Cap: a fixed --parallel-workers value compares against a constant; otherwise the cap
+        // is the machine's detected core count (cached in a global by __ashes_parallel_cap_get).
+        LlvmValueHandle capValue = state.Target.ParallelWorkerCap is { } fixedCap
+            ? LlvmApi.ConstInt(state.I64, (ulong)fixedCap, 0)
+            : LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(state.I64, []),
+                LlvmApi.GetNamedFunction(state.Target.Module, ParallelCapFnName), [], "par_cap");
         LlvmValueHandle canSpawn = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
-            prevActive, LlvmApi.ConstInt(state.I64, (ulong)ParallelWorkerCap, 0), "par_can_spawn");
+            prevActive, capValue, "par_can_spawn");
 
         var spawnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_spawn");
         var inlineBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_inline");

@@ -40,6 +40,7 @@ internal static partial class LlvmCodegen
     private const long SyscallClone = 56;
     private const long SyscallFutex = 202;
     private const long SyscallArchPrctl = 158;
+    private const long SyscallSchedGetaffinity = 204;
     // ARCH_SET_GS, not ARCH_SET_FS: glibc and the Rust runtime (linked rustls) own the FS
     // base for their thread-local storage on x86-64. GS is unused by userspace on Linux, so
     // pointing it at our per-thread arena control block coexists with the dlopen'd TLS runtime.
@@ -99,6 +100,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallWait4 = 260;
     private const long Arm64SyscallKill = 129;
     private const long Arm64SyscallPipe2 = 59;
+    private const long Arm64SyscallSchedGetaffinity = 123;
     private const uint WindowsFionBio = 0x8004667E;
     private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
     private const int WindowsWsaErrorWouldBlock = 10035;
@@ -176,7 +178,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.WindowsX64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options, rustlsSharedLibrary);
@@ -189,7 +191,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxX64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, rustlsSharedLibrary);
@@ -202,7 +204,7 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         HermeticTlsRuntimeAsset? rustlsSharedLibrary = LoadLinkedTlsRuntimeAsset(program, Backends.TargetIds.LinuxArm64);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, rustlsSharedLibrary);
@@ -277,13 +279,23 @@ internal static partial class LlvmCodegen
             Backends.BackendOptimizationLevel.O2 =>
                 "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
                 ",cgscc(inline)" +
+                // Second inline round: the first round inlines a curried wrapper whose body
+                // builds-and-returns a closure; gvn then forwards the stored code pointer into
+                // the caller's indirect call, instcombine turns it into a direct call, and only
+                // then can that callee be inlined. One extra round collapses these chains.
+                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
+                ",cgscc(inline)" +
                 ",function(dce,instcombine<no-verify-fixpoint>)",
             Backends.BackendOptimizationLevel.O3 =>
                 "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn,loop-mssa(licm))" +
                 ",cgscc(inline)" +
+                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
+                ",cgscc(inline)" +
                 ",function(dce,instcombine<no-verify-fixpoint>,gvn,dse)",
             _ =>
                 "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
+                ",cgscc(inline)" +
+                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
                 ",cgscc(inline)" +
                 ",function(dce,instcombine<no-verify-fixpoint>)",
         };
@@ -751,6 +763,8 @@ internal static partial class LlvmCodegen
                 EnsureWindowsImport("__imp_CreateThread");
                 EnsureWindowsImport("__imp_WaitForSingleObject");
                 EnsureWindowsImport("__imp_CloseHandle");
+                // Worker-cap auto-detection reads the machine's processor count.
+                EnsureWindowsImport("__imp_GetSystemInfo");
             }
 
             // arm64 workers need the TLS arena to get their own per-thread arena; it's now always
@@ -1284,7 +1298,9 @@ internal static partial class LlvmCodegen
             IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
             IrInst.BytesGet bytesGet => StoreTemp(state, bytesGet.Target, EmitBytesGet(state, LoadTemp(state, bytesGet.BytesTemp), LoadTemp(state, bytesGet.IndexTemp))),
             IrInst.BytesIndexOf bytesIndexOf => StoreTemp(state, bytesIndexOf.Target, EmitBytesIndexOf(state, LoadTemp(state, bytesIndexOf.BytesTemp), LoadTemp(state, bytesIndexOf.NeedleTemp), LoadTemp(state, bytesIndexOf.FromTemp))),
+            IrInst.BytesCompare bytesCompare => StoreTemp(state, bytesCompare.Target, EmitBytesCompare(state, LoadTemp(state, bytesCompare.LeftTemp), LoadTemp(state, bytesCompare.RightTemp))),
             IrInst.BytesSubText bytesSubText => StoreTemp(state, bytesSubText.Target, EmitBytesSubText(state, LoadTemp(state, bytesSubText.BytesTemp), LoadTemp(state, bytesSubText.StartTemp), LoadTemp(state, bytesSubText.LenTemp))),
+            IrInst.BytesSubView bytesSubView => StoreTemp(state, bytesSubView.Target, EmitBytesSubView(state, LoadTemp(state, bytesSubView.BytesTemp), LoadTemp(state, bytesSubView.StartTemp), LoadTemp(state, bytesSubView.LenTemp))),
             IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
             IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
             IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
@@ -1411,6 +1427,8 @@ internal static partial class LlvmCodegen
             IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target, EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp), makeClosureStack.EnvSizeBytes)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
+            IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
+                isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
             IrInst.CallExtern callExtern => StoreTemp(state, callExtern.Target, EmitCallExtern(state, callExtern.SymbolName, callExtern.LibraryName, callExtern.ArgTemps, callExtern.ParameterTypes, callExtern.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
@@ -1890,6 +1908,7 @@ internal static partial class LlvmCodegen
             SyscallWaitpid => Arm64SyscallWait4,
             SyscallKill => Arm64SyscallKill,
             SyscallPipe2 => Arm64SyscallPipe2,
+            SyscallSchedGetaffinity => Arm64SyscallSchedGetaffinity,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
     }

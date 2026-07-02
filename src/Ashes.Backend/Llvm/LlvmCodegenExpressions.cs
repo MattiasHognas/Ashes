@@ -79,6 +79,26 @@ internal static partial class LlvmCodegen
         return callInst;
     }
 
+    // Direct call of a statically-known closure body (IrInst.CallKnown): same (env, arg) → i64
+    // convention as EmitCallClosure, but the callee is the lifted function itself, so LLVM's
+    // inliner can see (and inline) it. The env value is the one the closure would have captured.
+    private static LlvmValueHandle EmitCallKnown(LlvmCodegenState state, string funcLabel, LlvmValueHandle envValue, LlvmValueHandle argValue, bool isTailCall = false)
+    {
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmValueHandle callee = state.LiftedFunctions[funcLabel];
+        LlvmValueHandle callInst = LlvmApi.BuildCall2(state.Target.Builder,
+            closureFunctionType,
+            callee,
+            [envValue, argValue],
+            "known_call");
+        if (isTailCall)
+        {
+            LlvmApi.SetTailCall(callInst, 1);
+        }
+
+        return callInst;
+    }
+
     private static LlvmValueHandle EmitToCString(LlvmCodegenState state, LlvmValueHandle stringRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

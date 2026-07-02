@@ -4,7 +4,8 @@ public sealed record BackendCompileOptions(
     BackendOptimizationLevel OptimizationLevel,
     bool EmitDebugInfo = false,
     string? TargetCpu = null,
-    long? ParallelWorkerStackBytes = null)
+    long? ParallelWorkerStackBytes = null,
+    long? ParallelWorkerCap = null)
 {
     public static BackendCompileOptions Default { get; } =
         new(BackendOptimizationLevel.O2);

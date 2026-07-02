@@ -7368,8 +7368,67 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bytes_idx_result_val");
     }
 
+    // Ashes.Bytes.compare(left)(right) : Int — three-way lexicographic byte order, normalized to
+    // -1/0/1. One memcmp over min(len) plus a length tie-break, instead of a byte-at-a-time loop.
+    // Uses the module's freestanding memcmp (present on every target); LLVM lowers small
+    // fixed-pattern calls efficiently and glibc is not required.
+    private static LlvmValueHandle EmitBytesCompare(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "bytes_cmp_left_len");
+        LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "bytes_cmp_right_len");
+        LlvmValueHandle leftPtr = GetStringBytesPointer(state, leftRef, "bytes_cmp_left_data");
+        LlvmValueHandle rightPtr = GetStringBytesPointer(state, rightRef, "bytes_cmp_right_data");
+
+        LlvmValueHandle leftSmaller = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, leftLen, rightLen, "bytes_cmp_left_smaller");
+        LlvmValueHandle minLen = LlvmApi.BuildSelect(builder, leftSmaller, leftLen, rightLen, "bytes_cmp_min_len");
+
+        LlvmTypeHandle memcmpType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I64]);
+        LlvmValueHandle memcmpFn = LlvmApi.GetNamedFunction(state.Target.Module, "memcmp");
+        LlvmValueHandle raw = LlvmApi.BuildCall2(builder, memcmpType, memcmpFn,
+            [leftPtr, rightPtr, minLen], "bytes_cmp_memcmp");
+
+        LlvmValueHandle zero32 = LlvmApi.ConstInt(state.I32, 0, 0);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+        LlvmValueHandle negOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0);
+
+        // Common prefix equal → order by length (shorter sorts first); else the sign of memcmp.
+        LlvmValueHandle rawIsZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, raw, zero32, "bytes_cmp_prefix_eq");
+        LlvmValueHandle rawNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, raw, zero32, "bytes_cmp_raw_neg");
+        LlvmValueHandle bySign = LlvmApi.BuildSelect(builder, rawNeg, negOne, one, "bytes_cmp_by_sign");
+        LlvmValueHandle lenEq = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftLen, rightLen, "bytes_cmp_len_eq");
+        LlvmValueHandle byLenNonEq = LlvmApi.BuildSelect(builder, leftSmaller, negOne, one, "bytes_cmp_by_len_ne");
+        LlvmValueHandle byLen = LlvmApi.BuildSelect(builder, lenEq, zero, byLenNonEq, "bytes_cmp_by_len");
+        return LlvmApi.BuildSelect(builder, rawIsZero, byLen, bySign, "bytes_cmp_result");
+    }
+
     // Ashes.Bytes.subText(bytes)(start)(len) : Str — copies `len` bytes from `start` into a fresh
     // Str ([length][bytes]). Range is clamped into the source so it never reads out of bounds.
+    // Ashes.Bytes.subView(bytes)(start)(len) : Str — a zero-copy view {len|VIEW, ptr} over the
+    // source range (clamped like subText). O(1); the backing must outlive the view.
+    private static LlvmValueHandle EmitBytesSubView(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle startVal, LlvmValueHandle lenVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle srcLen = LoadStringLength(state, bytesRef, "bytes_subv_srclen");
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
+        LlvmValueHandle startNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, startVal, zero, "bytes_subv_start_neg");
+        LlvmValueHandle start0 = LlvmApi.BuildSelect(builder, startNeg, zero, startVal, "bytes_subv_start0");
+        LlvmValueHandle startBig = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, start0, srcLen, "bytes_subv_start_big");
+        LlvmValueHandle start = LlvmApi.BuildSelect(builder, startBig, srcLen, start0, "bytes_subv_start");
+
+        LlvmValueHandle avail = LlvmApi.BuildSub(builder, srcLen, start, "bytes_subv_avail");
+        LlvmValueHandle lenNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, lenVal, zero, "bytes_subv_len_neg");
+        LlvmValueHandle len0 = LlvmApi.BuildSelect(builder, lenNeg, zero, lenVal, "bytes_subv_len0");
+        LlvmValueHandle lenBig = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, len0, avail, "bytes_subv_len_big");
+        LlvmValueHandle viewLen = LlvmApi.BuildSelect(builder, lenBig, avail, len0, "bytes_subv_len");
+
+        LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_subv_src");
+        LlvmValueHandle srcStart = LlvmApi.BuildGEP2(builder, state.I8, srcData, [start], "bytes_subv_srcstart");
+        return EmitStringView(state, srcStart, viewLen, "bytes_subv");
+    }
+
     private static LlvmValueHandle EmitBytesSubText(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle startVal, LlvmValueHandle lenVal)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
