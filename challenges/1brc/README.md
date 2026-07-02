@@ -5,12 +5,21 @@ example suites — nothing here is discovered or run by CI (`ci/jobs.sh`,
 `scripts/verify.sh`), and the `.ash` files here are not format-checked by any gate.
 Format them manually with `dotnet run --project src/Ashes.Cli -- fmt <file> -w`.
 
-## 1 Billion Row Challenge (`brc.ash`)
+## 1 Billion Row Challenge
 
-A faithful attempt at the [1BRC](https://github.com/gunnarmorling/1brc), written to
-**find the language's flaws**. It is correct for ASCII station names at a modest row
-count; it is _not_ viable for the real 1e9-row input. The interesting output of this
-exercise is [`FLAWS.md`](FLAWS.md) — read that.
+A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, originally written to
+**find the language's flaws**. Every flaw it surfaced has since been fixed in the compiler
+(see [`FLAWS.md`](FLAWS.md)), and it now **runs the full 1e9-row challenge**. Two variants:
+
+- **`brc.ash`** — sequential, streaming (`Ashes.File.readLine`), **constant-memory** (~50 MB at any
+  size). Correct and unbounded, single-core.
+- **`brc_parallel.ash`** — data-parallel: `mmap`s the whole file (`Ashes.File.mmap`, zero-copy), splits
+  it into per-core chunks at newline boundaries, folds each on a worker thread
+  (`Ashes.Parallel.reduce` / `both`), and merges the partial maps. Uses all cores up to an 8-worker
+  cap; output is byte-identical to the sequential version (purity makes the fold order-independent).
+
+Output is the canonical `{Station=min/mean/max, ...}` form, sorted by station name; correct for UTF-8
+station names (multibyte names sort by byte order).
 
 ### Prerequisites
 
@@ -22,17 +31,16 @@ bash scripts/download-llvm-native.sh --linux-x64
 
 ### Get the data
 
-The real 1BRC `measurements.txt` (~13 GB, 1e9 rows) is generated from a station list
-by the upstream project; there is no canonical download. `download.sh` fetches a
-prebuilt file from a URL and can subset it so the program actually finishes.
+The real 1BRC `measurements.txt` (~15.5 GB, 1e9 rows) is generated from a station list by the upstream
+project; there is no canonical download. `download.sh` fetches a prebuilt file from a URL and can subset
+it. Any size runs — the sequential variant is constant-memory and the parallel variant scales to the
+full file.
 
 ```bash
 # Edit MEASUREMENTS_URL in download.sh (or pass the URL as the first argument),
-# then fetch a subset that completes:
-ROWS=1000000 bash challenges/1brc/download.sh
-
-# Full file (will OOM — that's finding #2):
-bash challenges/1brc/download.sh
+# then fetch a subset (or the full file):
+ROWS=10000000 bash challenges/1brc/download.sh
+bash challenges/1brc/download.sh                 # full 1e9-row file
 ```
 
 `measurements.txt` and `measurements.full.txt` are git-ignored and never committed.
@@ -40,35 +48,40 @@ bash challenges/1brc/download.sh
 ### Build and run
 
 ```bash
-dotnet run --project src/Ashes.Cli -- compile challenges/1brc/brc.ash -o challenges/1brc/brc
-./challenges/brc challenges/1brc/measurements.txt
+# sequential (constant-memory) or parallel (multicore) — same output
+dotnet run --project src/Ashes.Cli -- compile challenges/1brc/brc.ash          -o /tmp/brc      -O2
+dotnet run --project src/Ashes.Cli -- compile challenges/1brc/brc_parallel.ash -o /tmp/brc_par  -O2
+/tmp/brc     challenges/1brc/measurements.txt     # sequential
+/tmp/brc_par challenges/1brc/measurements.txt     # parallel
 ```
 
-We should probably run it under hyperfine to get actaul data as sonn as we see it actually working, see: https://hotforknowledge.com/2024/01/13/1brc-in-dotnet-among-fastest-on-linux-my-optimization-journey/'
+The file path is the program's first argument.
 
-With something like this:
+### Benchmarks
+
+Measured with `hyperfine` (warm page cache) on a 32-core Linux x64 box; the parallel variant caps at
+8 workers. Both variants produce **byte-identical** output.
+
+| Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` |
+|------|----------------------|-----------------------------|
+| 10,000,000 | 12.8 s / 50 MB | **2.6 s** / 1.6 GB |
+| 100,000,000 | 2 m 07 s / 50 MB | **16.9 s** / 2.9 GB |
+| **1,000,000,000** (full challenge) | ~21 min / 50 MB | **2 m 36 s** / 15.9 GB — 41,343 stations, ≈6.4 M rows/s |
+
+The tradeoff: the sequential fold is constant-memory (streams the file, reclaims each iteration in
+place) and scales to any size on tiny RAM but is single-core; the parallel fold is ~5–8× faster (near
+the 8-worker cap) but holds the mapped file plus per-worker maps in RAM. Both stay near-constant-memory
+*per worker* thanks to in-place reuse — before that fix the parallel variant OOM'd past ~15M rows.
 
 ```bash
-hyperfine --warmup 1 --runs 5 './challenge/1brc/brc challenge/1brc/measurements.txt'
+hyperfine --warmup 1 --runs 5 '/tmp/brc_par challenges/1brc/measurements.txt'
 ```
-
-The file path is the program's first argument. (It does **not** stream stdin: a
-`readLine` loop crashes at a few hundred lines — see [`FLAWS.md`](FLAWS.md) #1b — so
-the whole file is read with `Ashes.File.readText`.) Output is the canonical
-`{Station=min/mean/max, ...}` form, sorted by station name.
 
 ### Quick correctness check (no download)
 
 ```bash
 printf 'Hamburg;12.0\nHamburg;14.0\nBulawayo;8.9\nHamburg;10.0\nPalembang;-5.3\n' \
   > /tmp/brc-fixture.txt
-./challenges/1brc/brc /tmp/brc-fixture.txt
+/tmp/brc /tmp/brc-fixture.txt
 # {Bulawayo=8.9/8.9/8.9, Hamburg=10.0/12.0/14.0, Palembang=-5.3/-5.3/-5.3}
 ```
-
-### Reproduce the failure
-
-Increase `ROWS` until the run dies with
-`panic("failed to allocate heap memory from OS")` — the arena leak in
-[`FLAWS.md`](FLAWS.md) #2. Record the row count where it happens; it depends on
-available RAM, not on a billion rows.
