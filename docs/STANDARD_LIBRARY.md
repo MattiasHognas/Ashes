@@ -223,6 +223,27 @@ Immutable indexed array backed by a persistent balanced tree.
 have a built-in ordering abstraction, callers supply a total ordering function
 `(K -> K -> Int)` to lookup and update helpers.
 
+### `Ashes.HashTrie`
+
+A persistent 16-ary hash trie keyed by `Str` — the constant-factor alternative to `Ashes.Map`
+for large keyed accumulations. Each internal node carries its own nibble shift, so a lookup or
+upsert costs ~4-5 dependent node loads at tens of thousands of keys (vs ~17 for the AVL
+`Ashes.Map`), at the price of hash iteration order (re-sort at the end when ordered output is
+needed). Keys compare by UTF-8 bytes at the leaf; equal-hash collisions chain through the leaf.
+Update loops get the same in-place reuse specialization as `Map.set`, so hot folds are
+constant-memory.
+
+- `empty` — empty trie
+- `hashText(text)` returning `Int` — the key hash (`Ashes.Bytes.hash` of the UTF-8 bytes);
+  compute once per key and pass to the operations below
+- `upsertHashed(hash)(key)(missValue)(onHit)(trie)` returning a new trie — single-traversal
+  insert-or-update: inserts `missValue` when absent, else replaces the stored value with
+  `onHit(oldValue)`
+- `getHashed(hash)(key)(trie)` returning `Maybe(V)`
+- `foldLeft(folder)(state)(trie)` returning the folded state (hash order, not key order)
+- `toList(trie)` returning `List((K, V))` in hash order
+- `size(trie)` returning `Int`
+
 ### `Ashes.Parallel`
 
 Structured, deterministic parallelism over **pure** functions (see

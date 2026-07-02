@@ -5690,16 +5690,44 @@ public sealed partial class Lowering
             return false;
         }
 
-        if (string.Equals(named.Symbol.Name, "MapTree", StringComparison.Ordinal) && named.TypeArgs.Count == 2)
+        // Structural check over the accumulator ADT (this used to special-case MapTree): every
+        // constructor field must be either the accumulator type itself (a recursive child — the
+        // node cells live in to-space / are rewritten in place, so they are persistent) or a leaf
+        // type the reuse materialization makes persistent (copy types inline; Str/Bytes and
+        // copy-tuples are copied to the blob on insert and overwritten in place on update — see
+        // LowerConstructorApplication). Any other field shape (a list, a closure, a foreign ADT)
+        // could point into per-iteration scratch, so the loop must not reset.
+        var sym = named.Symbol;
+        if (sym.Constructors.Count == 0)
         {
-            // A field is persistent if it is a copy type, a Str/Bytes (materialized to the blob), or a tuple
-            // of copy-type elements (fixed-size copy to the blob). The key is additionally kept-on-update;
-            // the value is fresh on every update and is materialized on both insert and update.
-            return IsReuseMaterializableFieldType(Prune(named.TypeArgs[0]))
-                && IsReuseMaterializableFieldType(Prune(named.TypeArgs[1]));
+            return false;
         }
 
-        return false;
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        foreach (var ctor in sym.Constructors)
+        {
+            foreach (var fieldType in ctor.ParameterTypes)
+            {
+                var resolved = Prune(ResolveFieldType(fieldType, typeParamMap));
+                bool isSelf = resolved is TypeRef.TNamedType fieldNamed
+                    && ReferenceEquals(fieldNamed.Symbol, sym);
+                if (!isSelf && !IsReuseMaterializableFieldType(resolved))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     // A reuse-node heap leaf field type the materialization can make persistent (blob): copy types (inline,

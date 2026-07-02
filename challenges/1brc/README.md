@@ -9,7 +9,7 @@ Format them manually with `dotnet run --project src/Ashes.Cli -- fmt <file> -w`.
 
 A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, originally written to
 **find the language's flaws**. Every flaw it surfaced has since been fixed in the compiler
-(see [`FLAWS.md`](FLAWS.md)), and it now **runs the full 1e9-row challenge**. Two variants:
+(see [`FLAWS.md`](FLAWS.md)), and it now **runs the full 1e9-row challenge**. Three variants:
 
 - **`brc.ash`** — sequential, streaming (`Ashes.File.readLine`), **constant-memory** (~50 MB at any
   size). Correct and unbounded, single-core.
@@ -17,6 +17,10 @@ A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, origina
   it into per-core chunks at newline boundaries, folds each on a worker thread
   (`Ashes.Parallel.reduce` / `both`), and merges the partial maps. Uses all cores (the worker cap
   defaults to the detected core count); output is byte-identical to the sequential version (purity makes the fold order-independent).
+
+- **`brc_trie.ash`** — like the parallel variant but folds into `Ashes.HashTrie` (16-ary hash trie,
+  ~4-5 dependent node loads per row instead of the AVL's ~17) and re-sorts by name at the end.
+  The fastest variant.
 
 Output is the canonical `{Station=min/mean/max, ...}` form, sorted by station name; correct for UTF-8
 station names (multibyte names sort by byte order).
@@ -62,11 +66,11 @@ The file path is the program's first argument.
 Measured with `hyperfine` (warm page cache) on a 32-core Linux x64 box; the parallel worker cap
 defaults to the core count (override with `--parallel-workers`). Both variants produce **byte-identical** output.
 
-| Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` |
-|------|----------------------|-----------------------------|
-| 10,000,000 | 6.5 s / 52 MB | **0.96 s** / 5.1 GB |
-| 100,000,000 | ~65 s / 52 MB | **3.1 s** / 5.6 GB |
-| **1,000,000,000** (full challenge) | ~11 min / 52 MB | **24.7 s** / 18.7 GB — 41,343 stations, ≈40 M rows/s |
+| Rows | Sequential `brc.ash` | Parallel `brc_parallel.ash` | Trie `brc_trie.ash` |
+|------|----------------------|-----------------------------|---------------------|
+| 10,000,000 | 6.5 s / 52 MB | 0.96 s / 5.1 GB | **0.5 s** (1.6 s single-core) |
+| 100,000,000 | ~65 s / 52 MB | 3.1 s / 5.6 GB | **1.5 s** |
+| **1,000,000,000** (full challenge) | ~11 min / 52 MB | 24.7 s / 18.7 GB | **12.2 s** / 16.6 GB — 41,343 stations, ≈82 M rows/s |
 
 (Previous compiler generation, for reference: sequential 12.8 s @10M; parallel 2 m 36 s @1e9 at an
 8-worker cap. The 2026-07-03 optimization arc — memcmp `Bytes.compare`, closure devirtualization,
