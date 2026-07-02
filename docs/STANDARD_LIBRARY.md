@@ -80,6 +80,13 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `getU32Le(bytes, offset)` returning `u32` — decode little-endian `u32` at offset
 - `getU64Le(bytes, offset)` returning `u64` — decode little-endian `u64` at offset
 
+### `Ashes.UInt`
+
+- `toInt(value)` returning `Int` — widen an unsigned integer (`u8`/`u16`/`u32`/`u64`) to a signed
+  `Int`. Value-preserving for `u8`/`u16`/`u32` (and a bit-reinterpret for `u64`); it is the bridge that
+  lets a byte from `Ashes.Bytes.get` be used in `Int` arithmetic, enabling byte-level integer parsing
+  without routing through strings.
+
 ### `Ashes.Text`
 
 - `uncons(text)` returning `Maybe((Str, Str))`

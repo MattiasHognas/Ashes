@@ -115,6 +115,7 @@ public sealed partial class Lowering
         BytesGetU16Le,
         BytesGetU32Le,
         BytesGetU64Le,
+        UIntToInt,
         FileWriteBytes,
         ReadExact,
         TextByteLength,
