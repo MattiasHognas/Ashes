@@ -39,6 +39,12 @@ public sealed partial class Lowering
         public List<int> ParamSlots { get; init; } = [];
         public bool InTailPosition { get; set; }
 
+        // Params passed as their own unchanged Var at EVERY tail self-call — loop-invariant, so they
+        // never hold a value allocated inside the loop and always point below the arena watermark. A
+        // plain per-iteration reset therefore leaves them valid, even when they are heap types (e.g. a
+        // Bytes threaded unchanged through a fold). Empty when not computed (conservative).
+        public HashSet<string> LoopInvariantParams { get; init; } = new(System.StringComparer.Ordinal);
+
         // True only while we are still descending the recursive binding's curried lambda chain
         // (fun a -> fun b -> body). The chain's innermost lambda owns the tail-call loop label; a
         // nested let-bound lambda inside the body is a separate frame and must not be mistaken for it.

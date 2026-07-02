@@ -2533,12 +2533,14 @@ public sealed partial class Lowering
             var savedTcoCtx = _tcoCtx;
             if (hasTailSelfCalls)
             {
+                var tcoParamNames = CollectLambdaParams(lam);
                 _tcoCtx = new TcoContext
                 {
                     SelfName = letRec.Name,
                     ParamCount = paramCount,
-                    ParamNames = CollectLambdaParams(lam),
-                    InTailPosition = false
+                    ParamNames = tcoParamNames,
+                    InTailPosition = false,
+                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam), tcoParamNames, letRec.Name)
                 };
             }
             else
@@ -3477,6 +3479,74 @@ public sealed partial class Lowering
     // tracking binders that shadow the accumulator name; each leaf must satisfy IsStableAccumulatorExpr
     // under the shadow set (a rebound accumulator name is no longer the accumulator). Used only when
     // recording a fold's stability, keyed by name — the caller side uses live-scope slots instead.
+    // The params that are passed as their own unchanged Var at every tail self-call, so they are
+    // loop-invariant (they only ever hold the value passed into the loop, allocated below the arena
+    // watermark) and survive a plain per-iteration reset. Computed from the raw AST before lowering, so
+    // self-calls are matched by name with shadow tracking (a rebound param name is no longer the param).
+    private static HashSet<string> CollectLoopInvariantParams(Expr body, IReadOnlyList<string> paramNames, string selfName)
+    {
+        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
+        bool sawSelfCall = false;
+
+        void Walk(Expr e, HashSet<string> shadowed)
+        {
+            switch (e)
+            {
+                case Expr.If iff:
+                    Walk(iff.Then, shadowed);
+                    Walk(iff.Else, shadowed);
+                    break;
+                case Expr.Match m:
+                    foreach (var c in m.Cases)
+                    {
+                        var caseShadow = shadowed;
+                        var binders = new HashSet<string>(StringComparer.Ordinal);
+                        CollectPatternBinders(c.Pattern, binders);
+                        if (binders.Count > 0)
+                        {
+                            caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                            caseShadow.UnionWith(binders);
+                        }
+
+                        Walk(c.Body, caseShadow);
+                    }
+
+                    break;
+                case Expr.Let let:
+                    var bodyShadow = shadowed.Contains(let.Name)
+                        ? shadowed
+                        : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+                    Walk(let.Body, bodyShadow);
+                    break;
+                case Expr.Call:
+                    var args = new List<Expr>();
+                    var root = CollectCallArgs(e, args);
+                    if (root is Expr.Var f
+                        && string.Equals(f.Name, selfName, StringComparison.Ordinal)
+                        && !shadowed.Contains(selfName)
+                        && args.Count == paramNames.Count)
+                    {
+                        sawSelfCall = true;
+                        for (int i = 0; i < paramNames.Count; i++)
+                        {
+                            bool unchanged = args[i] is Expr.Var av
+                                && string.Equals(av.Name, paramNames[i], StringComparison.Ordinal)
+                                && !shadowed.Contains(paramNames[i]);
+                            if (!unchanged)
+                            {
+                                candidates.Remove(paramNames[i]);
+                            }
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        Walk(body, new HashSet<string>(StringComparer.Ordinal));
+        return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
+    }
+
     private bool TailLeavesStable(Expr body, string accName, TextSpan selfSpan, int selfParamCount, HashSet<string> shadowed)
     {
         switch (body)
@@ -3740,6 +3810,13 @@ public sealed partial class Lowering
                 // already survives a plain reset, which then reclaims the iteration's scaffolding.
                 bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
                     || IsResourceHandleType(newArgTypes[i])
+                    // A loop-invariant param (passed unchanged as its own Var at every tail self-call)
+                    // holds the value passed into the loop — below the watermark — so it survives a plain
+                    // reset even when it is a heap type (e.g. a Bytes threaded unchanged through a fold).
+                    || (i < tco.ParamNames.Count
+                        && tco.LoopInvariantParams.Contains(tco.ParamNames[i])
+                        && collectedArgs[i] is Expr.Var invVar
+                        && string.Equals(invVar.Name, tco.ParamNames[i], StringComparison.Ordinal))
                     || (i < tco.ParamNames.Count
                         && _resetSafeAccumulators.Contains(tco.ParamNames[i])
                         && IsStableAccumulatorExpr(
