@@ -323,6 +323,49 @@ Multi-file project examples: [`project_imports/`](examples/project_imports/),
 
 ---
 
+## Common Questions
+
+**How is memory managed without a garbage collector?**
+Heap values live on a per-thread bump arena and are reclaimed in bulk at
+ownership-scope boundaries — the compiler tracks every owned value and inserts
+deterministic cleanup; there is no GC, no reference counting, and nothing for
+the user to annotate. Resource types (sockets) additionally get compile-time
+use-after-close and double-close checking.
+*Details: [Ownership Model](docs/LANGUAGE_SPEC.md#17-ownership-model) and
+[Resource Types](docs/LANGUAGE_SPEC.md#16-resource-types-and-deterministic-cleanup)
+in the spec; [Memory Model](docs/ARCHITECTURE.md#memory-model) in the
+architecture guide.*
+
+**Won't recursion-as-iteration overflow the stack?**
+No — tail calls compile to constant-stack loops, including cross-member tail
+calls in eligible `let rec ... and ...` groups. Only non-tail recursion
+consumes a frame per call and is bounded by the thread's stack (OS default on
+the main thread, 1 MiB default for parallel workers).
+*Details: [Tail-Call Optimization](docs/LANGUAGE_SPEC.md#183-tail-call-optimization)
+in the spec; [Stacks](docs/ARCHITECTURE.md#stacks) in the architecture guide.*
+
+**Is sharing data safe?**
+Always. Every value is immutable, so the compiler shares freely instead of
+copying — there is no aliasing hazard by construction. Across threads,
+`Ashes.Parallel` workers run on their own arenas and results are deep-copied
+back at the join, so heaps never alias between threads.
+*Details: [Evaluation Strategy](docs/LANGUAGE_SPEC.md#15-evaluation-strategy)
+in the spec;
+[Per-thread arenas](docs/ARCHITECTURE.md#per-thread-arenas-structured-parallelism)
+in the architecture guide.*
+
+**Where do async tasks allocate?**
+A `Task` is a small heap state struct on the calling thread's arena, holding
+the coroutine's captures and the variables live across each `await` — no
+machine stack survives a suspension, so a pending task costs its struct, not a
+stack frame. Task memory returns through the ordinary scope-based arena
+reclamation, and tasks execute single-threaded on the caller's thread.
+*Details: [Async/Await](docs/LANGUAGE_SPEC.md#19-asyncawait) in the spec;
+[Task frames and memory](docs/ARCHITECTURE.md#task-frames-and-memory) in the
+architecture guide.*
+
+---
+
 ## Documentation
 
 | Document | Contents |

@@ -760,7 +760,10 @@ polymorphically.
 
 Self-recursive calls in tail position are guaranteed not to consume additional stack
 frames. Tail-position arguments are still evaluated strictly before the recursive jump is
-performed.
+performed. Cross-member tail calls in a `let rec ... and ...` group are also
+constant-stack when the group members share a common parameter shape; non-tail recursive
+calls consume one stack frame per active call. See §18.3 for the exact conditions and
+stack-depth limits.
 
 ---
 
@@ -1947,6 +1950,44 @@ reusing the current stack frame. This means recursive functions like:
     in sum(1000000)(0)
 
 run in constant stack space, without risk of stack overflow.
+
+### 18.3.1 Mutual Recursion
+
+Cross-member tail calls in a `let rec ... and ...` group are also compiled
+to constant-stack loops when all of the following hold:
+
+- every member of the group has the same number of parameters (arity >= 1),
+- the parameter types are structurally identical position-by-position
+  across all members, and
+- at least one member makes a genuine cross-member call in tail position.
+
+When these conditions hold, the compiler merges the group into a single
+dispatch function whose in-group tail calls become back-edge jumps, so a
+mutually tail-recursive pair such as `isEven`/`isOdd` runs in constant
+stack space. When they do not hold, cross-member calls are ordinary
+closure calls and each one consumes a stack frame. Non-tail in-group
+calls always consume stack frames, exactly like non-tail self-calls.
+
+### 18.3.2 Stack Depth and Non-Tail Recursion
+
+Only tail calls are rewritten into loops. A recursive call whose result
+is still consumed by the caller (for example `n * factorial(n - 1)`, or
+rebuilding a list around the recursive result) occupies one stack frame
+per active call, so its maximum depth is bounded by the thread's stack:
+
+- **Main thread.** The executable does not override the platform stack.
+  On Linux targets the main thread gets the operating system's default
+  stack limit (`RLIMIT_STACK`, commonly 8 MiB). On `win-x64` the image
+  reserves 8 MiB by default.
+- **Parallel workers.** `Ashes.Parallel` workers default to a 1 MiB
+  stack, configurable with the `--parallel-stack-size` compile flag (see
+  the CLI specification).
+
+Exhausting the stack is not a diagnosed error: the process faults
+(segmentation fault on Linux, stack-overflow exception on Windows). For
+unbounded input sizes, structure the recursion so the recursive call is
+in tail position, typically by threading an accumulator as in the `sum`
+example above.
 
 ## 18.4 Zero-Cost Abstraction Philosophy
 
