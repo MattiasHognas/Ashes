@@ -128,11 +128,14 @@ public sealed partial class Lowering
                 && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
             {
                 _reuseTokens.Add((valueTemp, reuseArityVal));
+                RecordReuseTokenFieldBindings(valueTemp, match.Cases[i].Pattern, match.Cases[i].Body);
             }
 
             // Each case body IS in tail position (if the match itself is)
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+            var armCredits = BeginExclusiveBranch(match.Cases.Where((_, j) => j != i).Select(c => c.Body));
             var (bodyTemp, bodyType) = LowerExpr(match.Cases[i].Body);
+            EndExclusiveBranch(armCredits);
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
             // Drop any reuse token this arm published that the body didn't consume.
@@ -366,11 +369,14 @@ public sealed partial class Lowering
                 && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
             {
                 _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
+                RecordReuseTokenFieldBindings(valueTemp, cases[i].Pattern, cases[i].Body);
             }
 
             // Each case body IS in tail position (if the match itself is).
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+            var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
             var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
+            EndExclusiveBranch(armCredits);
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
             // Drop any reuse token this arm published that the body didn't consume.
@@ -1505,5 +1511,39 @@ public sealed partial class Lowering
         }
 
         return d[m, n];
+    }
+
+    /// <summary>Records a just-published reuse token's variable-bound fields: field index →
+    /// (local slot, total references in the arm body). See the CO-23 guard fields in Lowering.cs.</summary>
+    private void RecordReuseTokenFieldBindings(int tokenTemp, Pattern pattern, Expr armBody)
+    {
+        if (pattern is not Pattern.Constructor ctorPattern)
+        {
+            return;
+        }
+
+        Dictionary<int, (int Slot, int TotalRefs)>? fields = null;
+        for (int i = 0; i < ctorPattern.Patterns.Count; i++)
+        {
+            if (ctorPattern.Patterns[i] is Pattern.Var fieldVar
+                && !_constructorSymbols.ContainsKey(fieldVar.Name)
+                && _scopes.Peek().TryGetValue(fieldVar.Name, out var binding)
+                && binding is Binding.Local local)
+            {
+                fields ??= new Dictionary<int, (int, int)>();
+                fields[i] = (local.Slot, CountNameOccurrences(armBody, fieldVar.Name));
+                // Reset (not TryAdd): at token issuance no arm reference has been lowered yet.
+                // The same slot id recurs when the function is lowered again (e.g. once normally
+                // and once as a reuse specialization); a stale count from the earlier lowering
+                // would inflate SEEN and wrongly authorize the in-place overwrite.
+                _reuseBindingSeenBySlot[local.Slot] = 0;
+                _reuseTrackedSlotNames[local.Slot] = fieldVar.Name;
+            }
+        }
+
+        if (fields is not null)
+        {
+            _reuseTokenFieldBindings[tokenTemp] = fields;
+        }
     }
 }

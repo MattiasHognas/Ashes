@@ -631,8 +631,10 @@ public sealed partial class Lowering
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
         int ptrTemp = NewTemp();
         bool reuseNode = false;
+        int consumedTokenTemp = -1;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
+            consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // above, so overwriting the cell now is safe.
@@ -683,7 +685,7 @@ public sealed partial class Lowering
                 else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
                 {
                     int sizeBytes = tup.Elements.Count * 8;
-                    if (reuseNode)
+                    if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, i))
                     {
                         // Update path: the reused node's old value cell (a same-size blob tuple, still in
                         // field i until we overwrite it below) is dead. Overwrite its contents in place
@@ -731,5 +733,25 @@ public sealed partial class Lowering
         var typeSym = _typeSymbols[ctor.ParentType];
         var freshArgs = typeSym.TypeParameters.Select(_ => (TypeRef)NewTypeVar()).ToList();
         return new TypeRef.TNamedType(typeSym, freshArgs);
+    }
+
+    /// <summary>CO-23: true when the reuse token's field can no longer be referenced on the current
+    /// path — unbound (wildcard) or every arm reference already lowered/credited.</summary>
+    private bool ReuseTokenFieldIsDead(int tokenTemp, int fieldIndex)
+    {
+        if (tokenTemp < 0
+            || !_reuseTokenFieldBindings.TryGetValue(tokenTemp, out var fields)
+            || !fields.TryGetValue(fieldIndex, out var info))
+        {
+            return true;
+        }
+
+        bool dead = _reuseBindingSeenBySlot.GetValueOrDefault(info.Slot) >= info.TotalRefs;
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+        {
+            Console.Error.WriteLine($"[co23] gate field={fieldIndex} slot={info.Slot} seen={_reuseBindingSeenBySlot.GetValueOrDefault(info.Slot)} total={info.TotalRefs} dead={dead}");
+        }
+
+        return dead;
     }
 }
