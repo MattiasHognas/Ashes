@@ -52,6 +52,11 @@ public sealed partial class Lowering
     private bool _usesConcatStr;
     private bool _usesClosures;
     private bool _usesAsync;
+    // True while lowering the body of an async task that is being built as a suspending coroutine.
+    // Inside such a body an `await` is a suspension point (IrInst.AwaitTask, split by
+    // StateMachineTransform), not a blocking driver (IrInst.RunTask). Outside any coroutine body an
+    // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
+    private bool _inCoroutineBody;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
     // Source location tracking for debug info
@@ -4430,7 +4435,18 @@ public sealed partial class Lowering
         Unify(taskType, expectedType);
 
         int resultTemp = NewTemp();
-        Emit(new IrInst.RunTask(resultTemp, taskTemp));
+        if (_inCoroutineBody)
+        {
+            // Inside a coroutine: a suspension point. StateMachineTransform splits the body here, the
+            // driver runs the awaited sub-task, and resume reads its result — same value as a blocking
+            // RunTask, but the enclosing task suspends instead of blocking the thread inline.
+            Emit(new IrInst.AwaitTask(resultTemp, taskTemp));
+        }
+        else
+        {
+            Emit(new IrInst.RunTask(resultTemp, taskTemp));
+        }
+
         var resultType = new TypeRef.TNamedType(resultSymbol, [Prune(errorType), Prune(successType)]);
         return (resultTemp, resultType);
     }

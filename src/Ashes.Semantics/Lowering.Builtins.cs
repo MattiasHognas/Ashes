@@ -1270,6 +1270,16 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         _usesAsync = true;
 
+        // An `async(E)` whose body contains an `await` becomes a genuine suspending coroutine (built
+        // through StateMachineTransform), so the await is a suspension point rather than an inline
+        // blocking run. `Ashes.Async.run` still drives it to completion blockingly, so behavior is
+        // identical — but the task is now a live state machine instead of an eager completed value.
+        // An await-free body has no suspension point, so it stays the eager pre-completed task.
+        if (ExprContainsAwait(valueArg))
+        {
+            return LowerAsyncTaskCoroutine(valueArg);
+        }
+
         var (valueTemp, valueType) = LowerExpr(valueArg);
 
         if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
@@ -1282,6 +1292,143 @@ public sealed partial class Lowering
         int taskTemp = NewTemp();
         Emit(new IrInst.CreateCompletedTask(taskTemp, okResultTemp));
         return (taskTemp, new TypeRef.TNamedType(taskSymbol, [new TypeRef.TStr(), Prune(valueType)]));
+    }
+
+    /// <summary>
+    /// Lowers <c>async(E)</c> (where <c>E</c> awaits) into a suspending coroutine task. The body's free
+    /// variables are captured; the body is emitted into a coroutine (with awaits as suspension points)
+    /// via <see cref="LowerCapturedStringTask"/>, and the coroutine returns <c>Ok(E)</c>.
+    /// Semantics-preserving: <c>Ashes.Async.run</c> drives the state machine to completion.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncTaskCoroutine(Expr valueArg)
+    {
+        if (!TryGetStandardResultParts(out _, out var okConstructor, out _))
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // Capture the free variables that resolve to a value binding (locals / captured env). Globals,
+        // constructors and builtins resolve inside the coroutine without capture (registry / by-label).
+        var freeNames = FreeVars(valueArg, new HashSet<string>(StringComparer.Ordinal));
+        var captureNames = new List<string>();
+        var captureTemps = new List<int>();
+        var captureTypes = new List<TypeRef>();
+        foreach (var name in freeNames)
+        {
+            if (Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
+            {
+                var (capTemp, capType) = LowerVar(new Expr.Var(name));
+                captureNames.Add(name);
+                captureTemps.Add(capTemp);
+                captureTypes.Add(Prune(capType));
+            }
+        }
+
+        // Scope-independent bindings (intrinsics like `async`, extern functions, prelude values) must be
+        // re-seeded into the coroutine's fresh function scope so the body still resolves them; slot-based
+        // locals/env can't cross the function boundary and are captured above instead. Bottom-up so an
+        // inner scope's binding wins.
+        var globalBindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        foreach (var enclosingScope in _scopes.Reverse())
+        {
+            foreach (var (bindingName, binding) in enclosingScope)
+            {
+                if (binding is Binding.Intrinsic or Binding.ExternFunction or Binding.PreludeValue)
+                {
+                    globalBindings[bindingName] = binding;
+                }
+            }
+        }
+
+        var successType = NewTypeVar();
+
+        int EmitCoroutineBody(IReadOnlyList<int> coroutineCaptureTemps)
+        {
+            bool savedInCoroutine = _inCoroutineBody;
+            _inCoroutineBody = true;
+
+            var scope = _scopes.Peek();
+            foreach (var (bindingName, binding) in globalBindings)
+            {
+                scope[bindingName] = binding;
+            }
+
+            for (int i = 0; i < captureNames.Count; i++)
+            {
+                int slot = NewLocal();
+                Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
+                RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
+                scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+            }
+
+            var (valueTemp, valueType) = LowerExpr(valueArg);
+            Unify(valueType, successType);
+            int okTemp = LowerSingleFieldConstructorValue(okConstructor, valueTemp);
+
+            _inCoroutineBody = savedInCoroutine;
+            return okTemp;
+        }
+
+        return LowerCapturedStringTask(captureTemps, successType, valueArg, EmitCoroutineBody);
+    }
+
+    /// <summary>
+    /// Whether an expression syntactically contains an <c>await</c> anywhere within it. Complete over
+    /// the expression forms; a missed case would only fall back to the eager (still-correct) task path.
+    /// </summary>
+    private static bool ExprContainsAwait(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.Await:
+                return true;
+            case Expr.Add x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Subtract x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Multiply x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Divide x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.BitwiseAnd x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.BitwiseOr x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.BitwiseXor x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.ShiftLeft x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.ShiftRight x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.GreaterThan x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.LessThan x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.GreaterOrEqual x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.LessOrEqual x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Equal x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.NotEqual x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.ResultPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.ResultMapErrorPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Cons x: return ExprContainsAwait(x.Head) || ExprContainsAwait(x.Tail);
+            case Expr.BitwiseNot x: return ExprContainsAwait(x.Operand);
+            case Expr.Call x: return ExprContainsAwait(x.Func) || ExprContainsAwait(x.Arg);
+            case Expr.If x: return ExprContainsAwait(x.Cond) || ExprContainsAwait(x.Then) || ExprContainsAwait(x.Else);
+            case Expr.Lambda x: return ExprContainsAwait(x.Body);
+            case Expr.Let x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
+            case Expr.LetRec x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
+            case Expr.LetResult x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
+            case Expr.TupleLit x: return x.Elements.Any(ExprContainsAwait);
+            case Expr.ListLit x: return x.Elements.Any(ExprContainsAwait);
+            case Expr.RecordLit x: return x.Fields.Any(f => ExprContainsAwait(f.Value));
+            case Expr.RecordUpdate x: return ExprContainsAwait(x.Target) || x.Updates.Any(u => ExprContainsAwait(u.Value));
+            case Expr.Match x:
+                if (ExprContainsAwait(x.Value))
+                {
+                    return true;
+                }
+
+                foreach (var c in x.Cases)
+                {
+                    if (ExprContainsAwait(c.Body) || (c.Guard is not null && ExprContainsAwait(c.Guard)))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
