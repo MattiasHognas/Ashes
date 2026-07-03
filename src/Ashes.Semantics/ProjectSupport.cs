@@ -788,14 +788,19 @@ public static class ProjectSupport
 
         var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
         var hasPrefixBeforeBody = prefix.Length > entryShape.TypeDeclarationsSource.Length;
-        if (entryShape.TypeDeclarationsSource.Length == 0 && hasPrefixBeforeBody)
+        if (hasPrefixBeforeBody)
         {
+            // Module bindings precede the entry body, so the body must be parenthesized: a flat
+            // entry block (declarations + trailing expression) is only recognized inside parens
+            // (ParseParenthesizedBody), and after a legacy binding chain's trailing `in` a bare
+            // flat block would not parse at all. This holds whether or not the entry contributed
+            // hoisted type declarations (they sit at the very top, before every module binding).
             prefix.Append('(');
             var entryOffset = prefix.Length;
             prefix.Append(entryExpression);
             prefix.Append(')');
             moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
-            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, 0, moduleOffsets);
+            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
@@ -804,6 +809,9 @@ public static class ProjectSupport
             return new CombinedCompilationLayout(entryExpression, 0, 0, moduleOffsets);
         }
 
+        // Only the entry's own (hoisted) type declarations precede the body: append it bare — the
+        // combined source is then an ordinary flat program (type declarations, then the body), and
+        // the type-declaration region keeps its exact original offsets for span mapping.
         var offset = prefix.Length;
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
