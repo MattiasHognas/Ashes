@@ -273,6 +273,13 @@ build_openlibm_bitcode() {
 }
 
 for target in "${TARGETS[@]}"; do
+    if [ "$target" = "win-x64" ]; then
+        # Layer-2 transcendentals are not yet supported on win-x64 (openlibm's GNU weak-alias /
+        # long-double macros do not translate to the compiler's MSVC target). Layer-1 math works on
+        # win-x64 and needs no payload, so nothing is provisioned here.
+        echo "=== Skipping win-x64: Ashes.Math transcendentals are not yet supported on win-x64. ==="
+        continue
+    fi
     build_openlibm_bitcode "$target"
 done
 
@@ -287,7 +294,7 @@ for target in "${TARGETS[@]}"; do
             echo "  $RUNTIMES_DIR/linux-arm64/libopenlibm.bc"
             ;;
         win-x64)
-            echo "  $RUNTIMES_DIR/win-x64/libopenlibm.bc"
+            echo "  (win-x64 skipped -- transcendentals not yet supported there)"
             ;;
     esac
 done

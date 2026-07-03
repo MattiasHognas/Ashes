@@ -1,18 +1,26 @@
 # Ashes.Math — Status & Roadmap
 
-**Status:** Implemented (linux-x64 verified end-to-end; linux-arm64/win-x64 bitcode provisioned,
-execution not yet validated on those targets). Both layers are in:
+**Status:** Implemented and execution-validated on the ELF targets.
 
 - **Layer 1 (hermetic):** integer surface, Float helpers (`absF`/`signumF`/`minF`/`maxF`/`clampF`,
   constants), `sqrt`/`floor`/`ceil`/`round`/`trunc` (via `llvm.*`), `toFloat`/`*ToInt` conversions
-  (sitofp/fptosi).
+  (sitofp/fptosi). Verified on linux-x64, linux-arm64 (qemu), and win-x64 (Wine).
 - **Layer 2 (openlibm, bitcode-link):** `sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`,
   `sinh`/`cosh`/`tanh`, `exp`/`expm1`/`ln`/`log2`/`log10`/`log1p`, `powF`/`cbrt`/`hypot`, `fmod`.
   Vendored openlibm bitcode (`libopenlibm.bc`, ~50 KB/target) is linked into the program module and
-  gated on `ProgramUsesMathRuntimeAbi`, so hermetic-only programs embed nothing.
+  gated on `ProgramUsesMathRuntimeAbi`, so hermetic-only programs embed nothing. Verified end-to-end
+  on **linux-x64** and **linux-arm64** (correct results under qemu).
 
-Remaining: cross-target (arm64/win) execution validation and, optionally, per-function dead-strip to
-shrink the payload further (currently the whole minimal module is linked).
+**win-x64 Layer 2 is not yet supported** (Layer 1 works there). openlibm is GNU-oriented: its
+`openlibm_weak_reference` long-double aliases and related macros do not translate to the compiler's
+MSVC Windows target, so the openlibm bitcode does not link cleanly into an MSVC-target program
+module. The compiler emits a clear diagnostic for win-x64 + transcendentals; `download-openlibm.sh`
+skips the win-x64 payload. Options for a follow-up: patch openlibm's cdefs macros for the MSVC
+target, or switch the win-x64 compiler triple/PE path to the mingw (`windows-gnu`) ABI so the
+GNU-built bitcode matches.
+
+Optional follow-up: per-function dead-strip at link time to shrink the payload further (currently the
+whole minimal ~50 KB module is linked).
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point

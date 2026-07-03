@@ -980,6 +980,17 @@ internal static partial class LlvmCodegen
             return;
         }
 
+        // Layer-2 transcendentals are validated on the ELF targets (linux-x64, linux-arm64). The
+        // win-x64 path is not yet supported: openlibm's GNU weak-alias / long-double macros do not
+        // translate to the compiler's MSVC Windows target, so its bitcode does not link cleanly into
+        // the program module. Layer-1 math (integer, Float helpers, sqrt/rounding/conversions) works
+        // on win-x64. Surface this as a clear diagnostic rather than a COFF-link failure.
+        if (string.Equals(targetId, Backends.TargetIds.WindowsX64, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Ashes.Math transcendental functions (sin, cos, exp, ln, pow, ...) are not yet supported on the win-x64 target. Layer-1 math (sqrt, floor/ceil/round/trunc, conversions, integer functions) is supported; the openlibm-backed transcendentals currently target linux-x64 and linux-arm64.");
+        }
+
         byte[] bitcode = HermeticMathRuntimeAssets.GetOpenlibmBitcode(targetId);
         if (!LlvmApi.TryParseModule(target.Context, bitcode, "openlibm", out var openlibmModule, out string? error))
         {
