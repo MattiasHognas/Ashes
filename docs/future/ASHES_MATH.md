@@ -86,9 +86,35 @@ lookup tables and whatever relocation types llc emits — since it currently lin
 compiler-emitted object.
 
 Both options keep Ground Rule 6 (no runtime dependency): the payload is baked into the executable and
-never a dynamic link against a system `libm.so`. Option B is recommended (cleaner, dead-stripped, no
-runtime shim), contingent on confirming the in-house linker copes with openlibm's object; Option A is
-the fallback that reuses the already-provisioned `.so`.
+never a dynamic link against a system `libm.so`. **Decision: Option B (bitcode-link).**
+
+#### Option B is proven at the LLVM level (spike result)
+
+A command-line spike validated the whole Option-B chain on linux-x64 and it produces correct results
+(`sin(1.5) = 0.997495`, `cos(0.0) = 1.0`). The concrete, working provisioning recipe:
+
+- Build openlibm normally once (`make USE_GCC=1`) to get its **curated object set** in
+  `libopenlibm.a`; take that member list as the authoritative source selection (it already excludes
+  the conflicting complex/long-double variants). For each member, compile the portable `src/<base>.c`
+  (not the arch `.S` asm) to bitcode with
+  `clang --target=<triple> -emit-llvm -O2 -fno-stack-protector -ffreestanding -Iinclude -Isrc`.
+- Also compile `src/s_isinf.c` and `src/s_isnan.c` explicitly — they define the `__isinf`/`__isinff`
+  /`__isnan`/`__isnanf` classifiers that other units reference but that openlibm's `.a` omits (it
+  inlines `isnan` via macro). With these two included the merged module is **fully self-contained**;
+  no libc shim is needed.
+- `llvm-link` the per-target `.bc` set into one `libopenlibm-<rid>.bc` (~187 KB) and vendor it under
+  `runtimes/<rid>/` next to (or instead of) the `.so`.
+
+At compile time, when `ProgramUsesMathRuntimeAbi` fires: parse the embedded `.bc`
+(`LLVMParseIRInContext`), `LLVMLinkModules2` it into the program module, then `internalize`
+(public-list = the program's entry only) + `GlobalDCE` so only the referenced math functions survive.
+In the spike, a caller referencing ~20 transcendentals dead-stripped to a **~44 KB** object with the
+math symbols internal. **Still to verify in-compiler:** the in-house ELF/PE linker consuming the
+larger LLVM object (openlibm's rodata lookup tables and llc's relocation types) — the one remaining
+unknown; the LLVM/codegen half is de-risked.
+
+Option A (embed `.so` + `dlopen`) remains the documented fallback if the in-house linker cannot be
+made to cope with openlibm's object.
 
 ## Layer 1 — hermetic core (no library)
 
