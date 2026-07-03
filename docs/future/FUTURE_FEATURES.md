@@ -3,9 +3,7 @@
 Planned features and future work for the Ashes language and ecosystem. **Shipped** features are
 documented in the normative docs under [`docs/`](../) — syntax/semantics in
 [LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md), library APIs in [STANDARD_LIBRARY.md](../STANDARD_LIBRARY.md),
-and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not here. (Text parsing,
-async TCP/HTTP, HTTPS/TLS, brace-free records, and `Ashes.Math` were landed and their design docs
-retired into those.)
+and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not here.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
