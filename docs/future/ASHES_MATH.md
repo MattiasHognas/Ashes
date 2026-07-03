@@ -100,8 +100,15 @@ A command-line spike validated the whole Option-B chain on linux-x64 and it prod
   `clang --target=<triple> -emit-llvm -O2 -fno-stack-protector -ffreestanding -Iinclude -Isrc`.
 - Also compile `src/s_isinf.c` and `src/s_isnan.c` explicitly — they define the `__isinf`/`__isinff`
   /`__isnan`/`__isnanf` classifiers that other units reference but that openlibm's `.a` omits (it
-  inlines `isnan` via macro). With these two included the merged module is **fully self-contained**;
-  no libc shim is needed.
+  inlines `isnan` via macro). **Provisioning wrinkle:** openlibm's headers also expose the float
+  classifiers as `available_externally`/inline, so after `llvm-link` the `.bc` carries both a real
+  definition (`T __isinff`) and an unresolved reference (`U __isinff`), and `llc` does not emit
+  `available_externally` bodies — the object then has undefined `__isinff`/`__isnanf`. Fix in
+  provisioning by forcing external linkage on those symbols post-link (an `opt` internalize/linkage
+  pass) or by linking a tiny freestanding classifier shim as a *separate* object at the in-house-link
+  stage (do **not** `llvm-link` the shim into the same module — that collides with the real def). In
+  the spike the functions still ran correctly because clang's final link resolved the classifiers
+  from libc; the hermetic build needs them in-object via one of the two fixes above.
 - `llvm-link` the per-target `.bc` set into one `libopenlibm-<rid>.bc` (~187 KB) and vendor it under
   `runtimes/<rid>/` next to (or instead of) the `.so`.
 
