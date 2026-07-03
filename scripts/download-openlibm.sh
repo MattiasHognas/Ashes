@@ -207,9 +207,30 @@ openlibm_triple_for() {
     case "$1" in
         linux-x64) echo "x86_64-unknown-linux-gnu" ;;
         linux-arm64) echo "aarch64-unknown-linux-gnu" ;;
-        win-x64) echo "x86_64-pc-windows-msvc" ;;
+        # openlibm is GNU-oriented; build the Windows bitcode with the MinGW (windows-gnu) triple so
+        # its definitions and weak aliases compile. Its datalayout is identical to windows-msvc, so
+        # the bitcode links into the compiler's MSVC-target module (LinkModules2 gates on datalayout,
+        # not the triple string).
+        win-x64) echo "x86_64-w64-windows-gnu" ;;
         *) echo "ERROR: Unsupported target '$1'." >&2; exit 1 ;;
     esac
+}
+
+# Windows-only openlibm quirks: its GNU long-double weak aliases and per-precision sibling functions
+# pull in symbols that do not reduce to the double-precision set. Neuter the weak-alias macro, skip
+# the float/long-double/complex/gamma/bessel source variants, and supply a few forwarding shims.
+openlibm_is_win() { [ "$1" = "win-x64" ]; }
+
+openlibm_win_should_skip_source() {
+    # $1 = base source name (e.g. s_cosf, s_ccos, e_lgamma). Returns 0 (skip) for non-double variants.
+    local fn="$1"
+    fn="${fn#s_}"; fn="${fn#e_}"; fn="${fn#w_}"; fn="${fn#k_}"; fn="${fn#__}"
+    case "$fn" in
+        *f | *l) return 0 ;;
+        cabs|cacos|cacosh|carg|casin|casinh|catan|catanh|ccos|ccosh|cexp|cimag|clog|conj|cpow|cproj|creal|csin|csinh|csqrt|ctan|ctanh) return 0 ;;
+        *gamma* | j0 | j1 | jn | y0 | y1 | yn) return 0 ;;
+    esac
+    return 1
 }
 
 # Builds the vendored openlibm LLVM bitcode for one target. Because LLVM bitcode is produced by the
@@ -232,11 +253,20 @@ build_openlibm_bitcode() {
     # the curated source list, then compile those portable C sources to bitcode for the target triple.
     make -C "$src" -j USE_GCC=1 >/dev/null 2>&1
 
+    # On Windows, neuter openlibm's long-double weak-alias macro (it does not survive the toolchain
+    # cleanly); the last definition in the include-guarded header wins.
+    if openlibm_is_win "$rid"; then
+        printf '/* Ashes: neuter long-double weak aliases on Windows */\n#undef openlibm_weak_reference\n#define openlibm_weak_reference(sym,alias)\n' >> "$src/src/cdefs-compat.h"
+    fi
+
     bc="$tmpdir/bc"; mkdir -p "$bc"
     local cflags="--target=${triple} -emit-llvm -O2 -fno-stack-protector -ffreestanding -fno-builtin -DNDEBUG -I ${src}/include -I ${src}/src"
     while IFS= read -r m; do
         case "$m" in *.o) ;; *) continue;; esac
         base="${m%.o}"; base="${base%.c}"; base="${base%.S}"
+        if openlibm_is_win "$rid" && openlibm_win_should_skip_source "$base"; then
+            continue
+        fi
         s="${src}/src/${base}.c"
         [ -f "$s" ] && clang $cflags -c "$s" -o "$bc/$base.bc" 2>/dev/null || true
     done < <(ar t "$src/libopenlibm.a" | sort -u)
@@ -257,6 +287,21 @@ build_openlibm_bitcode() {
         'int fegetround(void){return 0;}' > "$tmpdir/fenv_stubs.c"
     clang $cflags -c "$tmpdir/fenv_stubs.c" -o "$bc/fenv_stubs.bc"
 
+    # Windows: s_nan.c defines __scan_nan, and a few leaf shims forward the float/long-double sibling
+    # and complex-accessor references (from per-precision source files) to the double implementations.
+    if openlibm_is_win "$rid"; then
+        clang $cflags -c "$src/src/s_nan.c" -o "$bc/s_nan.bc" 2>/dev/null || true
+        printf '%s\n' \
+            'extern double rint(double); extern double scalbn(double, int);' \
+            'int __isnormal(double x){union{double d;unsigned long long u;}v; v.d=x; unsigned e=(v.u>>52)&0x7ff; return e!=0 && e!=0x7ff;}' \
+            'float rintf(float x){return (float)rint((double)x);}' \
+            'float scalbnf(float x,int n){return (float)scalbn((double)x,n);}' \
+            'long double scalbnl(long double x,int n){return (long double)scalbn((double)x,n);}' \
+            'double creal(double _Complex z){return __real__ z;}' \
+            'double cimag(double _Complex z){return __imag__ z;}' > "$tmpdir/win_shims.c"
+        clang $cflags -c "$tmpdir/win_shims.c" -o "$bc/win_shims.bc"
+    fi
+
     llvm-link "$bc"/*.bc -o "$tmpdir/all.bc"
 
     local keep="sin,cos,tan,asin,acos,atan,atan2,sinh,cosh,tanh,exp,expm1,log,log2,log10,log1p,pow,cbrt,hypot,fmod"
@@ -273,13 +318,6 @@ build_openlibm_bitcode() {
 }
 
 for target in "${TARGETS[@]}"; do
-    if [ "$target" = "win-x64" ]; then
-        # Layer-2 transcendentals are not yet supported on win-x64 (openlibm's GNU weak-alias /
-        # long-double macros do not translate to the compiler's MSVC target). Layer-1 math works on
-        # win-x64 and needs no payload, so nothing is provisioned here.
-        echo "=== Skipping win-x64: Ashes.Math transcendentals are not yet supported on win-x64. ==="
-        continue
-    fi
     build_openlibm_bitcode "$target"
 done
 
@@ -294,7 +332,7 @@ for target in "${TARGETS[@]}"; do
             echo "  $RUNTIMES_DIR/linux-arm64/libopenlibm.bc"
             ;;
         win-x64)
-            echo "  (win-x64 skipped -- transcendentals not yet supported there)"
+            echo "  $RUNTIMES_DIR/win-x64/libopenlibm.bc"
             ;;
     esac
 done

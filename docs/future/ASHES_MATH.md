@@ -1,26 +1,34 @@
 # Ashes.Math — Status & Roadmap
 
-**Status:** Implemented and execution-validated on the ELF targets.
+**Status:** Implemented and execution-validated on all three targets.
 
 - **Layer 1 (hermetic):** integer surface, Float helpers (`absF`/`signumF`/`minF`/`maxF`/`clampF`,
   constants), `sqrt`/`floor`/`ceil`/`round`/`trunc` (via `llvm.*`), `toFloat`/`*ToInt` conversions
-  (sitofp/fptosi). Verified on linux-x64, linux-arm64 (qemu), and win-x64 (Wine).
+  (sitofp/fptosi).
 - **Layer 2 (openlibm, bitcode-link):** `sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`,
   `sinh`/`cosh`/`tanh`, `exp`/`expm1`/`ln`/`log2`/`log10`/`log1p`, `powF`/`cbrt`/`hypot`, `fmod`.
-  Vendored openlibm bitcode (`libopenlibm.bc`, ~50 KB/target) is linked into the program module and
-  gated on `ProgramUsesMathRuntimeAbi`, so hermetic-only programs embed nothing. Verified end-to-end
-  on **linux-x64** and **linux-arm64** (correct results under qemu).
+  Vendored openlibm bitcode (`libopenlibm.bc`, ~50-70 KB/target) is linked into the program module
+  and gated on `ProgramUsesMathRuntimeAbi`, so hermetic-only programs embed nothing.
 
-**win-x64 Layer 2 is not yet supported** (Layer 1 works there). openlibm is GNU-oriented: its
-`openlibm_weak_reference` long-double aliases and related macros do not translate to the compiler's
-MSVC Windows target, so the openlibm bitcode does not link cleanly into an MSVC-target program
-module. The compiler emits a clear diagnostic for win-x64 + transcendentals; `download-openlibm.sh`
-skips the win-x64 payload. Options for a follow-up: patch openlibm's cdefs macros for the MSVC
-target, or switch the win-x64 compiler triple/PE path to the mingw (`windows-gnu`) ABI so the
-GNU-built bitcode matches.
+Verified end-to-end: **linux-x64** (native), **linux-arm64** (qemu-aarch64, correct results), and
+**win-x64** (Wine, correct results).
+
+### win-x64 provisioning notes
+
+openlibm is GNU-oriented, so the Windows bitcode is built with the MinGW (`x86_64-w64-windows-gnu`)
+triple — its datalayout is identical to `windows-msvc`, so `LLVMLinkModules2` accepts it into the
+compiler's MSVC-target module (it gates on datalayout, not the triple string). Three Windows-only
+adjustments (in `download-openlibm.sh`, applied only for win-x64) make openlibm self-contained there:
+
+1. Neuter openlibm's `openlibm_weak_reference` macro so it does not emit long-double alias symbols.
+2. Skip the float / long-double / complex / gamma / bessel source variants (their per-precision
+   sibling functions pull in references outside the double-precision set).
+3. Add `s_nan.c` (defines `__scan_nan`) and a few forwarding shims (`rintf`/`scalbnf`/`scalbnl` →
+   the double versions, a bit-checked `__isnormal`, and complex `creal`/`cimag` accessors) for the
+   sibling references that survive.
 
 Optional follow-up: per-function dead-strip at link time to shrink the payload further (currently the
-whole minimal ~50 KB module is linked).
+whole minimal module is linked).
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point
