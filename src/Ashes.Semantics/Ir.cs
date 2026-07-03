@@ -180,6 +180,7 @@ public abstract record IrInst
     public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
     public sealed record BytesIndexOf(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
     public sealed record BytesCompare(int Target, int LeftTemp, int RightTemp) : IrInst;
+    public sealed record BytesScanHash(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
     public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesSubView(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
