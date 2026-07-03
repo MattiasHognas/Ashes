@@ -1,6 +1,8 @@
 # Ashes.Math — Status & Roadmap
 
-**Status:** Planned (design converged; not started).
+**Status:** In progress. Design converged; provisioning (source-build script + vendored payload +
+csproj wiring) landing first, then the Layer-1 hermetic core, then the Layer-2 openlibm-backed
+transcendentals.
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point
@@ -23,33 +25,49 @@ the output. Compare the three native dependencies the project already manages:
 | Dependency | Kind | In the user's executable? | End-user needs it? |
 |---|---|---|---|
 | LLVM | Build-time, compiler-internal | No — runs on the compiler's machine only | No |
-| rustls | Vendored; whole `.so`/`.dll` embedded, extracted + `dlopen`'d at startup | Yes, baked in | **No** |
-| openlibm (this proposal) | Vendored; **static archive linked with section-GC**, only into programs that use transcendentals | Yes, baked in | **No** |
+| rustls | Vendored; whole `.so`/`.dll` embedded, extracted + `dlopen`'d at startup, **gated on TLS use** | Yes, baked in when TLS used | **No** |
+| openlibm (this proposal) | Vendored; whole `.so`/`.dll` embedded, **gated on transcendental use** | Yes, baked in when a transcendental is used | **No** |
 
 openlibm shares rustls's *outcome* — a vendored payload, baked in by `LlvmImageLinker` only when a
 transcendental is actually used, with the end-user running a self-contained binary and never a
-dynamic link against a system `libm.so`. (A dynamically-linked option was rejected: the image linker
-emits static images and a runtime dependency would violate Ground Rule 6.) But it uses a **different
-embedding mechanism**, deliberately, to meet the size requirement.
+dynamic link against a system `libm.so`. (A dynamically-linked-against-the-host option was rejected:
+the image linker emits static images and a runtime dependency on a system `libm.so` would violate
+Ground Rule 6.)
 
-### Embedding mechanism — why openlibm differs from rustls
+### Provisioning — no upstream prebuilt, so build from source
 
-rustls is consumed as a **prebuilt shared library**: `HermeticTlsRuntimeAssets` embeds the entire
-`librustls.so` / `rustls.dll` blob, and at startup the program extracts it to a file and `dlopen`s
-it. The whole library ships — there is **no dead-stripping** (it can't be: a finished `.so` is not
-relinkable, and a TLS handshake exercises most of it anyway).
+Unlike rustls-ffi (which publishes prebuilt release zips for `linux-x64` and `win-x64`), **openlibm
+publishes no prebuilt shared libraries** — its GitHub releases ship source only. So the provisioning
+script builds openlibm from source for every target, the way `download-rustls-ffi.sh` already builds
+the `linux-arm64` rustls payload from source. See "Provisioning script" below. The output per target
+is a `.so`/`.dll` staged under `runtimes/<rid>/`, plus an `openlibm.version` marker, exactly
+mirroring the rustls asset layout.
 
-openlibm must not copy that. Transcendental users typically need only a handful of functions, so the
-whole-library approach would bloat every binary. Instead, openlibm is vendored as a **static archive
-(or LLVM bitcode)** and **statically linked into the image with section-level garbage collection**
-(`--gc-sections` / LTO `internalize` + `GlobalDCE`), so only the functions actually referenced are
-emitted, and there is no runtime extract-and-`dlopen` step. This is the concrete reason the chosen
-implementation must be buildable as a static archive (see implementation step 2), not just available
-as a shared library.
+### Embedding mechanism — same as rustls, gated the same way
 
-(Retrofitting the same static-archive + dead-strip treatment onto rustls is possible but out of
-scope here — it would mean building rustls from source as a static lib and is a much larger change
-for a modest win.)
+The original proposal called for a **static archive dead-stripped with section-GC**. That is
+deferred in favour of reusing rustls's proven mechanism verbatim, because the difference the user
+cares about — *only embed when the feature is used* — is **already how rustls works**, not a new
+capability:
+
+- `LlvmCodegen` already computes `ProgramUsesTlsRuntimeAbi(program)` and only loads/embeds the
+  rustls asset when the IR references a TLS/HTTP instruction (`LoadLinkedTlsRuntimeAsset`). A
+  hermetic-only program embeds nothing.
+- openlibm mirrors this with a `ProgramUsesMathRuntimeAbi(program)` gate (true when the IR
+  references any Layer-2 transcendental intrinsic). A program that uses only Layer-1 hermetic math,
+  or no math at all, embeds no openlibm.
+
+So the embedding path is: vendor the `.so`/`.dll` under `runtimes/`, embed the whole blob through a
+`HermeticMathRuntimeAssets` helper analogous to `HermeticTlsRuntimeAssets`, and extract-and-`dlopen`
+(or resolve the referenced symbols) at first use — but only in binaries whose IR actually calls a
+transcendental. The whole openlibm `.so` is small (linux-x64 build measures ~225 KB stripped-`.so` /
+~700 KB static `.a`), so shipping the whole library — rather than dead-stripping to the referenced
+functions — is an accepted size cost for reusing the existing, tested embedding path.
+
+**Deferred size optimization (not in scope):** dead-stripping to only the referenced functions via a
+**static archive + section-GC** (`--gc-sections` / LTO `internalize` + `GlobalDCE`). openlibm builds
+as a static `.a` too, so this remains available as a later optimization once whole-`.so` embedding is
+proven end-to-end. It is called out here so the choice is explicit, not lost.
 
 ## Layer 1 — hermetic core (no library)
 
@@ -115,48 +133,56 @@ are updated before implementation.
    (frontend registration → `BuiltinRegistry` → lowering → backend codegen → diagnostics → tests).
    This layer ships with no native payload and no `runtimes/` work.
 
-2. **Vendor the `libm` implementation (openlibm).** Add the vendored archive per target
-   (`linux-x64`, `linux-arm64`, `win-x64`) under
-   `runtimes/`, mirroring the rustls provisioning (`scripts/download-rustls-ffi.sh`,
-   `Directory.Build.props` version pin). The candidate must satisfy three hard requirements:
+2. **Provision the openlibm payload per target (build from source).** Add `scripts/download-openlibm.sh`
+   (see "Provisioning script" below) and pin `<OpenlibmVersion>` in `Directory.Build.props`. Because
+   openlibm ships no prebuilt shared library, the script clones the pinned source tag and builds it
+   per target, staging the result under `runtimes/<rid>/libopenlibm.so` (Linux) /
+   `runtimes/<rid>/openlibm.dll` (Windows) plus an `openlibm.version` marker — the same layout and
+   `.gitignore` allowlist treatment as the vendored rustls payloads. `Ashes.Backend.csproj` copies the
+   staged asset to the build output (conditioned on host/RID) and validates its presence and version,
+   exactly like the rustls asset targets.
 
-   - **Builds for all three targets** — x86-64 **and** AArch64, on **both** Linux and Windows. A
-     Linux-only `libm` is disqualified, since `win-x64` is a first-class target.
-   - **Buildable as a static archive / bitcode** — not just a prebuilt shared library — so it can be
-     statically linked and dead-stripped (see "Embedding mechanism" above). A `.so`-only distribution
-     is disqualified, because it would force the rustls whole-library mechanism and miss the size
-     target.
-   - **Small** — embedding adds to every transcendental-using binary, so the payload must be compact;
-     link only the referenced object code (`--gc-sections` / LTO + `GlobalDCE`) rather than the whole
-     archive.
-   - **Freestanding-friendly** — minimal libc coupling, so it links against the Ashes runtime rather
-     than a real libc.
+   openlibm is the chosen source: a portable, standalone `libm` (originally from the Julia project),
+   permissively licensed, that builds for x86-64/AArch64 on Linux and Windows, is compact, and is
+   designed for embedding with minimal libc coupling. musl's `libm` is Linux-centric (no first-class
+   Windows build) and so is only a Linux fallback. The main integration risk is satisfying the handful
+   of libc symbols openlibm references (e.g. `memcpy`) from the Ashes runtime rather than a real libc.
 
-   **openlibm** is the recommended source: it is a portable, standalone `libm` (originally from the
-   Julia project), permissively licensed, builds for x86-64/AArch64 on Linux and Windows, is compact,
-   and is explicitly designed for embedding with minimal libc coupling — it meets all three
-   requirements. musl's `libm` is small and clean but is Linux-centric (no first-class Windows
-   build), which fails the cross-OS requirement, so it is only a fallback for the Linux targets. The
-   main integration risk is satisfying the handful of libc symbols the chosen `libm` references (e.g.
-   `memcpy`, `abort`) from the Ashes runtime rather than a real libc.
-
-3. **Link on demand, dead-stripped.** Register the Layer-2 functions as intrinsics that resolve to
-   `libm` symbols, and extend `LlvmImageLinker` to **statically link the vendored openlibm archive and
-   run section-GC** so only referenced functions are emitted — and only when a transcendental
-   intrinsic is referenced at all (the conditional trigger mirrors the rustls TLS gate, even though
-   the link mechanism is static-archive rather than whole-`.so` embedding). Hermetic-only programs
-   link nothing extra.
+3. **Embed and link on demand, gated on use.** Register the Layer-2 functions as intrinsics that
+   resolve to openlibm symbols, add a `HermeticMathRuntimeAssets` helper (analogous to
+   `HermeticTlsRuntimeAssets`) that loads the vendored `.so`/`.dll`, and gate embedding on a new
+   `ProgramUsesMathRuntimeAbi(program)` check (analogous to `ProgramUsesTlsRuntimeAbi`) so the payload
+   is embedded only when the IR references a transcendental. Hermetic-only programs (Layer 1) and
+   math-free programs embed nothing. (The static-archive dead-strip variant is the deferred size
+   optimization noted under "Embedding mechanism".)
 
 4. **Tests + examples** per Ground Rule 3: numeric-accuracy tests with tolerance bounds, NaN/inf
    edge cases, a binary-size check confirming hermetic-only programs pull in no openlibm, and an
    example exercising both layers.
 
+## Provisioning script
+
+`scripts/download-openlibm.sh` mirrors `scripts/download-rustls-ffi.sh` in structure (target flags
+`--all` / `--linux-x64` / `--linux-arm64` / `--win-x64`, `--version` override, version pinned in
+`Directory.Build.props`, writable-dir checks, per-target `openlibm.version` markers). The difference
+is that **every** target is built from source, since openlibm publishes no prebuilt binaries:
+
+- **linux-x64** — `make USE_GCC=1` with the host toolchain, staging `libopenlibm.so`. (Validated:
+  the 0.8.7 source builds to a ~225 KB `libopenlibm.so.4.0` / ~700 KB `libopenlibm.a` exporting
+  `sin`/`cos`/`exp`/`log`/`pow`/`atan2`.)
+- **linux-arm64** — cross-built with `aarch64-linux-gnu-gcc` (openlibm's `ARCH=aarch64` +
+  `TOOLPREFIX`); the script auto-installs the cross-compiler on apt/pacman systems, as the rustls
+  script does for its arm64 build.
+- **win-x64** — cross-built with the MinGW-w64 toolchain (`x86_64-w64-mingw32-gcc`), staging
+  `openlibm.dll`. Requires `mingw-w64` on the build host (documented prerequisite; the script errors
+  with an install hint when it is absent).
+
 ## Open questions
 
-- **Which `libm`** — openlibm (recommended) vs musl, decided by the three hard requirements above:
-  it must build for x86-64 **and** AArch64 on **both** Linux and Windows, stay small (dead-stripped to
-  only the referenced functions), and link freestanding against the Ashes runtime. musl's Linux-only
-  story currently rules it out as the primary choice.
+- **Which `libm`** — **decided: openlibm.** It builds for x86-64 **and** AArch64 on **both** Linux
+  and Windows and links freestanding against the Ashes runtime; musl's Linux-only story rules it out
+  as the primary choice. (Dead-stripping to only the referenced functions is deferred; see "Embedding
+  mechanism".)
 - **Conversion home** — `toFloat` / `*ToInt` in `Ashes.Math` or in the language core (they are
   generally useful beyond math).
 - **Domain-error policy** — IEEE `NaN`/`inf` returns (proposed) vs a checked `Result`-returning
