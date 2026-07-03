@@ -2156,10 +2156,12 @@ same code runs against a real handler in production and an injected handler in t
 parameter threading and no mocking framework. See
 [future/EFFECTS.md](future/EFFECTS.md) for the design rationale and staged roadmap.
 
-Implementation status: **Stage 1** — effect declarations, `uses` rows, effect typing, and the
-unhandled-effect diagnostic — is implemented. The `handle`/`perform` surface (Stage 2) is parsed
-and specified here; until its lowering lands, a `handle` expression is rejected with a clear
-diagnostic rather than miscompiled.
+Implementation status: **Stage 1** (effect declarations, `uses` rows, effect typing, the
+unhandled-effect diagnostic) and **Stage 2** (`handle`/`perform` with **tail-resumptive** arms)
+are implemented. One-shot resumptive arms (work after `resume` returns) and aborting arms (a
+path that does not resume) are Stage 3 and are rejected with a clear diagnostic. Effects
+interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
+defined; handler evidence is currently per-process, not per-task or per-thread.
 
 ## 20.1 Effect Declarations
 

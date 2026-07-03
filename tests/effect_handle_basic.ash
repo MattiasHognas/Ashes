@@ -1,4 +1,4 @@
-// expect-compile-error: 'handle' expressions are not yet supported
+// expect: 42
 
 effect Clock =
     | now : Unit -> Int

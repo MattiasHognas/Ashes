@@ -1334,7 +1334,10 @@ public sealed partial class Lowering
             UsesConcatStr: _usesConcatStr,
             UsesClosures: _usesClosures,
             UsesAsync: _usesAsync
-        );
+        )
+        {
+            EffectHandlerGlobals = EffectGlobalCount,
+        };
     }
 
     // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
@@ -5180,6 +5183,21 @@ public sealed partial class Lowering
                     return;
                 case Expr.Await awaitExpr:
                     Visit(awaitExpr.Task, bnd);
+                    return;
+                case Expr.RecordLit recordLit:
+                    foreach (var field in recordLit.Fields)
+                    {
+                        Visit(field.Value, bnd);
+                    }
+
+                    return;
+                case Expr.RecordUpdate recordUpdate:
+                    Visit(recordUpdate.Target, bnd);
+                    foreach (var update in recordUpdate.Updates)
+                    {
+                        Visit(update.Value, bnd);
+                    }
+
                     return;
                 case Expr.Perform perform:
                     Visit(perform.Operation, bnd);

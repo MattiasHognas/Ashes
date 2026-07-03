@@ -598,6 +598,16 @@ public abstract record IrInst
 
     public sealed record PanicStr(int Source) : IrInst;
 
+    /// <summary>
+    /// Loads the current handler frame pointer for the effect with compile-time index
+    /// <see cref="EffectIndex"/> from its module global (dynamically-scoped handler evidence).
+    /// 0 means no handler is installed.
+    /// </summary>
+    public sealed record LoadEffectHandler(int Target, int EffectIndex) : IrInst;
+
+    /// <summary>Stores a handler frame pointer into the effect's module global.</summary>
+    public sealed record StoreEffectHandler(int EffectIndex, int Source) : IrInst;
+
     public sealed record Label(string Name) : IrInst;
     public sealed record Jump(string Target) : IrInst;
     public sealed record JumpIfFalse(int CondTemp, string Target) : IrInst;
@@ -737,6 +747,13 @@ public sealed record IrProgram(
     bool UsesAsync
 )
 {
+    /// <summary>
+    /// Number of declared effects. The backend materializes one module global per effect — the
+    /// dynamically-scoped handler-evidence slot holding a pointer to the innermost installed
+    /// handler frame for that effect (0 when none).
+    /// </summary>
+    public int EffectHandlerGlobals { get; init; }
+
     public IrProgram(
         IrFunction EntryFunction,
         List<IrFunction> Functions,

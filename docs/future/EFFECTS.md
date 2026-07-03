@@ -1,6 +1,8 @@
 # Algebraic Effects & Handlers — Status & Roadmap
 
-**Status:** Planned (design converged; implementation not started).
+**Status:** Stages 1 and 2 are implemented (`LANGUAGE_SPEC.md` section 20 is the authoritative
+surface); Stage 3 (one-shot resumptive handlers) is not started. See "Implementation notes"
+below for how Stage 2 represents handler evidence and the current cross-feature limitations.
 
 Algebraic effects let a function *declare* the operations it needs — `now`, `log`,
 `lookup`, `random`, `readFile` — without deciding what they **mean**. The caller chooses the
@@ -405,7 +407,7 @@ continuations to one-shot for the no-GC reason above.
 Per Ground Rule 1, `LANGUAGE_SPEC.md` is updated before any phase. Each stage is independently
 useful and does not strand the next.
 
-1. **Effect declarations + effect typing.**
+1. **Effect declarations + effect typing.** — DONE
    - Frontend: lex/parse `effect` declarations, effect type parameters, and `uses { ... }` rows in
      type annotations.
    - Semantics: introduce operation symbols (qualified `Effect.op`); extend HM inference with effect
@@ -413,7 +415,7 @@ useful and does not strand the next.
      diagnostic. No codegen yet — purely a typing layer (this also subsumes the old "IO marker"
      idea).
 
-2. **Tail-resumptive handlers.**
+2. **Tail-resumptive handlers.** — DONE
    - Frontend: parse `handle ... with`, operation/`return` arms, optional `perform`, and `resume`.
    - Semantics: lower handlers to **evidence passing** — an implicit handler vector threaded through
      effectful calls; a tail-resumptive operation becomes a direct call through the evidence. No
@@ -438,6 +440,57 @@ backed by a paired test — the fully-explicit and fully-implicit production pro
 above) must produce the **same inferred types, the same lowered IR, and the same program output**.
 This is the executable proof that `perform` and the dropped signatures are no-op markers, and it
 runs in both Stage 1 (types agree) and Stage 2 (lowering and output agree).
+The paired tests are `tests/effect_conformance_explicit.ash` / `effect_conformance_implicit.ash`
+(single-line output; the logging variant lives in `examples/effects_production.ash`); the
+one-shot log-collecting test handler shown above becomes runnable with Stage 3.
+
+## Implementation notes (Stage 2, as landed)
+
+Handler evidence is **dynamically scoped**: the backend materializes one module global per
+declared effect (`__ashes_effect_handler_<i>`, index = declaration order) holding a pointer to
+the innermost installed handler frame for that effect, 0 when none. A `handle` expression
+stack-allocates one frame per handled effect:
+
+    [0 .. numEffects-1]            snapshot of every effect global, taken before any of this
+                                   handle's frames install
+    [numEffects + opDeclIndex]     one arm closure per operation (declaration order)
+
+and installs it by writing the frame pointer into the effect's global; on body exit it restores
+the global from the frame's own snapshot slot. A perform site loads the effect's global (O(1) —
+no search), swaps **all** effect globals to the frame's snapshot, calls the arm closure with the
+operation's arguments, and swaps back. The snapshot swap is what gives correct deep-handler
+semantics: an arm runs under the evidence in scope at its handler's installation (with the
+handler itself removed), so an arm performing its own effect reaches the next outer handler, and
+handlers installed between the handler and the perform site are invisible to the arm. Typing
+makes a missing handler unreachable; the emitted guard panics with a clear message rather than
+dereferencing null if that invariant is ever broken.
+
+A tail-resumptive arm compiles to an ordinary closure: every tail-position `resume(e)` is
+rewritten to `e` ("resume with v" is exactly "return v to the perform site"), so there is no
+continuation capture at all. `resume` outside tail position (one-shot, Stage 3) and tail paths
+that do not resume (aborting arms, which need unwinding) are rejected with `ASH020`.
+
+Typing (Stage 1) threads an **ambient effect row** through lowering: each lambda's arrow gets a
+row variable that is the body's ambient row; operation calls insert their effect into it; an
+applied arrow's open row unifies with the caller's ambient row while a written closed row only
+subsumes into it (calling a `uses {Prices}` function from a `{Prices, Clock}` context is fine);
+`handle` lowers its body under `{handled effects | t}` with `t` unified into the enclosing row.
+Rows generalize with let-polymorphism; the ambient row's variables are treated as part of the
+environment (the row analog of the value restriction). Unsigned operations infer monomorphically
+within the compilation unit by unifying all perform-sites and handler arms.
+
+Known limitations, to resolve in later stages:
+
+- **Parallelism:** the evidence globals are per-process, not per-thread; installing or using
+  handlers across `Ashes.Parallel.both` workers is unspecified (the TLS work under the
+  parallelism milestone is the natural home for per-thread evidence).
+- **Async:** a `handle` whose body suspends (`await`) is unspecified — handler frames are
+  stack-allocated and do not survive coroutine suspension.
+- **Modules:** effects are currently declared and used within one compilation unit (the project
+  stitcher combines files into one unit, but exported-effect signatures across separate
+  compilation are not yet enforced).
+- **First-class operations:** a bare, uncalled operation reference (`let f = Clock.now`) is
+  rejected ("must be called directly"), mirroring intrinsics.
 
 ## Open questions
 

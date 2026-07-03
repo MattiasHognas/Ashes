@@ -513,6 +513,9 @@ public static class IrOptimizer
             },
             IrInst.Resume r => r with { StateStructTemp = R(r.StateStructTemp) },
 
+            // Effects.
+            IrInst.StoreEffectHandler se => se with { Source = R(se.Source) },
+
             // Control flow.
             IrInst.PanicStr p => p with { Source = R(p.Source) },
             IrInst.JumpIfFalse j => j with { CondTemp = R(j.CondTemp) },
@@ -1425,6 +1428,7 @@ public static class IrOptimizer
                 usedTemps.Add(r.StateStructTemp);
                 break;
             case IrInst.PanicStr p: usedTemps.Add(p.Source); break;
+            case IrInst.StoreEffectHandler se: usedTemps.Add(se.Source); break;
             case IrInst.JumpIfFalse j: usedTemps.Add(j.CondTemp); break;
             case IrInst.SwitchTag s: usedTemps.Add(s.TagTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;
