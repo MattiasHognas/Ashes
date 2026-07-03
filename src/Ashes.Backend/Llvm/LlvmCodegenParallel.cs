@@ -50,6 +50,34 @@ internal static partial class LlvmCodegen
     private const string ParallelCapGlobalName = "__ashes_parallel_cap";
     private const string ParallelCapFnName = "__ashes_parallel_cap_get";
 
+    // ── Work-conserving parallel reduce (queued Ashes.Parallel.reduce) ──────────────────────
+    //
+    // One OS-allocated, zero-initialized region holds the whole queue: a fixed header, the
+    // snapshotted list elements, one result and one publish-flag word per element, and one
+    // 64-byte record per spawned worker. Workers pull element indexes from the atomic
+    // next-index word and publish f(element) per index; the caller awaits indexes in ascending
+    // order and merges in fixed list order while later results are still being computed.
+    //
+    // Region layout: [header 64B][elems 8n][results 8n][flags 8n][worker records 64*W].
+    private const int ParallelQueueNextIndex = 0;    // atomic: next element index to claim
+    private const int ParallelQueueCount = 8;        // n = element count (read by lowering's merge loop)
+    private const int ParallelQueueClosure = 16;     // the mapper closure f
+    private const int ParallelQueueWorkerCount = 24; // W = workers actually spawned
+    private const int ParallelQueueRegionBytes = 32; // total region size (for the final free)
+    private const int ParallelQueueHeaderBytes = 64;
+    // A worker record reuses the both-descriptor offsets 32..56 (worker stack / win HANDLE at
+    // ParallelDescWorkerStack, TCB at ParallelDescWorkerTcb, arena end at
+    // ParallelDescWorkerArenaEnd, exited/ctid word at ParallelDescExited) so EmitCloneWorker's
+    // hardcoded ctid offset applies to both layouts; offset 0 holds the queue-region back-pointer.
+    private const int ParallelQueueRecDesc = 0;
+    private const int ParallelQueueRecBytes = 64;
+
+    private const string ParallelQueueWorkerFnName = "__ashes_parallel_queue_worker";
+    private const string ParallelQueueDrainFnName = "__ashes_parallel_queue_drain";
+    private const string ParallelQueueStartFnName = "__ashes_parallel_queue_start";
+    private const string ParallelQueueAwaitFnName = "__ashes_parallel_queue_await";
+    private const string ParallelQueueCleanupFnName = "__ashes_parallel_queue_cleanup";
+
     /// <summary>
     /// Emits the parallelism runtime (the shared active-worker counter and the worker trampoline)
     /// once per module. Only on linux-x64; other flavors always run `both` inline.
@@ -232,18 +260,10 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        if (flavor == LlvmCodegenFlavor.WindowsX64)
-        {
-            // The bare runtime state has null Windows-import handles; the worker's own arena
-            // grow/free (EmitHeapGrow/EmitFreeOsMemory) needs VirtualAlloc/VirtualFree, which are
-            // always created for win-x64 — look them up by name (linux grows via the mmap syscall).
-            state = state with
-            {
-                WindowsVirtualAllocImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_VirtualAlloc"),
-                WindowsVirtualFreeImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_VirtualFree"),
-                WindowsExitProcessImport = LlvmApi.GetNamedGlobal(target.Module, "__imp_ExitProcess"),
-            };
-        }
+        // The bare runtime state has null Windows-import handles; the worker's own arena
+        // grow/free (EmitHeapGrow/EmitFreeOsMemory) needs VirtualAlloc/VirtualFree, which are
+        // always created for win-x64 — look them up by name (linux grows via the mmap syscall).
+        state = WithWindowsRuntimeImports(state);
 
         // Point this thread's per-thread arena at the worker TCB the parent prepared (cursor/end
         // already written), then address the arena through it like any other function. linux: GS via
@@ -359,7 +379,7 @@ internal static partial class LlvmCodegen
             // exit (CLONE_CHILD_CLEARTID). Must be set before clone so the kernel's clear can't be missed.
             StoreMemory(state, desc, ParallelDescExited, LlvmApi.ConstInt(state.I64, 1, 0), "par_desc_exited1");
             LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack_top");
-            EmitCloneWorker(state, desc, stackTop); // EmitCloneWorker branches on flavor (x86 vs aarch64 asm)
+            EmitCloneWorker(state, desc, stackTop, ParallelWorkerFnName); // EmitCloneWorker branches on flavor (x86 vs aarch64 asm)
         }
         else
         {
@@ -594,12 +614,14 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Spawns a worker via raw <c>clone(2)</c> (musl-style): pushes the descriptor onto the child
     /// stack, keeps the trampoline pointer in r9 (preserved across the syscall), and in the child
-    /// pops the descriptor and calls the trampoline; the child exits when it returns.
+    /// pops the descriptor and calls the trampoline; the child exits when it returns. The ctid
+    /// (CLONE_CHILD_CLEARTID) word is hardcoded at descriptor offset 56 in the asm, so every
+    /// trampoline argument struct must keep its exited word there.
     /// </summary>
-    private static void EmitCloneWorker(LlvmCodegenState state, LlvmValueHandle desc, LlvmValueHandle stackTop)
+    private static void EmitCloneWorker(LlvmCodegenState state, LlvmValueHandle desc, LlvmValueHandle stackTop, string workerFnName)
     {
         LlvmValueHandle workerFn = LlvmApi.BuildPtrToInt(state.Target.Builder,
-            LlvmApi.GetNamedFunction(state.Target.Module, ParallelWorkerFnName), state.I64, "par_worker_fn");
+            LlvmApi.GetNamedFunction(state.Target.Module, workerFnName), state.I64, "par_worker_fn");
 
         if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
         {
@@ -676,6 +698,556 @@ internal static partial class LlvmCodegen
             true, false);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [stackTop, desc, workerFn,
             LlvmApi.ConstInt(state.I64, (ulong)ParallelCloneFlags, 0)], "");
+    }
+
+    // ── Queued reduce runtime ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a bare runtime state with the win-x64 memory/exit import handles resolved by name
+    /// (VirtualAlloc/VirtualFree/ExitProcess are created for every win-x64 program); unchanged on
+    /// other flavors. Runtime helpers that allocate, free, or run user closures need these.
+    /// </summary>
+    private static LlvmCodegenState WithWindowsRuntimeImports(LlvmCodegenState state) =>
+        state.Flavor != LlvmCodegenFlavor.WindowsX64 ? state : state with
+        {
+            WindowsVirtualAllocImport = LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_VirtualAlloc"),
+            WindowsVirtualFreeImport = LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_VirtualFree"),
+            WindowsExitProcessImport = LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_ExitProcess"),
+        };
+
+    /// <summary>
+    /// Adds an internal, nounwind runtime function taking <paramref name="paramCount"/> i64
+    /// parameters, positions the builder at its fresh entry block, and returns the function.
+    /// </summary>
+    private static LlvmValueHandle AddQueueRuntimeFn(LlvmTargetContext target, LlvmAttributeHandle nounwindAttr,
+        string name, int paramCount, bool returnsValue)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle retType = returnsValue ? i64 : LlvmApi.VoidTypeInContext(target.Context);
+        LlvmTypeHandle[] paramTypes = new LlvmTypeHandle[paramCount];
+        for (int i = 0; i < paramCount; i++)
+        {
+            paramTypes[i] = i64;
+        }
+
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, name, LlvmApi.FunctionType(retType, paramTypes));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction, nounwindAttr);
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+        return fn;
+    }
+
+    /// <summary>
+    /// Emits the queued-reduce runtime once per module (requires the base parallel runtime — the
+    /// active-worker counter and cap function — to have been emitted first). Five functions: the
+    /// drain loop, the worker trampoline, and the start/await/cleanup entry points called from the
+    /// ParallelQueueStart/Await/Cleanup IR instructions.
+    /// </summary>
+    private static void EmitParallelQueueRuntime(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        EmitParallelQueueDrainFn(target, flavor, nounwindAttr);
+        EmitParallelQueueWorkerTrampoline(target, flavor, nounwindAttr);
+        EmitParallelQueueStartFn(target, flavor, nounwindAttr);
+        EmitParallelQueueAwaitFn(target, flavor, nounwindAttr);
+        EmitParallelQueueCleanupFn(target, flavor, nounwindAttr);
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_drain(desc)</c>: repeatedly claims the next unclaimed element
+    /// index from the shared atomic counter, computes <c>f(element)</c>, and publishes the result
+    /// under the element's flag word. Runs on whichever thread calls it — a queue worker after its
+    /// arena setup, or the queue-starting thread when no worker slot could be claimed — and
+    /// allocates through that thread's own arena.
+    /// </summary>
+    private static void EmitParallelQueueDrainFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueDrainFnName, 1, returnsValue: false);
+        LlvmCodegenState state = WithWindowsRuntimeImports(CreateBareRuntimeState(target, fn, flavor));
+        state = flavor == LlvmCodegenFlavor.LinuxArm64 ? WithArm64ThreadLocalArenaSlots(state) : WithLinuxThreadArena(state);
+
+        LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_drain_n");
+        LlvmValueHandle mapper = LoadMemory(state, desc, ParallelQueueClosure, "parq_drain_f");
+        LlvmValueHandle elemsBase = LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_drain_elems");
+        LlvmValueHandle countBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_drain_nbytes");
+        LlvmValueHandle resultsBase = LlvmApi.BuildAdd(builder, elemsBase, countBytes, "parq_drain_results");
+        LlvmValueHandle flagsBase = LlvmApi.BuildAdd(builder, resultsBase, countBytes, "parq_drain_flags");
+
+        var loopBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_loop");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_body");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_done");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        // The next-index word is the first header word, so the descriptor address doubles as its address.
+        LlvmValueHandle idx = EmitAtomicFetchAdd(state, desc, 1, "parq_drain_claim");
+        LlvmValueHandle hasWork = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, idx, count, "parq_drain_has_work");
+        LlvmApi.BuildCondBr(builder, hasWork, bodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle idxBytes = LlvmApi.BuildMul(builder, idx, LlvmApi.ConstInt(i64, 8, 0), "parq_drain_idx_bytes");
+        LlvmValueHandle elem = LoadMemory(state, LlvmApi.BuildAdd(builder, elemsBase, idxBytes, "parq_drain_elem_addr"), 0, "parq_drain_elem");
+        LlvmValueHandle result = EmitCallClosure(state, mapper, elem);
+        StoreMemory(state, LlvmApi.BuildAdd(builder, resultsBase, idxBytes, "parq_drain_result_addr"), 0, result, "parq_drain_result");
+        // Publish with an atomic increment (0 -> 1): its release ordering makes the result store
+        // above visible to the awaiting thread's atomic acquire read of the flag.
+        LlvmValueHandle flagAddr = LlvmApi.BuildAdd(builder, flagsBase, idxBytes, "parq_drain_flag_addr");
+        EmitAtomicFetchAdd(state, flagAddr, 1, "parq_drain_publish");
+        if (IsLinuxFlavor(flavor))
+        {
+            EmitLinuxSyscall6(state, SyscallFutex,
+                flagAddr,
+                LlvmApi.ConstInt(i64, (ulong)FutexWakePrivate, 0),
+                LlvmApi.ConstInt(i64, 1, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                "parq_drain_wake");
+        }
+
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmApi.BuildRetVoid(builder);
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_worker(rec)</c>: the function each queue worker thread runs.
+    /// Points the thread's arena at the TCB/TLS block the spawner prepared (exactly like the
+    /// <c>both</c> trampoline), drains the queue, publishes the arm64 arena end for cleanup, and
+    /// releases the worker slot. Per-element results were already published by the drain loop, so
+    /// there is no done word here; the kernel's ctid clear signals thread exit to the cleanup.
+    /// </summary>
+    private static void EmitParallelQueueWorkerTrampoline(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueWorkerFnName, 1, returnsValue: false);
+        LlvmCodegenState state = WithWindowsRuntimeImports(CreateBareRuntimeState(target, fn, flavor));
+        LlvmValueHandle rec = LlvmApi.GetParam(fn, 0);
+
+        if (flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            LlvmValueHandle tlsBlock = LoadMemory(state, rec, ParallelDescWorkerTcb, "parq_worker_tls");
+            EmitArm64SetThreadPointer(state, tlsBlock);
+            state = WithArm64ThreadLocalArenaSlots(state);
+            EmitHeapChunkInit(state);
+        }
+        else
+        {
+            LlvmValueHandle tcb = LoadMemory(state, rec, ParallelDescWorkerTcb, "parq_worker_tcb");
+            if (flavor == LlvmCodegenFlavor.LinuxX64)
+            {
+                EmitLinuxSyscall(state, SyscallArchPrctl,
+                    LlvmApi.ConstInt(i64, (ulong)ArchSetGs, 0), tcb, LlvmApi.ConstInt(i64, 0, 0), "parq_worker_set_gs");
+            }
+            else
+            {
+                EmitWriteTcbBaseToTeb(state, tcb);
+            }
+
+            state = WithLinuxThreadArena(state);
+        }
+
+        LlvmValueHandle desc = LoadMemory(state, rec, ParallelQueueRecDesc, "parq_worker_desc");
+        LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [i64]),
+            LlvmApi.GetNamedFunction(target.Module, ParallelQueueDrainFnName), [desc], "");
+
+        if (flavor == LlvmCodegenFlavor.LinuxArm64)
+        {
+            // Publish the worker's heap-arena end so cleanup can walk+free its chunks (the parent
+            // can't read it from the TLS block without the link-time tprel offset).
+            LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, i64, state.HeapEndSlot, "parq_worker_heap_end");
+            StoreMemory(state, rec, ParallelDescWorkerArenaEnd, heapEnd, "parq_worker_arena_end");
+        }
+
+        LlvmValueHandle activeAddr = LlvmApi.BuildPtrToInt(builder,
+            LlvmApi.GetNamedGlobal(target.Module, ParallelActiveCounterName), i64, "parq_worker_counter_addr");
+        EmitAtomicFetchAdd(state, activeAddr, unchecked((ulong)-1L), "parq_worker_release");
+        LlvmApi.BuildRetVoid(builder);
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_start(f, list) -> desc</c>: counts the list, allocates the
+    /// zero-initialized queue region, snapshots the elements into it, and spawns up to
+    /// <c>min(cap, n)</c> workers (each claiming a slot in the shared active counter exactly like a
+    /// <c>both</c> fork, with its own TCB, arena chunk, and stack). When not a single slot could be
+    /// claimed, the caller drains the whole queue inline before returning — the queue never blocks
+    /// waiting for capacity, which also makes nested queued reduces deadlock-free.
+    /// </summary>
+    private static void EmitParallelQueueStartFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueStartFnName, 2, returnsValue: true);
+        LlvmCodegenState state = WithWindowsRuntimeImports(CreateBareRuntimeState(target, fn, flavor));
+        LlvmValueHandle mapper = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle list = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
+        LlvmValueHandle eight = LlvmApi.ConstInt(i64, 8, 0);
+
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_cur");
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_count");
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_idx");
+        LlvmValueHandle spawnedSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_spawned");
+        LlvmApi.BuildStore(builder, list, curSlot);
+        LlvmApi.BuildStore(builder, zero, countSlot);
+
+        // ── Count the list ──────────────────────────────────────────────────────────────────
+        var countLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_count_loop");
+        var countBody = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_count_body");
+        var countDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_count_done");
+        LlvmApi.BuildBr(builder, countLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countLoop);
+        LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, i64, curSlot, "parq_count_cur");
+        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, countCur, zero, "parq_count_is_nil");
+        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countBody);
+        LlvmValueHandle countVal = LlvmApi.BuildLoad2(builder, i64, countSlot, "parq_count_val");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, countVal, LlvmApi.ConstInt(i64, 1, 0), "parq_count_next"), countSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, countCur, 8, "parq_count_tail"), curSlot);
+        LlvmApi.BuildBr(builder, countLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countDone);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, i64, countSlot, "parq_n");
+
+        // ── Allocate and initialize the region ──────────────────────────────────────────────
+        LlvmValueHandle capValue = target.ParallelWorkerCap is { } fixedCap
+            ? LlvmApi.ConstInt(i64, (ulong)fixedCap, 0)
+            : LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(i64, []),
+                LlvmApi.GetNamedFunction(target.Module, ParallelCapFnName), [], "parq_cap");
+        LlvmValueHandle capBelowN = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, capValue, count, "parq_cap_below_n");
+        LlvmValueHandle maxWorkers = LlvmApi.BuildSelect(builder, capBelowN, capValue, count, "parq_max_workers");
+        // size = header + 3 arrays of n words (elems, results, flags) + one record per worker slot.
+        LlvmValueHandle payloadBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 24, 0), "parq_payload_bytes");
+        LlvmValueHandle recBytes = LlvmApi.BuildMul(builder, maxWorkers, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_rec_bytes");
+        LlvmValueHandle regionBytes = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), payloadBytes, "parq_header_payload"),
+            recBytes, "parq_region_bytes");
+        LlvmValueHandle desc = EmitAllocateOsMemory(state, regionBytes, "parq_region");
+        // mmap/VirtualAlloc zero-fill, so the next-index word, flags, and worker count start 0.
+        StoreMemory(state, desc, ParallelQueueCount, count, "parq_desc_n");
+        StoreMemory(state, desc, ParallelQueueClosure, mapper, "parq_desc_f");
+        StoreMemory(state, desc, ParallelQueueRegionBytes, regionBytes, "parq_desc_size");
+
+        // ── Snapshot the elements ────────────────────────────────────────────────────────────
+        LlvmValueHandle elemsBase = LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_elems_base");
+        LlvmApi.BuildStore(builder, list, curSlot);
+        LlvmApi.BuildStore(builder, zero, idxSlot);
+        var fillLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_fill_loop");
+        var fillBody = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_fill_body");
+        var fillDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_fill_done");
+        LlvmApi.BuildBr(builder, fillLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fillLoop);
+        LlvmValueHandle fillCur = LlvmApi.BuildLoad2(builder, i64, curSlot, "parq_fill_cur");
+        LlvmValueHandle fillIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fillCur, zero, "parq_fill_is_nil");
+        LlvmApi.BuildCondBr(builder, fillIsNil, fillDone, fillBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fillBody);
+        LlvmValueHandle fillIdx = LlvmApi.BuildLoad2(builder, i64, idxSlot, "parq_fill_idx");
+        LlvmValueHandle head = LoadMemory(state, fillCur, 0, "parq_fill_head");
+        LlvmValueHandle elemAddr = LlvmApi.BuildAdd(builder, elemsBase,
+            LlvmApi.BuildMul(builder, fillIdx, eight, "parq_fill_off"), "parq_fill_elem_addr");
+        StoreMemory(state, elemAddr, 0, head, "parq_fill_elem");
+        LlvmApi.BuildStore(builder, LoadMemory(state, fillCur, 8, "parq_fill_tail"), curSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, fillIdx, LlvmApi.ConstInt(i64, 1, 0), "parq_fill_next"), idxSlot);
+        LlvmApi.BuildBr(builder, fillLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fillDone);
+
+        // ── Spawn workers (each claims a slot; stop at the cap or maxWorkers) ────────────────
+        LlvmValueHandle recsBase = LlvmApi.BuildAdd(builder, elemsBase, payloadBytes, "parq_recs_base");
+        LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
+            LlvmApi.GetNamedGlobal(target.Module, ParallelActiveCounterName), i64, "parq_counter_addr");
+        LlvmApi.BuildStore(builder, zero, spawnedSlot);
+        var spawnLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_spawn_loop");
+        var spawnTry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_spawn_try");
+        var spawnBody = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_spawn_body");
+        var spawnAbort = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_spawn_abort");
+        var spawnDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_spawn_done");
+        LlvmApi.BuildBr(builder, spawnLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, spawnLoop);
+        LlvmValueHandle spawned = LlvmApi.BuildLoad2(builder, i64, spawnedSlot, "parq_spawned");
+        LlvmValueHandle wantMore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, spawned, maxWorkers, "parq_want_more");
+        LlvmApi.BuildCondBr(builder, wantMore, spawnTry, spawnDone);
+
+        LlvmApi.PositionBuilderAtEnd(builder, spawnTry);
+        LlvmValueHandle prevActive = EmitAtomicFetchAdd(state, counterAddr, 1, "parq_claim");
+        LlvmValueHandle canSpawn = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, prevActive, capValue, "parq_can_spawn");
+        LlvmApi.BuildCondBr(builder, canSpawn, spawnBody, spawnAbort);
+
+        LlvmApi.PositionBuilderAtEnd(builder, spawnAbort);
+        EmitAtomicFetchAdd(state, counterAddr, unchecked((ulong)-1L), "parq_unclaim");
+        LlvmApi.BuildBr(builder, spawnDone);
+
+        LlvmApi.PositionBuilderAtEnd(builder, spawnBody);
+        LlvmValueHandle recAddr = LlvmApi.BuildAdd(builder, recsBase,
+            LlvmApi.BuildMul(builder, spawned, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_rec_off"), "parq_rec");
+        StoreMemory(state, recAddr, ParallelQueueRecDesc, desc, "parq_rec_desc");
+        // The worker's per-thread control region, exactly as in EmitParallelFork: on x64/win a TCB
+        // pre-wired to a fresh arena chunk; on arm64 a zeroed TLS block the worker initializes itself.
+        LlvmValueHandle workerTcb = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)MainTcbSizeBytes, 0), "parq_tcb");
+        if (flavor != LlvmCodegenFlavor.LinuxArm64)
+        {
+            LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), "parq_chunk");
+            StoreMemory(state, workerTcb, (int)TcbSelfOffset, workerTcb, "parq_tcb_self");
+            StoreMemory(state, workerTcb, (int)TcbHeapCursorOffset,
+                LlvmApi.BuildAdd(builder, chunk, eight, "parq_chunk_cursor"), "parq_tcb_cursor");
+            StoreMemory(state, workerTcb, (int)TcbHeapEndOffset,
+                LlvmApi.BuildAdd(builder, chunk, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), "parq_chunk_end"), "parq_tcb_end");
+            StoreMemory(state, chunk, 0, zero, "parq_chunk_prevbase");
+        }
+
+        StoreMemory(state, recAddr, ParallelDescWorkerTcb, workerTcb, "parq_rec_tcb");
+        if (IsLinuxFlavor(flavor))
+        {
+            long parallelStackBytes = ParallelStackBytesFor(state);
+            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack");
+            StoreMemory(state, recAddr, ParallelDescWorkerStack, stack, "parq_rec_stack");
+            StoreMemory(state, recAddr, ParallelDescExited, LlvmApi.ConstInt(i64, 1, 0), "parq_rec_exited1");
+            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack_top");
+            EmitCloneWorker(state, recAddr, stackTop, ParallelQueueWorkerFnName);
+        }
+        else
+        {
+            LlvmValueHandle workerFn = LlvmApi.GetNamedFunction(target.Module, ParallelQueueWorkerFnName);
+            LlvmTypeHandle createThreadType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I8Ptr, state.I8Ptr, state.I64, state.I64]);
+            LlvmValueHandle stackSize = LlvmApi.ConstInt(state.I64, (ulong)(target.ParallelWorkerStackBytes ?? 0), 0);
+            LlvmValueHandle handle = EmitWindowsImportCall(state, "__imp_CreateThread", createThreadType,
+                [zero, stackSize, workerFn, LlvmApi.BuildIntToPtr(builder, recAddr, state.I8Ptr, "parq_rec_ptr"), zero, zero], "parq_create_thread");
+            StoreMemory(state, recAddr, ParallelDescWorkerStack, handle, "parq_rec_handle");
+        }
+
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, spawned, LlvmApi.ConstInt(i64, 1, 0), "parq_spawned_next"), spawnedSlot);
+        LlvmApi.BuildBr(builder, spawnLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, spawnDone);
+        LlvmValueHandle spawnedTotal = LlvmApi.BuildLoad2(builder, i64, spawnedSlot, "parq_spawned_total");
+        StoreMemory(state, desc, ParallelQueueWorkerCount, spawnedTotal, "parq_desc_workers");
+
+        // No slot claimed at all: drain the whole queue on this thread (correct and deadlock-free).
+        var drainInline = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_inline");
+        var startRet = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_start_ret");
+        LlvmValueHandle anySpawned = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, spawnedTotal, zero, "parq_any_spawned");
+        LlvmApi.BuildCondBr(builder, anySpawned, startRet, drainInline);
+
+        LlvmApi.PositionBuilderAtEnd(builder, drainInline);
+        LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [i64]),
+            LlvmApi.GetNamedFunction(target.Module, ParallelQueueDrainFnName), [desc], "");
+        LlvmApi.BuildBr(builder, startRet);
+
+        LlvmApi.PositionBuilderAtEnd(builder, startRet);
+        LlvmApi.BuildRet(builder, desc);
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_await(desc, idx) -> raw result</c>: blocks until the result for
+    /// element <c>idx</c> has been published, then returns it (still in the producing worker's
+    /// arena — the caller deep-copies). The flag is read with an atomic acquire so the publishing
+    /// worker's result store is visible. linux waits on the flag's futex; win-x64 polls with
+    /// <c>Sleep(1)</c> (results arrive at chunk granularity, so the poll is cold).
+    /// </summary>
+    private static void EmitParallelQueueAwaitFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueAwaitFnName, 2, returnsValue: true);
+        LlvmCodegenState state = CreateBareRuntimeState(target, fn, flavor);
+        LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle idx = LlvmApi.GetParam(fn, 1);
+
+        LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_await_n");
+        LlvmValueHandle countBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_await_nbytes");
+        LlvmValueHandle idxBytes = LlvmApi.BuildMul(builder, idx, LlvmApi.ConstInt(i64, 8, 0), "parq_await_idx_bytes");
+        LlvmValueHandle resultsBase = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_await_elems"),
+            countBytes, "parq_await_results");
+        LlvmValueHandle resultAddr = LlvmApi.BuildAdd(builder, resultsBase, idxBytes, "parq_await_result_addr");
+        LlvmValueHandle flagAddr = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, resultsBase, countBytes, "parq_await_flags"), idxBytes, "parq_await_flag_addr");
+
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_check");
+        var waitBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_wait");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        // fetch_add(0) = an atomic acquire read pairing with the drain loop's publish increment.
+        LlvmValueHandle flag = EmitAtomicFetchAdd(state, flagAddr, 0, "parq_await_flag");
+        LlvmValueHandle isReady = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, flag, LlvmApi.ConstInt(i64, 0, 0), "parq_await_ready");
+        LlvmApi.BuildCondBr(builder, isReady, doneBlock, waitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        if (IsLinuxFlavor(flavor))
+        {
+            // futex(&flag, FUTEX_WAIT_PRIVATE, 0): re-checks the flag atomically, so a wake racing
+            // the check is never lost.
+            EmitLinuxSyscall6(state, SyscallFutex,
+                flagAddr,
+                LlvmApi.ConstInt(i64, (ulong)FutexWaitPrivate, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                "parq_await_wait_call");
+        }
+        else
+        {
+            // void-returning import call: the instruction must be unnamed to pass LLVM verification.
+            LlvmTypeHandle sleepType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [state.I32]);
+            EmitWindowsImportCall(state, "__imp_Sleep", sleepType, [LlvmApi.ConstInt(state.I32, 1, 0)], "");
+        }
+
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmApi.BuildRet(builder, LoadMemory(state, resultAddr, 0, "parq_await_result"));
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_cleanup(desc)</c>: waits for every spawned worker thread to fully
+    /// exit (kernel ctid clear on linux, thread handle on win-x64), frees each worker's stack,
+    /// arena chunks, and TCB — mirroring <c>both</c>'s cleanup — then frees the queue region.
+    /// </summary>
+    private static void EmitParallelQueueCleanupFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueCleanupFnName, 1, returnsValue: false);
+        LlvmCodegenState state = WithWindowsRuntimeImports(CreateBareRuntimeState(target, fn, flavor));
+        LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
+
+        LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_cleanup_n");
+        LlvmValueHandle workers = LoadMemory(state, desc, ParallelQueueWorkerCount, "parq_cleanup_workers");
+        LlvmValueHandle regionBytes = LoadMemory(state, desc, ParallelQueueRegionBytes, "parq_cleanup_size");
+        LlvmValueHandle recsBase = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_cleanup_payload"),
+            LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 24, 0), "parq_cleanup_payload_bytes"), "parq_cleanup_recs");
+        LlvmValueHandle wSlot = LlvmApi.BuildAlloca(builder, i64, "parq_cleanup_w");
+        LlvmApi.BuildStore(builder, zero, wSlot);
+
+        var loopBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_loop");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_body");
+        var regionBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_region");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle w = LlvmApi.BuildLoad2(builder, i64, wSlot, "parq_cleanup_w_val");
+        LlvmValueHandle hasMore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, w, workers, "parq_cleanup_has_more");
+        LlvmApi.BuildCondBr(builder, hasMore, bodyBlock, regionBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle recAddr = LlvmApi.BuildAdd(builder, recsBase,
+            LlvmApi.BuildMul(builder, w, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_cleanup_rec_off"), "parq_cleanup_rec");
+        LlvmValueHandle workerTcb = LoadMemory(state, recAddr, ParallelDescWorkerTcb, "parq_cleanup_tcb");
+        LlvmValueHandle arenaEnd;
+        if (IsLinuxFlavor(flavor))
+        {
+            // Wait for true thread exit (the kernel zeroes the ctid/exited word and futex-wakes it
+            // in mm_release, after the worker stack is no longer used) before reclaiming the stack.
+            // Non-private FUTEX_WAIT to match the kernel's clear_child_tid wake.
+            var exitCheck = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exit_check");
+            var exitWait = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exit_wait");
+            var exitDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exited");
+            LlvmValueHandle exitedAddr = LlvmApi.BuildAdd(builder, recAddr, LlvmApi.ConstInt(i64, ParallelDescExited, 0), "parq_cleanup_exited_addr");
+            LlvmApi.BuildBr(builder, exitCheck);
+
+            LlvmApi.PositionBuilderAtEnd(builder, exitCheck);
+            LlvmValueHandle exited = LoadMemory(state, recAddr, ParallelDescExited, "parq_cleanup_exited_val");
+            LlvmValueHandle stillRunning = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, exited, zero, "parq_cleanup_still_running");
+            LlvmApi.BuildCondBr(builder, stillRunning, exitWait, exitDone);
+
+            LlvmApi.PositionBuilderAtEnd(builder, exitWait);
+            EmitLinuxSyscall6(state, SyscallFutex,
+                exitedAddr,
+                zero,
+                LlvmApi.ConstInt(i64, 1, 0),
+                zero,
+                zero,
+                zero,
+                "parq_cleanup_exit_wait_call");
+            LlvmApi.BuildBr(builder, exitCheck);
+
+            LlvmApi.PositionBuilderAtEnd(builder, exitDone);
+            EmitFreeOsMemory(state, LoadMemory(state, recAddr, ParallelDescWorkerStack, "parq_cleanup_stack"), ParallelStackBytesFor(state), "parq_cleanup_stack");
+            arenaEnd = flavor == LlvmCodegenFlavor.LinuxArm64
+                ? LoadMemory(state, recAddr, ParallelDescWorkerArenaEnd, "parq_cleanup_arena_end")
+                : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
+        }
+        else
+        {
+            LlvmValueHandle handle = LoadMemory(state, recAddr, ParallelDescWorkerStack, "parq_cleanup_handle");
+            LlvmTypeHandle waitType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+            EmitWindowsImportCall(state, "__imp_WaitForSingleObject", waitType,
+                [handle, LlvmApi.ConstInt(state.I32, 0xFFFFFFFFUL, 0)], "parq_cleanup_wait");
+            LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(state.I32, [state.I64]);
+            EmitWindowsImportCall(state, "__imp_CloseHandle", closeHandleType, [handle], "parq_cleanup_close");
+            arenaEnd = LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
+        }
+
+        EmitFreeWorkerArenaChunks(state, arenaEnd);
+        EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "parq_cleanup_tcb");
+        LlvmValueHandle wNext = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildLoad2(builder, i64, wSlot, "parq_cleanup_w_reload"), LlvmApi.ConstInt(i64, 1, 0), "parq_cleanup_w_next");
+        LlvmApi.BuildStore(builder, wNext, wSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, regionBlock);
+        if (IsLinuxFlavor(flavor))
+        {
+            // The region size is dynamic, so munmap directly (EmitFreeOsMemory takes a constant size).
+            EmitLinuxSyscall(state, SyscallMunmap, desc, regionBytes, zero, "parq_cleanup_region_munmap");
+        }
+        else
+        {
+            // VirtualFree with MEM_RELEASE ignores the size.
+            EmitFreeOsMemory(state, desc, 0, "parq_cleanup_region");
+        }
+
+        LlvmApi.BuildRetVoid(builder);
+    }
+
+    /// <summary>Looks up a queued-reduce runtime function, asserting it was emitted (the module
+    /// emission gate emits the queue runtime whenever a ParallelQueueStart instruction exists).</summary>
+    private static LlvmValueHandle GetQueueRuntimeFn(LlvmCodegenState state, string name)
+    {
+        LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, name);
+        if (fn == default)
+        {
+            throw new InvalidOperationException($"Parallel queue runtime function '{name}' was not emitted for this module.");
+        }
+
+        return fn;
+    }
+
+    private static LlvmValueHandle EmitParallelQueueStart(LlvmCodegenState state, LlvmValueHandle mapperClosure, LlvmValueHandle list)
+    {
+        LlvmTypeHandle i64 = state.I64;
+        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64, i64]),
+            GetQueueRuntimeFn(state, ParallelQueueStartFnName), [mapperClosure, list], "parq_start");
+    }
+
+    private static LlvmValueHandle EmitParallelQueueAwait(LlvmCodegenState state, LlvmValueHandle desc, LlvmValueHandle index)
+    {
+        LlvmTypeHandle i64 = state.I64;
+        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64, i64]),
+            GetQueueRuntimeFn(state, ParallelQueueAwaitFnName), [desc, index], "parq_await");
+    }
+
+    private static bool EmitParallelQueueCleanup(LlvmCodegenState state, LlvmValueHandle desc)
+    {
+        LlvmApi.BuildCall2(state.Target.Builder,
+            LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]),
+            GetQueueRuntimeFn(state, ParallelQueueCleanupFnName), [desc], "");
+        return false;
     }
 
     /// <summary>

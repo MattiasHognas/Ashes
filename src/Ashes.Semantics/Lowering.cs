@@ -3954,6 +3954,20 @@ public sealed partial class Lowering
             return LowerConstructorApplication(ctorSym, collectedArgs);
         }
 
+        // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result
+        // type routes to the runtime chunk queue (workers pull element indexes from a shared atomic
+        // counter; the caller merges per-index results in fixed list order), which packs workers
+        // tighter than the static fork tree below. Grained calls keep the fork-tree path — an
+        // explicit grain requests the divide-and-conquer shape.
+        if (!_inParallelSpecialization
+            && ResolveSpecializableCalleeName(rootExpr) is { } queueCalleeName
+            && string.Equals(queueCalleeName, ParallelReduceName, StringComparison.Ordinal)
+            && collectedArgs.Count == 4
+            && _parallelSpecializable.ContainsKey(ParallelReduceGrainedName))
+        {
+            return LowerParallelReduceQueued(collectedArgs);
+        }
+
         // Data-parallel map/reduce: a saturated call to a parallel combinator at a concrete result type
         // is monomorphized into a self-recursive specialization whose `both` splits fork genuinely. A
         // `map`/`reduce` call is rewritten to its grained form (grain = 1) first. A self-recursive call
@@ -6090,6 +6104,124 @@ public sealed partial class Lowering
         }
 
         return (current, resultType);
+    }
+
+    /// <summary>
+    /// Work-conserving lowering of a saturated <c>Parallel.reduce(combine)(identity)(f)(xs)</c> call.
+    /// Lowers the arguments once (against the combinator's reconstructed generic signature so element
+    /// types propagate), then — when the concrete result type is one a worker's arena-isolated result
+    /// can be deep-copied back from — emits the runtime chunk queue: workers pull element indexes from
+    /// a shared atomic counter and publish <c>f(element)</c> per index, while this caller awaits the
+    /// results in ascending index order and left-folds them through <c>combine</c> (the same fixed,
+    /// deterministic merge order regardless of which worker computed what; equivalent to the fork-tree
+    /// shape under reduce's associative-combine contract). An empty list yields <c>identity</c>; a
+    /// non-empty list folds the mapped results without <c>identity</c>, exactly like the sequential
+    /// combinator. Otherwise falls back to a plain sequential call to the polymorphic combinator (an
+    /// identical result). Never falls through, so the arguments are lowered exactly once.
+    /// </summary>
+    private (int, TypeRef) LowerParallelReduceQueued(List<Expr> args)
+    {
+        // reduce : (c -> c -> c) -> c -> (e -> c) -> List e -> c
+        var acc = NewTypeVar();
+        var elem = NewTypeVar();
+        var combineType = new TypeRef.TFun(acc, new TypeRef.TFun(acc, acc));
+        var mapFnType = new TypeRef.TFun(elem, acc);
+        TypeRef curType = new TypeRef.TFun(combineType, new TypeRef.TFun(acc, new TypeRef.TFun(mapFnType, new TypeRef.TFun(new TypeRef.TList(elem), acc))));
+
+        var savedTailPos = _tcoCtx?.InTailPosition ?? false;
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+        var argTemps = new int[args.Count];
+        for (int i = 0; i < args.Count; i++)
+        {
+            var (argTemp, argType) = LowerExpr(args[i]);
+            argTemps[i] = argTemp;
+            if (Prune(curType) is TypeRef.TFun tfun)
+            {
+                Unify(tfun.Arg, argType);
+                curType = Prune(tfun.Ret);
+            }
+        }
+
+        var resultType = Prune(acc);
+        int combineTemp = argTemps[0];
+        int identityTemp = argTemps[1];
+        int fTemp = argTemps[2];
+        int listTemp = argTemps[3];
+
+        // The workers' raw results live in worker arenas, so the merge must deep-copy each one at
+        // the concrete result type — unavailable for an abstract result, which (like `both`) degrades
+        // to the sequential polymorphic combinator.
+        if (!CanRunRightOnWorker(resultType))
+        {
+            if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+            var (combinatorTemp, _) = LowerVar(new Expr.Var(ParallelReduceName));
+            return ApplyLoweredArgs(combinatorTemp, argTemps, resultType);
+        }
+
+        int descTemp = NewTemp();
+        Emit(new IrInst.ParallelQueueStart(descTemp, fTemp, listTemp));
+        // Element count, published by the queue-start runtime at descriptor offset 8.
+        int countTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(countTemp, descTemp, 8));
+
+        int accSlot = NewLocal();
+        int idxSlot = NewLocal();
+        string emptyLabel = NewLabel("parq_empty");
+        string loopLabel = NewLabel("parq_merge");
+        string doneLabel = NewLabel("parq_done");
+
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntGt(nonEmptyTemp, countTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, emptyLabel));
+
+        // acc = deepCopy(result[0]); the fold starts from the first mapped element, not identity.
+        int firstIdxTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(firstIdxTemp, 0));
+        int firstRawTemp = NewTemp();
+        Emit(new IrInst.ParallelQueueAwait(firstRawTemp, descTemp, firstIdxTemp));
+        int firstTemp = EmitDeepCopy(firstRawTemp, resultType);
+        Emit(new IrInst.StoreLocal(accSlot, firstTemp));
+        int oneTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(oneTemp, 1));
+        Emit(new IrInst.StoreLocal(idxSlot, oneTemp));
+
+        // for i in 1..n-1: acc = combine(acc)(deepCopy(result[i]))
+        Emit(new IrInst.Label(loopLabel));
+        int idxTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(idxTemp, idxSlot));
+        int hasMoreTemp = NewTemp();
+        Emit(new IrInst.CmpIntLt(hasMoreTemp, idxTemp, countTemp));
+        Emit(new IrInst.JumpIfFalse(hasMoreTemp, doneLabel));
+        int rawTemp = NewTemp();
+        Emit(new IrInst.ParallelQueueAwait(rawTemp, descTemp, idxTemp));
+        int copiedTemp = EmitDeepCopy(rawTemp, resultType);
+        int accTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(accTemp, accSlot));
+        int partialTemp = NewTemp();
+        Emit(new IrInst.CallClosure(partialTemp, combineTemp, accTemp));
+        int mergedTemp = NewTemp();
+        Emit(new IrInst.CallClosure(mergedTemp, partialTemp, copiedTemp));
+        Emit(new IrInst.StoreLocal(accSlot, mergedTemp));
+        int stepTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(stepTemp, 1));
+        int nextIdxTemp = NewTemp();
+        Emit(new IrInst.AddInt(nextIdxTemp, idxTemp, stepTemp));
+        Emit(new IrInst.StoreLocal(idxSlot, nextIdxTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(emptyLabel));
+        Emit(new IrInst.StoreLocal(accSlot, identityTemp));
+
+        Emit(new IrInst.Label(doneLabel));
+        Emit(new IrInst.ParallelQueueCleanup(descTemp));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, accSlot));
+
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        return (resultTemp, resultType);
     }
 
     /// <summary>

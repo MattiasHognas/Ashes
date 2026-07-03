@@ -122,6 +122,32 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_arm64_backend_llvm_should_run_queued_parallel_reduce_in_list_order()
+    {
+        // CO-25: the queued Parallel.reduce runtime on arm64 (TPIDR_EL0 worker TLS blocks, ldaxr/stlxr
+        // atomics, futex publish/await). The combine is order-sensitive (string join), so the output
+        // proves the fixed list-order merge regardless of which worker computed which element.
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgramWithImports("""
+            import Ashes.Parallel
+
+            let rec range lo hi =
+                if lo >= hi
+                then []
+                else lo :: range(lo + 1)(hi)
+
+            let joined = Ashes.Parallel.reduce(fun (a) -> fun (b) -> a + "," + b)("")(fun (x) -> Ashes.Text.fromInt(x * x))(range(0)(8))
+
+            Ashes.IO.print(joined)
+            """));
+        result.Stdout.ShouldBe("0,1,4,9,16,25,36,49\n");
+    }
+
+    [Test]
     public async Task Linux_arm64_backend_llvm_should_run_user_extern_imports()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
@@ -434,6 +460,23 @@ public sealed class LinuxArm64BackendCoverageTests
         diagnostics.ThrowIfAny();
 
         var ir = new Lowering(diagnostics).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    // Stitches `import Ashes.*` module sources exactly like the CLI's standalone-compile path, so
+    // stdlib bindings that live in embedded module source (e.g. Ashes.Parallel.reduce) resolve.
+    private static IrProgram LowerProgramWithImports(string source)
+    {
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
+
+        var diagnostics = new Diagnostics();
+        var program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }

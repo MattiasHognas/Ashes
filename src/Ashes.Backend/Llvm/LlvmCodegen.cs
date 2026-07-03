@@ -748,7 +748,8 @@ internal static partial class LlvmCodegen
                 nounwindAttr);
         }
 
-        if (ProgramUsesInstruction<IrInst.ParallelFork>(program))
+        bool usesParallelQueue = ProgramUsesInstruction<IrInst.ParallelQueueStart>(program);
+        if (ProgramUsesInstruction<IrInst.ParallelFork>(program) || usesParallelQueue)
         {
             if (flavor == LlvmCodegenFlavor.WindowsX64)
             {
@@ -774,6 +775,8 @@ internal static partial class LlvmCodegen
                 EnsureWindowsImport("__imp_CloseHandle");
                 // Worker-cap auto-detection reads the machine's processor count.
                 EnsureWindowsImport("__imp_GetSystemInfo");
+                // The queued-reduce await polls with Sleep(1) (no futex on win-x64).
+                EnsureWindowsImport("__imp_Sleep");
             }
 
             // arm64 workers need the TLS arena to get their own per-thread arena; it's now always
@@ -781,6 +784,10 @@ internal static partial class LlvmCodegen
             if (flavor != LlvmCodegenFlavor.LinuxArm64 || arm64UsesTlsArena)
             {
                 EmitParallelRuntime(target, flavor, nounwindAttr);
+                if (usesParallelQueue)
+                {
+                    EmitParallelQueueRuntime(target, flavor, nounwindAttr);
+                }
             }
         }
 
@@ -1390,6 +1397,13 @@ internal static partial class LlvmCodegen
                 EmitParallelJoin(state, LoadTemp(state, parallelJoin.DescTemp))),
             IrInst.ParallelCleanup parallelCleanup =>
                 EmitParallelCleanup(state, LoadTemp(state, parallelCleanup.DescTemp)),
+            // Work-conserving parallel reduce (queued Ashes.Parallel.reduce).
+            IrInst.ParallelQueueStart parallelQueueStart => StoreTemp(state, parallelQueueStart.DescTarget,
+                EmitParallelQueueStart(state, LoadTemp(state, parallelQueueStart.FClosureTemp), LoadTemp(state, parallelQueueStart.ListTemp))),
+            IrInst.ParallelQueueAwait parallelQueueAwait => StoreTemp(state, parallelQueueAwait.ResultTarget,
+                EmitParallelQueueAwait(state, LoadTemp(state, parallelQueueAwait.DescTemp), LoadTemp(state, parallelQueueAwait.IndexTemp))),
+            IrInst.ParallelQueueCleanup parallelQueueCleanup =>
+                EmitParallelQueueCleanup(state, LoadTemp(state, parallelQueueCleanup.DescTemp)),
             // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
