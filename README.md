@@ -443,14 +443,16 @@ modules in the standard library; the planned
 [effects system](docs/future/EFFECTS.md).*
 
 **Why not just use Rust?**
-Different target. Rust gives you explicit ownership, mutation, and low-level
-control. Ashes deliberately hides all of that: a purely functional model with
-Hindley–Milner type inference, immutable values, and inferred deterministic
-memory management — native performance and no GC, but without asking the
-programmer to reason about ownership or lifetimes. If you want manual control
-over mutation and memory layout, reach for Rust; if you want a small pure
-functional language that still compiles to a dependency-free native binary,
-that is what Ashes is for.
+Aside from the obious fact that Rust is a mature and strong programming language 
+while Ashes is a one person experiment that is nowhere close to production ready.. 
+I'd say Ashes is very different at its core and design. Rust gives you explicit 
+ownership, mutation, and low-level control. Ashes deliberately hides all of that: 
+a purely functional model withHindley–Milner type inference, immutable values, 
+and inferred deterministic memory management — native performance and no GC, 
+but without asking the programmer to reason about ownership or lifetimes. 
+If you want manual control over mutation and memory layout, reach for Rust; 
+if you want to tinker with a small pure functional language that still compiles 
+to a dependency-free native binary, that is what Ashes is for.
 *Details: [Design Principles](#design-principles) above.*
 
 ---
