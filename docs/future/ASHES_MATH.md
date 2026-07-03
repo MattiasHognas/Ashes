@@ -45,31 +45,50 @@ the `linux-arm64` rustls payload from source. See "Provisioning script" below. T
 is a `.so`/`.dll` staged under `runtimes/<rid>/`, plus an `openlibm.version` marker, exactly
 mirroring the rustls asset layout.
 
-### Embedding mechanism — same as rustls, gated the same way
+### Conditional embedding — gated exactly like rustls
 
-The original proposal called for a **static archive dead-stripped with section-GC**. That is
-deferred in favour of reusing rustls's proven mechanism verbatim, because the difference the user
-cares about — *only embed when the feature is used* — is **already how rustls works**, not a new
-capability:
+Whichever link mechanism is chosen (below), the *gate* is the same and is **not** a new capability:
+`LlvmCodegen` already computes `ProgramUsesTlsRuntimeAbi(program)` and only pulls in the rustls asset
+when the IR references a TLS/HTTP instruction (`LoadLinkedTlsRuntimeAsset`). openlibm mirrors this
+with a `ProgramUsesMathRuntimeAbi(program)` gate (true when the IR references any Layer-2
+transcendental intrinsic). Layer-1-only and math-free programs pull in nothing.
 
-- `LlvmCodegen` already computes `ProgramUsesTlsRuntimeAbi(program)` and only loads/embeds the
-  rustls asset when the IR references a TLS/HTTP instruction (`LoadLinkedTlsRuntimeAsset`). A
-  hermetic-only program embeds nothing.
-- openlibm mirrors this with a `ProgramUsesMathRuntimeAbi(program)` gate (true when the IR
-  references any Layer-2 transcendental intrinsic). A program that uses only Layer-1 hermetic math,
-  or no math at all, embeds no openlibm.
+### Link mechanism — two viable hermetic options (decision pending)
 
-So the embedding path is: vendor the `.so`/`.dll` under `runtimes/`, embed the whole blob through a
-`HermeticMathRuntimeAssets` helper analogous to `HermeticTlsRuntimeAssets`, and extract-and-`dlopen`
-(or resolve the referenced symbols) at first use — but only in binaries whose IR actually calls a
-transcendental. The whole openlibm `.so` is small (linux-x64 build measures ~225 KB stripped-`.so` /
-~700 KB static `.a`), so shipping the whole library — rather than dead-stripping to the referenced
-functions — is an accepted size cost for reusing the existing, tested embedding path.
+A feasibility spike (clang / llvm-link / llvm-ar are on the build host) established that there are
+**two** hermetic mechanisms, and they diverge enough to be an explicit decision, not an
+implementation detail:
 
-**Deferred size optimization (not in scope):** dead-stripping to only the referenced functions via a
-**static archive + section-GC** (`--gc-sections` / LTO `internalize` + `GlobalDCE`). openlibm builds
-as a static `.a` too, so this remains available as a later optimization once whole-`.so` embedding is
-proven end-to-end. It is called out here so the choice is explicit, not lost.
+**Option A — embed the `.so`, `dlopen`+`dlsym` at runtime (the rustls mechanism).**
+Vendor `libopenlibm.so` / `openlibm.dll` (already provisioned for linux-x64/arm64), embed the blob
+via a `HermeticMathRuntimeAssets` helper analogous to `HermeticTlsRuntimeAssets`, and at first
+transcendental use extract-and-`dlopen` it and `dlsym` the referenced functions into pointers the
+math intrinsics call through. Pros: reuses the shipped `.so` provisioning verbatim; matches the
+original "download `.so`/`.dll`" direction. Cons: the rustls `dlopen` path is **not** cleanly
+reusable — it is entangled with TLS runtime init, a per-module ABI, and the Windows
+`LoadLibrary`/`__imp_` plumbing — so this needs a fresh (if simpler, stateless) per-function
+resolve-and-cache shim on all three targets; ships the whole `.so` (no dead-strip).
+
+**Option B — link openlibm as LLVM bitcode into the program module (recommended).**
+Provision openlibm as a single `libopenlibm.bc` per target; when the math gate fires, parse it and
+`LLVMLinkModules2` it into the program module before codegen, so `sin`/`cos`/… become ordinary
+internal functions in the one object LLVM emits — no dynamic import, no `dlopen`, no runtime
+dependency, and `internalize` + `GlobalDCE` dead-strips to only the referenced functions (small
+binaries). Because these are stateless leaf functions this avoids all the rustls runtime machinery.
+Cons/unknowns established by the spike: (1) a naive "compile every `src/*.c`" build has **symbol
+conflicts** (complex `c*` and long-double `ld80`/`ld128` variants redefine symbols such as `ccos`),
+so bitcode must be produced from openlibm's **own curated source selection** (drive it from the
+Makefile's object list, or build with `clang -flto`); (2) bitcode is target-specific, so one `.bc`
+per target (`--target=x86_64-linux-gnu` / `aarch64-linux-gnu` / `x86_64-windows-gnu`); (3) two new
+LLVM interop entry points are needed (`LLVMParseIRInContext` + `LLVMLinkModules2`); (4) **the key
+untested risk** is whether the in-house ELF/PE linker handles openlibm's larger object — its rodata
+lookup tables and whatever relocation types llc emits — since it currently links a single
+compiler-emitted object.
+
+Both options keep Ground Rule 6 (no runtime dependency): the payload is baked into the executable and
+never a dynamic link against a system `libm.so`. Option B is recommended (cleaner, dead-stripped, no
+runtime shim), contingent on confirming the in-house linker copes with openlibm's object; Option A is
+the fallback that reuses the already-provisioned `.so`.
 
 ## Layer 1 — hermetic core (no library)
 
