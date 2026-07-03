@@ -190,8 +190,8 @@ namespace. They are not overridable by project-local modules.
 All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
 transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
 linked into the program only when a transcendental is used, so hermetic-only
-programs carry no math payload and there is never a runtime dependency; see
-`docs/future/ASHES_MATH.md`.
+programs carry no math payload and there is never a runtime dependency. See the
+*Math runtime model* in [ARCHITECTURE.md](ARCHITECTURE.md) for the mechanism.
 
 Integer:
 

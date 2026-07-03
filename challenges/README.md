@@ -17,15 +17,15 @@ The interesting output of each challenge is its `FLAWS.md` — what broke, where
 - The folders below are the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
   set — **scaffolds for now** (README only; `.ash` + run + `FLAWS.md` deferred).
 
-## Benchmarks Game — coverage after `Ashes.Math` lands
+## Benchmarks Game — math-lib coverage
 
-[`docs/future/ASHES_MATH.md`](../docs/future/ASHES_MATH.md) is planned. After it lands, this
-is where each benchmark stands. The math lib's real unlock for this set is the **Int↔Float
-conversions** (`toFloat`, `*ToInt`) it introduces — Ashes has none today — plus the hermetic
-`sqrt`. Notably **none of these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only
-the hermetic core is on the critical path. Two needs fall **outside** the math doc: a
-**fixed-precision float formatter** (`fromFloat` hardcodes 6 fractional digits; n-body and
-spectral-norm require 9 dp) and **bignum** (pidigits).
+`Ashes.Math` has landed (see [STANDARD_LIBRARY.md](../docs/STANDARD_LIBRARY.md#ashesmath)), and
+this is where each benchmark stands. The math lib's real unlock for this set is the **Int↔Float
+conversions** (`toFloat`, `*ToInt`) it introduces plus the hermetic `sqrt`. Notably **none of
+these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only the hermetic core is on the
+critical path. Two needs fall **outside** the math lib: a **fixed-precision float formatter**
+(`fromFloat` hardcodes 6 fractional digits; n-body and spectral-norm require 9 dp) and **bignum**
+(pidigits).
 
 | Challenge | Covered by math lib? | Remaining gap |
 |---|---|---|
