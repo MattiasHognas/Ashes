@@ -2148,7 +2148,135 @@ full code table.
 
 ---
 
-# 20. Unsupported (Future)
+# 20. Algebraic Effects and Handlers
+
+Algebraic effects let a function *declare* the operations it needs — `now`, `log`, `lookup` —
+without deciding what they mean. The caller chooses the meaning by installing a **handler**. The
+same code runs against a real handler in production and an injected handler in tests, with no
+parameter threading and no mocking framework. See
+[future/EFFECTS.md](future/EFFECTS.md) for the design rationale and staged roadmap.
+
+Implementation status: **Stage 1** — effect declarations, `uses` rows, effect typing, and the
+unhandled-effect diagnostic — is implemented. The `handle`/`perform` surface (Stage 2) is parsed
+and specified here; until its lowering lands, a `handle` expression is rejected with a clear
+diagnostic rather than miscompiled.
+
+## 20.1 Effect Declarations
+
+An effect is a named set of operations, declared at the top level like a `type`:
+
+```
+effect Clock =
+    | now : Unit -> Int          // explicit operation signature
+
+effect Log =
+    | log                        // implicit: signature inferred from uses + handler arms
+
+effect State(a) =                // effect type parameter, for polymorphic operations
+    | get : Unit -> a
+    | set : a -> Unit
+```
+
+- `effect` is a keyword and a top-level declaration form; effects cannot be declared inside
+  expressions.
+- Effect names share the qualified-name namespace with modules: operations are always referenced
+  qualified as `Effect.op`.
+- Operation signatures are optional. A bare `| lookup` is valid within a compilation unit; the
+  operation's type is inferred by unifying every perform-site and every handler arm, then
+  generalized like a `let`. Explicit signatures are required when the effect is exported from a
+  module, or when an operation is intentionally polymorphic (usually via an effect type parameter
+  as in `State(a)`).
+- Operation signatures are function types; `Unit -> T` declares a Unit-taking operation.
+
+## 20.2 Performing an Operation
+
+```
+let t = perform Clock.now(Unit)  // explicit form
+let t = Clock.now(Unit)          // implicit form — identical program
+```
+
+`perform` is an **optional** keyword: `perform Clock.now(x)` and `Clock.now(x)` are the same
+program. The keyword is a greppability marker; the effect row in the type is the source of truth.
+The formatter preserves whichever form was written. `perform` must be applied to an effect
+operation call (`perform 42` is an error), and operations are always qualified by their effect
+(`Clock.now`), so no ambiguity arises when two effects share an operation name.
+
+## 20.3 Effect Rows in Type Annotations
+
+A function type may carry a `uses` clause listing the effects the function performs:
+
+```
+let taxFor  : Int -> Int                          = ...  // pure: no row
+let priceOf : Str -> Int uses {Prices}            = ...  // performs exactly one effect
+let run     : Str -> Int uses {Prices, Clock | e} = ...  // open row: passes other effects through
+let apply   : (Unit -> a uses e) -> a uses e      = ...  // bare row variable
+```
+
+- A function type with no `uses` clause is pure.
+- A written `uses {A, B}` row is **closed**: the function performs at most `A` and `B`.
+- A trailing row variable (`uses {A, B | e}`) makes the row **open**: at least `A` and `B`, plus
+  whatever `e` instantiates to. `uses e` is an open row with no required effects.
+- Type inference always produces the open form; a written closed row is a deliberate restriction.
+- A parameterized effect is written applied: `uses {State(Int)}`. A row contains at most one
+  instance of a given effect; mentioning the same effect twice unifies their type arguments.
+- `uses` attaches to the **innermost** arrow whose result it follows:
+  `A -> B -> C uses {E}` reads as `A -> (B -> C uses {E})` — the first application is pure, the
+  second performs `E`. Parenthesize to scope it differently:
+  `(A -> B uses {E}) -> C` puts the row on the parameter's type.
+
+## 20.4 Effect Typing
+
+Effect rows are part of the Hindley-Milner type system as a second kind of row, with
+row-polymorphic unification:
+
+- **Operations** are typed like functions; their type is inferred by unifying all perform-sites
+  and handler arms, then generalized with let-polymorphism.
+- **A function's row** is the union of the rows of the operations it performs and the rows of the
+  functions it calls, minus any effects it handles internally. Rows are inferred open and
+  generalized at `let`, so a pure function like `fun (x) -> x` receives a row-polymorphic type
+  usable in any context.
+- **Calling** a function whose row includes effect `E` inside a function whose written (closed)
+  row does not include `E` is a compile-time error (`ASH018`).
+- **Unhandled effects:** if the program's residual effect row at the top level is non-empty after
+  default built-in handlers are applied, that is a compile-time error (`ASH017`), not a runtime
+  failure.
+- Annotation boundaries mirror the rest of Ashes: infer locally, annotate at module exports and
+  for intentionally-polymorphic operations.
+
+## 20.5 Handlers
+
+```
+handle work(Unit) with
+    | Clock.now(_)  -> resume(realClock(Unit))   // operation arm: args + one-shot resume
+    | Log.log(msg)  -> let _ = emit(msg) in resume(Unit)
+    | return(r)     -> r                         // runs on the computation's final value
+```
+
+A `handle body with | arms` expression installs an interpretation over the dynamic extent of
+`body`. Each operation arm receives the operation's arguments and a one-shot continuation
+`resume`; calling `resume(v)` returns `v` to the perform-site and continues the computation. The
+optional `return` arm transforms the computation's final value; when absent, the final value is
+returned unchanged. A handler discharges exactly the operations it lists and is transparent to
+any other effects, so its inferred type is row-polymorphic. `resume` is an ordinary identifier
+bound by each operation arm, not a keyword.
+
+Continuation power is restricted by the memory model (no GC):
+
+- **Tail-resumptive** arms (`resume` in tail position) compile to a direct call with no
+  continuation capture.
+- **One-shot resumptive** arms (work after `resume` returns) capture the continuation as a
+  resumable state machine; `resume` may run at most once.
+- **Multi-shot** (`resume` called more than once) is out of scope and rejected.
+
+## 20.6 Diagnostics
+
+`ASH017` (unhandled effect), `ASH018` (effect not permitted by a closed row), `ASH019` (unknown
+effect or operation), and `ASH020` (invalid handler / not-yet-supported handler form) cover this
+surface; see [DIAGNOSTICS.md](DIAGNOSTICS.md).
+
+---
+
+# 21. Unsupported (Future)
 
 See [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 

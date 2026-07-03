@@ -62,6 +62,10 @@ public enum TokenKind
     Await,
     LetBang,
     Extern,
+    Effect,
+    Uses,
+    Perform,
+    Handle,
 }
 
 public readonly record struct Token(

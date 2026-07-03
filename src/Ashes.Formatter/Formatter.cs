@@ -139,6 +139,33 @@ public static class Formatter
         }
     }
 
+    private static void WriteEffectDecl(StringBuilder sb, EffectDecl decl, FormattingOptions options)
+    {
+        sb.Append("effect ");
+        sb.Append(decl.Name);
+        if (decl.TypeParameters.Count > 0)
+        {
+            sb.Append('(');
+            sb.Append(string.Join(", ", decl.TypeParameters.Select(p => p.Name)));
+            sb.Append(')');
+        }
+
+        sb.Append(" =\n");
+        foreach (var operation in decl.Operations)
+        {
+            WriteIndent(sb, options.IndentSize, options);
+            sb.Append("| ");
+            sb.Append(operation.Name);
+            if (operation.Signature is not null)
+            {
+                sb.Append(" : ");
+                WriteTypeExpr(sb, operation.Signature);
+            }
+
+            sb.Append('\n');
+        }
+    }
+
     private static void WriteTopLevelItem(StringBuilder sb, TopLevelItem item, bool preferPipelines, FormattingOptions options)
     {
         switch (item)
@@ -148,6 +175,9 @@ public static class Formatter
                 return;
             case TopLevelItem.Extern e:
                 WriteExternDecl(sb, e.Decl);
+                return;
+            case TopLevelItem.Effect eff:
+                WriteEffectDecl(sb, eff.Decl, options);
                 return;
             case TopLevelItem.LetDecl let:
                 WriteLetDecl(sb, let, preferPipelines, options);
@@ -273,9 +303,39 @@ public static class Formatter
                 sb.Append(')');
                 return;
             case TypeExpr.Arrow arr:
-                WriteTypeExpr(sb, arr.From);
+                // An arrow in parameter position must be parenthesized to keep the arrow
+                // right-associative on re-parse: (A -> B) -> C.
+                if (arr.From is TypeExpr.Arrow)
+                {
+                    sb.Append('(');
+                    WriteTypeExpr(sb, arr.From);
+                    sb.Append(')');
+                }
+                else
+                {
+                    WriteTypeExpr(sb, arr.From);
+                }
+
                 sb.Append(" -> ");
-                WriteTypeExpr(sb, arr.To);
+                // When this arrow carries a row and its result is itself an arrow, the result must
+                // be parenthesized or the row would re-attach to the inner arrow on re-parse
+                // (`uses` binds to the innermost arrow whose result it follows).
+                if (arr.Uses is not null && arr.To is TypeExpr.Arrow)
+                {
+                    sb.Append('(');
+                    WriteTypeExpr(sb, arr.To);
+                    sb.Append(')');
+                }
+                else
+                {
+                    WriteTypeExpr(sb, arr.To);
+                }
+
+                if (arr.Uses is { } uses)
+                {
+                    WriteUsesRow(sb, uses);
+                }
+
                 return;
             case TypeExpr.TupleType t:
                 sb.Append('(');
@@ -287,6 +347,51 @@ public static class Formatter
                 sb.Append(')');
                 return;
         }
+    }
+
+    private static void WriteUsesRow(StringBuilder sb, UsesRowSyntax row)
+    {
+        sb.Append(" uses ");
+        if (row.Effects.Count == 0 && row.TailVar is not null)
+        {
+            // Bare row variable: `uses e`.
+            sb.Append(row.TailVar);
+            return;
+        }
+
+        sb.Append('{');
+        for (int i = 0; i < row.Effects.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append(row.Effects[i].Name);
+            if (row.Effects[i].Args.Count > 0)
+            {
+                sb.Append('(');
+                for (int j = 0; j < row.Effects[i].Args.Count; j++)
+                {
+                    if (j > 0)
+                    {
+                        sb.Append(", ");
+                    }
+
+                    WriteTypeExpr(sb, row.Effects[i].Args[j]);
+                }
+
+                sb.Append(')');
+            }
+        }
+
+        if (row.TailVar is not null)
+        {
+            sb.Append(" | ");
+            sb.Append(row.TailVar);
+        }
+
+        sb.Append('}');
     }
 
     private static void WriteExternDecl(StringBuilder sb, ExternDecl decl)
@@ -395,6 +500,7 @@ public static class Formatter
             Expr.Cons cons => IsSingleLine(cons.Head, preferPipelines) && IsSingleLine(cons.Tail, preferPipelines),
             Expr.Call c => (!preferPipelines || !TryCollectPipeline(c, out _, out _)) && IsSingleLine(c.Func, preferPipelines) && IsSingleLine(c.Arg, preferPipelines),
             Expr.Await awaitExpr => IsSingleLine(awaitExpr.Task, preferPipelines),
+            Expr.Perform perform => IsSingleLine(perform.Operation, preferPipelines),
             Expr.RecordLit rl => rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
             Expr.RecordUpdate ru => IsSingleLine(ru.Target, preferPipelines) && ru.Updates.All(f => IsSingleLine(f.Value, preferPipelines)),
             _ => false
@@ -427,6 +533,10 @@ public static class Formatter
 
             case Expr.Match match:
                 WriteMatch(sb, match, indent, parentPrec, preferPipelines, options);
+                return;
+
+            case Expr.Handle handle:
+                WriteHandle(sb, handle, indent, parentPrec, preferPipelines, options);
                 return;
 
             default:
@@ -739,6 +849,69 @@ public static class Formatter
                 sb.Append('\n');
                 WriteIndent(sb, indent + options.IndentSize * 2, options);
                 WriteExpr(sb, matchCase.Body, indent + options.IndentSize * 2, 0, preferPipelines, options);
+                if (!EndsWithNewLine(sb, "\n"))
+                {
+                    sb.Append('\n');
+                }
+            }
+        }
+
+        if (sb.Length > 0 && sb[^1] == '\n')
+        {
+            sb.Length--;
+        }
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    private static void WriteHandle(StringBuilder sb, Expr.Handle handle, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        var needsParens = parentPrec > PrecLetIfLambda;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        sb.Append("handle ");
+        WriteExprInline(sb, handle.Body, indent, 0, preferPipelines, options);
+        sb.Append(" with\n");
+
+        foreach (var arm in handle.Arms)
+        {
+            WriteIndent(sb, indent + options.IndentSize, options);
+            sb.Append("| ");
+            if (arm.EffectName is not null)
+            {
+                sb.Append(arm.EffectName);
+                sb.Append('.');
+            }
+
+            sb.Append(arm.OperationName);
+            sb.Append('(');
+            for (int i = 0; i < arm.Parameters.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(", ");
+                }
+
+                WritePattern(sb, arm.Parameters[i]);
+            }
+
+            sb.Append(") -> ");
+            if (IsSingleLine(arm.Body, preferPipelines))
+            {
+                WriteExprInline(sb, arm.Body, indent + options.IndentSize, 0, preferPipelines, options);
+                sb.Append('\n');
+            }
+            else
+            {
+                sb.Append('\n');
+                WriteIndent(sb, indent + options.IndentSize * 2, options);
+                WriteExpr(sb, arm.Body, indent + options.IndentSize * 2, 0, preferPipelines, options);
                 if (!EndsWithNewLine(sb, "\n"))
                 {
                     sb.Append('\n');
@@ -1213,7 +1386,7 @@ public static class Formatter
                     var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If
                         or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
                         or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-                        or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await;
+                        or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
                     if (funcNeedsParens)
                     {
                         sb.Append('(');
@@ -1253,6 +1426,13 @@ public static class Formatter
                 {
                     sb.Append("await ");
                     WriteExprInline(sb, awaitExpr.Task, indent, PrecCall, preferPipelines, options);
+                    return;
+                }
+
+            case Expr.Perform perform:
+                {
+                    sb.Append("perform ");
+                    WriteExprInline(sb, perform.Operation, indent, PrecCall, preferPipelines, options);
                     return;
                 }
 
@@ -1426,7 +1606,7 @@ public static class Formatter
 
     private static bool CanBePipelineFunction(Expr expr)
     {
-        return expr is not (Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Match);
+        return expr is not (Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Match or Expr.Handle);
     }
 
     private static string EscapeString(string s)

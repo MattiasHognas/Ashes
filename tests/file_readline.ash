@@ -3,17 +3,17 @@
 import Ashes.File
 import Ashes.IO
 import Ashes.Text
-let rec go handle acc count = 
-    match Ashes.File.readLine(handle) with
+let rec go fh acc count = 
+    match Ashes.File.readLine(fh) with
         | None -> acc + "<count=" + Ashes.Text.fromInt(count) + ">"
-        | Some(line) -> go(handle)(acc + line + "|")(count + 1)
+        | Some(line) -> go(fh)(acc + line + "|")(count + 1)
 
 let result = 
     match Ashes.File.open("lines.txt") with
         | Error(_e) -> "open-failed"
-        | Ok(handle) -> 
-            let text = go(handle)("")(0)
+        | Ok(fh) -> 
+            let text = go(fh)("")(0)
             in 
-                let _closed = Ashes.File.close(handle)
+                let _closed = Ashes.File.close(fh)
                 in text
 in Ashes.IO.writeLine(result)

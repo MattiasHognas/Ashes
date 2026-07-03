@@ -1,8 +1,8 @@
 // file: cdc_input.txt = Z
 // expect: 50
-// Each iteration opens a file, captures the handle in a closure that escapes the match arm, reads
+// Each iteration opens a file, captures the fh in a closure that escapes the match arm, reads
 // through the closure, then drops the closure at the tail-call back-edge — which runs the closure's
-// resource dropper (closure+24) to close the handle deterministically.
+// resource dropper (closure+24) to close the fh deterministically.
 // Reaching 50 successful reads exercises the dropper path without corruption;
 // the fd-release guarantee itself is verified under a low `ulimit -n`.
 import Ashes.File
