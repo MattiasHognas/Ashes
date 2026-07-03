@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RustlsFfiVersion>0.15.3</RustlsFfiVersion>
+    <OpenlibmVersion>0.8.7</OpenlibmVersion>
 
     <!-- Enable .NET analyzers -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>

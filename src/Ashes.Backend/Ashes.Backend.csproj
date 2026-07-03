@@ -50,6 +50,7 @@
     <_ExpectedRustlsLibraryFileName>librustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
     <_ExpectedRustlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionPath>
     <_ExpectedRustlsProvisionHint>bash scripts/download-rustls-ffi.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedRustlsProvisionHint>
+    <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != '' and '$(_ExpectedRustlsRuntimeIdentifier)' != 'win-x64'">
@@ -61,6 +62,7 @@
     <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
     <_ExpectedRustlsLibraryFileName>rustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
+    <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
@@ -69,6 +71,10 @@
     <_ExpectedLlvmLinkFileName>libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmLinkFileName>
     <_ExpectedRustlsAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedRustlsLibraryFileName)</_ExpectedRustlsAssetLinkPath>
     <_ExpectedRustlsVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionLinkPath>
+    <_ExpectedOpenlibmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetPath>
+    <_ExpectedOpenlibmVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionPath>
+    <_ExpectedOpenlibmAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetLinkPath>
+    <_ExpectedOpenlibmVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionLinkPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' )">
@@ -95,6 +101,16 @@
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
       Link="$(_ExpectedRustlsVersionLinkPath)" />
+    <None Include="$(_ExpectedOpenlibmAssetPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedOpenlibmAssetPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedOpenlibmAssetLinkPath)" />
+    <None Include="$(_ExpectedOpenlibmVersionPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedOpenlibmVersionPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedOpenlibmVersionLinkPath)" />
   </ItemGroup>
 
   <Target Name="ValidateRustlsRuntimeAsset"

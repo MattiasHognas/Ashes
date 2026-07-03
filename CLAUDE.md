@@ -44,9 +44,18 @@ The rustls-ffi TLS payloads (used by `Ashes.Net.Tls` / `Ashes.Http`) are vendore
 bash scripts/download-rustls-ffi.sh --all    # linux-x64/win-x64 are downloaded; linux-arm64 is source-built
 ```
 
-Both scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
+The openlibm bitcode payloads (used by `Ashes.Math` transcendentals) are likewise vendored under
+`runtimes/` and normally don't need fetching. Refresh them only when `<OpenlibmVersion>` changes:
+
+```bash
+bash scripts/download-openlibm.sh --all       # builds libopenlibm.bc for all targets on one host (needs clang, llvm-link, opt)
+```
+
+All three scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
 `--all`. linux-arm64 rustls has no upstream prebuilt, so it's cross-compiled (needs cargo, rustup,
-and an aarch64 GNU linker; the script auto-installs the cross-linker on apt/pacman systems).
+and an aarch64 GNU linker; the script auto-installs the cross-linker on apt/pacman systems). openlibm
+is compiled to LLVM bitcode by the clang frontend, so every target builds on one host with no cross
+toolchain.
 
 ## Build, test, format
 

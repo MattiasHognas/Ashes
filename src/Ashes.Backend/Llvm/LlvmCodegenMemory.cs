@@ -1239,6 +1239,50 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, okBlock);
     }
 
+    /// <summary>Applies a unary LLVM math intrinsic (e.g. <c>llvm.sqrt.f64</c>) to an f64 value,
+    /// declaring the intrinsic in the module on first use. Backs the Ashes.Math Float unary
+    /// primitives (sqrt/floor/ceil/round/trunc).</summary>
+    private static LlvmValueHandle EmitFloatUnaryIntrinsic(LlvmCodegenState state, LlvmValueHandle value, string intrinsicName)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle fnTy = LlvmApi.FunctionType(state.F64, [state.F64]);
+        LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, intrinsicName);
+        if (fn.Ptr == 0)
+        {
+            fn = LlvmApi.AddFunction(state.Target.Module, intrinsicName, fnTy);
+        }
+
+        return LlvmApi.BuildCall2(builder, fnTy, fn, [value], $"{intrinsicName.Replace('.', '_')}_call");
+    }
+
+    /// <summary>Calls an openlibm transcendental symbol (e.g. <c>sin</c>, <c>pow</c>). All arguments
+    /// and the result are f64. The function is declared in the module on first use; its body comes
+    /// from the openlibm bitcode linked into the module when the program uses the math runtime.</summary>
+    private static LlvmValueHandle EmitCallLibm(LlvmCodegenState state, string symbol, IReadOnlyList<int> args)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        Span<LlvmTypeHandle> paramTypes = stackalloc LlvmTypeHandle[args.Count];
+        for (int i = 0; i < args.Count; i++)
+        {
+            paramTypes[i] = state.F64;
+        }
+
+        LlvmTypeHandle fnTy = LlvmApi.FunctionType(state.F64, paramTypes);
+        LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, symbol);
+        if (fn.Ptr == 0)
+        {
+            fn = LlvmApi.AddFunction(state.Target.Module, symbol, fnTy);
+        }
+
+        var argValues = new LlvmValueHandle[args.Count];
+        for (int i = 0; i < args.Count; i++)
+        {
+            argValues[i] = LoadTempAsFloat(state, args[i]);
+        }
+
+        return LlvmApi.BuildCall2(builder, fnTy, fn, argValues, $"libm_{symbol}");
+    }
+
     /// <summary>Saves the current stack pointer (llvm.stacksave) into a local slot at a TCO loop header.</summary>
     private static bool EmitSaveStackPointer(LlvmCodegenState state, int slot)
     {

@@ -190,6 +190,51 @@ namespace. They are not overridable by project-local modules.
 - `reverse` — `List(a) -> List(a)`, the elements in reverse order
 - `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
 
+### `Ashes.Math`
+
+All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
+transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
+linked into the program only when a transcendental is used, so hermetic-only
+programs carry no math payload and there is never a runtime dependency. See the
+*Math runtime model* in [ARCHITECTURE.md](ARCHITECTURE.md) for the mechanism.
+
+Integer:
+
+- `abs(n)` returning `Int` — absolute value
+- `signum(n)` returning `Int` — `-1`, `0`, or `1`
+- `min(a)(b)` / `max(a)(b)` returning `Int`
+- `clamp(lo)(hi)(n)` returning `Int` — `n` confined to `[lo, hi]`
+- `gcd(a)(b)` returning `Int` — greatest common divisor (non-negative)
+- `lcm(a)(b)` returning `Int` — least common multiple (non-negative; `0` if either is `0`)
+- `divMod(a)(b)` returning `(Int, Int)` — Euclidean quotient and remainder (`0 <= r < |b|`)
+- `pow(base)(exp)` returning `Int` — exponentiation by squaring (`exp >= 0`)
+- `isqrt(n)` returning `Int` — integer (floor) square root (`n >= 0`)
+
+Float:
+
+- `absF(x)` / `signumF(x)` returning `Float`
+- `minF(a)(b)` / `maxF(a)(b)` returning `Float`
+- `clampF(lo)(hi)(x)` returning `Float`
+- `sqrt(x)` returning `Float` — hardware square root (`llvm.sqrt`), no library
+- `floor(x)` / `ceil(x)` / `round(x)` / `trunc(x)` returning `Float`
+- `pi` / `e` / `tau` — `Float` constants
+
+Conversions:
+
+- `toFloat(n)` returning `Float` — widen an `Int`
+- `floorToInt(x)` / `roundToInt(x)` / `truncToInt(x)` returning `Int` — narrow a `Float`
+
+Transcendentals (Layer 2, openlibm-backed):
+
+- Trigonometric: `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y)(x)`
+- Hyperbolic: `sinh(x)`, `cosh(x)`, `tanh(x)`
+- Exponential / logarithmic: `exp(x)`, `expm1(x)`, `ln(x)`, `log2(x)`, `log10(x)`, `log1p(x)`
+- Powers / roots: `powF(base)(exp)`, `cbrt(x)`, `hypot(x)(y)`
+- Remainder: `fmod(x)(y)`
+
+Domain errors follow IEEE-754 (`sqrt(-1.0)` is `NaN`), so the Float functions
+stay total.
+
 ### `Ashes.Array`
 
 Immutable indexed array backed by a persistent balanced tree.

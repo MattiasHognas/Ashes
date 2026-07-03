@@ -185,6 +185,9 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
+        // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
+        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
@@ -198,6 +201,9 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
+        // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
+        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
@@ -211,6 +217,9 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
+        // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
+        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
     }
@@ -953,6 +962,42 @@ internal static partial class LlvmCodegen
             : null;
     }
 
+    private static bool ProgramUsesMathRuntimeAbi(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.CallLibm>(program);
+    }
+
+    /// <summary>
+    /// When the program calls a Layer-2 transcendental, parses the vendored openlibm bitcode and
+    /// links it into the program module so the referenced symbols (<c>sin</c>, <c>pow</c>, …)
+    /// resolve internally — no dynamic import, no runtime dependency. Hermetic-only programs link
+    /// nothing.
+    /// </summary>
+    private static void LinkOpenlibmBitcodeIfNeeded(LlvmTargetContext target, IrProgram program, string targetId)
+    {
+        if (!ProgramUsesMathRuntimeAbi(program))
+        {
+            return;
+        }
+
+        byte[] bitcode = HermeticMathRuntimeAssets.GetOpenlibmBitcode(targetId);
+        if (!LlvmApi.TryParseModule(target.Context, bitcode, "openlibm", out var openlibmModule, out string? error))
+        {
+            throw new InvalidOperationException($"Failed to parse openlibm bitcode for '{targetId}': {error}");
+        }
+
+        // LLVMLinkModules2 consumes (and disposes) the source module. Returns non-zero on failure.
+        // The vendored bitcode is the whole (small, ~190 KB) self-contained openlibm, kept intact:
+        // it must retain the standard libm functions because the backend's own instruction selection
+        // lowers some intrinsics (e.g. llvm.round) to libm libcalls (round, floor, …) resolved
+        // against these definitions. Dead-stripping to only the referenced functions is a documented
+        // future size optimization; it requires preserving those libcall targets.
+        if (LlvmApi.LinkModules2(target.Module, openlibmModule) != 0)
+        {
+            throw new InvalidOperationException($"Failed to link openlibm bitcode into the program module for '{targetId}'.");
+        }
+    }
+
     private static LlvmImageLinker.LinkedImagePayload? CreateLinkedTlsPayload(HermeticTlsRuntimeAsset? rustlsSharedLibrary)
     {
         return rustlsSharedLibrary is null
@@ -1394,6 +1439,10 @@ internal static partial class LlvmCodegen
             IrInst.DivInt divInt => StoreTemp(state, divInt.Target, LlvmApi.BuildSDiv(builder, LoadTemp(state, divInt.Left), LoadTemp(state, divInt.Right), $"div_{divInt.Target}")),
             IrInst.DivUInt divUInt => StoreTemp(state, divUInt.Target, LlvmApi.BuildUDiv(builder, LoadTemp(state, divUInt.Left), LoadTemp(state, divUInt.Right), $"udiv_{divUInt.Target}")),
             IrInst.DivFloat divFloat => StoreTemp(state, divFloat.Target, LlvmApi.BuildFDiv(builder, LoadTempAsFloat(state, divFloat.Left), LoadTempAsFloat(state, divFloat.Right), $"fdiv_{divFloat.Target}")),
+            IrInst.IntToFloat intToFloat => StoreTemp(state, intToFloat.Target, LlvmApi.BuildSIToFP(builder, LoadTemp(state, intToFloat.ValueTemp), state.F64, $"sitofp_{intToFloat.Target}")),
+            IrInst.FloatToInt floatToInt => StoreTemp(state, floatToInt.Target, LlvmApi.BuildFPToSI(builder, LoadTempAsFloat(state, floatToInt.ValueTemp), state.I64, $"fptosi_{floatToInt.Target}")),
+            IrInst.FloatUnaryIntrinsic floatUnary => StoreTemp(state, floatUnary.Target, EmitFloatUnaryIntrinsic(state, LoadTempAsFloat(state, floatUnary.ValueTemp), floatUnary.LlvmIntrinsic)),
+            IrInst.CallLibm callLibm => StoreTemp(state, callLibm.Target, EmitCallLibm(state, callLibm.Symbol, callLibm.Args)),
             IrInst.AndInt andInt => StoreTemp(state, andInt.Target, LlvmApi.BuildAnd(builder, LoadTemp(state, andInt.Left), LoadTemp(state, andInt.Right), $"and_{andInt.Target}")),
             IrInst.OrInt orInt => StoreTemp(state, orInt.Target, LlvmApi.BuildOr(builder, LoadTemp(state, orInt.Left), LoadTemp(state, orInt.Right), $"or_{orInt.Target}")),
             IrInst.XorInt xorInt => StoreTemp(state, xorInt.Target, LlvmApi.BuildXor(builder, LoadTemp(state, xorInt.Left), LoadTemp(state, xorInt.Right), $"xor_{xorInt.Target}")),

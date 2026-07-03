@@ -165,6 +165,7 @@ the target ID.
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
 | rustls-ffi (native) | Vendored under `runtimes/` (refreshed via `scripts/download-rustls-ffi.sh`) | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
+| openlibm (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-openlibm.sh`) | Transcendental math for `Ashes.Math` Layer 2 (`libopenlibm.bc`), linked into programs that use it |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
@@ -179,6 +180,7 @@ and are provisioned for build/publish with the following scripts:
 |------------|-------------|------------------------|
 | libLLVM | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) | `./scripts/download-llvm-native.sh --all [LLVM_VERSION]` |
 | rustls-ffi | `./scripts/download-rustls-ffi.sh` (native Linux), `./scripts/download-rustls-ffi.sh --linux-arm64`, or `./scripts/download-rustls-ffi.sh --all` | `./scripts/download-rustls-ffi.sh --win-x64` or `./scripts/download-rustls-ffi.sh --all` |
+| openlibm | `./scripts/download-openlibm.sh` (host arch) or `./scripts/download-openlibm.sh --all` | `./scripts/download-openlibm.sh --all` (all targets build on one host with clang) |
 
 `Ashes.Backend.csproj` validates that the expected LLVM library and
 rustls-ffi payload exist for the active RID. LLVM is copied into the
@@ -189,6 +191,12 @@ RID-specific copies during `dotnet publish`.
 The rustls-ffi payloads are committed to the repository. Re-run
 `scripts/download-rustls-ffi.sh` only when updating `RustlsFfiVersion`
 or refreshing the vendored binaries.
+
+The openlibm `libopenlibm.bc` payloads are likewise committed. Re-run
+`scripts/download-openlibm.sh` only when updating `OpenlibmVersion` in
+`Directory.Build.props` or refreshing the vendored bitcode. Because bitcode is
+produced by the clang frontend, every target's payload builds on one host with
+clang alone (no cross toolchain). See *Math runtime model* below.
 
 To bump the LLVM version, pass the new version to the download script —
 no source changes are needed because the LLVM C API is stable across
@@ -244,6 +252,37 @@ default, with `SSL_CERT_FILE` as an explicit PEM-root override (used by loopback
 tests). Payload-load or verifier-init failures return `Error(...)` rather than
 crashing. Deferred TLS scope: mutual TLS / client certs, custom trust (per-call CA
 bundles, pinning), server-side accept/listen, ALPN, HTTP/2, HTTP/3.
+
+### Math runtime model
+
+`Ashes.Math` is delivered in two layers with no runtime dependency in either.
+
+**Layer 1 (hermetic core).** The integer helpers and pure-Float helpers ship as
+ordinary Ashes in `lib/Ashes/Math.ash`; `sqrt`/`floor`/`ceil`/`round`/`trunc`
+lower to `llvm.*` intrinsics and `toFloat`/`floorToInt`/`roundToInt`/`truncToInt`
+to `sitofp`/`fptosi` — no native payload.
+
+**Layer 2 (transcendentals).** `sin`, `cos`, `exp`, `ln`, `pow`, … are backed by
+a vendored **openlibm compiled to LLVM bitcode** (`libopenlibm.bc`, ~50-70 KB per
+target, under `runtimes/<rid>/`). Each is an `IrInst.CallLibm` to the openlibm
+symbol. When the program's IR references any of them (`ProgramUsesMathRuntimeAbi`,
+mirroring the TLS gate), the backend parses the bitcode (`LLVMParseIRInContext`)
+and links it into the program module (`LLVMLinkModules2`) so the symbols resolve
+as ordinary internal functions in the single emitted object — **no dynamic
+import, no `dlopen`, no dependency on a system `libm`**. Hermetic-only and
+math-free programs link nothing. The link runs *after* the program's LLVM
+optimization passes, so openlibm's already-optimized bitcode is not re-optimized
+into libm libcall intrinsics (e.g. `llvm.exp2`).
+
+Provisioning (`scripts/download-openlibm.sh`) builds the bitcode from openlibm's
+curated source set with `-fno-builtin -DNDEBUG -ffreestanding`, adds the float
+classifiers (`s_isinf`/`s_isnan`) and no-op `fenv` shims, `llvm-link`s them, and
+`opt internalize`/`globaldce`s to a minimal self-contained module. Bitcode is
+frontend-only, so all three targets build on one host with clang. The win-x64
+payload uses the MinGW (`windows-gnu`) triple — its datalayout is identical to
+`windows-msvc`, so the bitcode links into the compiler's MSVC-target module — plus
+win-only adjustments (neuter openlibm's long-double weak-alias macro; skip the
+float/long-double/complex/gamma/bessel source variants; a few forwarding shims).
 
 ---
 

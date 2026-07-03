@@ -474,6 +474,45 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMemoryBuffer")]
     public static partial void DisposeMemoryBuffer(nint memBuf);
 
+    // ── Module linking (used to embed openlibm bitcode into the program module) ──
+    [LibraryImport(Lib, EntryPoint = "LLVMCreateMemoryBufferWithMemoryRangeCopy", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint CreateMemoryBufferWithMemoryRangeCopyRaw(nint inputData, nuint inputDataLength, string bufferName);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMParseIRInContext")]
+    private static partial int ParseIRInContextRaw(LlvmContextHandle context, nint memBuf, out LlvmModuleHandle outModule, out nint outMessage);
+
+    // Returns 0 on success. Consumes (invalidates) the source module.
+    [LibraryImport(Lib, EntryPoint = "LLVMLinkModules2")]
+    public static partial int LinkModules2(LlvmModuleHandle dest, LlvmModuleHandle src);
+
+    /// <summary>
+    /// Parses LLVM IR/bitcode <paramref name="bytes"/> into a new module in <paramref name="context"/>.
+    /// Returns true on success. On failure, <paramref name="error"/> holds the diagnostic.
+    /// </summary>
+    public static unsafe bool TryParseModule(LlvmContextHandle context, ReadOnlySpan<byte> bytes, string name, out LlvmModuleHandle module, out string? error)
+    {
+        fixed (byte* p = bytes)
+        {
+            // RangeCopy copies the input, so the pinned span need not outlive this call.
+            nint memBuf = CreateMemoryBufferWithMemoryRangeCopyRaw((nint)p, (nuint)bytes.Length, name);
+            // ParseIRInContext takes ownership of memBuf (success or failure), so we do not dispose it.
+            int failed = ParseIRInContextRaw(context, memBuf, out module, out nint msgPtr);
+            if (failed != 0)
+            {
+                error = msgPtr == 0 ? "unknown IR parse error" : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(msgPtr);
+                if (msgPtr != 0)
+                {
+                    DisposeMessage(msgPtr);
+                }
+
+                return false;
+            }
+
+            error = null;
+            return true;
+        }
+    }
+
     // ── Safe convenience wrappers ───────────────────────────────────────
 
     public static LlvmTypeHandle FunctionType(LlvmTypeHandle returnType, ReadOnlySpan<LlvmTypeHandle> paramTypes, int isVarArg = 0)

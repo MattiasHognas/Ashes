@@ -72,6 +72,7 @@ public static class IrOptimizer
             or IrInst.AddInt or IrInst.SubInt or IrInst.MulInt or IrInst.DivInt or IrInst.DivUInt
             or IrInst.AndInt or IrInst.OrInt or IrInst.XorInt or IrInst.ShlInt or IrInst.ShrInt
             or IrInst.AddFloat or IrInst.SubFloat or IrInst.MulFloat or IrInst.DivFloat
+            or IrInst.IntToFloat or IrInst.FloatToInt or IrInst.FloatUnaryIntrinsic or IrInst.CallLibm
             or IrInst.CmpIntGt or IrInst.CmpIntGe or IrInst.CmpIntLt or IrInst.CmpIntLe
             or IrInst.CmpUIntGt or IrInst.CmpUIntGe or IrInst.CmpUIntLt or IrInst.CmpUIntLe
             or IrInst.CmpIntEq or IrInst.CmpIntNe
@@ -383,6 +384,10 @@ public static class IrOptimizer
             IrInst.SubFloat s => s with { Left = R(s.Left), Right = R(s.Right) },
             IrInst.MulFloat m => m with { Left = R(m.Left), Right = R(m.Right) },
             IrInst.DivFloat d => d with { Left = R(d.Left), Right = R(d.Right) },
+            IrInst.IntToFloat i => i with { ValueTemp = R(i.ValueTemp) },
+            IrInst.FloatToInt f => f with { ValueTemp = R(f.ValueTemp) },
+            IrInst.FloatUnaryIntrinsic u => u with { ValueTemp = R(u.ValueTemp) },
+            IrInst.CallLibm c => c with { Args = c.Args.Select(R).ToList() },
             IrInst.CmpIntGt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntLt c => c with { Left = R(c.Left), Right = R(c.Right) },
@@ -1298,6 +1303,10 @@ public static class IrOptimizer
             case IrInst.SubFloat s: usedTemps.Add(s.Left); usedTemps.Add(s.Right); break;
             case IrInst.MulFloat m: usedTemps.Add(m.Left); usedTemps.Add(m.Right); break;
             case IrInst.DivFloat d: usedTemps.Add(d.Left); usedTemps.Add(d.Right); break;
+            case IrInst.IntToFloat i: usedTemps.Add(i.ValueTemp); break;
+            case IrInst.FloatToInt f: usedTemps.Add(f.ValueTemp); break;
+            case IrInst.FloatUnaryIntrinsic u: usedTemps.Add(u.ValueTemp); break;
+            case IrInst.CallLibm c: foreach (int a in c.Args) { usedTemps.Add(a); } break;
             case IrInst.CmpIntGt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntGe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntLt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
