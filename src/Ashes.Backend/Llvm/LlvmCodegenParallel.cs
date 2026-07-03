@@ -110,8 +110,9 @@ internal static partial class LlvmCodegen
             // SYSTEM_INFO is 48 bytes; dwNumberOfProcessors is the DWORD at offset 32.
             LlvmValueHandle infoBuf = EmitStackAlloc(state, 64, "cap_sysinfo");
             LlvmTypeHandle getSystemInfoType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [state.I8Ptr]);
+            // void-returning call: LLVM verification rejects a named instruction with a void result.
             EmitWindowsImportCall(state, "__imp_GetSystemInfo", getSystemInfoType,
-                [LlvmApi.BuildIntToPtr(builder, infoBuf, state.I8Ptr, "cap_sysinfo_ptr")], "cap_get_system_info");
+                [LlvmApi.BuildIntToPtr(builder, infoBuf, state.I8Ptr, "cap_sysinfo_ptr")], "");
             LlvmValueHandle packed = LoadMemory(state, infoBuf, 32, "cap_nproc_packed");
             detected = LlvmApi.BuildAnd(builder, packed, LlvmApi.ConstInt(i64, 0xFFFFFFFFUL, 0), "cap_nproc");
         }
@@ -174,8 +175,8 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// The function each worker thread runs (linux-x64): point GS at the worker's TCB, evaluate the
-    /// right thunk in the worker arena, publish the result, and wake the joining parent via futex.
-    /// It returns normally; the clone wrapper performs the thread exit.
+    /// right thunk in the worker arena, publish the result, release the worker slot, and wake the
+    /// joining parent via futex. It returns normally; the clone wrapper performs the thread exit.
     /// </summary>
     private static void EmitParallelWorkerTrampoline(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
@@ -211,6 +212,14 @@ internal static partial class LlvmCodegen
             LlvmValueHandle armHeapEnd = LlvmApi.BuildLoad2(target.Builder, state.I64, state.HeapEndSlot, "worker_heap_end");
             StoreMemory(state, desc, ParallelDescWorkerArenaEnd, armHeapEnd, "worker_arena_end");
             StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 1, 0), "worker_done");
+            // Release the worker slot now that this worker's user work is complete. The cap bounds
+            // RUNNING workers, not un-joined descriptors: a fork attempted while this result still
+            // awaits its join may reuse the slot. Releasing here (instead of at join cleanup) lets
+            // cap-saturated callers that fell back to inline evaluation hand later work to fresh
+            // workers as soon as capacity frees, rather than only after their own join runs.
+            LlvmValueHandle armActiveAddr = LlvmApi.BuildPtrToInt(target.Builder,
+                LlvmApi.GetNamedGlobal(target.Module, ParallelActiveCounterName), i64, "worker_counter_addr");
+            EmitAtomicFetchAdd(state, armActiveAddr, unchecked((ulong)-1L), "worker_release");
             EmitLinuxSyscall6(state, SyscallFutex,
                 desc,
                 LlvmApi.ConstInt(state.I64, (ulong)FutexWakePrivate, 0),
@@ -256,6 +265,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle rightClosure = LoadMemory(state, desc, ParallelDescRightClosure, "worker_right");
         LlvmValueHandle result = EmitCallClosure(state, rightClosure, unit);
         StoreMemory(state, desc, ParallelDescResult, result, "worker_result");
+        // Release the worker slot now that this worker's user work is complete (see the arm64 branch
+        // above): the cap bounds running workers, so the slot may be reused before this result is joined.
+        LlvmValueHandle activeAddr = LlvmApi.BuildPtrToInt(target.Builder,
+            LlvmApi.GetNamedGlobal(target.Module, ParallelActiveCounterName), i64, "worker_counter_addr");
+        EmitAtomicFetchAdd(state, activeAddr, unchecked((ulong)-1L), "worker_release");
 
         if (flavor == LlvmCodegenFlavor.LinuxX64)
         {
@@ -459,10 +473,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isWorker, freeBlock, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freeBlock);
-        // Release the worker slot.
-        LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
-            LlvmApi.GetNamedGlobal(state.Target.Module, ParallelActiveCounterName), state.I64, "par_cleanup_counter_addr");
-        EmitAtomicFetchAdd(state, counterAddr, unchecked((ulong)-1L), "par_cleanup_release");
+        // The worker slot was already released by the worker trampoline when its user work completed;
+        // cleanup only reclaims the exited worker's OS resources.
 
         // linux: the result (Done word) is published before the worker returns, but the worker still
         // runs its return epilogue on its stack afterwards. Wait for true thread exit — the kernel zeroes

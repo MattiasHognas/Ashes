@@ -86,6 +86,14 @@ the 8-worker cap) but holds the mapped file plus per-worker maps in RAM. Both st
 hyperfine --warmup 1 --runs 5 '/tmp/brc_par challenges/1brc/measurements.txt'
 ```
 
+Scaling note (measured on the reference box, a dual-CCD Ryzen 9 9950X3D): the trie fold saturates
+all 32 hardware threads for the first ~70% of the run; the tail is set by the smaller-L3 CCD, whose
+workers need ~1.4x the CPU per equal chunk — 16 workers x ~5 MB trie working set fits inside the
+96 MB V-cache CCD but thrashes the 32 MB one. Chunk counts above the worker cap measure worse than
+32 (a fork-join tree cannot shed a blocked parent's pending work), which puts this runtime's packing
+ceiling on this box at ~10.2-10.5 s; the sub-10-s follow-up is the work-conserving chunk queue
+(CO-25 in `docs/future/COMPILER_OPTIMIZATION.md`).
+
 ### Quick correctness check (no download)
 
 ```bash
