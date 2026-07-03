@@ -67,6 +67,22 @@ let updateStats existing tenths =
                     else mx
                 in (newMin, newMax, sm + tenths, ct + 1)
 
+let parseFixed bytes start stop = 
+    (let len = stop - start
+    in 
+        if len == 3
+        then Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 2)) - 528
+        else 
+            if len == 4
+            then 
+                if Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) == 45
+                then -(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 3)) - 528)
+                else Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) * 100 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 3)) - 5328
+            else 
+                if len == 5
+                then -(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 100 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 2)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 4)) - 5328)
+                else parseTenthsBytes(bytes)(start)(stop)(1)(0))
+
 let rec foldLines bytes pos hi map = 
     if pos >= hi
     then map
@@ -94,7 +110,7 @@ let rec foldLines bytes pos hi map =
                             else 
                                 let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
                                 in 
-                                    let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
+                                    let tenths = parseFixed(bytes)(sep + 1)(lineEnd)
                                     in 
                                         foldLines(bytes)(lineEnd + 1)(hi)(Ashes.HashTrie.upsertHashed(nameHash)(name)((tenths, tenths, tenths, 1))(fun (old) -> updateStats(old)(tenths))(map))
 
