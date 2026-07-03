@@ -187,9 +187,11 @@ namespace. They are not overridable by project-local modules.
 
 ### `Ashes.Math`
 
-Hermetic math (Layer 1) — no native payload. All functions are curried. The
-transcendental layer (`sin`, `cos`, `exp`, …, backed by openlibm) is added
-separately; see `docs/future/ASHES_MATH.md`.
+All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
+transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
+linked into the program only when a transcendental is used, so hermetic-only
+programs carry no math payload and there is never a runtime dependency; see
+`docs/future/ASHES_MATH.md`.
 
 Integer:
 
@@ -216,6 +218,14 @@ Conversions:
 
 - `toFloat(n)` returning `Float` — widen an `Int`
 - `floorToInt(x)` / `roundToInt(x)` / `truncToInt(x)` returning `Int` — narrow a `Float`
+
+Transcendentals (Layer 2, openlibm-backed):
+
+- Trigonometric: `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y)(x)`
+- Hyperbolic: `sinh(x)`, `cosh(x)`, `tanh(x)`
+- Exponential / logarithmic: `exp(x)`, `expm1(x)`, `ln(x)`, `log2(x)`, `log10(x)`, `log1p(x)`
+- Powers / roots: `powF(base)(exp)`, `cbrt(x)`, `hypot(x)(y)`
+- Remainder: `fmod(x)(y)`
 
 Domain errors follow IEEE-754 (`sqrt(-1.0)` is `NaN`), so the Float functions
 stay total.

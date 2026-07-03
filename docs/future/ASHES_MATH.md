@@ -1,10 +1,18 @@
 # Ashes.Math — Status & Roadmap
 
-**Status:** In progress. Provisioning (source-build script + vendored linux payloads + csproj
-wiring) and the **Layer-1 hermetic core are implemented** — the integer surface, the Float helpers
-(`absF`/`signumF`/`minF`/`maxF`/`clampF`, constants), the `sqrt`/`floor`/`ceil`/`round`/`trunc`
-intrinsics (via `llvm.*`), and the `toFloat`/`*ToInt` conversions (sitofp/fptosi). Remaining: the
-Layer-2 openlibm-backed transcendentals (embed + gated link) and the win-x64 payload.
+**Status:** Implemented (linux-x64 verified end-to-end; linux-arm64/win-x64 bitcode provisioned,
+execution not yet validated on those targets). Both layers are in:
+
+- **Layer 1 (hermetic):** integer surface, Float helpers (`absF`/`signumF`/`minF`/`maxF`/`clampF`,
+  constants), `sqrt`/`floor`/`ceil`/`round`/`trunc` (via `llvm.*`), `toFloat`/`*ToInt` conversions
+  (sitofp/fptosi).
+- **Layer 2 (openlibm, bitcode-link):** `sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`,
+  `sinh`/`cosh`/`tanh`, `exp`/`expm1`/`ln`/`log2`/`log10`/`log1p`, `powF`/`cbrt`/`hypot`, `fmod`.
+  Vendored openlibm bitcode (`libopenlibm.bc`, ~50 KB/target) is linked into the program module and
+  gated on `ProgramUsesMathRuntimeAbi`, so hermetic-only programs embed nothing.
+
+Remaining: cross-target (arm64/win) execution validation and, optionally, per-function dead-strip to
+shrink the payload further (currently the whole minimal module is linked).
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point

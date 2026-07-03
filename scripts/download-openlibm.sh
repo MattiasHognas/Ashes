@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # download-openlibm.sh
-# Provisions openlibm shared-library payloads for the Ashes.Math native layer.
+# Provisions the openlibm LLVM-bitcode payload for the Ashes.Math native layer.
 #
-# Unlike rustls-ffi, openlibm publishes no prebuilt release binaries, so every
-# target is built from the pinned source tag.
+# openlibm publishes no prebuilt release binaries, so the payload is compiled from the
+# pinned source tag into a minimal, self-contained bitcode module (see build_openlibm_bitcode).
 #
 # Supported outputs:
-#   - runtimes/linux-x64/libopenlibm.so    (built with the host gcc)
-#   - runtimes/linux-arm64/libopenlibm.so  (cross-built with aarch64-linux-gnu-gcc)
-#   - runtimes/win-x64/openlibm.dll        (cross-built with x86_64-w64-mingw32-gcc)
+#   - runtimes/linux-x64/libopenlibm.bc
+#   - runtimes/linux-arm64/libopenlibm.bc
+#   - runtimes/win-x64/libopenlibm.bc
 #
 # This script is intended to run on Linux directly or under WSL on Windows.
 
@@ -18,7 +18,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIMES_DIR="$REPO_ROOT/runtimes"
 TARGETS=()
-SUDO=()
 
 read_openlibm_version_from_props() {
     local props_path="$REPO_ROOT/Directory.Build.props"
@@ -50,17 +49,15 @@ Usage:
   ./scripts/download-openlibm.sh --version 0.8.7 --linux-x64
 
 Defaults:
-  - Without explicit target switches, builds the native Linux payload.
+  - Without explicit target switches, builds the payload for the host Linux arch.
 
 Notes:
-  - openlibm publishes no prebuilt binaries; every target is built from source.
-  - linux-x64 builds with the host gcc/make.
-  - linux-arm64 is cross-built with aarch64-linux-gnu-gcc.
-    - On apt-based and pacman-based systems, the script installs the cross-compiler
-      automatically when needed; otherwise install gcc-aarch64-linux-gnu first.
-  - win-x64 is cross-built with the MinGW-w64 toolchain (x86_64-w64-mingw32-gcc).
-    - On apt-based and pacman-based systems, the script installs mingw-w64
-      automatically when needed; otherwise install it first.
+  - openlibm publishes no prebuilt binaries; the payload is compiled from the pinned source.
+  - The payload is LLVM bitcode (libopenlibm.bc), which the compiler links into programs that use
+    Ashes.Math transcendentals. Bitcode is produced by the clang frontend, so every target's payload
+    is built on this host with clang alone -- no cross toolchain is required for linux-arm64/win-x64.
+  - Requires: curl, tar, make, ar, clang, llvm-link, opt (make/ar/host cc are used once to enumerate
+    openlibm's curated source set from its .a).
   - The default openlibm version comes from Directory.Build.props; --version overrides it.
 EOF
 }
@@ -79,107 +76,10 @@ require_command() {
     fi
 }
 
-ensure_root_access() {
-    if [ "$(id -u)" -eq 0 ]; then
-        SUDO=()
-        return
-    fi
 
-    if command -v sudo >/dev/null 2>&1; then
-        SUDO=(sudo)
-        return
-    fi
 
-    echo "ERROR: Missing root access or sudo to install cross-build prerequisites automatically." >&2
-    echo "Install the required cross toolchain manually and retry." >&2
-    exit 1
-}
 
-as_root() {
-    if [ "${#SUDO[@]}" -eq 0 ]; then
-        "$@"
-    else
-        "${SUDO[@]}" "$@"
-    fi
-}
 
-detect_package_manager() {
-    if command -v apt-get >/dev/null 2>&1; then
-        echo "apt"
-        return
-    fi
-
-    if command -v pacman >/dev/null 2>&1; then
-        echo "pacman"
-        return
-    fi
-
-    echo "unknown"
-}
-
-resolve_aarch64_gnu_compiler() {
-    if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-        printf '%s\n' "aarch64-linux-gnu-"
-        return
-    fi
-
-    if [ "$(detect_package_manager)" = "apt" ]; then
-        ensure_root_access
-        echo "Installing missing prerequisite: gcc-aarch64-linux-gnu" >&2
-        as_root apt-get update -qq
-        as_root apt-get install -y -qq gcc-aarch64-linux-gnu
-        if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-            printf '%s\n' "aarch64-linux-gnu-"
-            return
-        fi
-    fi
-
-    if [ "$(detect_package_manager)" = "pacman" ]; then
-        ensure_root_access
-        echo "Installing missing prerequisite: aarch64-linux-gnu-gcc" >&2
-        as_root pacman -Sy --noconfirm --needed aarch64-linux-gnu-gcc
-        if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-            printf '%s\n' "aarch64-linux-gnu-"
-            return
-        fi
-    fi
-
-    echo "ERROR: linux-arm64 build requires an aarch64 GNU cross-compiler." >&2
-    echo "Install 'gcc-aarch64-linux-gnu' (apt) or 'aarch64-linux-gnu-gcc' (pacman) and retry." >&2
-    exit 1
-}
-
-resolve_mingw_compiler() {
-    if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-        printf '%s\n' "x86_64-w64-mingw32-"
-        return
-    fi
-
-    if [ "$(detect_package_manager)" = "apt" ]; then
-        ensure_root_access
-        echo "Installing missing prerequisite: mingw-w64" >&2
-        as_root apt-get update -qq
-        as_root apt-get install -y -qq mingw-w64
-        if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            printf '%s\n' "x86_64-w64-mingw32-"
-            return
-        fi
-    fi
-
-    if [ "$(detect_package_manager)" = "pacman" ]; then
-        ensure_root_access
-        echo "Installing missing prerequisite: mingw-w64-gcc" >&2
-        as_root pacman -Sy --noconfirm --needed mingw-w64-gcc
-        if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            printf '%s\n' "x86_64-w64-mingw32-"
-            return
-        fi
-    fi
-
-    echo "ERROR: win-x64 build requires the MinGW-w64 toolchain (x86_64-w64-mingw32-gcc)." >&2
-    echo "Install 'mingw-w64' (apt) or 'mingw-w64-gcc' (pacman) and retry." >&2
-    exit 1
-}
 
 normalize_arch() {
     case "$1" in
@@ -255,6 +155,10 @@ fi
 require_command curl "Install curl and retry."
 require_command tar "Install tar and retry."
 require_command make "Install make and retry."
+require_command ar "Install binutils (ar) and retry."
+require_command clang "Install clang and retry."
+require_command llvm-link "Install the LLVM tools (llvm-link) and retry."
+require_command opt "Install the LLVM tools (opt) and retry."
 
 ensure_directory_writable() {
     local dir_path="$1"
@@ -299,94 +203,77 @@ fetch_openlibm_source() {
     printf '%s\n' "$tmpdir/openlibm-${OPENLIBM_VERSION}"
 }
 
-build_linux_x64() {
-    local output_path="$RUNTIMES_DIR/linux-x64/libopenlibm.so"
-    local tmpdir src
-    tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' RETURN
-
-    require_command gcc "Install gcc and retry."
-
-    echo "=== Building openlibm linux-x64 ${OPENLIBM_VERSION} ==="
-    src="$(fetch_openlibm_source "$tmpdir")"
-    make -C "$src" -j USE_GCC=1 >/dev/null
-    cp -f "$src"/libopenlibm.so.*.* "$output_path"
-    write_version_marker "linux-x64"
-    echo "  -> $output_path"
-
-    rm -rf "$tmpdir"
-    trap - RETURN
+openlibm_triple_for() {
+    case "$1" in
+        linux-x64) echo "x86_64-unknown-linux-gnu" ;;
+        linux-arm64) echo "aarch64-unknown-linux-gnu" ;;
+        win-x64) echo "x86_64-pc-windows-msvc" ;;
+        *) echo "ERROR: Unsupported target '$1'." >&2; exit 1 ;;
+    esac
 }
 
-build_linux_arm64() {
-    local output_path="$RUNTIMES_DIR/linux-arm64/libopenlibm.so"
-    local tmpdir src toolprefix
+# Builds the vendored openlibm LLVM bitcode for one target. Because LLVM bitcode is produced by the
+# clang frontend, every target's payload is built on this host with clang alone (no cross toolchain).
+# The result is a minimal, self-contained module: only the double-precision transcendentals and the
+# libm functions the backend's instruction selection may lower to (round/floor/... exp2/log2), plus
+# the float classifiers and no-op fenv shims. Nothing dynamically links against a system libm.
+build_openlibm_bitcode() {
+    local rid="$1"
+    local triple output_path tmpdir src bc a members base s
+    triple="$(openlibm_triple_for "$rid")"
+    output_path="$RUNTIMES_DIR/$rid/libopenlibm.bc"
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' RETURN
 
-    if [ "$HOST_ARCH" = "arm64" ]; then
-        require_command gcc "Install gcc and retry."
-        echo "=== Building openlibm linux-arm64 ${OPENLIBM_VERSION} natively ==="
-        src="$(fetch_openlibm_source "$tmpdir")"
-        make -C "$src" -j USE_GCC=1 >/dev/null
-    else
-        toolprefix="$(resolve_aarch64_gnu_compiler)"
-        echo "=== Building openlibm linux-arm64 ${OPENLIBM_VERSION} via cross-compilation ==="
-        src="$(fetch_openlibm_source "$tmpdir")"
-        make -C "$src" -j USE_GCC=1 ARCH=aarch64 TOOLPREFIX="$toolprefix" >/dev/null
-    fi
-
-    cp -f "$src"/libopenlibm.so.*.* "$output_path"
-    write_version_marker "linux-arm64"
-    echo "  -> $output_path"
-
-    rm -rf "$tmpdir"
-    trap - RETURN
-}
-
-build_win_x64() {
-    local output_path="$RUNTIMES_DIR/win-x64/openlibm.dll"
-    local tmpdir src toolprefix
-    tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' RETURN
-
-    toolprefix="$(resolve_mingw_compiler)"
-
-    echo "=== Building openlibm win-x64 ${OPENLIBM_VERSION} via cross-compilation ==="
+    echo "=== Building openlibm bitcode ${rid} (${OPENLIBM_VERSION}) ==="
     src="$(fetch_openlibm_source "$tmpdir")"
-    make -C "$src" -j USE_GCC=1 OS=WINNT ARCH=x86_64 TOOLPREFIX="$toolprefix" >/dev/null
 
-    if [ -f "$src/libopenlibm.dll" ]; then
-        cp -f "$src/libopenlibm.dll" "$output_path"
-    elif [ -f "$src/openlibm.dll" ]; then
-        cp -f "$src/openlibm.dll" "$output_path"
-    else
-        echo "ERROR: openlibm win-x64 build did not produce a .dll under '$src'." >&2
-        exit 1
-    fi
-    write_version_marker "win-x64"
-    echo "  -> $output_path"
+    # openlibm's own Makefile selects a conflict-free object set; build it once (host) to enumerate
+    # the curated source list, then compile those portable C sources to bitcode for the target triple.
+    make -C "$src" -j USE_GCC=1 >/dev/null 2>&1
+
+    bc="$tmpdir/bc"; mkdir -p "$bc"
+    local cflags="--target=${triple} -emit-llvm -O2 -fno-stack-protector -ffreestanding -fno-builtin -DNDEBUG -I ${src}/include -I ${src}/src"
+    while IFS= read -r m; do
+        case "$m" in *.o) ;; *) continue;; esac
+        base="${m%.o}"; base="${base%.c}"; base="${base%.S}"
+        s="${src}/src/${base}.c"
+        [ -f "$s" ] && clang $cflags -c "$s" -o "$bc/$base.bc" 2>/dev/null || true
+    done < <(ar t "$src/libopenlibm.a" | sort -u)
+
+    # s_isinf/s_isnan define the float classifiers openlibm references but its .a omits; the fenv
+    # shims satisfy the FP-environment calls in a freestanding image.
+    clang $cflags -c "$src/src/s_isinf.c" -o "$bc/s_isinf.bc" 2>/dev/null || true
+    clang $cflags -c "$src/src/s_isnan.c" -o "$bc/s_isnan.bc" 2>/dev/null || true
+    printf '%s\n' \
+        'int feholdexcept(void*e){(void)e;return 0;}' \
+        'int feupdateenv(const void*e){(void)e;return 0;}' \
+        'int fegetenv(void*e){(void)e;return 0;}' \
+        'int fesetenv(const void*e){(void)e;return 0;}' \
+        'int feraiseexcept(int e){(void)e;return 0;}' \
+        'int feclearexcept(int e){(void)e;return 0;}' \
+        'int fetestexcept(int e){(void)e;return 0;}' \
+        'int fesetround(int r){(void)r;return 0;}' \
+        'int fegetround(void){return 0;}' > "$tmpdir/fenv_stubs.c"
+    clang $cflags -c "$tmpdir/fenv_stubs.c" -o "$bc/fenv_stubs.bc"
+
+    llvm-link "$bc"/*.bc -o "$tmpdir/all.bc"
+
+    local keep="sin,cos,tan,asin,acos,atan,atan2,sinh,cosh,tanh,exp,expm1,log,log2,log10,log1p,pow,cbrt,hypot,fmod"
+    keep="$keep,floor,ceil,trunc,round,rint,nearbyint,sqrt,fma,copysign,fabs,fmax,fmin,scalbn,ldexp,exp2"
+    keep="$keep,__isinf,__isnan,__isinff,__isnanf"
+    keep="$keep,feholdexcept,feupdateenv,fegetenv,fesetenv,feraiseexcept,feclearexcept,fetestexcept,fesetround,fegetround"
+    opt -passes='internalize,globaldce' -internalize-public-api-list="$keep" "$tmpdir/all.bc" -o "$output_path"
+
+    write_version_marker "$rid"
+    echo "  -> $output_path ($(stat -c%s "$output_path") bytes)"
 
     rm -rf "$tmpdir"
     trap - RETURN
 }
 
 for target in "${TARGETS[@]}"; do
-    case "$target" in
-        linux-x64)
-            build_linux_x64
-            ;;
-        linux-arm64)
-            build_linux_arm64
-            ;;
-        win-x64)
-            build_win_x64
-            ;;
-        *)
-            echo "ERROR: Unsupported target '$target'." >&2
-            exit 1
-            ;;
-    esac
+    build_openlibm_bitcode "$target"
 done
 
 echo
@@ -394,13 +281,13 @@ echo "openlibm payloads are available under:"
 for target in "${TARGETS[@]}"; do
     case "$target" in
         linux-x64)
-            echo "  $RUNTIMES_DIR/linux-x64/libopenlibm.so"
+            echo "  $RUNTIMES_DIR/linux-x64/libopenlibm.bc"
             ;;
         linux-arm64)
-            echo "  $RUNTIMES_DIR/linux-arm64/libopenlibm.so"
+            echo "  $RUNTIMES_DIR/linux-arm64/libopenlibm.bc"
             ;;
         win-x64)
-            echo "  $RUNTIMES_DIR/win-x64/openlibm.dll"
+            echo "  $RUNTIMES_DIR/win-x64/libopenlibm.bc"
             ;;
     esac
 done

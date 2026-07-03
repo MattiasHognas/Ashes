@@ -94,6 +94,11 @@ public abstract record IrInst
     public sealed record FloatToInt(int Target, int ValueTemp) : IrInst;
     public sealed record FloatUnaryIntrinsic(int Target, int ValueTemp, string LlvmIntrinsic) : IrInst;
 
+    // Ashes.Math Layer-2 transcendental: a call to an openlibm symbol (e.g. "sin", "pow"). All
+    // arguments and the result are Float (f64). The openlibm bitcode is linked into the module when
+    // the program uses any of these (ProgramUsesMathRuntimeAbi), so the symbol resolves internally.
+    public sealed record CallLibm(int Target, string Symbol, IReadOnlyList<int> Args) : IrInst;
+
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;

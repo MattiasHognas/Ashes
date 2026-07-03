@@ -50,7 +50,7 @@
     <_ExpectedRustlsLibraryFileName>librustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
     <_ExpectedRustlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionPath>
     <_ExpectedRustlsProvisionHint>bash scripts/download-rustls-ffi.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedRustlsProvisionHint>
-    <_ExpectedOpenlibmLibraryFileName>libopenlibm$(_ExpectedNativeLibraryExtension)</_ExpectedOpenlibmLibraryFileName>
+    <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != '' and '$(_ExpectedRustlsRuntimeIdentifier)' != 'win-x64'">
@@ -62,7 +62,7 @@
     <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
     <_ExpectedRustlsLibraryFileName>rustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
-    <_ExpectedOpenlibmLibraryFileName>openlibm$(_ExpectedNativeLibraryExtension)</_ExpectedOpenlibmLibraryFileName>
+    <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
