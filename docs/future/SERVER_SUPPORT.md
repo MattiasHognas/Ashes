@@ -38,8 +38,12 @@ Each incoming request (HTTP) or connection/session (TCP) has its own result.
 
 For example:
 
-`Ok(response)`
-`Error(NotFound)`
+```ash
+Ok(response)
+```
+```ash
+Error(NotFound)
+```
 
 These are local to that request.
 
@@ -55,7 +59,9 @@ The server itself eventually completes with its own result.
 
 For example:
 
-`Ok(())`
+```ash
+Ok(())
+```
 
 meaning
 
@@ -65,7 +71,9 @@ meaning
 
 or
 
-`Error(...)`
+```ash
+Error(...)
+```
 
 meaning
 
@@ -80,7 +88,8 @@ This is the value produced by the final program expression.
 
 ## HTTP Example
 
-`import Ashes.Http.Server as http
+```ash
+import Ashes.Http.Server as http
 import Ashes.IO as io
 type AppError =
     | NotFound
@@ -99,7 +108,8 @@ in
         | Ok(()) ->
             io.print("server stopped")
         | Error(e) ->
-            io.print(e)`
+            io.print(e)
+```
 
 Conceptually:
 
@@ -125,12 +135,14 @@ The handler should naturally support await just like any other Ashes function.
 
 Example:
 
-`let handle req =
+```ash
+let handle req =
     match await users.find(42) with
         | Ok(user) ->
             Ok(http.json(user))
         | Error(_) ->
-            Error(NotFound)`
+            Error(NotFound)
+```
 
 The exact lowered/inferred type should follow the compiler’s existing async model.
 
@@ -140,7 +152,8 @@ There should ideally not be a separate serveAsync API unless the implementation 
 
 TCP Example
 
-`import Ashes.Net.Tcp.Server as tcp
+```ash
+import Ashes.Net.Tcp.Server as tcp
 import Ashes.IO as io
 type ClientError =
     | ReceiveFailed(Str)
@@ -166,7 +179,8 @@ in
         | Ok(()) ->
             io.print("server stopped")
         | Error(e) ->
-            io.print(e)`
+            io.print(e)
+```
 
 For persistent protocols the handler would naturally become recursive.
 
