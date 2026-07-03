@@ -68,8 +68,8 @@ and the binding/type import selectors. See
 
 These codes cover the algebraic-effects surface (`effect` declarations, `uses` rows,
 `perform`, `handle ... with`). See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §20 for the
-grammar and typing rules, and [future/EFFECTS.md](future/EFFECTS.md) for the staged
-implementation plan.
+grammar and typing rules, and [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)
+for the remaining roadmap.
 
 - `ASH017` — **Unhandled effect.** The program's residual effect row at the top level is
   non-empty after default built-in handlers are applied: some code reachable from the

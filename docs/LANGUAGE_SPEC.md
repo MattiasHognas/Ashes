@@ -2153,15 +2153,21 @@ full code table.
 Algebraic effects let a function *declare* the operations it needs — `now`, `log`, `lookup` —
 without deciding what they mean. The caller chooses the meaning by installing a **handler**. The
 same code runs against a real handler in production and an injected handler in tests, with no
-parameter threading and no mocking framework. See
-[future/EFFECTS.md](future/EFFECTS.md) for the design rationale and staged roadmap.
+parameter threading and no mocking framework. Effects are not limited to IO: a handler can
+interpret an operation as console IO, but equally as a frozen clock, a captured log buffer, a
+fixed price table, a deterministic RNG, or a retry policy. The headline use is **deterministic
+dependency injection**: capabilities like `Clock`, `Random`, `Env`, or `FileSystem` are real in
+production and fixed in tests, with no `Clock`/`Logger` parameter polluting every signature.
 
-Implementation status: **Stage 1** (effect declarations, `uses` rows, effect typing, the
-unhandled-effect diagnostic) and **Stage 2** (`handle`/`perform` with **tail-resumptive** arms)
-are implemented. One-shot resumptive arms (work after `resume` returns) and aborting arms (a
-path that does not resume) are Stage 3 and are rejected with a clear diagnostic. Effects
+Implementation status: effect declarations, `uses` rows, effect typing, the unhandled-effect
+diagnostic, and `handle`/`perform` with **tail-resumptive** arms are implemented. One-shot
+resumptive arms (work after `resume` returns) and aborting arms (a path that does not resume)
+are rejected with a clear diagnostic; see
+[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md) for the remaining roadmap. Effects
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
-defined; handler evidence is currently per-process, not per-task or per-thread.
+defined; handler evidence is currently per-process, not per-task or per-thread. How handlers
+compile (dynamically-scoped evidence globals, stack-allocated frames, the tail-`resume`
+rewrite) is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 20.1 Effect Declarations
 
@@ -2270,7 +2276,52 @@ Continuation power is restricted by the memory model (no GC):
   resumable state machine; `resume` may run at most once.
 - **Multi-shot** (`resume` called more than once) is out of scope and rejected.
 
-## 20.6 Diagnostics
+## 20.6 Worked Example
+
+The same business code runs under any handler; only the interpretation changes:
+
+```
+effect Prices =
+    | lookup : Str -> Int
+
+effect Clock =
+    | now : Unit -> Int
+
+let priceOf : Str -> Int uses {Prices} = fun (item) -> perform Prices.lookup(item)
+
+let order = fun (item) -> (priceOf(item), Clock.now(Unit))
+
+let runTest = fun (work) ->
+    handle work(Unit) with
+        | Prices.lookup(_) -> resume(200)
+        | Clock.now(_) -> resume(1000)
+        | return(r) -> r
+
+runTest(fun (_) -> order("widget"))
+```
+
+The optional-`perform` and optional-annotation decisions are backed by a paired conformance
+test — a fully-explicit program (every `perform`, signature, and `uses` row written out) and
+its fully-implicit twin must produce the same inferred types and the same output
+(`tests/effect_conformance_explicit.ash` / `effect_conformance_implicit.ash`); a complete
+production-shaped demo with a logging handler is `examples/effects_production.ash`.
+
+## 20.7 Design Notes
+
+Ashes uses **lexical handler injection** (the OCaml 5 / Koka / Eff / Frank / Unison family):
+the nearest enclosing handler interprets an operation. The two other ML/FP injection routes are
+deliberately not used because the language lacks their prerequisites: typeclass/monad-transformer
+injection (Haskell `mtl`, tagless-final; Scala ZIO environments) needs typeclasses, and functor
+injection (SML/OCaml functors) needs module functors — Ashes has neither. Relative to OCaml 5,
+Ashes adds what OCaml deliberately omitted: effects are tracked in the type system, so an
+unhandled effect is a *compile-time* error, not a runtime crash. Relative to Koka, Ashes
+restricts continuations to one-shot/tail-resumptive: multi-shot `resume` would require copying a
+captured slice of stack and heap — GC-style reachability — which collides with the no-GC memory
+model and affine ownership (double-resume is double-use/double-drop of owned values).
+Consequently effect-based generators, backtracking, and nondeterminism are out of scope —
+documented limitation, not a TODO.
+
+## 20.8 Diagnostics
 
 `ASH017` (unhandled effect), `ASH018` (effect not permitted by a closed row), `ASH019` (unknown
 effect or operation), and `ASH020` (invalid handler / not-yet-supported handler form) cover this

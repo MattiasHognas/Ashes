@@ -444,6 +444,62 @@ recursion depth is bounded by these sizes:
 
 ---
 
+## Algebraic Effects Lowering
+
+The effects surface and typing rules are specified in
+[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) section 20; this section documents how they compile.
+
+### Effect typing: the ambient row
+
+Typing threads an **ambient effect row** through lowering. Each lambda's arrow carries a row
+variable that becomes the body's ambient row; operation calls insert their effect into it. At an
+application, an *open* (inferred) callee row unifies with the caller's ambient row, while a
+written *closed* row only subsumes into it — calling a `uses {Prices}` function from a
+`{Prices, Clock}` context is fine. A `handle` lowers its body under `{handled effects | t}` with
+`t` unified into the enclosing row, which is what makes handlers transparent to effects they do
+not list. Rows generalize with let-polymorphism; the ambient row's variables count as part of the
+environment (the row analog of the value restriction). Unsigned operations infer monomorphically
+within the compilation unit by unifying all perform-sites and handler arms.
+
+### Handler evidence: dynamically-scoped globals
+
+Handler evidence is dynamically scoped, with no per-call threading. The backend materializes one
+module global per declared effect (`__ashes_effect_handler_<i>`, index = declaration order)
+holding a pointer to the innermost installed handler frame for that effect, 0 when none. A
+`handle` expression stack-allocates one frame per handled effect:
+
+```
+[0 .. numEffects-1]           snapshot of every effect global, taken before any of this
+                              handle's frames install
+[numEffects + opDeclIndex]    one arm closure per operation (declaration order)
+```
+
+and installs it by writing the frame pointer into the effect's global; on body exit it restores
+the global from the frame's own snapshot slot. A perform site loads the effect's global (O(1) —
+no search), swaps **all** effect globals to the frame's snapshot, calls the arm closure with the
+operation's arguments through the ordinary closure ABI, and swaps back. The snapshot swap is what
+gives correct deep-handler semantics: an arm runs under the evidence in scope at its handler's
+installation (with the handler itself removed), so an arm performing its own effect reaches the
+next outer handler, and handlers installed between the handler and the perform site are invisible
+to the arm. Typing makes a missing handler unreachable; the emitted guard panics with a clear
+message rather than dereferencing null if that invariant is ever broken.
+
+A tail-resumptive arm compiles to an ordinary closure: every tail-position `resume(e)` is
+rewritten to `e` at the AST level ("resume with v" is exactly "return v to the perform site"), so
+there is no continuation capture at all. `resume` outside tail position (one-shot) and tail paths
+that do not resume (aborting arms, which need unwinding) are rejected with `ASH020`.
+
+The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
+[IR_REFERENCE.md](IR_REFERENCE.md)); frames use the ordinary `AllocStack` /
+`StoreMemOffset` / `LoadMemOffset` / `CallClosure` machinery.
+
+Current limitations: the evidence globals are per-process, so installing or using handlers
+across `Ashes.Parallel` workers is unspecified (per-thread evidence belongs with the TLS arena
+work), and a `handle` whose body suspends (`await`) is unspecified — handler frames are
+stack-allocated and do not survive coroutine suspension.
+
+---
+
 ## Linking
 
 The compiler does **not** shell out to an external linker. Instead,
