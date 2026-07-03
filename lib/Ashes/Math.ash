@@ -87,3 +87,45 @@ let isqrt n =
     if n == 0
     then 0
     else isqrtGo(n)(n)
+
+let absF x = 
+    if x < 0.0
+    then 0.0 - x
+    else x
+
+let signumF x = 
+    if x < 0.0
+    then 0.0 - 1.0
+    else 
+        if x > 0.0
+        then 1.0
+        else 0.0
+
+let asFloat x = 
+    if x < 0.0
+    then x
+    else x
+
+let minF a b = 
+    if asFloat(a) < asFloat(b)
+    then a
+    else b
+
+let maxF a b = 
+    if asFloat(a) > asFloat(b)
+    then a
+    else b
+
+let clampF lo hi x = 
+    if asFloat(x) < asFloat(lo)
+    then lo
+    else 
+        if asFloat(x) > asFloat(hi)
+        then hi
+        else x
+
+let pi = 3.141592653589793
+
+let e = 2.718281828459045
+
+let tau = 6.283185307179586

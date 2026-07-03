@@ -1,8 +1,10 @@
 # Ashes.Math — Status & Roadmap
 
-**Status:** In progress. Design converged; provisioning (source-build script + vendored payload +
-csproj wiring) landing first, then the Layer-1 hermetic core, then the Layer-2 openlibm-backed
-transcendentals.
+**Status:** In progress. Provisioning (source-build script + vendored linux payloads + csproj
+wiring) and the **Layer-1 hermetic core are implemented** — the integer surface, the Float helpers
+(`absF`/`signumF`/`minF`/`maxF`/`clampF`, constants), the `sqrt`/`floor`/`ceil`/`round`/`trunc`
+intrinsics (via `llvm.*`), and the `toFloat`/`*ToInt` conversions (sitofp/fptosi). Remaining: the
+Layer-2 openlibm-backed transcendentals (embed + gated link) and the win-x64 payload.
 
 A standard-library math module. It is delivered in **two layers**: a fully self-contained *hermetic
 core* implemented without any native library, and a *native-backed* layer of floating-point

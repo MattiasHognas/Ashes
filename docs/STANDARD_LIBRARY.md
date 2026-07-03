@@ -187,9 +187,11 @@ namespace. They are not overridable by project-local modules.
 
 ### `Ashes.Math`
 
-Hermetic integer math (Layer 1) — pure Ashes, no native payload. All functions
-are curried. Float and transcendental layers (`sqrt`, `toFloat`, `sin`, …) are
-added separately; see `docs/future/ASHES_MATH.md`.
+Hermetic math (Layer 1) — no native payload. All functions are curried. The
+transcendental layer (`sin`, `cos`, `exp`, …, backed by openlibm) is added
+separately; see `docs/future/ASHES_MATH.md`.
+
+Integer:
 
 - `abs(n)` returning `Int` — absolute value
 - `signum(n)` returning `Int` — `-1`, `0`, or `1`
@@ -200,6 +202,23 @@ added separately; see `docs/future/ASHES_MATH.md`.
 - `divMod(a)(b)` returning `(Int, Int)` — Euclidean quotient and remainder (`0 <= r < |b|`)
 - `pow(base)(exp)` returning `Int` — exponentiation by squaring (`exp >= 0`)
 - `isqrt(n)` returning `Int` — integer (floor) square root (`n >= 0`)
+
+Float:
+
+- `absF(x)` / `signumF(x)` returning `Float`
+- `minF(a)(b)` / `maxF(a)(b)` returning `Float`
+- `clampF(lo)(hi)(x)` returning `Float`
+- `sqrt(x)` returning `Float` — hardware square root (`llvm.sqrt`), no library
+- `floor(x)` / `ceil(x)` / `round(x)` / `trunc(x)` returning `Float`
+- `pi` / `e` / `tau` — `Float` constants
+
+Conversions:
+
+- `toFloat(n)` returning `Float` — widen an `Int`
+- `floorToInt(x)` / `roundToInt(x)` / `truncToInt(x)` returning `Int` — narrow a `Float`
+
+Domain errors follow IEEE-754 (`sqrt(-1.0)` is `NaN`), so the Float functions
+stay total.
 
 ### `Ashes.Array`
 

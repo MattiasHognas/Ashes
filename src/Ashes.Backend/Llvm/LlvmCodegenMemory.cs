@@ -1239,6 +1239,22 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, okBlock);
     }
 
+    /// <summary>Applies a unary LLVM math intrinsic (e.g. <c>llvm.sqrt.f64</c>) to an f64 value,
+    /// declaring the intrinsic in the module on first use. Backs the Ashes.Math Float unary
+    /// primitives (sqrt/floor/ceil/round/trunc).</summary>
+    private static LlvmValueHandle EmitFloatUnaryIntrinsic(LlvmCodegenState state, LlvmValueHandle value, string intrinsicName)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle fnTy = LlvmApi.FunctionType(state.F64, [state.F64]);
+        LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, intrinsicName);
+        if (fn.Ptr == 0)
+        {
+            fn = LlvmApi.AddFunction(state.Target.Module, intrinsicName, fnTy);
+        }
+
+        return LlvmApi.BuildCall2(builder, fnTy, fn, [value], $"{intrinsicName.Replace('.', '_')}_call");
+    }
+
     /// <summary>Saves the current stack pointer (llvm.stacksave) into a local slot at a TCO loop header.</summary>
     private static bool EmitSaveStackPointer(LlvmCodegenState state, int slot)
     {

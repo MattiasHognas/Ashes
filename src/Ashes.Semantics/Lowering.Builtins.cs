@@ -2663,6 +2663,122 @@ public sealed partial class Lowering
         return (argTemp, new TypeRef.TInt());
     }
 
+    // ── Ashes.Math Layer-1 numeric conversions and Float unary primitives. ──
+
+    private Binding.Intrinsic CreateMathToFloatBinding() =>
+        new(IntrinsicKind.MathToFloat, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFloat())));
+
+    private Binding.Intrinsic CreateMathSqrtBinding() => CreateFloatUnaryBinding(IntrinsicKind.MathSqrt);
+    private Binding.Intrinsic CreateMathFloorBinding() => CreateFloatUnaryBinding(IntrinsicKind.MathFloor);
+    private Binding.Intrinsic CreateMathCeilBinding() => CreateFloatUnaryBinding(IntrinsicKind.MathCeil);
+    private Binding.Intrinsic CreateMathRoundBinding() => CreateFloatUnaryBinding(IntrinsicKind.MathRound);
+    private Binding.Intrinsic CreateMathTruncBinding() => CreateFloatUnaryBinding(IntrinsicKind.MathTrunc);
+
+    private Binding.Intrinsic CreateMathFloorToIntBinding() => CreateFloatToIntBinding(IntrinsicKind.MathFloorToInt);
+    private Binding.Intrinsic CreateMathRoundToIntBinding() => CreateFloatToIntBinding(IntrinsicKind.MathRoundToInt);
+    private Binding.Intrinsic CreateMathTruncToIntBinding() => CreateFloatToIntBinding(IntrinsicKind.MathTruncToInt);
+
+    private static Binding.Intrinsic CreateFloatUnaryBinding(IntrinsicKind kind) =>
+        new(kind, new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TFloat())));
+
+    private static Binding.Intrinsic CreateFloatToIntBinding(IntrinsicKind kind) =>
+        new(kind, new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TInt())));
+
+    // Ashes.Math.toFloat(n) : Float — widen an Int to a Float (sitofp).
+    private (int, TypeRef) LowerMathToFloat(Expr arg)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (argTemp, pruned);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Math.toFloat() expects Int but got {Pretty(pruned)}.");
+            return (argTemp, new TypeRef.TFloat());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.IntToFloat(target, argTemp));
+        return (target, new TypeRef.TFloat());
+    }
+
+    // Ashes.Math Float -> Float primitive (sqrt/floor/ceil/round/trunc), via the named LLVM intrinsic.
+    private (int, TypeRef) LowerMathFloatUnary(Expr arg, string functionName, string llvmIntrinsic)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var valueTemp = LowerFloatArg(arg, functionName, out bool ok);
+        if (!ok)
+        {
+            return (valueTemp, new TypeRef.TFloat());
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FloatUnaryIntrinsic(target, valueTemp, llvmIntrinsic));
+        return (target, new TypeRef.TFloat());
+    }
+
+    // Ashes.Math Float -> Int narrowing. `preRound` is the LLVM intrinsic applied before the
+    // truncating fptosi (floor/round), or null for truncToInt (fptosi truncates toward zero).
+    private (int, TypeRef) LowerMathFloatToInt(Expr arg, string functionName, string? preRound)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var valueTemp = LowerFloatArg(arg, functionName, out bool ok);
+        if (!ok)
+        {
+            return (valueTemp, new TypeRef.TInt());
+        }
+
+        if (preRound is not null)
+        {
+            var rounded = NewTemp();
+            Emit(new IrInst.FloatUnaryIntrinsic(rounded, valueTemp, preRound));
+            valueTemp = rounded;
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.FloatToInt(target, valueTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    // Lowers a Float argument, defaulting an unconstrained type variable to Float and reporting a
+    // diagnostic on a non-Float argument. `ok` is false when the argument is Never or ill-typed.
+    private int LowerFloatArg(Expr arg, string functionName, out bool ok)
+    {
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            ok = false;
+            return argTemp;
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TFloat());
+            pruned = new TypeRef.TFloat();
+        }
+
+        if (pruned is not TypeRef.TFloat)
+        {
+            ReportDiagnostic(GetSpan(arg), $"{functionName}() expects Float but got {Pretty(pruned)}.");
+            ok = false;
+            return argTemp;
+        }
+
+        ok = true;
+        return argTemp;
+    }
+
     private Binding.Intrinsic CreateBytesGetBinding()
     {
         return new Binding.Intrinsic(

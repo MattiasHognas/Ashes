@@ -71,6 +71,15 @@ public static class BuiltinRegistry
         BytesGetU32Le,
         BytesGetU64Le,
         UIntToInt,
+        MathToFloat,
+        MathSqrt,
+        MathFloor,
+        MathCeil,
+        MathRound,
+        MathTrunc,
+        MathFloorToInt,
+        MathRoundToInt,
+        MathTruncToInt,
         FileWriteBytes,
         IoReadExact,
         TextByteLength,
@@ -139,7 +148,18 @@ public static class BuiltinRegistry
             ["Ashes.Math"] = new(
                 "Ashes.Math",
                 "Ashes.Semantics.StdLib.Ashes.Math.ash",
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["toFloat"] = new("toFloat", BuiltinValueKind.MathToFloat, IsCallable: true, Arity: 1),
+                    ["sqrt"] = new("sqrt", BuiltinValueKind.MathSqrt, IsCallable: true, Arity: 1),
+                    ["floor"] = new("floor", BuiltinValueKind.MathFloor, IsCallable: true, Arity: 1),
+                    ["ceil"] = new("ceil", BuiltinValueKind.MathCeil, IsCallable: true, Arity: 1),
+                    ["round"] = new("round", BuiltinValueKind.MathRound, IsCallable: true, Arity: 1),
+                    ["trunc"] = new("trunc", BuiltinValueKind.MathTrunc, IsCallable: true, Arity: 1),
+                    ["floorToInt"] = new("floorToInt", BuiltinValueKind.MathFloorToInt, IsCallable: true, Arity: 1),
+                    ["roundToInt"] = new("roundToInt", BuiltinValueKind.MathRoundToInt, IsCallable: true, Arity: 1),
+                    ["truncToInt"] = new("truncToInt", BuiltinValueKind.MathTruncToInt, IsCallable: true, Arity: 1)
+                }),
             ["Ashes.Array"] = new(
                 "Ashes.Array",
                 "Ashes.Semantics.StdLib.Ashes.Array.ash",
