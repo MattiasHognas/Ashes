@@ -33,6 +33,7 @@ public static class BuiltinRegistry
         TextParseFloat,
         TextFromInt,
         TextFromFloat,
+        TextFormatFloat,
         TextToHex,
         HttpGet,
         HttpPost,
@@ -205,6 +206,7 @@ public static class BuiltinRegistry
                     ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
                     ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
+                    ["formatFloat"] = new("formatFloat", BuiltinValueKind.TextFormatFloat, IsCallable: true, Arity: 2),
                     ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1),
                     ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1)
                 }),

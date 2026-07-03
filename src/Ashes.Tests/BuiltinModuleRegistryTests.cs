@@ -76,6 +76,7 @@ public sealed class BuiltinModuleRegistryTests
         module.Members.ContainsKey("parseFloat").ShouldBeTrue();
         module.Members.ContainsKey("fromInt").ShouldBeTrue();
         module.Members.ContainsKey("fromFloat").ShouldBeTrue();
+        module.Members.ContainsKey("formatFloat").ShouldBeTrue();
         module.Members.ContainsKey("toHex").ShouldBeTrue();
     }
 

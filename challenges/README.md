@@ -23,9 +23,10 @@ The interesting output of each challenge is its `FLAWS.md` — what broke, where
 is where each benchmark stands. The math lib's real unlock for this set is the **Int↔Float
 conversions** (`toFloat`, `*ToInt`) it introduces — Ashes has none today — plus the hermetic
 `sqrt`. Notably **none of these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only
-the hermetic core is on the critical path. Two needs fall **outside** the math doc: a
+the hermetic core is on the critical path. Two needs fell **outside** the math doc: a
 **fixed-precision float formatter** (`fromFloat` hardcodes 6 fractional digits; n-body and
-spectral-norm require 9 dp) and **bignum** (pidigits).
+spectral-norm require 9 dp) — now shipped as `Ashes.Text.formatFloat(value)(decimals)` — and
+**bignum** (pidigits), still open.
 
 | Challenge | Covered by math lib? | Remaining gap |
 |---|---|---|
@@ -35,10 +36,10 @@ spectral-norm require 9 dp) and **bignum** (pidigits).
 | [mandelbrot](mandelbrot/README.md) | ✅ `toFloat` | — |
 | [reverse-complement](reverse-complement/README.md) | n/a (no math) | — |
 | [regex-redux](regex-redux/README.md) | n/a (no math) | regex-engine perf at scale |
-| [k-nucleotide](k-nucleotide/README.md) | ✅ `toFloat` | percentages want 3-dp format (6-dp `fromFloat` is close) |
-| [n-body](n-body/README.md) | ✅ `sqrt` | ❌ **9-dp float formatting** |
-| [spectral-norm](spectral-norm/README.md) | ✅ `sqrt` + `toFloat` | ❌ **9-dp float formatting** |
+| [k-nucleotide](k-nucleotide/README.md) | ✅ `toFloat` | — (3-dp percentages via `formatFloat`) |
+| [n-body](n-body/README.md) | ✅ `sqrt` | — (9-dp via `formatFloat`) |
+| [spectral-norm](spectral-norm/README.md) | ✅ `sqrt` + `toFloat` | — (9-dp via `formatFloat`) |
 | [pidigits](pidigits/README.md) | ❌ | ❌ **bignum** (out of scope of the math lib) |
 
-Net: `Ashes.Math` **plus a fixed-precision float formatter** fully serves 9 of 10; pidigits
-needs a separate bignum decision. Each folder's `README.md` has the per-benchmark detail.
+Net: `Ashes.Math` plus the (now shipped) fixed-precision float formatter fully serves 9 of 10;
+pidigits needs a separate bignum decision. Each folder's `README.md` has the per-benchmark detail.

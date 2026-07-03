@@ -112,6 +112,11 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `parseFloat(text)` returning `Result(Str, Float)`
 - `fromInt(value)` returning `Str`
 - `fromFloat(value)` returning `Str`
+- `formatFloat(value)(decimals)` returning `Str` — fixed-precision decimal formatting: exactly
+  `decimals` fractional digits, trailing zeros kept (`formatFloat(1.5)(9)` is `1.500000000`,
+  `formatFloat(2.5)(0)` is `3`). `decimals` is clamped to the range 0–18. Rounding is
+  half-away-from-zero on the magnitude. Magnitudes too large for the fixed path fall back to the
+  same scientific notation as `fromFloat`.
 - `toHex(value)` returning `Str`
 - `byteLength(text)` returning `Int` — UTF-8 byte length of a string
  
