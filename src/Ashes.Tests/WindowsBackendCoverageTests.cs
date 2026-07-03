@@ -532,6 +532,19 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public async Task Windows_backend_llvm_should_format_floats_with_fixed_precision()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync(
+            """Ashes.IO.print(Ashes.Text.formatFloat(3.141592653589793)(9) + "|" + Ashes.Text.formatFloat(0.0 - 12.25)(3) + "|" + Ashes.Text.formatFloat(2.5)(0))""");
+        result.Stdout.ShouldBe("3.141592654|-12.250|3\n");
+    }
+
+    [Test]
     public async Task Windows_backend_llvm_should_run_file_exists_programs()
     {
         if (!CanRunWindowsRuntimePrograms())

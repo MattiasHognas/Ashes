@@ -1788,7 +1788,25 @@ internal static partial class LlvmCodegen
     }
 
     private static LlvmValueHandle EmitFloatToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+        => EmitFloatToDecimalString(state, value, LlvmApi.ConstInt(state.I64, 6, 0), trimTrailingZeros: true, prefix);
+
+    private static LlvmValueHandle EmitFloatToFixedString(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle decimals, string prefix)
     {
+        // Fixed-precision formatting keeps trailing zeros. decimals is clamped to [0, 18] so the
+        // 10^decimals fraction scale stays representable in signed i64.
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle maxDecimals = LlvmApi.ConstInt(state.I64, 18, 0);
+        LlvmValueHandle belowZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, decimals, zero, prefix + "_below_zero");
+        LlvmValueHandle clampedLow = LlvmApi.BuildSelect(builder, belowZero, zero, decimals, prefix + "_clamped_low");
+        LlvmValueHandle aboveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, clampedLow, maxDecimals, prefix + "_above_max");
+        LlvmValueHandle clamped = LlvmApi.BuildSelect(builder, aboveMax, maxDecimals, clampedLow, prefix + "_clamped");
+        return EmitFloatToDecimalString(state, value, clamped, trimTrailingZeros: false, prefix);
+    }
+
+    private static LlvmValueHandle EmitFloatToDecimalString(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle decimals, bool trimTrailingZeros, string prefix)
+    {
+        // Caller must ensure 0 <= decimals <= 18.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zeroFloat = LlvmApi.ConstReal(state.F64, 0.0);
         LlvmValueHandle isNegative = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Olt, value, zeroFloat, prefix + "_is_negative");
@@ -1812,7 +1830,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, needsScientific, scientificInitBlock, fixedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, fixedBlock);
-        LlvmValueHandle fixedUnsigned = EmitUnsignedFloatToStringWithinI64Range(state, absValue, prefix + "_fixed_unsigned");
+        LlvmValueHandle fixedUnsigned = EmitUnsignedFloatToDecimalString(state, absValue, decimals, trimTrailingZeros, prefix + "_fixed_unsigned");
         LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned), resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
 
@@ -1835,7 +1853,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, scientificFinishBlock);
         LlvmValueHandle normalizedFinal = LlvmApi.BuildLoad2(builder, state.F64, normalizedSlot, prefix + "_normalized_final");
         LlvmValueHandle exponentFinal = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, prefix + "_exponent_final");
-        LlvmValueHandle mantissaText = EmitUnsignedFloatToStringWithinI64Range(state, normalizedFinal, prefix + "_scientific_mantissa");
+        LlvmValueHandle mantissaText = EmitUnsignedFloatToDecimalString(state, normalizedFinal, decimals, trimTrailingZeros, prefix + "_scientific_mantissa");
         LlvmValueHandle exponentText = EmitNonNegativeIntToString(state, exponentFinal, prefix + "_scientific_exponent");
         LlvmValueHandle scientificResult = EmitStringConcat(state, mantissaText, EmitHeapStringLiteral(state, "e+"));
         scientificResult = EmitStringConcat(state, scientificResult, exponentText);
@@ -1846,28 +1864,67 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
-    private static LlvmValueHandle EmitUnsignedFloatToStringWithinI64Range(LlvmCodegenState state, LlvmValueHandle absValue, string prefix)
+    private static LlvmValueHandle EmitUnsignedFloatToDecimalString(LlvmCodegenState state, LlvmValueHandle absValue, LlvmValueHandle decimals, bool trimTrailingZeros, string prefix)
     {
-        // Caller must ensure absValue <= safeIntegerLimit from EmitFloatToString.
+        // Caller must ensure absValue <= safeIntegerLimit from EmitFloatToDecimalString and
+        // 0 <= decimals <= 18 so that 10^decimals fits in signed i64.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle integerPart = LlvmApi.BuildFPToSI(builder, absValue, state.I64, prefix + "_integer");
         LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
         LlvmValueHandle fractional = LlvmApi.BuildFSub(builder, absValue, integerAsFloat, prefix + "_fractional");
-        LlvmValueHandle scaledFractionalFloat = LlvmApi.BuildFMul(builder, fractional, LlvmApi.ConstReal(state.F64, 1000000.0), prefix + "_scaled_fractional_f64");
+
+        LlvmValueHandle scaleSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_scale");
+        LlvmValueHandle scaleCounterSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_scale_counter");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), scaleSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), scaleCounterSlot);
+
+        var scaleCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scale_check");
+        var scaleBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scale_body");
+        var scaleDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_scale_done");
+        var fractionBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fraction");
+        var joinBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_join");
+
+        LlvmApi.BuildBr(builder, scaleCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scaleCheckBlock);
+        LlvmValueHandle scaleCounter = LlvmApi.BuildLoad2(builder, state.I64, scaleCounterSlot, prefix + "_scale_counter_value");
+        LlvmValueHandle scaleContinue = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, scaleCounter, decimals, prefix + "_scale_continue");
+        LlvmApi.BuildCondBr(builder, scaleContinue, scaleBodyBlock, scaleDoneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scaleBodyBlock);
+        LlvmValueHandle scaleValue = LlvmApi.BuildLoad2(builder, state.I64, scaleSlot, prefix + "_scale_value");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildMul(builder, scaleValue, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_scale_next"), scaleSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, scaleCounter, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_scale_counter_next"), scaleCounterSlot);
+        LlvmApi.BuildBr(builder, scaleCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scaleDoneBlock);
+        LlvmValueHandle scale = LlvmApi.BuildLoad2(builder, state.I64, scaleSlot, prefix + "_scale_final");
+        LlvmValueHandle scaleAsFloat = LlvmApi.BuildSIToFP(builder, scale, state.F64, prefix + "_scale_f64");
+        LlvmValueHandle scaledFractionalFloat = LlvmApi.BuildFMul(builder, fractional, scaleAsFloat, prefix + "_scaled_fractional_f64");
         LlvmValueHandle scaledFractionalRounded = LlvmApi.BuildFAdd(builder, scaledFractionalFloat, LlvmApi.ConstReal(state.F64, 0.5), prefix + "_scaled_fractional_rounded");
         LlvmValueHandle scaledFractionalRaw = LlvmApi.BuildFPToSI(builder, scaledFractionalRounded, state.I64, prefix + "_scaled_fractional_raw");
-        LlvmValueHandle million = LlvmApi.ConstInt(state.I64, 1000000, 0);
-        LlvmValueHandle hasCarry = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, scaledFractionalRaw, million, prefix + "_has_carry");
+        LlvmValueHandle hasCarry = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, scaledFractionalRaw, scale, prefix + "_has_carry");
         LlvmValueHandle scaledFractional = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.ConstInt(state.I64, 0, 0), scaledFractionalRaw, prefix + "_scaled_fractional");
         LlvmValueHandle integerFinal = LlvmApi.BuildSelect(builder, hasCarry, LlvmApi.BuildAdd(builder, integerPart, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_integer_carry"), integerPart, prefix + "_integer_final");
+        LlvmValueHandle integerText = EmitSignedIntToString(state, integerFinal, prefix + "_integer_text");
+        LlvmApi.BuildStore(builder, integerText, resultSlot);
+        LlvmValueHandle hasFraction = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, decimals, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_fraction");
+        LlvmApi.BuildCondBr(builder, hasFraction, fractionBlock, joinBlock);
 
-        LlvmValueHandle result = EmitSignedIntToString(state, integerFinal, prefix + "_integer_text");
-        result = EmitStringConcat(state, result, EmitHeapStringLiteral(state, "."));
-        return EmitStringConcat(state, result, EmitFractionalSixDigitsToString(state, scaledFractional, prefix + "_fraction_text"));
+        LlvmApi.PositionBuilderAtEnd(builder, fractionBlock);
+        LlvmValueHandle withDot = EmitStringConcat(state, integerText, EmitHeapStringLiteral(state, "."));
+        LlvmValueHandle fractionText = EmitFractionalDigitsToString(state, scaledFractional, decimals, trimTrailingZeros, prefix + "_fraction_text");
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, withDot, fractionText), resultSlot);
+        LlvmApi.BuildBr(builder, joinBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, joinBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
-    private static LlvmValueHandle EmitFractionalSixDigitsToString(LlvmCodegenState state, LlvmValueHandle scaledValue, string prefix)
+    private static LlvmValueHandle EmitFractionalDigitsToString(LlvmCodegenState state, LlvmValueHandle scaledValue, LlvmValueHandle digits, bool trimTrailingZeros, string prefix)
     {
+        // Caller must ensure 1 <= digits <= 18 (the 32-byte buffer holds at most 18 digits).
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
         LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
@@ -1875,35 +1932,35 @@ internal static partial class LlvmCodegen
         LlvmValueHandle widthSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_width");
         LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
         LlvmApi.BuildStore(builder, scaledValue, workSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 6, 0), widthSlot);
+        LlvmApi.BuildStore(builder, digits, widthSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
 
-        var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_zero");
-        var trimCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_check");
-        var trimBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_body");
         var emitCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_emit_check");
         var emitBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_emit_body");
         var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
 
-        LlvmValueHandle isZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scaledValue, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_is_zero");
-        LlvmApi.BuildCondBr(builder, isZero, zeroBlock, trimCheckBlock);
+        if (trimTrailingZeros)
+        {
+            var trimCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_check");
+            var trimBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_body");
+            LlvmApi.BuildBr(builder, trimCheckBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
-        StoreBufferByte(state, buffer, LlvmApi.ConstInt(state.I64, 31, 0), (byte)'0');
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
-        LlvmApi.BuildBr(builder, finishBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, trimCheckBlock);
+            LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_trim_work");
+            LlvmValueHandle width = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_trim_width");
+            LlvmValueHandle canTrim = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_can_trim");
+            LlvmValueHandle trailingZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildURem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trim_rem"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_trailing_zero");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, canTrim, trailingZero, prefix + "_should_trim"), trimBodyBlock, emitCheckBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, trimCheckBlock);
-        LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_trim_work");
-        LlvmValueHandle width = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_trim_width");
-        LlvmValueHandle canTrim = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_can_trim");
-        LlvmValueHandle trailingZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildURem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trim_rem"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_trailing_zero");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, canTrim, trailingZero, prefix + "_should_trim"), trimBodyBlock, emitCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, trimBodyBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trimmed_work"), workSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_trimmed_width"), widthSlot);
-        LlvmApi.BuildBr(builder, trimCheckBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, trimBodyBlock);
+            LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_trimmed_work"), workSlot);
+            LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, width, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_trimmed_width"), widthSlot);
+            LlvmApi.BuildBr(builder, trimCheckBlock);
+        }
+        else
+        {
+            LlvmApi.BuildBr(builder, emitCheckBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, emitCheckBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_emit_index");

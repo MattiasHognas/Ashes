@@ -28,7 +28,8 @@ final result needs a single `sqrt`.
   persistent `Ashes.Array` (O(log N) access, per-update allocation) or `List` (O(N) index),
   the `N×N` inner loop is heavily penalised and generates per-iteration garbage (arena leak
   #2). A strong probe of the persistent-array cost model under a numeric hot loop.
-- Float throughput and fixed-precision (9 dp) formatting once `sqrt` exists.
+- Float throughput once `sqrt` exists; fixed-precision (9 dp) formatting is covered by
+  `Ashes.Text.formatFloat(value)(9)`.
 
 ## Dependencies / blockers
 
