@@ -347,8 +347,6 @@ The result is a single native binary with no runtime dependencies.
 *Details: [Compiler Architecture](docs/ARCHITECTURE.md#memory-model) and
 [Linking](docs/ARCHITECTURE.md#linking).*
 
-Ashes lowers to LLVM IR and uses LLVM for optimization and native object generation, then performs the final object-to-executable linking itself using its own built-in linker—without invoking external tools such as clang, ld, lld, or link.exe. The result is a single native binary with no runtime dependencies.
-
 **How can immutable data be efficient?**
 Ashes does not copy a value on every "update". Immutable values are freely
 shared (never defensively copied), so `x` and a derived `y` transparently share
