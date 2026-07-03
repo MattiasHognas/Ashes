@@ -12,6 +12,7 @@ and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not he
 | [Natural Keywords](NATURAL_KEYWORDS.md) | Planned | Rename the three abbreviated keywords to full English words — `fun` → `given`, `rec` → `recursive`, `extern` → `external`; old spellings permanently reserved with a rename diagnostic. Principles: words for meaning, symbols for plumbing; no abbreviations. Corpus migrates via `fmt -w` |
 | [Parallel Worker Overrides](PARALLEL_WORKER_OVERRIDES.md) | Planned | Treat `--parallel-workers` as the executable’s default/hard maximum, and add scoped `Ashes.Parallel.withWorkers` plus `*WithWorkers` stdlib helpers to locally request lower worker caps without changing compilation itself |
 | [Server Support](SERVER_SUPPORT.md) | Planned | Add first-class HTTP server support for native Ashes programs, keeping the API explicit and functional while preserving Ashes’ no-external-runtime model |
+| [Inline Modules](INLINE_MODULES.md) | Planned | Allow compile-time nested modules within a source file for zero-cost namespacing, enabling local organization and seamless promotion from inline to file modules without changing call sites |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ---
