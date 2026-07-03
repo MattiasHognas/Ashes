@@ -19,12 +19,13 @@
 //
 // `reduce` is special-cased further: a saturated call at a concrete result type is executed by
 // a work-conserving runtime queue — worker threads pull elements from a shared index (so a slow
-// element never strands the others behind a static split) and the caller folds `combine` over
-// the results in fixed list order as they arrive. The fold order over the mapped elements is
-// left-to-right list order, while `reduceGrained` combines as a balanced tree and the sequential
-// fallback folds right-to-left — all identical under `reduce`'s contract that `combine` is
-// associative (and `identity` its identity, used only for the empty list; a singleton list
-// yields `f(x)` alone). A non-associative `combine` has no defined fold shape here.
+// element never strands the others behind a static split) and then merge the mapped results
+// pairwise in rounds (adjacent pairs, an odd trailing result carried forward), a fixed tree
+// shape determined only by the list length that respects list order. `reduceGrained` combines
+// as a balanced split tree and the sequential fallback folds right-to-left — all identical
+// under `reduce`'s contract that `combine` is associative (and `identity` its identity, used
+// only for the empty list; a singleton list yields `f(x)` alone). A non-associative `combine`
+// has no defined fold shape here.
 //
 // Self-contained: uses only core language features.
 

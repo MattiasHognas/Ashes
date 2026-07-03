@@ -53,17 +53,26 @@ internal static partial class LlvmCodegen
     // ── Work-conserving parallel reduce (queued Ashes.Parallel.reduce) ──────────────────────
     //
     // One OS-allocated, zero-initialized region holds the whole queue: a fixed header, the
-    // snapshotted list elements, one result and one publish-flag word per element, and one
-    // 64-byte record per spawned worker. Workers pull element indexes from the atomic
-    // next-index word and publish f(element) per index; the caller awaits indexes in ascending
-    // order and merges in fixed list order while later results are still being computed.
+    // snapshotted list elements, an item slot and a publish-flag word for every node of the
+    // merge tree, and one 64-byte record per spawned worker. Workers first pull element indexes
+    // from the atomic next-index word and publish f(element) into items[0..n-1]; they then pull
+    // merge tasks from the second counter and combine adjacent item pairs round by round (an odd
+    // trailing item promotes) until the tree's root — items[S-1] — is published. The item arrays
+    // are laid round-major (round 0 = the n leaves, then ceil(n/2) round-1 slots, and so on down
+    // to 1), so the task order is topological and the tree shape depends only on n: the merge is
+    // deterministic under reduce's associative-combine contract no matter which worker computes
+    // what. The caller awaits only the root.
     //
-    // Region layout: [header 64B][elems 8n][results 8n][flags 8n][worker records 64*W].
-    private const int ParallelQueueNextIndex = 0;    // atomic: next element index to claim
-    private const int ParallelQueueCount = 8;        // n = element count (read by lowering's merge loop)
-    private const int ParallelQueueClosure = 16;     // the mapper closure f
-    private const int ParallelQueueWorkerCount = 24; // W = workers actually spawned
-    private const int ParallelQueueRegionBytes = 32; // total region size (for the final free)
+    // Region layout: [header 64B][elems 8n][items 8S][flags 8S][worker records 64*W]
+    // where S = n + ceil(n/2) + ceil(n/4) + ... + 1 (total merge-tree nodes; 0 when n = 0).
+    private const int ParallelQueueNextIndex = 0;     // atomic: next element index to claim
+    private const int ParallelQueueCount = 8;         // n = element count (read by lowering's empty check)
+    private const int ParallelQueueClosure = 16;      // the mapper closure f
+    private const int ParallelQueueWorkerCount = 24;  // W = workers actually spawned
+    private const int ParallelQueueRegionBytes = 32;  // total region size (for the final free)
+    private const int ParallelQueueCombine = 40;      // the combine closure
+    private const int ParallelQueueNextMergeTask = 48; // atomic: next merge-tree task to claim
+    private const int ParallelQueueTotalItems = 56;   // S = total merge-tree item count
     private const int ParallelQueueHeaderBytes = 64;
     // A worker record reuses the both-descriptor offsets 32..56 (worker stack / win HANDLE at
     // ParallelDescWorkerStack, TCB at ParallelDescWorkerTcb, arena end at
@@ -754,11 +763,85 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// <c>__ashes_parallel_queue_drain(desc)</c>: repeatedly claims the next unclaimed element
-    /// index from the shared atomic counter, computes <c>f(element)</c>, and publishes the result
-    /// under the element's flag word. Runs on whichever thread calls it — a queue worker after its
-    /// arena setup, or the queue-starting thread when no worker slot could be claimed — and
-    /// allocates through that thread's own arena.
+    /// Blocks until the flag word at <paramref name="flagAddr"/> becomes nonzero. The read is an
+    /// atomic acquire (a fetch-add of zero) pairing with the publisher's release increment, so the
+    /// published item store is visible on return. linux sleeps on the flag's futex — each flag has
+    /// at most one waiter (an item's unique consumer task, or the awaiting caller for the root) —
+    /// and win-x64 polls with <c>Sleep(1)</c> (items arrive at chunk granularity, so the poll is
+    /// cold).
+    /// </summary>
+    private static void EmitQueueFlagWait(LlvmCodegenState state, LlvmValueHandle flagAddr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle i64 = state.I64;
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
+        var waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_wait");
+        var readyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_ready");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle flag = EmitAtomicFetchAdd(state, flagAddr, 0, prefix + "_flag");
+        LlvmValueHandle isReady = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, flag, LlvmApi.ConstInt(i64, 0, 0), prefix + "_is_ready");
+        LlvmApi.BuildCondBr(builder, isReady, readyBlock, waitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // futex(&flag, FUTEX_WAIT_PRIVATE, 0): re-checks the flag atomically, so a wake racing
+            // the check is never lost.
+            EmitLinuxSyscall6(state, SyscallFutex,
+                flagAddr,
+                LlvmApi.ConstInt(i64, (ulong)FutexWaitPrivate, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                LlvmApi.ConstInt(i64, 0, 0),
+                prefix + "_wait_call");
+        }
+        else
+        {
+            // void-returning import call: the instruction must be unnamed to pass LLVM verification.
+            LlvmTypeHandle sleepType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32]);
+            EmitWindowsImportCall(state, "__imp_Sleep", sleepType, [LlvmApi.ConstInt(state.I32, 1, 0)], "");
+        }
+
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, readyBlock);
+    }
+
+    /// <summary>
+    /// Publishes the item at <paramref name="itemAddr"/>: stores the value, then flips the item's
+    /// flag with an atomic release increment and futex-wakes its (single) waiter on linux.
+    /// </summary>
+    private static void EmitQueueItemPublish(LlvmCodegenState state, LlvmValueHandle itemAddr, LlvmValueHandle flagAddr, LlvmValueHandle value, string prefix)
+    {
+        StoreMemory(state, itemAddr, 0, value, prefix + "_item");
+        EmitAtomicFetchAdd(state, flagAddr, 1, prefix + "_publish");
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            EmitLinuxSyscall6(state, SyscallFutex,
+                flagAddr,
+                LlvmApi.ConstInt(state.I64, (ulong)FutexWakePrivate, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                prefix + "_wake");
+        }
+    }
+
+    /// <summary>
+    /// <c>__ashes_parallel_queue_drain(desc)</c>: the whole per-thread work loop. Phase one claims
+    /// element indexes from the shared counter and publishes <c>f(element)</c> into the leaf items;
+    /// phase two claims merge-tree tasks (round-major, so claim order is topological) from the
+    /// second counter, waits for the task's operand flags, and publishes <c>combine(left)(right)</c>
+    /// — or promotes a lone trailing item — into the output slot. Claim order makes this
+    /// deadlock-free: the earliest incomplete task always has published operands and a claimant.
+    /// Runs on whichever thread calls it — a queue worker after its arena setup, or the
+    /// queue-starting thread when no worker slot could be claimed — and allocates through that
+    /// thread's own arena; merge results may reference operand items in other workers' arenas,
+    /// which all stay live until cleanup.
     /// </summary>
     private static void EmitParallelQueueDrainFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
@@ -769,48 +852,127 @@ internal static partial class LlvmCodegen
         state = flavor == LlvmCodegenFlavor.LinuxArm64 ? WithArm64ThreadLocalArenaSlots(state) : WithLinuxThreadArena(state);
 
         LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(i64, 1, 0);
+        LlvmValueHandle eight = LlvmApi.ConstInt(i64, 8, 0);
         LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_drain_n");
         LlvmValueHandle mapper = LoadMemory(state, desc, ParallelQueueClosure, "parq_drain_f");
+        LlvmValueHandle combiner = LoadMemory(state, desc, ParallelQueueCombine, "parq_drain_combine");
+        LlvmValueHandle totalItems = LoadMemory(state, desc, ParallelQueueTotalItems, "parq_drain_s");
         LlvmValueHandle elemsBase = LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_drain_elems");
-        LlvmValueHandle countBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_drain_nbytes");
-        LlvmValueHandle resultsBase = LlvmApi.BuildAdd(builder, elemsBase, countBytes, "parq_drain_results");
-        LlvmValueHandle flagsBase = LlvmApi.BuildAdd(builder, resultsBase, countBytes, "parq_drain_flags");
+        LlvmValueHandle countBytes = LlvmApi.BuildMul(builder, count, eight, "parq_drain_nbytes");
+        LlvmValueHandle itemBytes = LlvmApi.BuildMul(builder, totalItems, eight, "parq_drain_sbytes");
+        LlvmValueHandle itemsBase = LlvmApi.BuildAdd(builder, elemsBase, countBytes, "parq_drain_items");
+        LlvmValueHandle flagsBase = LlvmApi.BuildAdd(builder, itemsBase, itemBytes, "parq_drain_flags");
+        // Merge-task locate state (see the merge phase below); allocas live in the entry block.
+        LlvmValueHandle roundCountSlot = LlvmApi.BuildAlloca(builder, i64, "parq_merge_c");
+        LlvmValueHandle prevBaseSlot = LlvmApi.BuildAlloca(builder, i64, "parq_merge_prev_base");
+        LlvmValueHandle curBaseSlot = LlvmApi.BuildAlloca(builder, i64, "parq_merge_cur_base");
+        LlvmValueHandle remSlot = LlvmApi.BuildAlloca(builder, i64, "parq_merge_rem");
+        LlvmValueHandle resSlot = LlvmApi.BuildAlloca(builder, i64, "parq_merge_res");
 
         var loopBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_loop");
         var bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_body");
-        var doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_drain_done");
+        var mergeLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_loop");
         LlvmApi.BuildBr(builder, loopBlock);
 
+        // ── Phase one: fold leaves ──────────────────────────────────────────────────────────
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         // The next-index word is the first header word, so the descriptor address doubles as its address.
         LlvmValueHandle idx = EmitAtomicFetchAdd(state, desc, 1, "parq_drain_claim");
         LlvmValueHandle hasWork = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, idx, count, "parq_drain_has_work");
-        LlvmApi.BuildCondBr(builder, hasWork, bodyBlock, doneBlock);
+        LlvmApi.BuildCondBr(builder, hasWork, bodyBlock, mergeLoop);
 
         LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-        LlvmValueHandle idxBytes = LlvmApi.BuildMul(builder, idx, LlvmApi.ConstInt(i64, 8, 0), "parq_drain_idx_bytes");
+        LlvmValueHandle idxBytes = LlvmApi.BuildMul(builder, idx, eight, "parq_drain_idx_bytes");
         LlvmValueHandle elem = LoadMemory(state, LlvmApi.BuildAdd(builder, elemsBase, idxBytes, "parq_drain_elem_addr"), 0, "parq_drain_elem");
         LlvmValueHandle result = EmitCallClosure(state, mapper, elem);
-        StoreMemory(state, LlvmApi.BuildAdd(builder, resultsBase, idxBytes, "parq_drain_result_addr"), 0, result, "parq_drain_result");
-        // Publish with an atomic increment (0 -> 1): its release ordering makes the result store
-        // above visible to the awaiting thread's atomic acquire read of the flag.
-        LlvmValueHandle flagAddr = LlvmApi.BuildAdd(builder, flagsBase, idxBytes, "parq_drain_flag_addr");
-        EmitAtomicFetchAdd(state, flagAddr, 1, "parq_drain_publish");
-        if (IsLinuxFlavor(flavor))
-        {
-            EmitLinuxSyscall6(state, SyscallFutex,
-                flagAddr,
-                LlvmApi.ConstInt(i64, (ulong)FutexWakePrivate, 0),
-                LlvmApi.ConstInt(i64, 1, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                "parq_drain_wake");
-        }
-
+        EmitQueueItemPublish(state,
+            LlvmApi.BuildAdd(builder, itemsBase, idxBytes, "parq_drain_result_addr"),
+            LlvmApi.BuildAdd(builder, flagsBase, idxBytes, "parq_drain_flag_addr"),
+            result, "parq_drain");
         LlvmApi.BuildBr(builder, loopBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        // ── Phase two: pairwise merges ──────────────────────────────────────────────────────
+        LlvmApi.PositionBuilderAtEnd(builder, mergeLoop);
+        LlvmValueHandle taskTotal = LlvmApi.BuildSub(builder, totalItems, count, "parq_merge_task_total");
+        LlvmValueHandle mergeCounterAddr = LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueNextMergeTask, 0), "parq_merge_counter");
+        var mergeClaim = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_claim");
+        var locateLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_locate");
+        var locateNext = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_locate_next");
+        var locateDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_located");
+        var mergeDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_done");
+        LlvmApi.BuildBr(builder, mergeClaim);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeClaim);
+        LlvmValueHandle task = EmitAtomicFetchAdd(state, mergeCounterAddr, 1, "parq_merge_claim_task");
+        LlvmValueHandle taskInRange = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, task, taskTotal, "parq_merge_has_task");
+        LlvmApi.BuildStore(builder, count, roundCountSlot);
+        LlvmApi.BuildStore(builder, zero, prevBaseSlot);
+        LlvmApi.BuildStore(builder, count, curBaseSlot);
+        LlvmApi.BuildStore(builder, task, remSlot);
+        LlvmApi.BuildCondBr(builder, taskInRange, locateLoop, mergeDone);
+
+        // Locate the claimed task's round: task ids run round-major, so peel whole rounds off
+        // `rem` until it indexes into the current one. `c` is the previous round's item count,
+        // `prevBase`/`curBase` the previous and current rounds' first item indexes.
+        LlvmApi.PositionBuilderAtEnd(builder, locateLoop);
+        LlvmValueHandle c = LlvmApi.BuildLoad2(builder, i64, roundCountSlot, "parq_merge_c_val");
+        LlvmValueHandle roundSize = LlvmApi.BuildLShr(builder, LlvmApi.BuildAdd(builder, c, one, "parq_merge_c1a"), one, "parq_merge_round_size");
+        LlvmValueHandle rem = LlvmApi.BuildLoad2(builder, i64, remSlot, "parq_merge_rem_val");
+        LlvmValueHandle inRound = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, rem, roundSize, "parq_merge_in_round");
+        LlvmApi.BuildCondBr(builder, inRound, locateDone, locateNext);
+
+        LlvmApi.PositionBuilderAtEnd(builder, locateNext);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, rem, roundSize, "parq_merge_rem_next"), remSlot);
+        LlvmValueHandle curBase = LlvmApi.BuildLoad2(builder, i64, curBaseSlot, "parq_merge_cur_base_val");
+        LlvmApi.BuildStore(builder, curBase, prevBaseSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, curBase, roundSize, "parq_merge_cur_base_next"), curBaseSlot);
+        LlvmApi.BuildStore(builder, roundSize, roundCountSlot);
+        LlvmApi.BuildBr(builder, locateLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, locateDone);
+        LlvmValueHandle prevCount = LlvmApi.BuildLoad2(builder, i64, roundCountSlot, "parq_merge_prev_count");
+        LlvmValueHandle j = LlvmApi.BuildLoad2(builder, i64, remSlot, "parq_merge_j");
+        LlvmValueHandle prevBase = LlvmApi.BuildLoad2(builder, i64, prevBaseSlot, "parq_merge_prev_base_val");
+        LlvmValueHandle outBase = LlvmApi.BuildLoad2(builder, i64, curBaseSlot, "parq_merge_out_base");
+        LlvmValueHandle leftOffset = LlvmApi.BuildMul(builder, j, LlvmApi.ConstInt(i64, 2, 0), "parq_merge_left_off");
+        LlvmValueHandle leftItem = LlvmApi.BuildAdd(builder, prevBase, leftOffset, "parq_merge_left_item");
+        LlvmValueHandle leftItemBytes = LlvmApi.BuildMul(builder, leftItem, eight, "parq_merge_left_bytes");
+        LlvmValueHandle outItem = LlvmApi.BuildAdd(builder, outBase, j, "parq_merge_out_item");
+        LlvmValueHandle outItemBytes = LlvmApi.BuildMul(builder, outItem, eight, "parq_merge_out_bytes");
+        EmitQueueFlagWait(state, LlvmApi.BuildAdd(builder, flagsBase, leftItemBytes, "parq_merge_left_flag"), "parq_merge_left");
+        // The wait helper leaves the builder in its ready block; re-derive nothing — values above
+        // dominate it. A right operand exists unless this is an odd round's promoted last item.
+        LlvmValueHandle left = LoadMemory(state, LlvmApi.BuildAdd(builder, itemsBase, leftItemBytes, "parq_merge_left_addr"), 0, "parq_merge_left_val");
+        LlvmValueHandle rightOffset = LlvmApi.BuildAdd(builder, leftOffset, one, "parq_merge_right_off");
+        LlvmValueHandle hasRight = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, rightOffset, prevCount, "parq_merge_has_right");
+        var combineBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_combine");
+        var promoteBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_promote");
+        var publishBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_merge_publish");
+        LlvmApi.BuildCondBr(builder, hasRight, combineBlock, promoteBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, combineBlock);
+        LlvmValueHandle rightItemBytes = LlvmApi.BuildAdd(builder, leftItemBytes, eight, "parq_merge_right_bytes");
+        EmitQueueFlagWait(state, LlvmApi.BuildAdd(builder, flagsBase, rightItemBytes, "parq_merge_right_flag"), "parq_merge_right");
+        LlvmValueHandle right = LoadMemory(state, LlvmApi.BuildAdd(builder, itemsBase, rightItemBytes, "parq_merge_right_addr"), 0, "parq_merge_right_val");
+        LlvmValueHandle partial = EmitCallClosure(state, combiner, left);
+        LlvmValueHandle merged = EmitCallClosure(state, partial, right);
+        LlvmApi.BuildStore(builder, merged, resSlot);
+        LlvmApi.BuildBr(builder, publishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, promoteBlock);
+        LlvmApi.BuildStore(builder, left, resSlot);
+        LlvmApi.BuildBr(builder, publishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, publishBlock);
+        EmitQueueItemPublish(state,
+            LlvmApi.BuildAdd(builder, itemsBase, outItemBytes, "parq_merge_out_addr"),
+            LlvmApi.BuildAdd(builder, flagsBase, outItemBytes, "parq_merge_out_flag"),
+            LlvmApi.BuildLoad2(builder, i64, resSlot, "parq_merge_res_val"), "parq_merge");
+        LlvmApi.BuildBr(builder, mergeClaim);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeDone);
         LlvmApi.BuildRetVoid(builder);
     }
 
@@ -871,28 +1033,33 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// <c>__ashes_parallel_queue_start(f, list) -> desc</c>: counts the list, allocates the
-    /// zero-initialized queue region, snapshots the elements into it, and spawns up to
-    /// <c>min(cap, n)</c> workers (each claiming a slot in the shared active counter exactly like a
-    /// <c>both</c> fork, with its own TCB, arena chunk, and stack). When not a single slot could be
-    /// claimed, the caller drains the whole queue inline before returning — the queue never blocks
-    /// waiting for capacity, which also makes nested queued reduces deadlock-free.
+    /// <c>__ashes_parallel_queue_start(f, combine, list) -> desc</c>: counts the list, allocates
+    /// the zero-initialized queue region (sized for the full merge tree), snapshots the elements
+    /// into it, and spawns up to <c>min(cap, n)</c> workers (each claiming a slot in the shared
+    /// active counter exactly like a <c>both</c> fork, with its own TCB, arena chunk, and stack).
+    /// When not a single slot could be claimed, the caller drains the whole queue — folds and
+    /// merges — inline before returning; the queue never blocks waiting for capacity, which also
+    /// makes nested queued reduces deadlock-free.
     /// </summary>
     private static void EmitParallelQueueStartFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmBuilderHandle builder = target.Builder;
-        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueStartFnName, 2, returnsValue: true);
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueStartFnName, 3, returnsValue: true);
         LlvmCodegenState state = WithWindowsRuntimeImports(CreateBareRuntimeState(target, fn, flavor));
         LlvmValueHandle mapper = LlvmApi.GetParam(fn, 0);
-        LlvmValueHandle list = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle combiner = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle list = LlvmApi.GetParam(fn, 2);
         LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(i64, 1, 0);
         LlvmValueHandle eight = LlvmApi.ConstInt(i64, 8, 0);
 
         LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_cur");
         LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_count");
         LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_idx");
         LlvmValueHandle spawnedSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_spawned");
+        LlvmValueHandle roundSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_round");
+        LlvmValueHandle totalSlot = LlvmApi.BuildAlloca(builder, i64, "parq_start_total");
         LlvmApi.BuildStore(builder, list, curSlot);
         LlvmApi.BuildStore(builder, zero, countSlot);
 
@@ -916,6 +1083,29 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
         LlvmValueHandle count = LlvmApi.BuildLoad2(builder, i64, countSlot, "parq_n");
 
+        // ── Size the merge tree: S = n + ceil(n/2) + ... + 1 (0 when the list is empty) ─────
+        LlvmApi.BuildStore(builder, count, roundSlot);
+        LlvmApi.BuildStore(builder, count, totalSlot);
+        var sizeLoop = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_size_loop");
+        var sizeBody = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_size_body");
+        var sizeDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_size_done");
+        LlvmApi.BuildBr(builder, sizeLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sizeLoop);
+        LlvmValueHandle sizeRound = LlvmApi.BuildLoad2(builder, i64, roundSlot, "parq_size_round");
+        LlvmValueHandle sizeMore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, sizeRound, one, "parq_size_more");
+        LlvmApi.BuildCondBr(builder, sizeMore, sizeBody, sizeDone);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sizeBody);
+        LlvmValueHandle sizeNext = LlvmApi.BuildLShr(builder, LlvmApi.BuildAdd(builder, sizeRound, one, "parq_size_r1"), one, "parq_size_next");
+        LlvmApi.BuildStore(builder, sizeNext, roundSlot);
+        LlvmValueHandle sizeTotal = LlvmApi.BuildLoad2(builder, i64, totalSlot, "parq_size_total_val");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, sizeTotal, sizeNext, "parq_size_total_next"), totalSlot);
+        LlvmApi.BuildBr(builder, sizeLoop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sizeDone);
+        LlvmValueHandle totalItems = LlvmApi.BuildLoad2(builder, i64, totalSlot, "parq_s");
+
         // ── Allocate and initialize the region ──────────────────────────────────────────────
         LlvmValueHandle capValue = target.ParallelWorkerCap is { } fixedCap
             ? LlvmApi.ConstInt(i64, (ulong)fixedCap, 0)
@@ -923,16 +1113,21 @@ internal static partial class LlvmCodegen
                 LlvmApi.GetNamedFunction(target.Module, ParallelCapFnName), [], "parq_cap");
         LlvmValueHandle capBelowN = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, capValue, count, "parq_cap_below_n");
         LlvmValueHandle maxWorkers = LlvmApi.BuildSelect(builder, capBelowN, capValue, count, "parq_max_workers");
-        // size = header + 3 arrays of n words (elems, results, flags) + one record per worker slot.
-        LlvmValueHandle payloadBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 24, 0), "parq_payload_bytes");
+        // size = header + n element words + S item words + S flag words + one record per worker slot.
+        LlvmValueHandle payloadBytes = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildMul(builder, count, eight, "parq_elem_bytes"),
+            LlvmApi.BuildMul(builder, totalItems, LlvmApi.ConstInt(i64, 16, 0), "parq_tree_bytes"),
+            "parq_payload_bytes");
         LlvmValueHandle recBytes = LlvmApi.BuildMul(builder, maxWorkers, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_rec_bytes");
         LlvmValueHandle regionBytes = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildAdd(builder, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), payloadBytes, "parq_header_payload"),
             recBytes, "parq_region_bytes");
         LlvmValueHandle desc = EmitAllocateOsMemory(state, regionBytes, "parq_region");
-        // mmap/VirtualAlloc zero-fill, so the next-index word, flags, and worker count start 0.
+        // mmap/VirtualAlloc zero-fill, so the two claim counters, flags, and worker count start 0.
         StoreMemory(state, desc, ParallelQueueCount, count, "parq_desc_n");
         StoreMemory(state, desc, ParallelQueueClosure, mapper, "parq_desc_f");
+        StoreMemory(state, desc, ParallelQueueCombine, combiner, "parq_desc_combine");
+        StoreMemory(state, desc, ParallelQueueTotalItems, totalItems, "parq_desc_s");
         StoreMemory(state, desc, ParallelQueueRegionBytes, regionBytes, "parq_desc_size");
 
         // ── Snapshot the elements ────────────────────────────────────────────────────────────
@@ -1048,67 +1243,32 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// <c>__ashes_parallel_queue_await(desc, idx) -> raw result</c>: blocks until the result for
-    /// element <c>idx</c> has been published, then returns it (still in the producing worker's
-    /// arena — the caller deep-copies). The flag is read with an atomic acquire so the publishing
-    /// worker's result store is visible. linux waits on the flag's futex; win-x64 polls with
-    /// <c>Sleep(1)</c> (results arrive at chunk granularity, so the poll is cold).
+    /// <c>__ashes_parallel_queue_await(desc) -> raw root result</c>: blocks until the merge tree's
+    /// root — the last item slot — has been published, then returns it (still in worker arenas;
+    /// the caller deep-copies before cleanup). Must only be called for a non-empty element list.
     /// </summary>
     private static void EmitParallelQueueAwaitFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmBuilderHandle builder = target.Builder;
-        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueAwaitFnName, 2, returnsValue: true);
+        LlvmValueHandle fn = AddQueueRuntimeFn(target, nounwindAttr, ParallelQueueAwaitFnName, 1, returnsValue: true);
         LlvmCodegenState state = CreateBareRuntimeState(target, fn, flavor);
         LlvmValueHandle desc = LlvmApi.GetParam(fn, 0);
-        LlvmValueHandle idx = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle eight = LlvmApi.ConstInt(i64, 8, 0);
 
         LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_await_n");
-        LlvmValueHandle countBytes = LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_await_nbytes");
-        LlvmValueHandle idxBytes = LlvmApi.BuildMul(builder, idx, LlvmApi.ConstInt(i64, 8, 0), "parq_await_idx_bytes");
-        LlvmValueHandle resultsBase = LlvmApi.BuildAdd(builder,
+        LlvmValueHandle totalItems = LoadMemory(state, desc, ParallelQueueTotalItems, "parq_await_s");
+        LlvmValueHandle itemsBase = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_await_elems"),
-            countBytes, "parq_await_results");
-        LlvmValueHandle resultAddr = LlvmApi.BuildAdd(builder, resultsBase, idxBytes, "parq_await_result_addr");
-        LlvmValueHandle flagAddr = LlvmApi.BuildAdd(builder,
-            LlvmApi.BuildAdd(builder, resultsBase, countBytes, "parq_await_flags"), idxBytes, "parq_await_flag_addr");
+            LlvmApi.BuildMul(builder, count, eight, "parq_await_nbytes"), "parq_await_items");
+        LlvmValueHandle itemBytes = LlvmApi.BuildMul(builder, totalItems, eight, "parq_await_sbytes");
+        LlvmValueHandle rootBytes = LlvmApi.BuildSub(builder, itemBytes, eight, "parq_await_root_bytes");
+        LlvmValueHandle rootAddr = LlvmApi.BuildAdd(builder, itemsBase, rootBytes, "parq_await_root_addr");
+        LlvmValueHandle rootFlagAddr = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, itemsBase, itemBytes, "parq_await_flags"), rootBytes, "parq_await_root_flag");
 
-        var checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_check");
-        var waitBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_wait");
-        var doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_await_done");
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        // fetch_add(0) = an atomic acquire read pairing with the drain loop's publish increment.
-        LlvmValueHandle flag = EmitAtomicFetchAdd(state, flagAddr, 0, "parq_await_flag");
-        LlvmValueHandle isReady = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, flag, LlvmApi.ConstInt(i64, 0, 0), "parq_await_ready");
-        LlvmApi.BuildCondBr(builder, isReady, doneBlock, waitBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
-        if (IsLinuxFlavor(flavor))
-        {
-            // futex(&flag, FUTEX_WAIT_PRIVATE, 0): re-checks the flag atomically, so a wake racing
-            // the check is never lost.
-            EmitLinuxSyscall6(state, SyscallFutex,
-                flagAddr,
-                LlvmApi.ConstInt(i64, (ulong)FutexWaitPrivate, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                LlvmApi.ConstInt(i64, 0, 0),
-                "parq_await_wait_call");
-        }
-        else
-        {
-            // void-returning import call: the instruction must be unnamed to pass LLVM verification.
-            LlvmTypeHandle sleepType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [state.I32]);
-            EmitWindowsImportCall(state, "__imp_Sleep", sleepType, [LlvmApi.ConstInt(state.I32, 1, 0)], "");
-        }
-
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        LlvmApi.BuildRet(builder, LoadMemory(state, resultAddr, 0, "parq_await_result"));
+        EmitQueueFlagWait(state, rootFlagAddr, "parq_await");
+        LlvmApi.BuildRet(builder, LoadMemory(state, rootAddr, 0, "parq_await_result"));
     }
 
     /// <summary>
@@ -1126,11 +1286,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
 
         LlvmValueHandle count = LoadMemory(state, desc, ParallelQueueCount, "parq_cleanup_n");
+        LlvmValueHandle totalItems = LoadMemory(state, desc, ParallelQueueTotalItems, "parq_cleanup_s");
         LlvmValueHandle workers = LoadMemory(state, desc, ParallelQueueWorkerCount, "parq_cleanup_workers");
         LlvmValueHandle regionBytes = LoadMemory(state, desc, ParallelQueueRegionBytes, "parq_cleanup_size");
+        LlvmValueHandle payloadBytes = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_cleanup_elem_bytes"),
+            LlvmApi.BuildMul(builder, totalItems, LlvmApi.ConstInt(i64, 16, 0), "parq_cleanup_tree_bytes"), "parq_cleanup_payload_bytes");
         LlvmValueHandle recsBase = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_cleanup_payload"),
-            LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 24, 0), "parq_cleanup_payload_bytes"), "parq_cleanup_recs");
+            payloadBytes, "parq_cleanup_recs");
         LlvmValueHandle wSlot = LlvmApi.BuildAlloca(builder, i64, "parq_cleanup_w");
         LlvmApi.BuildStore(builder, zero, wSlot);
 
@@ -1228,18 +1392,18 @@ internal static partial class LlvmCodegen
         return fn;
     }
 
-    private static LlvmValueHandle EmitParallelQueueStart(LlvmCodegenState state, LlvmValueHandle mapperClosure, LlvmValueHandle list)
+    private static LlvmValueHandle EmitParallelQueueStart(LlvmCodegenState state, LlvmValueHandle mapperClosure, LlvmValueHandle combineClosure, LlvmValueHandle list)
     {
         LlvmTypeHandle i64 = state.I64;
-        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64, i64]),
-            GetQueueRuntimeFn(state, ParallelQueueStartFnName), [mapperClosure, list], "parq_start");
+        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64, i64, i64]),
+            GetQueueRuntimeFn(state, ParallelQueueStartFnName), [mapperClosure, combineClosure, list], "parq_start");
     }
 
-    private static LlvmValueHandle EmitParallelQueueAwait(LlvmCodegenState state, LlvmValueHandle desc, LlvmValueHandle index)
+    private static LlvmValueHandle EmitParallelQueueAwait(LlvmCodegenState state, LlvmValueHandle desc)
     {
         LlvmTypeHandle i64 = state.I64;
-        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64, i64]),
-            GetQueueRuntimeFn(state, ParallelQueueAwaitFnName), [desc, index], "parq_await");
+        return LlvmApi.BuildCall2(state.Target.Builder, LlvmApi.FunctionType(i64, [i64]),
+            GetQueueRuntimeFn(state, ParallelQueueAwaitFnName), [desc], "parq_await");
     }
 
     private static bool EmitParallelQueueCleanup(LlvmCodegenState state, LlvmValueHandle desc)

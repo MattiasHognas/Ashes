@@ -445,22 +445,26 @@ public abstract record IrInst
     /// <summary>
     /// Work-conserving parallel reduce (queued lowering of Ashes.Parallel.reduce). Snapshots the
     /// list elements into a shared queue region, spawns up to the worker-cap worker threads that
-    /// pull element indexes from a shared atomic counter and record <c>f(element)</c> per index,
-    /// and yields a pointer to the queue descriptor in <c>DescTarget</c>. When no worker slot can
-    /// be claimed, the caller drains the whole queue inline (a correct sequential fallback). The
-    /// element count is readable at descriptor offset 8. Only emitted at concrete result types the
-    /// caller can deep-copy out of a worker arena (see LowerParallelReduceQueued).
+    /// pull element indexes from a shared atomic counter, record <c>f(element)</c> per index, and
+    /// then merge the results pairwise through <c>combine</c> — adjacent index pairs per round,
+    /// an odd trailing item promoting, until a single root remains. The merge shape depends only
+    /// on the element count and pairs each left operand with the elements preceding its right
+    /// operand, so the result is deterministic under reduce's associative-combine contract no
+    /// matter which worker computes what. <c>DescTarget</c> receives the queue descriptor; the
+    /// element count is readable at descriptor offset 8. When no worker slot can be claimed, the
+    /// caller drains the whole queue — folds and merges — inline (a correct sequential fallback).
+    /// Only emitted at concrete result types the caller can deep-copy out of a worker arena (see
+    /// LowerParallelReduceQueued).
     /// </summary>
-    public sealed record ParallelQueueStart(int DescTarget, int FClosureTemp, int ListTemp) : IrInst;
+    public sealed record ParallelQueueStart(int DescTarget, int FClosureTemp, int CombineClosureTemp, int ListTemp) : IrInst;
 
     /// <summary>
-    /// Waits until the queue result for element index <c>IndexTemp</c> has been published and
-    /// yields its raw result pointer (in the producing worker's arena). The caller deep-copies it
-    /// into its own arena before <see cref="ParallelQueueCleanup"/> frees the worker arenas.
-    /// Awaiting indexes in ascending order lets the caller merge in fixed list order while later
-    /// results are still being computed.
+    /// Waits until the merge tree's root result has been published and yields its raw pointer
+    /// (in some worker's arena, possibly referencing several). The caller deep-copies it into its
+    /// own arena before <see cref="ParallelQueueCleanup"/> frees the worker arenas. Must not be
+    /// emitted for an empty element list (there is no root; the caller branches to the identity).
     /// </summary>
-    public sealed record ParallelQueueAwait(int ResultTarget, int DescTemp, int IndexTemp) : IrInst;
+    public sealed record ParallelQueueAwait(int ResultTarget, int DescTemp) : IrInst;
 
     /// <summary>
     /// Waits for every spawned queue worker to fully exit, then frees the workers' stacks, TCBs,

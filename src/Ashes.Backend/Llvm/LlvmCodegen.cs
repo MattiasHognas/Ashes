@@ -1399,9 +1399,10 @@ internal static partial class LlvmCodegen
                 EmitParallelCleanup(state, LoadTemp(state, parallelCleanup.DescTemp)),
             // Work-conserving parallel reduce (queued Ashes.Parallel.reduce).
             IrInst.ParallelQueueStart parallelQueueStart => StoreTemp(state, parallelQueueStart.DescTarget,
-                EmitParallelQueueStart(state, LoadTemp(state, parallelQueueStart.FClosureTemp), LoadTemp(state, parallelQueueStart.ListTemp))),
+                EmitParallelQueueStart(state, LoadTemp(state, parallelQueueStart.FClosureTemp),
+                    LoadTemp(state, parallelQueueStart.CombineClosureTemp), LoadTemp(state, parallelQueueStart.ListTemp))),
             IrInst.ParallelQueueAwait parallelQueueAwait => StoreTemp(state, parallelQueueAwait.ResultTarget,
-                EmitParallelQueueAwait(state, LoadTemp(state, parallelQueueAwait.DescTemp), LoadTemp(state, parallelQueueAwait.IndexTemp))),
+                EmitParallelQueueAwait(state, LoadTemp(state, parallelQueueAwait.DescTemp))),
             IrInst.ParallelQueueCleanup parallelQueueCleanup =>
                 EmitParallelQueueCleanup(state, LoadTemp(state, parallelQueueCleanup.DescTemp)),
             // AsyncSleep: create a sleep task with a timer deadline.

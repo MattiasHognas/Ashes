@@ -126,7 +126,8 @@ public sealed class LinuxArm64BackendCoverageTests
     {
         // CO-25: the queued Parallel.reduce runtime on arm64 (TPIDR_EL0 worker TLS blocks, ldaxr/stlxr
         // atomics, futex publish/await). The combine is order-sensitive (string join), so the output
-        // proves the fixed list-order merge regardless of which worker computed which element.
+        // proves the fixed list-order merge regardless of which worker computed which element; the
+        // odd element count exercises the pairwise merge tree's promotion rounds.
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
         {
             return;
@@ -140,11 +141,11 @@ public sealed class LinuxArm64BackendCoverageTests
                 then []
                 else lo :: range(lo + 1)(hi)
 
-            let joined = Ashes.Parallel.reduce(fun (a) -> fun (b) -> a + "," + b)("")(fun (x) -> Ashes.Text.fromInt(x * x))(range(0)(8))
+            let joined = Ashes.Parallel.reduce(fun (a) -> fun (b) -> a + "," + b)("")(fun (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
 
             Ashes.IO.print(joined)
             """));
-        result.Stdout.ShouldBe("0,1,4,9,16,25,36,49\n");
+        result.Stdout.ShouldBe("0,1,4,9,16,25,36\n");
     }
 
     [Test]
