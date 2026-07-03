@@ -71,7 +71,27 @@ public abstract record Expr
 
     /// <summary>Record update: <c>{ expr with field1 = e1, field2 = e2 }</c>.</summary>
     public sealed record RecordUpdate(Expr Target, IReadOnlyList<(string Name, Expr Value)> Updates) : Expr;
+
+    /// <summary>
+    /// Explicit effect-operation marker: <c>perform Clock.now(x)</c>. The keyword is optional and
+    /// changes nothing about the program — <see cref="Operation"/> is the operation call itself
+    /// (typically a <see cref="Call"/> rooted at a <see cref="QualifiedVar"/>); the node exists so
+    /// the formatter can preserve the written form.
+    /// </summary>
+    public sealed record Perform(Expr Operation) : Expr;
+
+    /// <summary>
+    /// Handler installation: <c>handle body with | Effect.op(args) -> arm | return(r) -> arm</c>.
+    /// </summary>
+    public sealed record Handle(Expr Body, IReadOnlyList<HandlerArm> Arms) : Expr;
 }
+
+/// <summary>
+/// One arm of a <c>handle ... with</c> expression. An operation arm has a non-null
+/// <see cref="EffectName"/> (<c>| Clock.now(_) -> ...</c>); the <c>return</c> arm has a null
+/// <see cref="EffectName"/> and <see cref="OperationName"/> <c>"return"</c>.
+/// </summary>
+public sealed record HandlerArm(string? EffectName, string OperationName, IReadOnlyList<Pattern> Parameters, Expr Body);
 
 public readonly record struct MatchCase(Pattern Pattern, Expr Body, Expr? Guard = null);
 
@@ -102,6 +122,22 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
     public bool IsRecord { get; init; }
 }
 
+/// <summary>One operation of an <c>effect</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
+public sealed record EffectOperation(string Name, TypeExpr? Signature);
+
+/// <summary>An <c>effect</c> declaration: <c>effect Clock = | now : Unit -> Int</c>.</summary>
+public sealed record EffectDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<EffectOperation> Operations);
+
+/// <summary>A single effect reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
+public sealed record EffectRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
+
+/// <summary>
+/// A written <c>uses</c> row: <c>uses {A, B}</c> (closed), <c>uses {A, B | e}</c> (open), or
+/// <c>uses e</c> (open, no required effects). The row is closed exactly when <see cref="TailVar"/>
+/// is null.
+/// </summary>
+public sealed record UsesRowSyntax(IReadOnlyList<EffectRefSyntax> Effects, string? TailVar);
+
 public abstract record ParsedType
 {
     public sealed record Named(string Name) : ParsedType;
@@ -115,8 +151,12 @@ public abstract record TypeExpr
     public sealed record Named(string Name) : TypeExpr;
     /// <summary>A parameterised type application: <c>List(Int)</c>, <c>Result(Str, Int)</c>.</summary>
     public sealed record Applied(string Name, IReadOnlyList<TypeExpr> Args) : TypeExpr;
-    /// <summary>A function type: <c>Int -> Str</c>.</summary>
-    public sealed record Arrow(TypeExpr From, TypeExpr To) : TypeExpr;
+    /// <summary>A function type: <c>Int -> Str</c>, optionally carrying an effect row: <c>Str -> Int uses {Prices}</c>.</summary>
+    public sealed record Arrow(TypeExpr From, TypeExpr To) : TypeExpr
+    {
+        /// <summary>The written <c>uses</c> row, or null when the arrow carries none (pure).</summary>
+        public UsesRowSyntax? Uses { get; init; }
+    }
     /// <summary>A tuple type: <c>(Int, Str)</c>.</summary>
     public sealed record TupleType(IReadOnlyList<TypeExpr> Elements) : TypeExpr;
     /// <summary>Unit written as an empty tuple: <c>()</c>.</summary>
@@ -146,6 +186,9 @@ public abstract record TopLevelItem
     /// <summary>A top-level <c>extern</c> declaration.</summary>
     public sealed record Extern(ExternDecl Decl) : TopLevelItem;
 
+    /// <summary>A top-level <c>effect</c> declaration.</summary>
+    public sealed record Effect(EffectDecl Decl) : TopLevelItem;
+
     /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
     public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem
     {
@@ -155,6 +198,9 @@ public abstract record TopLevelItem
         /// already the desugared nested-lambda form regardless of this list.
         /// </summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
+
+        /// <summary>Optional user-supplied type annotation: <c>let f : Int -> Int = ...</c>.</summary>
+        public TypeExpr? TypeAnnotation { get; init; }
     }
 
     /// <summary>

@@ -86,8 +86,8 @@ let updateStats existing tenths =
                     else mx
                 in (newMin, newMax, sm + tenths, ct + 1)
 
-let rec streamLoop handle map = 
-    match Ashes.File.readLine(handle) with
+let rec streamLoop fh map = 
+    match Ashes.File.readLine(fh) with
         | None -> map
         | Some(line) -> 
             let bytes = Ashes.Bytes.fromText(line)
@@ -95,10 +95,10 @@ let rec streamLoop handle map =
                 let sep = Ashes.Bytes.indexOf(bytes)(59)(0)
                 in 
                     if sep < 0
-                    then streamLoop(handle)(map)
+                    then streamLoop(fh)(map)
                     else 
                         if Ashes.Bytes.subText(bytes)(0)(1) == "#"
-                        then streamLoop(handle)(map)
+                        then streamLoop(fh)(map)
                         else 
                             let name = Ashes.Bytes.subText(bytes)(0)(sep)
                             in 
@@ -109,8 +109,8 @@ let rec streamLoop handle map =
                                         let tenths = parseTenths(rest)
                                         in 
                                             match Ashes.Map.getStr(name)(map) with
-                                                | None -> streamLoop(handle)(Ashes.Map.setStr(name)((tenths, tenths, tenths, 1))(map))
-                                                | Some(existing) -> streamLoop(handle)(Ashes.Map.setStr(name)(updateStats(existing)(tenths))(map))
+                                                | None -> streamLoop(fh)(Ashes.Map.setStr(name)((tenths, tenths, tenths, 1))(map))
+                                                | Some(existing) -> streamLoop(fh)(Ashes.Map.setStr(name)(updateStats(existing)(tenths))(map))
 
 let collectEntry acc key value = 
     match value with
@@ -123,10 +123,10 @@ let final =
         | path :: _ -> 
             match Ashes.File.open(path) with
                 | Error(_e) -> Ashes.Map.empty
-                | Ok(handle) -> 
-                    let result = streamLoop(handle)(Ashes.Map.empty)
+                | Ok(fh) -> 
+                    let result = streamLoop(fh)(Ashes.Map.empty)
                     in 
-                        let _closed = Ashes.File.close(handle)
+                        let _closed = Ashes.File.close(fh)
                         in result
         | [] -> Ashes.Map.empty
 

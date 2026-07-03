@@ -21,6 +21,10 @@ Current codes:
 | `ASH014` | Reference to a binding not yet declared (forward reference)   |
 | `ASH015` | `and` used without a preceding `let rec`                      |
 | `ASH016` | Conflicting unqualified import selectors for the same name    |
+| `ASH017` | Unhandled effect (residual top-level effect row is non-empty) |
+| `ASH018` | Effect not permitted by a closed `uses` row                   |
+| `ASH019` | Unknown effect or effect operation                            |
+| `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
@@ -59,6 +63,40 @@ and the binding/type import selectors. See
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
+
+## Effect diagnostics
+
+These codes cover the algebraic-effects surface (`effect` declarations, `uses` rows,
+`perform`, `handle ... with`). See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §20 for the
+grammar and typing rules, and [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)
+for the remaining roadmap.
+
+- `ASH017` — **Unhandled effect.** The program's residual effect row at the top level is
+  non-empty after default built-in handlers are applied: some code reachable from the
+  entry expression performs an effect that no enclosing handler discharges. The span
+  points at the first perform-site of the offending effect.
+  Message: `Unhandled effect 'Effect': no enclosing handler discharges it.`
+
+- `ASH018` — **Effect not permitted by a closed row.** A function whose written `uses`
+  row is closed performs an effect (directly or by calling an effectful function) that
+  the row does not include.
+  Message: `Effect 'Effect' is not permitted by the closed row uses {...}.`
+
+- `ASH019` — **Unknown effect or operation.** A qualified reference names a declared
+  effect but an operation it does not declare, a `uses` row mentions an undeclared
+  effect, or `perform` is applied to something that is not an effect operation call.
+  Messages: `Effect 'Effect' has no operation 'op'.`,
+  `Unknown effect 'Effect' in uses row.`,
+  `'perform' must be applied to an effect operation call.`
+
+- `ASH020` — **Invalid handler.** A `handle` expression has a malformed arm (an arm for
+  an unknown effect/operation, a duplicate arm, a duplicate `return` arm, or a missing
+  operation for a handled effect), uses `resume` in an unsupported position (supported:
+  tail position, let value, match scrutinee — exactly once per path), or has an arm path
+  that never resumes (aborting arms need unwinding and are not supported).
+  Messages include: `Handler arm 'Effect.op' does not name a declared effect operation.`,
+  `Duplicate handler arm for 'Effect.op'.`,
+  `Handler for effect 'Effect' must handle operation 'op'.`
 
 ## Record diagnostics
 

@@ -76,7 +76,7 @@ did, pre-rename code would silently reparse — `let rec f = ...` would become a
 `rec` with parameter `f` — and change meaning instead of erroring. Instead the three old spellings
 stay reserved forever and produce a dedicated diagnostic:
 
-- **`ASH017` — renamed keyword.** Message names the replacement, e.g.
+- **`ASH021` — renamed keyword.** Message names the replacement, e.g.
   `'fun' was renamed to 'given'` / `'rec' was renamed to 'recursive'` /
   `'extern' was renamed to 'external'`. Next free code at the time of writing; confirm against
   `docs/DIAGNOSTICS.md` when implementing.
@@ -93,7 +93,7 @@ Formatting is canonical in Ashes, which makes the corpus migration nearly free.
 the entire `.ash` corpus — this auto-migrates every file. All docs and specs switch to the new
 spellings in this stage.
 
-**Stage 2 — cutover.** The old spellings stop being accepted and start producing `ASH017`. This
+**Stage 2 — cutover.** The old spellings stop being accepted and start producing `ASH021`. This
 can land in the same release as Stage 1 (the repo is pre-1.0 and milestone-driven; the dual window
 only needs to be long enough to reformat the world, which is one commit) — but Stage 1 must be a
 separate commit so the corpus rewrite is mechanically reviewable apart from the behavior change.
@@ -105,22 +105,22 @@ purely lexical surface; the AST shapes are untouched and only token spellings mo
 
 1. **`docs/LANGUAGE_SPEC.md`** — rename the keywords in the grammar, the keyword list, and every
    code sample. State the two principles above and the permanent reservation of the old spellings.
-2. **`docs/DIAGNOSTICS.md`** — add the `ASH017` row (renamed keyword, one code for all three, the
+2. **`docs/DIAGNOSTICS.md`** — add the `ASH021` row (renamed keyword, one code for all three, the
    message carries the specific old/new pair).
 3. **Other docs** — `docs/FORMATTER_SPEC.md` (canonical forms), `docs/STANDARD_LIBRARY.md`,
    `docs/TESTING.md`, `docs/PROJECT_SPEC.md`, `README.md`, and the code samples in the planned-work
-   docs (`docs/future/EFFECTS.md` uses `fun` throughout its worked examples;
+   docs (the effects worked examples in `docs/LANGUAGE_SPEC.md` section 20 use `fun`;
    `docs/future/INLINE_MODULES.md` likewise if it shows lambdas).
 4. **`src/Ashes.Frontend/Tokens.cs`** — rename the token kinds to match the surface:
    `TokenKind.Fun` → `TokenKind.Given`, `TokenKind.Rec` → `TokenKind.Recursive`,
    `TokenKind.Extern` → `TokenKind.External`.
 5. **`src/Ashes.Frontend/Lexer.cs`** — in `GetIdentifierTokenKind`: Stage 1 maps both spellings to
    the renamed token kinds (`"given" or "fun" => TokenKind.Given`, ...); Stage 2 maps the old
-   spellings to a form the parser rejects with `ASH017` (a dedicated `RenamedKeyword` token kind
+   spellings to a form the parser rejects with `ASH021` (a dedicated `RenamedKeyword` token kind
    carrying the replacement text is the simplest route — the lexer stays diagnostic-free and the
    parser owns the error, matching the existing split).
 6. **`src/Ashes.Frontend/Parser.cs`** — mechanical: follows the token-kind renames. No error-message
-   text mentions the old spellings today (verified by grep), but re-verify, and add the `ASH017`
+   text mentions the old spellings today (verified by grep), but re-verify, and add the `ASH021`
    emission for the reserved-spelling token. Check `Diagnostics.cs` for the new code constant.
 7. **`src/Ashes.Formatter/Formatter.cs`** — the emission sites: the single `"fun ("` lambda
    rendering, the two `"let rec "` sites (top-level `RecGroup` and nested let-rec), the `"and "`
@@ -131,7 +131,7 @@ purely lexical surface; the AST shapes are untouched and only token spellings mo
 9. **`.ash` corpus** — `fmt -w` over `lib/`, `tests/`, `examples/`, and `challenges/` during
    Stage 1; refresh the shipped per-target copies under `dist/`. Check `tests/*.ash`
    `// expect-compile-error:` substrings for mentions of the old keywords.
-10. **Tests** — lexer unit tests for the new spellings and the reserved-spelling path; `ASH017`
+10. **Tests** — lexer unit tests for the new spellings and the reserved-spelling path; `ASH021`
     end-to-end tests (one per renamed keyword, `// expect-compile-error:` on the rename message);
     formatter round-trip tests updated to the canonical new spellings.
 
@@ -140,12 +140,12 @@ purely lexical surface; the AST shapes are untouched and only token spellings mo
 - After Stage 1: `dotnet run --project src/Ashes.Cli -- fmt <path>` (check mode, no `-w`) over the
   whole corpus reports no pending changes, and the formatted output contains only new spellings.
 - After Stage 2: a grep for `\bfun\b`, `\brec\b`, `\bextern\b` over all `.ash` files in the repo
-  matches only the `ASH017` error fixtures; the three fixtures fail with the rename message;
+  matches only the `ASH021` error fixtures; the three fixtures fail with the rename message;
   `scripts/verify.sh` is green.
 
 ## Open questions
 
-- Whether `ASH017` should carry a machine-applicable fix (the LSP could offer the rewrite as a
+- Whether `ASH021` should carry a machine-applicable fix (the LSP could offer the rewrite as a
   code action) or the message alone is enough given `fmt -w` handles migration in bulk.
 - Whether the effects surface should land before or after this rename — if before, the effects
   worked examples are written with `fun` and migrate with the corpus; if after, they are written

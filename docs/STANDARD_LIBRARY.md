@@ -47,17 +47,17 @@ These types are always available without imports:
 - `exists(path)` returning `Result(Str, Bool)`
 - `open(path)` returning `Result(Str, FileHandle)` — open a file for reading; the handle is a
   resource type, automatically closed when it goes out of scope.
-- `readChunk(handle)(maxBytes)` returning `Result(Str, Str)` — read up to `maxBytes` bytes;
+- `readChunk(fh)(maxBytes)` returning `Result(Str, Str)` — read up to `maxBytes` bytes;
   returns `Ok("")` at end of file. Lets a large file be streamed without loading it whole (cf.
   `readText`, which allocates the entire file at once).
-- `readLine(handle)` returning `Maybe(Str)` — read one line (the trailing `\n`, and a preceding
+- `readLine(fh)` returning `Maybe(Str)` — read one line (the trailing `\n`, and a preceding
   `\r`, are stripped) through a refillable module-global buffer; returns `None` at end of file. Unlike
   `readChunk` it threads no buffer state through the caller, so a whole-file fold can be a **single**
   loop carrying only its accumulator — which is what keeps such a fold constant-memory (a per-chunk
   re-entry structure re-copies a reuse accumulator each chunk). The buffer is guarded by the handle it
   holds: calling `readLine` on a different handle resets it (any read-ahead for the previous handle is
   discarded), so it is for reading one file to completion, not interleaving line-reads across handles.
-- `close(handle)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
+- `close(fh)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
 
 ### `Ashes.Bytes`
 

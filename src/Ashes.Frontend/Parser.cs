@@ -62,7 +62,7 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.Extern or TokenKind.Let)
+        while (_current.Kind is TokenKind.Type or TokenKind.Extern or TokenKind.Let or TokenKind.Effect)
         {
             if (_current.Kind == TokenKind.Type)
             {
@@ -73,6 +73,12 @@ public sealed class Parser
             if (_current.Kind == TokenKind.Extern)
             {
                 items.Add(new TopLevelItem.Extern(ParseExternDecl()));
+                continue;
+            }
+
+            if (_current.Kind == TokenKind.Effect)
+            {
+                items.Add(new TopLevelItem.Effect(ParseEffectDecl()));
                 continue;
             }
 
@@ -117,7 +123,11 @@ public sealed class Parser
             }
 
             // A flat top-level binding, terminated by EOF or the next declaration.
-            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive) { SugarParams = header.SugarParams });
+            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
+            {
+                SugarParams = header.SugarParams,
+                TypeAnnotation = header.TypeAnnotation
+            });
         }
 
         // The trailing expression is optional once the file has declarations: a file may end after
@@ -372,20 +382,157 @@ public sealed class Parser
     }
 
     /// <summary>
+    /// Parses an <c>effect</c> declaration:
+    /// <c>effect Name [(a, b)] = | op [: TypeExpr] | op2 ...</c>.
+    /// </summary>
+    private EffectDecl ParseEffectDecl()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Effect);
+        var name = Consume(TokenKind.Ident).Text;
+        var typeParameters = new List<TypeParameter>();
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind != TokenKind.RParen)
+            {
+                typeParameters.Add(new TypeParameter(Consume(TokenKind.Ident).Text));
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    typeParameters.Add(new TypeParameter(Consume(TokenKind.Ident).Text));
+                }
+            }
+
+            Consume(TokenKind.RParen);
+        }
+
+        Consume(TokenKind.Equals);
+
+        var operations = new List<EffectOperation>();
+        while (_current.Kind == TokenKind.Pipe)
+        {
+            Consume(TokenKind.Pipe);
+            var opName = Consume(TokenKind.Ident).Text;
+            TypeExpr? signature = null;
+            if (_current.Kind == TokenKind.Colon)
+            {
+                Consume(TokenKind.Colon);
+                signature = ParseTypeExpr();
+            }
+
+            operations.Add(new EffectOperation(opName, signature));
+        }
+
+        if (operations.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Effect '{name}' must declare at least one operation.");
+        }
+
+        var decl = new EffectDecl(name, typeParameters, operations);
+        AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
+        return decl;
+    }
+
+    /// <summary>
     /// Parses a full type expression: <c>Int</c>, <c>Int -> Str</c>, <c>List(Int)</c>,
-    /// <c>(Int, Str)</c>, <c>()</c> (Unit).
+    /// <c>(Int, Str)</c>, <c>()</c> (Unit), and effect rows: <c>Str -> Int uses {Prices}</c>.
     /// </summary>
     private TypeExpr ParseTypeExpr()
+    {
+        var (type, pendingUses) = ParseTypeExprWithUses();
+        if (pendingUses is not null)
+        {
+            // A `uses` row can only attach to a function arrow; e.g. `let x : Int uses {E}`.
+            _diag.Error(CurrentErrorSpan(), "'uses' requires a function type to attach to.", DiagnosticCodes.ParseError);
+        }
+
+        return type;
+    }
+
+    /// <summary>
+    /// Parses a type expression, returning a trailing <c>uses</c> row separately when the row
+    /// follows a non-arrow type. The row attaches to the innermost arrow whose result it follows
+    /// (<c>A -> B -> C uses {E}</c> is <c>A -> (B -> C uses {E})</c>), so a row parsed after a
+    /// non-arrow result bubbles up exactly one level to the arrow that encloses it.
+    /// </summary>
+    private (TypeExpr Type, UsesRowSyntax? PendingUses) ParseTypeExprWithUses()
     {
         var atom = ParseTypeExprPrimary();
         if (_current.Kind == TokenKind.Arrow)
         {
             Consume(TokenKind.Arrow);
-            var returnType = ParseTypeExpr();
-            return new TypeExpr.Arrow(atom, returnType);
+            var (returnType, pendingUses) = ParseTypeExprWithUses();
+            return (new TypeExpr.Arrow(atom, returnType) { Uses = pendingUses }, null);
         }
 
-        return atom;
+        if (_current.Kind == TokenKind.Uses)
+        {
+            return (atom, ParseUsesRow());
+        }
+
+        return (atom, null);
+    }
+
+    /// <summary>
+    /// Parses a <c>uses</c> row: <c>uses {A, B}</c>, <c>uses {A, B | e}</c>, <c>uses {State(Int)}</c>,
+    /// or the bare row variable form <c>uses e</c>.
+    /// </summary>
+    private UsesRowSyntax ParseUsesRow()
+    {
+        Consume(TokenKind.Uses);
+
+        // Bare row variable: `uses e`.
+        if (_current.Kind == TokenKind.Ident)
+        {
+            return new UsesRowSyntax([], Consume(TokenKind.Ident).Text);
+        }
+
+        Consume(TokenKind.LBrace);
+        var effects = new List<EffectRefSyntax>();
+        string? tailVar = null;
+        if (_current.Kind != TokenKind.RBrace)
+        {
+            effects.Add(ParseEffectRef());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                effects.Add(ParseEffectRef());
+            }
+
+            if (_current.Kind == TokenKind.Pipe)
+            {
+                Consume(TokenKind.Pipe);
+                tailVar = Consume(TokenKind.Ident).Text;
+            }
+        }
+
+        Consume(TokenKind.RBrace);
+        return new UsesRowSyntax(effects, tailVar);
+    }
+
+    /// <summary>Parses one effect reference in a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
+    private EffectRefSyntax ParseEffectRef()
+    {
+        var name = Consume(TokenKind.Ident).Text;
+        var args = new List<TypeExpr>();
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind != TokenKind.RParen)
+            {
+                args.Add(ParseTypeExpr());
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    args.Add(ParseTypeExpr());
+                }
+            }
+
+            Consume(TokenKind.RParen);
+        }
+
+        return new EffectRefSyntax(name, args);
     }
 
     private TypeExpr ParseTypeExprPrimary()
@@ -439,6 +586,11 @@ public sealed class Parser
 
     private Expr ParseMatch()
     {
+        if (_current.Kind == TokenKind.Handle)
+        {
+            return ParseHandle();
+        }
+
         if (_current.Kind != TokenKind.Match)
         {
             return ParseIf();
@@ -505,6 +657,82 @@ public sealed class Parser
         {
             _matchCasePipeSuppressionDepth--;
         }
+    }
+
+    /// <summary>
+    /// Parses <c>handle body with | Effect.op(args) -> arm | return(r) -> arm</c>. The body is
+    /// parsed like a match scrutinee (the trailing <c>with</c> belongs to the handle), and arms
+    /// follow the same pipe/column rules as match cases.
+    /// </summary>
+    private Expr ParseHandle()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Handle);
+        _withSuppressionDepth++;
+        Expr body;
+        try
+        {
+            body = ParseExpressionCore();
+        }
+        finally
+        {
+            _withSuppressionDepth--;
+        }
+
+        Consume(TokenKind.With);
+
+        var arms = new List<HandlerArm>();
+        int firstPipeColumn = _current.Kind == TokenKind.Pipe ? GetColumn(_current.Position) : -1;
+        if (_current.Kind == TokenKind.Pipe)
+        {
+            Consume(TokenKind.Pipe);
+        }
+
+        arms.Add(ParseHandlerArm());
+        while (_current.Kind == TokenKind.Pipe && (firstPipeColumn < 0 || GetColumn(_current.Position) >= firstPipeColumn))
+        {
+            Consume(TokenKind.Pipe);
+            arms.Add(ParseHandlerArm());
+        }
+
+        return RegisterExpr(new Expr.Handle(body, arms), start, LastConsumedEnd);
+    }
+
+    /// <summary>
+    /// Parses one handler arm: <c>Effect.op(p1, p2) -> body</c> or <c>return(r) -> body</c>.
+    /// </summary>
+    private HandlerArm ParseHandlerArm()
+    {
+        var head = Consume(TokenKind.Ident);
+        string? effectName = null;
+        var operationName = head.Text;
+        if (_current.Kind == TokenKind.Dot)
+        {
+            Consume(TokenKind.Dot);
+            effectName = head.Text;
+            operationName = Consume(TokenKind.Ident).Text;
+        }
+        else if (!string.Equals(head.Text, "return", StringComparison.Ordinal))
+        {
+            _diag.Error(head.Span, "Handler arm must be 'Effect.op(args)' or 'return(value)'.", DiagnosticCodes.ParseError);
+        }
+
+        var parameters = new List<Pattern>();
+        Consume(TokenKind.LParen);
+        if (_current.Kind != TokenKind.RParen)
+        {
+            parameters.Add(ParsePattern());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                parameters.Add(ParsePattern());
+            }
+        }
+
+        Consume(TokenKind.RParen);
+        Consume(TokenKind.Arrow);
+        var body = ParseMatchCaseBody();
+        return new HandlerArm(effectName, operationName, parameters, body);
     }
 
     private Expr ParseIf()
@@ -1071,6 +1299,14 @@ public sealed class Parser
             Consume(TokenKind.Await);
             var operand = ParseCall();
             return RegisterExpr(new Expr.Await(operand), start, AstSpans.GetOrDefault(operand).End);
+        }
+
+        if (_current.Kind == TokenKind.Perform)
+        {
+            var start = _current.Position;
+            Consume(TokenKind.Perform);
+            var operation = ParseCall();
+            return RegisterExpr(new Expr.Perform(operation), start, AstSpans.GetOrDefault(operation).End);
         }
 
         return ParseCall();

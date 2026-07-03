@@ -21,8 +21,30 @@ public abstract record TypeRef
     public sealed record TNever : TypeRef;
     public sealed record TList(TypeRef Element) : TypeRef;
     public sealed record TTuple(IReadOnlyList<TypeRef> Elements) : TypeRef;
-    public sealed record TFun(TypeRef Arg, TypeRef Ret) : TypeRef;
+    public sealed record TFun(TypeRef Arg, TypeRef Ret) : TypeRef
+    {
+        /// <summary>
+        /// The arrow's effect row: a <see cref="TRow"/> (or a <see cref="TVar"/> row variable), or
+        /// null for the pure closed empty row. Kept as an init-only property so the ubiquitous
+        /// two-argument construction stays pure by default.
+        /// </summary>
+        public TypeRef? Row { get; init; }
+    }
+
     public sealed record TVar(int Id) : TypeRef;
+
+    /// <summary>
+    /// One effect instance inside a row: the declared effect plus its type arguments
+    /// (e.g. <c>Clock</c> or <c>State(Int)</c>). Only ever appears inside <see cref="TRow"/>.
+    /// </summary>
+    public sealed record TEffect(EffectSymbol Symbol, IReadOnlyList<TypeRef> Args) : TypeRef;
+
+    /// <summary>
+    /// An effect row: a set of effects plus a tail. <see cref="Tail"/> is a <see cref="TVar"/>
+    /// row variable (open row), another <see cref="TRow"/> produced by substitution (flattened on
+    /// normalization), or null (closed row).
+    /// </summary>
+    public sealed record TRow(IReadOnlyList<TEffect> Effects, TypeRef? Tail) : TypeRef;
     public sealed record TNamedType(TypeSymbol Symbol, IReadOnlyList<TypeRef> TypeArgs) : TypeRef;
     public sealed record TTypeParam(TypeParameterSymbol Symbol) : TypeRef;
     public sealed record TOpaque(string Name) : TypeRef;
@@ -576,6 +598,16 @@ public abstract record IrInst
 
     public sealed record PanicStr(int Source) : IrInst;
 
+    /// <summary>
+    /// Loads the current handler frame pointer for the effect with compile-time index
+    /// <see cref="EffectIndex"/> from its module global (dynamically-scoped handler evidence).
+    /// 0 means no handler is installed.
+    /// </summary>
+    public sealed record LoadEffectHandler(int Target, int EffectIndex) : IrInst;
+
+    /// <summary>Stores a handler frame pointer into the effect's module global.</summary>
+    public sealed record StoreEffectHandler(int EffectIndex, int Source) : IrInst;
+
     public sealed record Label(string Name) : IrInst;
     public sealed record Jump(string Target) : IrInst;
     public sealed record JumpIfFalse(int CondTemp, string Target) : IrInst;
@@ -715,6 +747,13 @@ public sealed record IrProgram(
     bool UsesAsync
 )
 {
+    /// <summary>
+    /// Number of declared effects. The backend materializes one module global per effect — the
+    /// dynamically-scoped handler-evidence slot holding a pointer to the innermost installed
+    /// handler frame for that effect (0 when none).
+    /// </summary>
+    public int EffectHandlerGlobals { get; init; }
+
     public IrProgram(
         IrFunction EntryFunction,
         List<IrFunction> Functions,

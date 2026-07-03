@@ -147,6 +147,39 @@ in
         | Error(_) -> 0)
 ```
 
+### Effects & Handlers
+
+Business code declares the operations it needs; the caller decides what they
+mean by installing a handler — dependency injection with no framework, checked
+at compile time (an unhandled effect is a compile error, not a runtime crash):
+
+```ash
+effect Clock =
+    | now : Unit -> Int
+
+effect Log =
+    | log : Str -> Unit
+
+let stamped msg = 
+    let _ = Log.log(msg)
+    in Clock.now(Unit)
+
+let result = 
+    handle stamped("checkout") with
+        | Clock.now(_) -> resume(1720000000)
+        | Log.log(m) -> 
+            let _ = Ashes.IO.writeLine("[log] " + m)
+            in resume(Unit)
+        | return(r) -> r
+
+Ashes.IO.print(result)
+```
+
+Swap the handler and the same `stamped` runs against a real clock in
+production or a frozen one in tests. Effect rows are inferred and appear in
+types as `uses {Clock, Log}`; see
+[LANGUAGE_SPEC.md](docs/LANGUAGE_SPEC.md) section 20.
+
 ### Polymorphism
 
 Hindley-Milner let-polymorphism - use the same function at different types:
@@ -437,11 +470,11 @@ sequentially evaluated, so these effects happen in a well-defined order, and the
 purity contract is specifically about values: no function mutates an existing
 binding or value in place. Networking and TLS additionally return `Task(E, A)`
 and are consumed via `await`. A general algebraic-effects system (handlers for
-`Clock`, `Random`, `FileSystem`, and the like) is designed but not yet
-implemented.
+`Clock`, `Random`, `FileSystem`, and the like) has landed, with tail-resumptive
+and one-shot resumptive handlers.
 *Details: [`Ashes.IO`](docs/STANDARD_LIBRARY.md#ashesio) and the built-in
-modules in the standard library; the planned
-[effects system](docs/future/EFFECTS.md).*
+modules in the standard library; the
+[effects system](docs/LANGUAGE_SPEC.md#20-algebraic-effects-and-handlers).*
 
 **Why not just use Rust?**
 Aside from the obious fact that Rust is a mature and strong programming language 

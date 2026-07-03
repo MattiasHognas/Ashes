@@ -533,6 +533,16 @@ internal static partial class LlvmCodegen
                 }
             }
         }
+        // Dynamically-scoped handler-evidence slots: one module global per declared effect, holding
+        // the innermost installed handler frame pointer (0 = none). Plain globals on every flavor —
+        // effects interacting with structured parallelism is out of scope for the current stage.
+        for (int effectIndex = 0; effectIndex < program.EffectHandlerGlobals; effectIndex++)
+        {
+            LlvmValueHandle effectGlobal = LlvmApi.AddGlobal(target.Module, i64, $"__ashes_effect_handler_{effectIndex}");
+            LlvmApi.SetLinkage(effectGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(effectGlobal, LlvmApi.ConstInt(i64, 0, 0));
+        }
+
         if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
@@ -1440,6 +1450,11 @@ internal static partial class LlvmCodegen
             // The actual save/restore is done by StoreMemOffset/LoadMemOffset around them.
             IrInst.Suspend => false,
             IrInst.Resume => false,
+            // Effects: dynamically-scoped handler evidence in per-effect module globals.
+            IrInst.LoadEffectHandler loadEffectHandler => StoreTemp(state, loadEffectHandler.Target,
+                LlvmApi.BuildLoad2(builder, state.I64, GetEffectHandlerGlobal(state, loadEffectHandler.EffectIndex), $"load_effect_{loadEffectHandler.EffectIndex}")),
+            IrInst.StoreEffectHandler storeEffectHandler =>
+                StoreEffectHandlerGlobal(state, storeEffectHandler.EffectIndex, LoadTemp(state, storeEffectHandler.Source)),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -1524,6 +1539,17 @@ internal static partial class LlvmCodegen
             IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
             _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
         };
+    }
+
+    private static LlvmValueHandle GetEffectHandlerGlobal(LlvmCodegenState state, int effectIndex)
+    {
+        return LlvmApi.GetNamedGlobal(state.Target.Module, $"__ashes_effect_handler_{effectIndex}");
+    }
+
+    private static bool StoreEffectHandlerGlobal(LlvmCodegenState state, int effectIndex, LlvmValueHandle value)
+    {
+        LlvmApi.BuildStore(state.Target.Builder, value, GetEffectHandlerGlobal(state, effectIndex));
+        return false;
     }
 
     private static bool StoreTemp(LlvmCodegenState state, int target, LlvmValueHandle value)

@@ -1413,6 +1413,23 @@ public static class ProjectSupport
                         break;
                     }
 
+                case TopLevelItem.Effect effectItem:
+                    {
+                        // Effect declarations hoist exactly like type declarations: they are
+                        // program-wide (operations resolve as qualified Effect.op from any module)
+                        // and carry no value binding.
+                        var span = AstSpans.GetOrDefault(effectItem.Decl);
+                        if (span.End <= span.Start || span.End > source.Length)
+                        {
+                            return false;
+                        }
+
+                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
+                        hoistedSpans.Add((span.Start, span.End));
+                        cursor = span.End;
+                        break;
+                    }
+
                 case TopLevelItem.Extern externItem:
                     {
                         // `extern` is never exported and carries no value the stitcher needs; skip it.
@@ -2158,6 +2175,14 @@ public static class ProjectSupport
                     Visit(ru.Target);
                     foreach (var update in ru.Updates)
                         Visit(update.Value);
+                    break;
+                case Expr.Perform perform:
+                    Visit(perform.Operation);
+                    break;
+                case Expr.Handle handleExpr:
+                    Visit(handleExpr.Body);
+                    foreach (var arm in handleExpr.Arms)
+                        Visit(arm.Body);
                     break;
                 default:
                     throw new NotSupportedException(expr.GetType().Name);

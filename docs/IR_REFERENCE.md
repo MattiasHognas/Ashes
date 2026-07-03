@@ -24,6 +24,7 @@ The root container for a compiled Ashes program:
 | `UsesConcatStr` | `bool` | Whether `ConcatStr` is used |
 | `UsesClosures` | `bool` | Whether closures are created |
 | `UsesAsync` | `bool` | Whether async/await is used |
+| `EffectHandlerGlobals` | `int` | Number of declared effects (one handler-evidence global each) |
 
 The `Uses*` flags allow the backend to omit unused runtime helpers.
 
@@ -252,6 +253,18 @@ These instructions return the existing `Maybe` and `Result` ADTs.
 | `Jump` | `Target` | Unconditional jump to label |
 | `JumpIfFalse` | `CondTemp`, `Target` | Jump to label if `CondTemp == 0` |
 | `Return` | `Source` | Return value from function |
+
+### Effects
+
+Handler evidence for algebraic effects: one module global per declared effect
+(`__ashes_effect_handler_<i>`, created when `IrProgram.EffectHandlerGlobals > 0`) holds a pointer
+to the innermost installed handler frame for that effect, 0 when none. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the frame layout and perform/handle sequences.
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `LoadEffectHandler` | `Target`, `EffectIndex` | Load the effect's current handler frame pointer |
+| `StoreEffectHandler` | `EffectIndex`, `Source` | Store a handler frame pointer into the effect's global |
 
 ### Async / Task
 

@@ -24,6 +24,30 @@ public sealed partial class Lowering
             case TypeRef.TFun f:
                 FtvType(f.Arg, result);
                 FtvType(f.Ret, result);
+                if (f.Row is not null)
+                {
+                    FtvType(f.Row, result);
+                }
+
+                break;
+            case TypeRef.TRow row:
+                foreach (var effect in row.Effects)
+                {
+                    FtvType(effect, result);
+                }
+
+                if (row.Tail is not null)
+                {
+                    FtvType(row.Tail, result);
+                }
+
+                break;
+            case TypeRef.TEffect effect:
+                foreach (var arg in effect.Args)
+                {
+                    FtvType(arg, result);
+                }
+
                 break;
             case TypeRef.TPtr p:
                 FtvType(p.Pointee, result);
@@ -50,6 +74,14 @@ public sealed partial class Lowering
     // Collect the IDs of all free (non-quantified) type variables across all bindings in the current scope.
     private void FtvEnv(HashSet<int> result)
     {
+        // The ambient effect row is part of the environment: a row variable unified with it must
+        // stay monomorphic (generalizing it would detach the binding from the effects its context
+        // actually performs — the row analog of the value restriction).
+        if (_ambientRow is not null)
+        {
+            FtvType(_ambientRow, result);
+        }
+
         foreach (var binding in _scopes.Peek().Values)
         {
             if (binding is Binding.Scheme s)
@@ -165,7 +197,14 @@ public sealed partial class Lowering
         return t switch
         {
             TypeRef.TVar v => subst.TryGetValue(v.Id, out var r) ? r : t,
-            TypeRef.TFun f => new TypeRef.TFun(ApplyInstSubst(f.Arg, subst), ApplyInstSubst(f.Ret, subst)),
+            TypeRef.TFun f => new TypeRef.TFun(ApplyInstSubst(f.Arg, subst), ApplyInstSubst(f.Ret, subst))
+            {
+                Row = f.Row is null ? null : ApplyInstSubst(f.Row, subst)
+            },
+            TypeRef.TRow row => new TypeRef.TRow(
+                row.Effects.Select(e => (TypeRef.TEffect)ApplyInstSubst(e, subst)).ToList(),
+                row.Tail is null ? null : ApplyInstSubst(row.Tail, subst)),
+            TypeRef.TEffect effect => new TypeRef.TEffect(effect.Symbol, effect.Args.Select(a => ApplyInstSubst(a, subst)).ToList()),
             TypeRef.TPtr p => new TypeRef.TPtr(ApplyInstSubst(p.Pointee, subst)),
             TypeRef.TList l => new TypeRef.TList(ApplyInstSubst(l.Element, subst)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(e => ApplyInstSubst(e, subst)).ToList()),
@@ -227,7 +266,23 @@ public sealed partial class Lowering
         {
             Unify(fa.Arg, fb.Arg);
             Unify(fa.Ret, fb.Ret);
+            if (fa.Row is not null || fb.Row is not null)
+            {
+                UnifyRows(fa.Row, fb.Row);
+            }
+
             return;
+        }
+
+        if (a is TypeRef.TRow || b is TypeRef.TRow)
+        {
+            if (a is TypeRef.TRow && b is TypeRef.TRow)
+            {
+                UnifyRows(a, b);
+                return;
+            }
+
+            // A row meeting a non-row is ill-kinded; fall through to the base mismatch report.
         }
 
         if (a is TypeRef.TPtr pa && b is TypeRef.TPtr pb)
@@ -293,7 +348,9 @@ public sealed partial class Lowering
         return t switch
         {
             TypeRef.TVar v => v.Id == id,
-            TypeRef.TFun f => Occurs(id, f.Arg) || Occurs(id, f.Ret),
+            TypeRef.TFun f => Occurs(id, f.Arg) || Occurs(id, f.Ret) || (f.Row is not null && Occurs(id, f.Row)),
+            TypeRef.TRow row => row.Effects.Any(e => Occurs(id, e)) || (row.Tail is not null && Occurs(id, row.Tail)),
+            TypeRef.TEffect effect => effect.Args.Any(arg => Occurs(id, arg)),
             TypeRef.TPtr p => Occurs(id, p.Pointee),
             TypeRef.TList l => Occurs(id, l.Element),
             TypeRef.TTuple tuple => tuple.Elements.Any(e => Occurs(id, e)),
@@ -332,9 +389,11 @@ public sealed partial class Lowering
             TypeRef.TTuple tuple => ($"({string.Join(", ", tuple.Elements.Select(e => Pretty(e, typeVarNames, parentPrecedence: 0)))})", precAtom),
             TypeRef.TVar v => (GetTypeVarName(v.Id, typeVarNames), precAtom),
             TypeRef.TFun f => (
-                $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}",
+                $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}{PrettyRowSuffix(f.Row, typeVarNames)}",
                 precArrow
             ),
+            TypeRef.TRow row => (PrettyRow(row, typeVarNames), precAtom),
+            TypeRef.TEffect effect => (PrettyEffect(effect), precAtom),
             TypeRef.TPtr p => ($"*{Pretty(p.Pointee, typeVarNames, parentPrecedence: precAtom)}", precAtom),
             TypeRef.TNamedType n => n.TypeArgs.Count == 0
                 ? (n.Symbol.Name, precAtom)
@@ -345,6 +404,42 @@ public sealed partial class Lowering
         };
 
         return precedence < parentPrecedence ? $"({rendered})" : rendered;
+    }
+
+    /// <summary>
+    /// Renders an arrow's effect-row suffix. Rows with no concrete effect (pure, or a bare row
+    /// variable) render as nothing, keeping ordinary function types unchanged in diagnostics.
+    /// </summary>
+    private string PrettyRowSuffix(TypeRef? row, Dictionary<int, string> typeVarNames)
+    {
+        if (row is null)
+        {
+            return "";
+        }
+
+        var (effects, tail) = NormalizeRow(row);
+        if (effects.Count == 0)
+        {
+            return "";
+        }
+
+        return " " + PrettyRow(new TypeRef.TRow(effects, tail), typeVarNames, includeUsesKeyword: true);
+    }
+
+    private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeUsesKeyword = false)
+    {
+        var (effects, tail) = NormalizeRow(row);
+        var items = string.Join(
+            ", ",
+            effects
+                .Select(e => e.Args.Count == 0
+                    ? e.Symbol.Name
+                    : $"{e.Symbol.Name}({string.Join(", ", e.Args.Select(a => Pretty(a, typeVarNames, parentPrecedence: 0)))})")
+                .OrderBy(n => n, StringComparer.Ordinal));
+        var rendered = tail is null
+            ? $"{{{items}}}"
+            : $"{{{items} | {GetTypeVarName(tail.Id, typeVarNames)}}}";
+        return includeUsesKeyword ? $"uses {rendered}" : rendered;
     }
 
     private void RecordExprHoverType(Expr expr, TypeRef type)

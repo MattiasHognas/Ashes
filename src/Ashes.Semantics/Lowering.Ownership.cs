@@ -535,15 +535,30 @@ public sealed partial class Lowering
 
             if (CanArenaReset(resultType))
             {
-                // Copy-type result: arena reset is always safe. No heap values escape.
+                // Copy-type result: arena reset is always safe — unless a one-shot post pushed
+                // during this scope still lives in its allocations.
+                var scopeResetSkipLabel = BeginLivePostsGuard();
                 Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
                 Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+                EndLivePostsGuard(scopeResetSkipLabel);
             }
             else if (hadAliveOwned && resultTemp >= 0)
             {
                 var copyOutKind = GetCopyOutKind(resultType, out int staticSizeBytes);
                 if (copyOutKind != CopyOutKind.None)
                 {
+                    // With effects in the program the copy-out is conditional on no post being
+                    // pending; the result routes through a local so the skipped path keeps the
+                    // original pointer.
+                    int guardResultSlot = -1;
+                    string? copySkipLabel = null;
+                    if (EffectGlobalCount > 0)
+                    {
+                        guardResultSlot = NewLocal();
+                        Emit(new IrInst.StoreLocal(guardResultSlot, resultTemp));
+                        copySkipLabel = BeginLivePostsGuard();
+                    }
+
                     Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
                     int copyDest = NewTemp();
                     switch (copyOutKind)
@@ -560,6 +575,15 @@ public sealed partial class Lowering
                     }
                     Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
                     _ownershipScopes.Pop();
+                    if (guardResultSlot >= 0)
+                    {
+                        Emit(new IrInst.StoreLocal(guardResultSlot, copyDest));
+                        EndLivePostsGuard(copySkipLabel);
+                        int guardedResultTemp = NewTemp();
+                        Emit(new IrInst.LoadLocal(guardedResultTemp, guardResultSlot));
+                        return guardedResultTemp;
+                    }
+
                     return copyDest;
                 }
             }
