@@ -488,8 +488,8 @@ public static class IrOptimizer
             IrInst.ParallelFork pf => pf with { RightClosureTemp = R(pf.RightClosureTemp) },
             IrInst.ParallelJoin pj => pj with { DescTemp = R(pj.DescTemp) },
             IrInst.ParallelCleanup pc => pc with { DescTemp = R(pc.DescTemp) },
-            IrInst.ParallelQueueStart qs => qs with { FClosureTemp = R(qs.FClosureTemp), ListTemp = R(qs.ListTemp) },
-            IrInst.ParallelQueueAwait qa => qa with { DescTemp = R(qa.DescTemp), IndexTemp = R(qa.IndexTemp) },
+            IrInst.ParallelQueueStart qs => qs with { FClosureTemp = R(qs.FClosureTemp), CombineClosureTemp = R(qs.CombineClosureTemp), ListTemp = R(qs.ListTemp) },
+            IrInst.ParallelQueueAwait qa => qa with { DescTemp = R(qa.DescTemp) },
             IrInst.ParallelQueueCleanup qc => qc with { DescTemp = R(qc.DescTemp) },
             IrInst.AsyncSleep sl => sl with { MillisecondsTemp = R(sl.MillisecondsTemp) },
             IrInst.CreateTcpConnectTask t => t with { HostTemp = R(t.HostTemp), PortTemp = R(t.PortTemp) },
@@ -1399,8 +1399,8 @@ public static class IrOptimizer
             case IrInst.ParallelFork pf: usedTemps.Add(pf.RightClosureTemp); break;
             case IrInst.ParallelJoin pj: usedTemps.Add(pj.DescTemp); break;
             case IrInst.ParallelCleanup pc: usedTemps.Add(pc.DescTemp); break;
-            case IrInst.ParallelQueueStart qs: usedTemps.Add(qs.FClosureTemp); usedTemps.Add(qs.ListTemp); break;
-            case IrInst.ParallelQueueAwait qa: usedTemps.Add(qa.DescTemp); usedTemps.Add(qa.IndexTemp); break;
+            case IrInst.ParallelQueueStart qs: usedTemps.Add(qs.FClosureTemp); usedTemps.Add(qs.CombineClosureTemp); usedTemps.Add(qs.ListTemp); break;
+            case IrInst.ParallelQueueAwait qa: usedTemps.Add(qa.DescTemp); break;
             case IrInst.ParallelQueueCleanup qc: usedTemps.Add(qc.DescTemp); break;
             case IrInst.AsyncSleep sl: usedTemps.Add(sl.MillisecondsTemp); break;
             case IrInst.CreateTcpConnectTask t: usedTemps.Add(t.HostTemp); usedTemps.Add(t.PortTemp); break;
