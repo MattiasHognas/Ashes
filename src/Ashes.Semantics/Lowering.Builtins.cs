@@ -583,6 +583,55 @@ public sealed partial class Lowering
         return (target, new TypeRef.TStr());
     }
 
+    private (int, TypeRef) LowerTextFormatFloat(Expr valueArg, Expr decimalsArg)
+    {
+        using var valueDiagnosticSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        var prunedValueType = Prune(valueType);
+
+        if (prunedValueType is TypeRef.TNever)
+        {
+            return (valueTemp, prunedValueType);
+        }
+
+        if (prunedValueType is TypeRef.TVar)
+        {
+            Unify(prunedValueType, new TypeRef.TFloat());
+            prunedValueType = new TypeRef.TFloat();
+        }
+
+        if (prunedValueType is not TypeRef.TFloat)
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Text.formatFloat() expects Float but got {Pretty(prunedValueType)}.");
+            return (valueTemp, prunedValueType);
+        }
+
+        using var decimalsDiagnosticSpan = PushDiagnosticSpan(decimalsArg);
+        var (decimalsTemp, decimalsType) = LowerExpr(decimalsArg);
+        var prunedDecimalsType = Prune(decimalsType);
+
+        if (prunedDecimalsType is TypeRef.TNever)
+        {
+            return (decimalsTemp, prunedDecimalsType);
+        }
+
+        if (prunedDecimalsType is TypeRef.TVar)
+        {
+            Unify(prunedDecimalsType, new TypeRef.TInt());
+            prunedDecimalsType = new TypeRef.TInt();
+        }
+
+        if (prunedDecimalsType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(decimalsArg), $"Ashes.Text.formatFloat() expects Int for the decimals argument but got {Pretty(prunedDecimalsType)}.");
+            return (decimalsTemp, prunedDecimalsType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp));
+        return (target, new TypeRef.TStr());
+    }
+
     private (int, TypeRef) LowerTextToHex(Expr valueArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
@@ -797,6 +846,7 @@ public sealed partial class Lowering
         IntrinsicKind.BytesSubView => 3,
         IntrinsicKind.BytesAppend => 2,
         IntrinsicKind.BytesAppendByte => 2,
+        IntrinsicKind.TextFormatFloat => 2,
         IntrinsicKind.BytesGetU16Le => 2,
         IntrinsicKind.BytesGetU32Le => 2,
         IntrinsicKind.BytesGetU64Le => 2,
@@ -1652,6 +1702,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.TextFromFloat,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TStr()))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextFormatFloatBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.TextFormatFloat,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr())))
         );
     }
 

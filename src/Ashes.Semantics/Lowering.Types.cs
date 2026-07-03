@@ -88,6 +88,7 @@ public sealed partial class Lowering
         TextParseFloat,
         TextFromInt,
         TextFromFloat,
+        TextFormatFloat,
         TextToHex,
         HttpGet,
         HttpPost,

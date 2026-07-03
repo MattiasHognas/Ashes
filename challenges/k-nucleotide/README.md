@@ -30,7 +30,7 @@ Slide a k-wide window across the sequence, keying a map by the window substring.
 - Substring/window extraction cost — whether `substring`/`take` are view-based or copy
   (1BRC #7 fixed `uncons` views; `take` is still O(count²) per FLAWS #2 task 3).
 - Sorting map entries by frequency then key (needs a total order and a stable sort).
-- Float formatting for the printed percentages.
+- Float formatting for the printed percentages (`Ashes.Text.formatFloat(value)(3)`).
 
 ## Dependencies / blockers
 

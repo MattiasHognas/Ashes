@@ -25,13 +25,13 @@ calculation and the `1/distance³` force term both require a **square root**.
   benchmark is *blocked* on the math lib; writing it now would only measure a hand-rolled
   Newton's-method `sqrt`, not the real primitive.
 - Once `sqrt` lands: float throughput in a long `N`-step loop, float formatting to fixed
-  precision (`fromFloat` to 9 dp — does an exact-decimal formatter exist?), and arena
+  precision (`Ashes.Text.formatFloat(value)(9)` — shipped), and arena
   behaviour of a fold that rebuilds the small body list each step.
 
 ## Dependencies / blockers
 
 **BLOCKED on the math lib (`sqrt`).** Defer until `Ashes.Math.sqrt` (or equivalent
-intrinsic) exists. Also needs fixed-precision float formatting (9 decimal places).
+intrinsic) exists. Fixed-precision 9-dp formatting is covered by `Ashes.Text.formatFloat`.
 
 ## Status
 

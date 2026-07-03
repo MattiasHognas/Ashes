@@ -337,12 +337,13 @@ in the spec; [Memory Model](docs/ARCHITECTURE.md#memory-model) in the
 architecture guide.*
 
 **Does Ashes require a runtime?**
-No. `.ash` source compiles directly to a standalone native executable — there
+No. `.ash` source compiles directly to a standalone native executable.There
 is no VM, garbage collector, interpreter, runtime library, or hidden scheduler
-that ships alongside the binary. The standard library is ordinary Ashes code
-compiled into the executable, and the compiler emits object code and links it
-itself (no external assembler or linker). The result is a single native binary
-with zero runtime dependencies.
+that ships alongside the binary.
+Ashes lowers to LLVM IR and uses LLVM for optimization and native object generation,
+then performs the final object-to-executable linking itself using its own built-in
+linker—without invoking external tools such as clang, ld, lld, or link.exe.
+The result is a single native binary with no runtime dependencies.
 *Details: [Compiler Architecture](docs/ARCHITECTURE.md#memory-model) and
 [Linking](docs/ARCHITECTURE.md#linking).*
 

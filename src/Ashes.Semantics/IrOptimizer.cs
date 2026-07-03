@@ -439,6 +439,7 @@ public static class IrOptimizer
             IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextFromInt t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.TextFromFloat t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.TextFormatFloat t => t with { ValueTemp = R(t.ValueTemp), DecimalsTemp = R(t.DecimalsTemp) },
             IrInst.TextToHex t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.HttpGet h => h with { UrlTemp = R(h.UrlTemp) },
             IrInst.HttpPost h => h with { UrlTemp = R(h.UrlTemp), BodyTemp = R(h.BodyTemp) },
@@ -1351,6 +1352,7 @@ public static class IrOptimizer
             case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextFromInt t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.TextFromFloat t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.TextFormatFloat t: usedTemps.Add(t.ValueTemp); usedTemps.Add(t.DecimalsTemp); break;
             case IrInst.TextToHex t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.HttpGet h: usedTemps.Add(h.UrlTemp); break;
             case IrInst.HttpPost h: usedTemps.Add(h.UrlTemp); usedTemps.Add(h.BodyTemp); break;
