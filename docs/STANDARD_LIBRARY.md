@@ -185,6 +185,22 @@ namespace. They are not overridable by project-local modules.
 - `reverse` — `List(a) -> List(a)`, the elements in reverse order
 - `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
 
+### `Ashes.Math`
+
+Hermetic integer math (Layer 1) — pure Ashes, no native payload. All functions
+are curried. Float and transcendental layers (`sqrt`, `toFloat`, `sin`, …) are
+added separately; see `docs/future/ASHES_MATH.md`.
+
+- `abs(n)` returning `Int` — absolute value
+- `signum(n)` returning `Int` — `-1`, `0`, or `1`
+- `min(a)(b)` / `max(a)(b)` returning `Int`
+- `clamp(lo)(hi)(n)` returning `Int` — `n` confined to `[lo, hi]`
+- `gcd(a)(b)` returning `Int` — greatest common divisor (non-negative)
+- `lcm(a)(b)` returning `Int` — least common multiple (non-negative; `0` if either is `0`)
+- `divMod(a)(b)` returning `(Int, Int)` — Euclidean quotient and remainder (`0 <= r < |b|`)
+- `pow(base)(exp)` returning `Int` — exponentiation by squaring (`exp >= 0`)
+- `isqrt(n)` returning `Int` — integer (floor) square root (`n >= 0`)
+
 ### `Ashes.Array`
 
 Immutable indexed array backed by a persistent balanced tree.

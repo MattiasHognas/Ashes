@@ -136,6 +136,10 @@ public static class BuiltinRegistry
                 "Ashes.List",
                 "Ashes.Semantics.StdLib.Ashes.List.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Math"] = new(
+                "Ashes.Math",
+                "Ashes.Semantics.StdLib.Ashes.Math.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Array"] = new(
                 "Ashes.Array",
                 "Ashes.Semantics.StdLib.Ashes.Array.ash",
