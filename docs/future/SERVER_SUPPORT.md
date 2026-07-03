@@ -311,5 +311,3 @@ If server support proves successful as a library API,
 would dedicated language syntax provide meaningful value,
 
 or simply duplicate functionality already expressed naturally through existing Ashes constructs?
-
-One thing I would add after the implementation exists is a short rationale explaining why server support was designed as a long-running expression rather than introducing a new top-level language construct. That philosophy seems consistent with the rest of Ashes and would help future contributors understand the decision.
