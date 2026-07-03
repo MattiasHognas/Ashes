@@ -198,6 +198,9 @@ public abstract record TopLevelItem
         /// already the desugared nested-lambda form regardless of this list.
         /// </summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
+
+        /// <summary>Optional user-supplied type annotation: <c>let f : Int -> Int = ...</c>.</summary>
+        public TypeExpr? TypeAnnotation { get; init; }
     }
 
     /// <summary>

@@ -197,6 +197,13 @@ public static class Formatter
         }
         sb.Append(decl.Name);
 
+        // Type annotation: let f : Type = ... (mutually exclusive with parameter sugar).
+        if (decl.TypeAnnotation is { } typeAnnotation)
+        {
+            sb.Append(" : ");
+            WriteTypeExpr(sb, typeAnnotation);
+        }
+
         // ML-style sugar: let f x y = <value>, unwrapping one lambda layer per parameter.
         var value = decl.Value;
         foreach (var p in decl.SugarParams)

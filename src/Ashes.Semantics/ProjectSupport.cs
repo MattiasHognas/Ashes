@@ -2151,6 +2151,14 @@ public static class ProjectSupport
                     foreach (var update in ru.Updates)
                         Visit(update.Value);
                     break;
+                case Expr.Perform perform:
+                    Visit(perform.Operation);
+                    break;
+                case Expr.Handle handleExpr:
+                    Visit(handleExpr.Body);
+                    foreach (var arm in handleExpr.Arms)
+                        Visit(arm.Body);
+                    break;
                 default:
                     throw new NotSupportedException(expr.GetType().Name);
             }

@@ -18,9 +18,13 @@ public sealed partial class Lowering
             TypeExpr.Named { Name: "Bool" } => new TypeRef.TBool(),
             TypeExpr.Named { Name: "Str" } => new TypeRef.TStr(),
             TypeExpr.Named { Name: "Float" } => new TypeRef.TFloat(),
+            TypeExpr.Named n when _typeExprParamScope?.TryGetValue(n.Name, out var scoped) == true => scoped,
             TypeExpr.Named n => ResolveTypeName(n.Name),
             TypeExpr.Applied a => ResolveTypeName(a.Name, a.Args.Select(ResolveTypeExpr).ToList()),
-            TypeExpr.Arrow arr => new TypeRef.TFun(ResolveTypeExpr(arr.From), ResolveTypeExpr(arr.To)),
+            TypeExpr.Arrow arr => new TypeRef.TFun(ResolveTypeExpr(arr.From), ResolveTypeExpr(arr.To))
+            {
+                Row = arr.Uses is null ? null : ResolveUsesRow(arr.Uses)
+            },
             TypeExpr.TupleType t when t.Elements.Count == 0 => _resolvedTypes["Unit"],
             TypeExpr.TupleType t => new TypeRef.TTuple(t.Elements.Select(ResolveTypeExpr).ToList()),
             _ => throw new NotSupportedException($"Unknown TypeExpr: {typeExpr.GetType().Name}")

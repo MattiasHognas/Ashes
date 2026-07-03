@@ -423,10 +423,11 @@ public sealed partial class Lowering
 
     public IrProgram Lower(Program program)
     {
-        // Type and extern declarations are registered upfront; their relative order among value
-        // bindings does not affect ADT/extern visibility under Model-A scoping.
+        // Type, extern, and effect declarations are registered upfront; their relative order among
+        // value bindings does not affect visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternDeclarations(program.ExternDecls);
+        RegisterEffectDeclarations(program.Items);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecGroup)
@@ -673,7 +674,7 @@ public sealed partial class Lowering
             return;
         }
 
-        if (node is not (Expr or Pattern or MatchCase))
+        if (node is not (Expr or Pattern or MatchCase or HandlerArm))
         {
             return;
         }
@@ -793,8 +794,8 @@ public sealed partial class Lowering
         {
             body = valueItems[i] switch
             {
-                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRec(let.Name, let.Value, body),
-                TopLevelItem.LetDecl let => new Expr.Let(let.Name, let.Value, body),
+                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRec(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
+                TopLevelItem.LetDecl let => new Expr.Let(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
                 TopLevelItem.RecGroup group => DesugarRecGroup(group, body),
                 _ => body
             };
@@ -1303,6 +1304,10 @@ public sealed partial class Lowering
 
         ResolveDeferredAdds();
 
+        // Any concrete effect left in the entry expression's row after inference has no handler
+        // discharging it — a compile-time error, not a runtime failure.
+        CheckUnhandledEffects();
+
         // After ResolveDeferredAdds, an unresolved '+' operand var has been defaulted to Int, so the
         // reported result type (e.g. the REPL's `add : Int -> Int -> Int`) is concrete.
         LastLoweredType = Prune(resultType);
@@ -1425,6 +1430,8 @@ public sealed partial class Lowering
             Expr.Await awaitExpr => LowerAwait(awaitExpr),
             Expr.RecordLit rl => LowerRecordLit(rl),
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
+            Expr.Perform perform => LowerPerform(perform),
+            Expr.Handle handle => LowerHandle(handle),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -1632,6 +1639,23 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
     {
+        // A bare (uncalled) effect operation reference. Direct application is handled in
+        // LowerCall; a first-class operation value has no Stage 1 lowering, so reject it the same
+        // way uncalled intrinsics are rejected.
+        if (_effectSymbols.TryGetValue(qv.Module, out var bareEffectSym))
+        {
+            if (!bareEffectSym.Operations.ContainsKey(qv.Name))
+            {
+                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownEffectCode);
+            }
+            else
+            {
+                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' must be called directly.", UnknownEffectCode);
+            }
+
+            return ReturnNeverWithDummyTemp();
+        }
+
         var resolvedModule = ResolveModuleAlias(qv.Module);
 
         if (BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule))
@@ -2580,7 +2604,8 @@ public sealed partial class Lowering
         // If the user wrote a type annotation, verify it matches the inferred type.
         if (let.TypeAnnotation is { } letAnnotation)
         {
-            var annotatedType = ResolveTypeExpr(letAnnotation);
+            using var annotationSpan = PushDiagnosticSpan(GetSpan(let.Value));
+            var annotatedType = ResolveAnnotationType(letAnnotation);
             Unify(annotatedType, valueType);
         }
 
@@ -2873,7 +2898,8 @@ public sealed partial class Lowering
         // If the user wrote a type annotation, verify it matches the inferred type.
         if (letRec.TypeAnnotation is { } recAnnotation)
         {
-            var annotatedRecType = ResolveTypeExpr(recAnnotation);
+            using var annotationSpan = PushDiagnosticSpan(GetSpan(letRec.Value));
+            var annotatedRecType = ResolveAnnotationType(recAnnotation);
             Unify(annotatedRecType, recType);
         }
 
@@ -3075,10 +3101,14 @@ public sealed partial class Lowering
     {
         _usesClosures = true;
 
-        // Create type variables for param and return
+        // Create type variables for param, return, and the arrow's effect row. The row variable
+        // becomes the body's ambient row: every operation performed and effectful call made while
+        // lowering the body inserts its effects there, so the arrow ends up carrying exactly the
+        // effects the body performs (open, generalized at the enclosing let).
         var paramTy = NewTypeVar();
         var retTy = NewTypeVar();
-        var funTy = new TypeRef.TFun(paramTy, retTy);
+        var rowTy = NewTypeVar();
+        var funTy = new TypeRef.TFun(paramTy, retTy) { Row = rowTy };
 
         // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
         // the routed call, so the body (and the heap-field key materialization) sees concrete types.
@@ -3504,7 +3534,10 @@ public sealed partial class Lowering
 
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
         bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
+        var savedAmbientRow = _ambientRow;
+        _ambientRow = rowTy;
         var (bodyTemp, bodyType) = LowerExpr(lam.Body);
+        _ambientRow = savedAmbientRow;
         if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
         if (isInnermostTco && savedTcoCtx is not null)
         {
@@ -3952,6 +3985,12 @@ public sealed partial class Lowering
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(ctorSym, collectedArgs);
+        }
+
+        // Effect operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
+        if (rootExpr is Expr.QualifiedVar effectQv && _effectSymbols.TryGetValue(effectQv.Module, out var effectSym))
+        {
+            return LowerEffectOperationCall(effectSym, effectQv, collectedArgs);
         }
 
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result
@@ -4458,8 +4497,10 @@ public sealed partial class Lowering
             if (currentType is TypeRef.TVar)
             {
                 // Callee type is an unresolved type variable: constrain it to a function type
-                // so that the occurs check can fire if the argument is the same variable.
-                Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()));
+                // so that the occurs check can fire if the argument is the same variable. The
+                // constructed arrow shares the caller's ambient row, so a higher-order parameter
+                // applied here (`fun f -> fun x -> f(x)`) carries its effects to the caller.
+                Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = AmbientRow });
                 currentType = Prune(currentType);
             }
 
@@ -4475,6 +4516,12 @@ public sealed partial class Lowering
             using (PushDiagnosticContext(callContext))
             {
                 Unify(fun.Arg, argType);
+            }
+
+            // The applied arrow's effects happen here: record them in the ambient row.
+            using (PushDiagnosticSpan(GetSpan(call)))
+            {
+                SubsumeCalleeRow(fun.Row, GetSpan(call));
             }
 
             int target = NewTemp();
@@ -5134,6 +5181,26 @@ public sealed partial class Lowering
                 case Expr.Await awaitExpr:
                     Visit(awaitExpr.Task, bnd);
                     return;
+                case Expr.Perform perform:
+                    Visit(perform.Operation, bnd);
+                    return;
+                case Expr.Handle handleExpr:
+                    Visit(handleExpr.Body, bnd);
+                    foreach (var arm in handleExpr.Arms)
+                    {
+                        var bndArm = new HashSet<string>(bnd, StringComparer.Ordinal) { "resume" };
+                        foreach (var armParam in arm.Parameters)
+                        {
+                            foreach (var name in PatternBindings(armParam))
+                            {
+                                bndArm.Add(name);
+                            }
+                        }
+
+                        Visit(arm.Body, bndArm);
+                    }
+
+                    return;
                 default:
                     throw new NotSupportedException(ex.GetType().Name);
             }
@@ -5211,6 +5278,7 @@ public sealed partial class Lowering
             case Expr.Cons c: return new Expr.Cons(S(c.Head), S(c.Tail));
             case Expr.If i: return new Expr.If(S(i.Cond), S(i.Then), S(i.Else));
             case Expr.Await a: return new Expr.Await(S(a.Task));
+            case Expr.Perform p: return new Expr.Perform(S(p.Operation));
             case Expr.Lambda lam:
                 return WithShadowed([lam.ParamName], sub => new Expr.Lambda(lam.ParamName, SubstituteVars(lam.Body, sub)));
             case Expr.Let l:
@@ -5405,6 +5473,11 @@ public sealed partial class Lowering
                 return true;
             case Expr.Await awaitExpr:
                 return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
+            case Expr.Perform perform:
+                return UsesNameOnlyAsDirectCallee(perform.Operation, targetName, shadowed);
+            case Expr.Handle:
+                // Conservative: a handler's arms may use the name in arbitrary positions.
+                return false;
             case Expr.RecordLit rl:
                 return rl.Fields.All(f => UsesNameOnlyAsDirectCallee(f.Value, targetName, shadowed));
             case Expr.RecordUpdate ru:
@@ -6379,6 +6452,26 @@ public sealed partial class Lowering
                 return false;
             case Expr.Await awaitExpr:
                 return ExprReferencesName(awaitExpr.Task, targetName, shadowed);
+            case Expr.Perform perform:
+                return ExprReferencesName(perform.Operation, targetName, shadowed);
+            case Expr.Handle handleExpr:
+                if (ExprReferencesName(handleExpr.Body, targetName, shadowed))
+                {
+                    return true;
+                }
+
+                foreach (var arm in handleExpr.Arms)
+                {
+                    bool armShadowed = shadowed
+                        || string.Equals("resume", targetName, StringComparison.Ordinal)
+                        || arm.Parameters.Any(p => PatternBindings(p).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal)));
+                    if (ExprReferencesName(arm.Body, targetName, armShadowed))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             case Expr.RecordLit rl:
                 return rl.Fields.Any(f => ExprReferencesName(f.Value, targetName, shadowed));
             case Expr.RecordUpdate ru:

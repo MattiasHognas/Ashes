@@ -123,7 +123,11 @@ public sealed class Parser
             }
 
             // A flat top-level binding, terminated by EOF or the next declaration.
-            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive) { SugarParams = header.SugarParams });
+            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
+            {
+                SugarParams = header.SugarParams,
+                TypeAnnotation = header.TypeAnnotation
+            });
         }
 
         // The trailing expression is optional once the file has declarations: a file may end after
