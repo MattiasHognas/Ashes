@@ -1,4 +1,4 @@
-// expect-compile-error: must end in resume
+// expect-compile-error: aborting arms need unwinding
 
 effect Clock =
     | now : Unit -> Int

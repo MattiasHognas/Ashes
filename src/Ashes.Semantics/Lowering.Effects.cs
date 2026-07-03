@@ -89,6 +89,99 @@ public sealed partial class Lowering
     /// <summary>Number of declared effects: the backend materializes one handler-evidence global per effect.</summary>
     private int EffectGlobalCount => _effectSymbols.Count;
 
+    /// <summary>
+    /// Index of the pending-post register: one extra global (after the per-effect evidence slots)
+    /// through which a one-shot resumptive arm hands its post-resume continuation closure back to
+    /// the perform site. Invariant: 0 except between the arm's store and the perform site's
+    /// consume-and-reset, so a tail-resumptive arm pushes nothing.
+    /// </summary>
+    private int PostRegisterIndex => EffectGlobalCount;
+
+    /// <summary>
+    /// Index of the live-posts counter global: the number of collected post-resume continuations
+    /// not yet folded by their handle. While it is non-zero, every arena restore/reclaim is
+    /// skipped — a pending post (and everything it captures) lives in arena allocations that must
+    /// survive until the handle folds it. Data a post references always predates its push, so any
+    /// window with no push during it stays safe to reclaim.
+    /// </summary>
+    private int LivePostsIndex => EffectGlobalCount + 1;
+
+    /// <summary>
+    /// Internal-only AST node produced by the one-shot arm rewrite. Evaluates <see cref="Value"/>
+    /// (the resume argument, returned to the perform site), then creates <see cref="PostLambda"/>
+    /// (the arm's work after resume, as a function of the handle's result) and stores it in the
+    /// pending-post register for the perform site to collect. Only ever created inside a
+    /// synthesized handler arm, so no generic expression walker encounters it.
+    /// </summary>
+    internal sealed record EffectPostExpr(Expr Value, Expr PostLambda, TypeRef HandleResultType) : Expr;
+
+    /// <summary>
+    /// Begins a live-posts guard around an arena restore/copy-out/reclaim block: emits a check
+    /// that jumps past the block when any post-resume continuation is pending. Returns the skip
+    /// label to place after the block, or null (emitting nothing) when the program declares no
+    /// effects and the guard is unnecessary.
+    /// </summary>
+    private string? BeginLivePostsGuard()
+    {
+        if (EffectGlobalCount == 0)
+        {
+            return null;
+        }
+
+        int counterTemp = NewTemp();
+        Emit(new IrInst.LoadEffectHandler(counterTemp, LivePostsIndex));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int isZeroTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(isZeroTemp, counterTemp, zeroTemp));
+        string skipLabel = $"live_posts_skip_{_nextEffectSiteId++}";
+        Emit(new IrInst.JumpIfFalse(isZeroTemp, skipLabel));
+        return skipLabel;
+    }
+
+    private void EndLivePostsGuard(string? skipLabel)
+    {
+        if (skipLabel is not null)
+        {
+            Emit(new IrInst.Label(skipLabel));
+        }
+    }
+
+    /// <summary>Emits `counter := counter + delta` on the live-posts global.</summary>
+    private void EmitLivePostsAdjust(long delta)
+    {
+        int counterTemp = NewTemp();
+        Emit(new IrInst.LoadEffectHandler(counterTemp, LivePostsIndex));
+        int deltaTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(deltaTemp, delta));
+        int adjustedTemp = NewTemp();
+        Emit(new IrInst.AddInt(adjustedTemp, counterTemp, deltaTemp));
+        Emit(new IrInst.StoreEffectHandler(LivePostsIndex, adjustedTemp));
+    }
+
+    /// <summary>
+    /// Lowers the internal one-shot arm node: evaluate the resume argument first (it may itself
+    /// perform), then create the post-resume continuation closure and hand it to the perform site
+    /// through the pending-post register.
+    /// </summary>
+    private (int, TypeRef) LowerEffectPost(EffectPostExpr post)
+    {
+        var (valueTemp, valueType) = LowerExpr(post.Value);
+        var (postTemp, postType) = LowerExpr(post.PostLambda);
+
+        // The post runs after its handle exits, transforming the handle's result: R -> R. Its
+        // effects belong to the enclosing context (the ambient row the arm is lowered under).
+        if (Prune(postType) is TypeRef.TFun postFun)
+        {
+            Unify(postFun.Arg, post.HandleResultType);
+            Unify(postFun.Ret, post.HandleResultType);
+            SubsumeCalleeRow(postFun.Row, GetSpan(post.PostLambda));
+        }
+
+        Emit(new IrInst.StoreEffectHandler(PostRegisterIndex, postTemp));
+        return (valueTemp, valueType);
+    }
+
     /// <summary>The operation's slot index inside a handler frame for its effect (declaration order).</summary>
     private static int OperationDeclIndex(EffectSymbol effect, string opName)
     {
@@ -493,7 +586,7 @@ public sealed partial class Lowering
         }
 
         int closureTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(closureTemp, frameTemp, (globalCount + opIndex) * 8));
+        Emit(new IrInst.LoadMemOffset(closureTemp, frameTemp, (globalCount + 1 + opIndex) * 8));
         int currentTemp = closureTemp;
         foreach (var argTemp in argTemps)
         {
@@ -508,6 +601,31 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.StoreEffectHandler(k, savedTemps[k]));
         }
+
+        // Collect a one-shot arm's post-resume continuation: consume-and-reset the pending-post
+        // register, and push a {closure, next} cell onto the handle's shared LIFO posts list
+        // (frame slot globalCount holds a pointer to the list head slot). Tail-resumptive arms
+        // never store the register, so this is a load-compare-skip for them.
+        int postTemp = NewTemp();
+        Emit(new IrInst.LoadEffectHandler(postTemp, PostRegisterIndex));
+        int postZeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(postZeroTemp, 0));
+        Emit(new IrInst.StoreEffectHandler(PostRegisterIndex, postZeroTemp));
+        int hasPostTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasPostTemp, postTemp, postZeroTemp));
+        string noPostLabel = $"effect_no_post_{siteId}";
+        Emit(new IrInst.JumpIfFalse(hasPostTemp, noPostLabel));
+        int postsHeadPtrTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(postsHeadPtrTemp, frameTemp, globalCount * 8));
+        int cellTemp = NewTemp();
+        Emit(new IrInst.Alloc(cellTemp, 16));
+        Emit(new IrInst.StoreMemOffset(cellTemp, 0, postTemp));
+        int previousHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(previousHeadTemp, postsHeadPtrTemp, 0));
+        Emit(new IrInst.StoreMemOffset(cellTemp, 8, previousHeadTemp));
+        Emit(new IrInst.StoreMemOffset(postsHeadPtrTemp, 0, cellTemp));
+        EmitLivePostsAdjust(1);
+        Emit(new IrInst.Label(noPostLabel));
 
         int resultTemp = NewTemp();
         int resultSlot = NewLocal();
@@ -648,11 +766,13 @@ public sealed partial class Lowering
 
         // 2. One instance of each handled effect's type arguments, shared by the body's row entry
         // and every arm's operation signature (`handle ... with | State.get ...` handles State(a)
-        // at one concrete-or-inferred `a`).
+        // at one concrete-or-inferred `a`), plus the handle's result type — one-shot arms need it
+        // before the body is lowered, since their post-resume continuations have type R -> R.
         var effectInstances = handledEffects.ToDictionary(
             e => e.Name,
             e => e.TypeParameters.Select(_ => NewTypeVar()).ToList(),
             StringComparer.Ordinal);
+        var resultType = NewTypeVar();
 
         // 3. Lower the operation arms to closures (in the enclosing context: an arm belongs
         // lexically outside the handle and its effects flow to the enclosing row).
@@ -660,7 +780,7 @@ public sealed partial class Lowering
         var armClosures = new List<(EffectSymbol Effect, int OpIndex, int ClosureTemp)>();
         foreach (var (effect, opName, arm) in opArms)
         {
-            var armLambda = BuildOperationArmLambda(effect, opName, arm);
+            var armLambda = BuildOperationArmLambda(effect, opName, arm, resultType);
             if (armLambda is null)
             {
                 return ReturnNeverWithDummyTemp();
@@ -673,15 +793,22 @@ public sealed partial class Lowering
         }
 
         // 4. Build and install one handler frame per handled effect:
-        // [0 .. globals-1]           snapshot of every handler-evidence global (taken before any of
-        //                            this handle's frames install, so arms run under the evidence
-        //                            in scope at installation, minus this handler)
-        // [globals + opDeclIndex]    the arm closure per operation.
+        // [0 .. globals-1]              snapshot of every handler-evidence global (taken before
+        //                               any of this handle's frames install, so arms run under the
+        //                               evidence in scope at installation, minus this handler)
+        // [globals]                     pointer to the handle's shared posts-list head slot
+        // [globals + 1 + opDeclIndex]   the arm closure per operation.
+        int postsHeadPtrTemp = NewTemp();
+        Emit(new IrInst.AllocStack(postsHeadPtrTemp, 8));
+        int postsInitZeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(postsInitZeroTemp, 0));
+        Emit(new IrInst.StoreMemOffset(postsHeadPtrTemp, 0, postsInitZeroTemp));
+
         var frameTemps = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var effect in handledEffects)
         {
             int frameTemp = NewTemp();
-            Emit(new IrInst.AllocStack(frameTemp, (globalCount + effect.DeclaringSyntax.Operations.Count) * 8));
+            Emit(new IrInst.AllocStack(frameTemp, (globalCount + 1 + effect.DeclaringSyntax.Operations.Count) * 8));
             for (int k = 0; k < globalCount; k++)
             {
                 int snapshotTemp = NewTemp();
@@ -689,11 +816,12 @@ public sealed partial class Lowering
                 Emit(new IrInst.StoreMemOffset(frameTemp, k * 8, snapshotTemp));
             }
 
+            Emit(new IrInst.StoreMemOffset(frameTemp, globalCount * 8, postsHeadPtrTemp));
             foreach (var (armEffect, opIndex, closureTemp) in armClosures)
             {
                 if (ReferenceEquals(armEffect, effect))
                 {
-                    Emit(new IrInst.StoreMemOffset(frameTemp, (globalCount + opIndex) * 8, closureTemp));
+                    Emit(new IrInst.StoreMemOffset(frameTemp, (globalCount + 1 + opIndex) * 8, closureTemp));
                 }
             }
 
@@ -727,36 +855,82 @@ public sealed partial class Lowering
         }
 
         // 7. The return arm transforms the body's final value; without one the value passes through.
+        int currentResultTemp;
         if (returnArm is null)
         {
-            return (bodyTemp, bodyType);
+            Unify(resultType, bodyType);
+            currentResultTemp = bodyTemp;
+        }
+        else
+        {
+            int bodySlot = NewLocal();
+            Emit(new IrInst.StoreLocal(bodySlot, bodyTemp));
+            var resultName = $"__handle_result_{_nextEffectSiteId++}";
+            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
+            {
+                [resultName] = new Binding.Local(bodySlot, bodyType),
+            });
+            var scrutinee = new Expr.Var(resultName);
+            AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
+            var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);
+            AstSpans.Set(returnMatch, GetSpan(returnArm.Body));
+            var (returnTemp, returnType) = LowerExpr(returnMatch);
+            _scopes.Pop();
+            Unify(resultType, returnType);
+            currentResultTemp = returnTemp;
         }
 
-        int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-        var resultName = $"__handle_result_{_nextEffectSiteId++}";
-        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
-        {
-            [resultName] = new Binding.Local(resultSlot, bodyType),
-        });
-        var scrutinee = new Expr.Var(resultName);
-        AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
-        var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);
-        AstSpans.Set(returnMatch, GetSpan(returnArm.Body));
-        var (resultTemp, resultType) = LowerExpr(returnMatch);
-        _scopes.Pop();
-        return (resultTemp, resultType);
+        // 8. Fold the collected one-shot post-resume continuations over the result, LIFO (the
+        // most recent perform's continuation is innermost in the reduction), decrementing the
+        // live-posts counter as each is consumed. Posts run here — outside the handle — under the
+        // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h].
+        int foldId = _nextEffectSiteId++;
+        string foldLoopLabel = $"posts_fold_{foldId}";
+        string foldDoneLabel = $"posts_fold_done_{foldId}";
+        int foldResultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(foldResultSlot, currentResultTemp));
+        int foldHeadSlot = NewLocal();
+        int initialHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(initialHeadTemp, postsHeadPtrTemp, 0));
+        Emit(new IrInst.StoreLocal(foldHeadSlot, initialHeadTemp));
+        Emit(new IrInst.Label(foldLoopLabel));
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(headTemp, foldHeadSlot));
+        int foldZeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(foldZeroTemp, 0));
+        int hasCellTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasCellTemp, headTemp, foldZeroTemp));
+        Emit(new IrInst.JumpIfFalse(hasCellTemp, foldDoneLabel));
+        int postClosureTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(postClosureTemp, headTemp, 0));
+        int foldInTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(foldInTemp, foldResultSlot));
+        int foldOutTemp = NewTemp();
+        Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp));
+        Emit(new IrInst.StoreLocal(foldResultSlot, foldOutTemp));
+        int nextCellTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(nextCellTemp, headTemp, 8));
+        Emit(new IrInst.StoreLocal(foldHeadSlot, nextCellTemp));
+        EmitLivePostsAdjust(-1);
+        Emit(new IrInst.Jump(foldLoopLabel));
+        Emit(new IrInst.Label(foldDoneLabel));
+        int finalResultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(finalResultTemp, foldResultSlot));
+        return (finalResultTemp, resultType);
     }
 
     /// <summary>
-    /// Builds the closure for a tail-resumptive operation arm: parameters become lambda
-    /// parameters (complex patterns via a synthesized match), and every tail `resume(e)` is
-    /// rewritten to `e` — for a tail-resumptive arm, "resume with v" is exactly "return v to the
-    /// perform site". Returns null (with a diagnostic) when the arm is not tail-resumptive.
+    /// Builds the closure for an operation arm: parameters become lambda parameters (complex
+    /// patterns via a synthesized match), and each `resume` is rewritten away. A tail
+    /// `resume(e)` becomes `e` ("resume with v" is exactly "return v to the perform site"); a
+    /// one-shot `resume` — the scrutinee of a match or the value of a let, with work after —
+    /// splits into the resume argument plus a post-resume continuation handed to the perform
+    /// site. Returns null (with a diagnostic) when the arm uses `resume` in an unsupported
+    /// position or has a path that never resumes.
     /// </summary>
-    private Expr? BuildOperationArmLambda(EffectSymbol effect, string opName, HandlerArm arm)
+    private Expr? BuildOperationArmLambda(EffectSymbol effect, string opName, HandlerArm arm, TypeRef handleResultType)
     {
-        if (!TryRewriteTailResume(arm.Body, out var body, out var error))
+        if (!TryRewriteResume(arm.Body, handleResultType, out var body, out var error))
         {
             ReportDiagnostic(GetSpan(arm.Body), $"In handler arm '{effect.Name}.{opName}': {error}", InvalidHandlerCode);
             return null;
@@ -798,12 +972,19 @@ public sealed partial class Lowering
         return body;
     }
 
+    private const string UnsupportedResumePosition =
+        "'resume' is only supported in tail position, as the value of a let, or as the scrutinee of a match; bind its result with 'let' to move the work after it.";
+
     /// <summary>
-    /// Rewrites every tail-position <c>resume(e)</c> to <c>e</c>. Fails (with a message) when
-    /// <c>resume</c> is used outside tail position — a one-shot resumptive arm, not yet supported —
-    /// or when some tail path does not resume — an aborting arm, which needs unwinding.
+    /// Rewrites the arm's <c>resume</c> calls away. On each execution path, <c>resume</c> must be
+    /// called exactly once, in one of the supported positions:
+    /// tail — <c>resume(e)</c> becomes <c>e</c>;
+    /// let value — <c>let x = resume(v) in B</c> splits into <c>v</c> plus post <c>fun x -&gt; B</c>;
+    /// match scrutinee — <c>match resume(v) with cases</c> splits into <c>v</c> plus
+    /// <c>fun r -&gt; match r with cases</c>.
+    /// A path that never resumes is an aborting arm (needs unwinding) and is rejected.
     /// </summary>
-    private bool TryRewriteTailResume(Expr expr, out Expr rewritten, out string error)
+    private bool TryRewriteResume(Expr expr, TypeRef handleResultType, out Expr rewritten, out string error)
     {
         rewritten = expr;
         error = "";
@@ -812,21 +993,32 @@ public sealed partial class Lowering
             case Expr.Call { Func: Expr.Var { Name: "resume" } } call:
                 if (ExprReferencesName(call.Arg, "resume", shadowed: false))
                 {
-                    error = "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported).";
+                    error = UnsupportedResumePosition;
                     return false;
                 }
 
                 rewritten = call.Arg;
                 return true;
 
-            case Expr.Let let:
-                if (ExprReferencesName(let.Value, "resume", shadowed: false))
+            case Expr.Let { Value: Expr.Call { Func: Expr.Var { Name: "resume" } } resumeCall } oneShotLet:
+                if (ExprReferencesName(resumeCall.Arg, "resume", shadowed: false)
+                    || ExprReferencesName(oneShotLet.Body, "resume", shadowed: false))
                 {
-                    error = "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported).";
+                    error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
                     return false;
                 }
 
-                if (!TryRewriteTailResume(let.Body, out var letBody, out error))
+                rewritten = BuildEffectPost(oneShotLet.Name, oneShotLet.Body, resumeCall.Arg, handleResultType, oneShotLet);
+                return true;
+
+            case Expr.Let let:
+                if (ExprReferencesName(let.Value, "resume", shadowed: false))
+                {
+                    error = UnsupportedResumePosition;
+                    return false;
+                }
+
+                if (!TryRewriteResume(let.Body, handleResultType, out var letBody, out error))
                 {
                     return false;
                 }
@@ -837,11 +1029,11 @@ public sealed partial class Lowering
             case Expr.LetRec letRec:
                 if (ExprReferencesName(letRec.Value, "resume", shadowed: false))
                 {
-                    error = "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported).";
+                    error = UnsupportedResumePosition;
                     return false;
                 }
 
-                if (!TryRewriteTailResume(letRec.Body, out var letRecBody, out error))
+                if (!TryRewriteResume(letRec.Body, handleResultType, out var letRecBody, out error))
                 {
                     return false;
                 }
@@ -852,12 +1044,12 @@ public sealed partial class Lowering
             case Expr.If iff:
                 if (ExprReferencesName(iff.Cond, "resume", shadowed: false))
                 {
-                    error = "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported).";
+                    error = UnsupportedResumePosition;
                     return false;
                 }
 
-                if (!TryRewriteTailResume(iff.Then, out var thenBody, out error)
-                    || !TryRewriteTailResume(iff.Else, out var elseBody, out error))
+                if (!TryRewriteResume(iff.Then, handleResultType, out var thenBody, out error)
+                    || !TryRewriteResume(iff.Else, handleResultType, out var elseBody, out error))
                 {
                     return false;
                 }
@@ -865,18 +1057,35 @@ public sealed partial class Lowering
                 rewritten = CopySpan(iff, new Expr.If(iff.Cond, thenBody, elseBody));
                 return true;
 
+            case Expr.Match { Value: Expr.Call { Func: Expr.Var { Name: "resume" } } scrutineeResume } oneShotMatch:
+                if (ExprReferencesName(scrutineeResume.Arg, "resume", shadowed: false)
+                    || oneShotMatch.Cases.Any(c => ExprReferencesName(c.Body, "resume", shadowed: false)
+                        || (c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false))))
+                {
+                    error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
+                    return false;
+                }
+
+                var postParam = $"__resume_result_{_nextEffectSiteId++}";
+                var postScrutinee = new Expr.Var(postParam);
+                AstSpans.Set(postScrutinee, GetSpan(oneShotMatch));
+                var postMatch = new Expr.Match(postScrutinee, oneShotMatch.Cases, oneShotMatch.Pos);
+                AstSpans.Set(postMatch, AstSpans.GetOrDefault(oneShotMatch));
+                rewritten = BuildEffectPost(postParam, postMatch, scrutineeResume.Arg, handleResultType, oneShotMatch);
+                return true;
+
             case Expr.Match match:
                 if (ExprReferencesName(match.Value, "resume", shadowed: false)
                     || match.Cases.Any(c => c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false)))
                 {
-                    error = "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported).";
+                    error = UnsupportedResumePosition;
                     return false;
                 }
 
                 var cases = new List<MatchCase>(match.Cases.Count);
                 foreach (var matchCase in match.Cases)
                 {
-                    if (!TryRewriteTailResume(matchCase.Body, out var caseBody, out error))
+                    if (!TryRewriteResume(matchCase.Body, handleResultType, out var caseBody, out error))
                     {
                         return false;
                     }
@@ -889,10 +1098,23 @@ public sealed partial class Lowering
 
             default:
                 error = ExprReferencesName(expr, "resume", shadowed: false)
-                    ? "'resume' must be called in tail position (one-shot resumptive handlers are not yet supported)."
-                    : "every path of a tail-resumptive operation arm must end in resume(...).";
+                    ? UnsupportedResumePosition
+                    : "every path of an operation arm must call resume(...) (aborting arms need unwinding and are not supported).";
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Builds the one-shot split node: the resume argument as the value returned to the perform
+    /// site, and <c>fun param -&gt; postBody</c> as the post-resume continuation.
+    /// </summary>
+    private Expr BuildEffectPost(string paramName, Expr postBody, Expr resumeArg, TypeRef handleResultType, Expr original)
+    {
+        var postLambda = new Expr.Lambda(paramName, postBody);
+        AstSpans.Set(postLambda, AstSpans.GetOrDefault(original));
+        var node = new EffectPostExpr(resumeArg, postLambda, handleResultType);
+        AstSpans.Set(node, AstSpans.GetOrDefault(original));
+        return node;
     }
 
     private static Expr CopySpan(Expr original, Expr copy)
@@ -951,6 +1173,37 @@ public sealed partial class Lowering
             TypeRef.TNamedType named => new TypeRef.TNamedType(named.Symbol, named.TypeArgs.Select(DetachRows).ToList()),
             _ => type,
         };
+    }
+
+    /// <summary>
+    /// Eta-expands a first-class operation reference: <c>Clock.now</c> becomes
+    /// <c>fun a -&gt; Clock.now(a)</c> (curried to the signature's arity), so the perform happens
+    /// at the eventual application site and normal closure lowering applies.
+    /// </summary>
+    private Expr BuildOperationEtaLambda(Expr.QualifiedVar qv, int arity)
+    {
+        var span = AstSpans.GetOrDefault(qv);
+        var paramNames = Enumerable.Range(0, Math.Max(arity, 1))
+            .Select(i => $"__op_arg_{_nextEffectSiteId++}_{i}")
+            .ToList();
+
+        Expr body = new Expr.QualifiedVar(qv.Module, qv.Name);
+        AstSpans.Set(body, span);
+        foreach (var paramName in paramNames)
+        {
+            var argVar = new Expr.Var(paramName);
+            AstSpans.Set(argVar, span);
+            body = new Expr.Call(body, argVar);
+            AstSpans.Set(body, span);
+        }
+
+        for (int i = paramNames.Count - 1; i >= 0; i--)
+        {
+            body = new Expr.Lambda(paramNames[i], body);
+            AstSpans.Set(body, span);
+        }
+
+        return body;
     }
 
     /// <summary>The row of the innermost arrow of a curried function type (where the effects fire).</summary>

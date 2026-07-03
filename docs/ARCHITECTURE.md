@@ -469,9 +469,10 @@ holding a pointer to the innermost installed handler frame for that effect, 0 wh
 `handle` expression stack-allocates one frame per handled effect:
 
 ```
-[0 .. numEffects-1]           snapshot of every effect global, taken before any of this
-                              handle's frames install
-[numEffects + opDeclIndex]    one arm closure per operation (declaration order)
+[0 .. numEffects-1]              snapshot of every effect global, taken before any of this
+                                 handle's frames install
+[numEffects]                     pointer to the handle's shared posts-list head slot
+[numEffects + 1 + opDeclIndex]   one arm closure per operation (declaration order)
 ```
 
 and installs it by writing the frame pointer into the effect's global; on body exit it restores
@@ -486,12 +487,35 @@ message rather than dereferencing null if that invariant is ever broken.
 
 A tail-resumptive arm compiles to an ordinary closure: every tail-position `resume(e)` is
 rewritten to `e` at the AST level ("resume with v" is exactly "return v to the perform site"), so
-there is no continuation capture at all. `resume` outside tail position (one-shot) and tail paths
-that do not resume (aborting arms, which need unwinding) are rejected with `ASH020`.
+there is no continuation capture at all.
+
+### One-shot resumptive arms: the pre/post split
+
+An arm that does work after `resume` returns needs no continuation capture either, because the
+deep-handler reduction `handle E[perform op] with h  →  C[handle E[v] with h]` runs the arm
+context `C` *around* the resumed computation. The arm splits syntactically at its single
+`resume` call: `let x = resume(v) in B` (or `match resume(v) with cases`) becomes the resume
+argument `v` — returned to the perform site exactly like a tail arm — plus a **post-resume
+continuation** `fun x -> B`, handed to the perform site through a reserved pending-post register
+(one extra evidence global) and pushed onto the handle's shared LIFO posts list (a
+`{closure, next}` cell chain; each frame stores a pointer to the handle's list-head slot). On
+body exit, after the `return` arm, the handle folds the pending posts over the result — LIFO, so
+the most recent perform's continuation applies innermost, matching the reduction order. Posts
+run outside the handle under the enclosing evidence, exactly where `C` sits in the reduction.
+`resume` must run exactly once per arm path; aborting paths (never resume) need unwinding and
+are rejected, and multi-shot is out of scope under the no-GC rule.
+
+Because a pending post (and everything it captures) lives in arena allocations of the dynamic
+extent it was pushed in, every arena reclaim (per-call watermarks, scope exits, TCO back-edge
+resets, failed-match-arm cleanups) is guarded by a **live-posts counter** (a second reserved
+global): while it is non-zero the reclaim is skipped. Data a post references always predates its
+push, so windows with no push during them stay safe to reclaim; the counter is decremented as
+each post is folded. Programs that declare no effects compile byte-for-byte as before — the
+guards are only emitted when effects exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
-[IR_REFERENCE.md](IR_REFERENCE.md)); frames use the ordinary `AllocStack` /
-`StoreMemOffset` / `LoadMemOffset` / `CallClosure` machinery.
+[IR_REFERENCE.md](IR_REFERENCE.md)); frames, posts cells, and the fold loop use the ordinary
+`AllocStack` / `Alloc` / `StoreMemOffset` / `LoadMemOffset` / `CallClosure` / label machinery.
 
 Current limitations: the evidence globals are per-process, so installing or using handlers
 across `Ashes.Parallel` workers is unspecified (per-thread evidence belongs with the TLS arena

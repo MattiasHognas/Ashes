@@ -2160,14 +2160,15 @@ dependency injection**: capabilities like `Clock`, `Random`, `Env`, or `FileSyst
 production and fixed in tests, with no `Clock`/`Logger` parameter polluting every signature.
 
 Implementation status: effect declarations, `uses` rows, effect typing, the unhandled-effect
-diagnostic, and `handle`/`perform` with **tail-resumptive** arms are implemented. One-shot
-resumptive arms (work after `resume` returns) and aborting arms (a path that does not resume)
-are rejected with a clear diagnostic; see
-[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md) for the remaining roadmap. Effects
+diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot resumptive** arms are
+implemented, as are first-class operation values (for operations with explicit signatures) and
+effects declared in imported project modules. Aborting arms (a path that never resumes) and
+multi-shot `resume` are rejected with a clear diagnostic — see section 20.7 for why. Effects
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
-defined; handler evidence is currently per-process, not per-task or per-thread. How handlers
-compile (dynamically-scoped evidence globals, stack-allocated frames, the tail-`resume`
-rewrite) is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+defined; handler evidence is currently per-process, not per-task or per-thread (see
+[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)). How handlers compile
+(dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
+documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 20.1 Effect Declarations
 
@@ -2272,8 +2273,14 @@ Continuation power is restricted by the memory model (no GC):
 
 - **Tail-resumptive** arms (`resume` in tail position) compile to a direct call with no
   continuation capture.
-- **One-shot resumptive** arms (work after `resume` returns) capture the continuation as a
-  resumable state machine; `resume` may run at most once.
+- **One-shot resumptive** arms do work after `resume` returns; `resume` runs exactly once per
+  path, and is supported in tail position, as the value of a `let`
+  (`let r = resume(v) in ...`), or as the scrutinee of a `match`
+  (`match resume(v) with ...`). Any other position is rejected with a hint to bind the result
+  with `let`. The work after `resume` executes after the handled computation (and the `return`
+  arm) completes, transforming the handle's result — when several performs are pending, the most
+  recent one's continuation applies innermost.
+- **Aborting** arms (a path that never calls `resume`) need unwinding and are rejected.
 - **Multi-shot** (`resume` called more than once) is out of scope and rejected.
 
 ## 20.6 Worked Example

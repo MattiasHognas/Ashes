@@ -470,8 +470,8 @@ sequentially evaluated, so these effects happen in a well-defined order, and the
 purity contract is specifically about values: no function mutates an existing
 binding or value in place. Networking and TLS additionally return `Task(E, A)`
 and are consumed via `await`. A general algebraic-effects system (handlers for
-`Clock`, `Random`, `FileSystem`, and the like) has landed with tail-resumptive
-handlers; one-shot resumptive handlers are on the roadmap.
+`Clock`, `Random`, `FileSystem`, and the like) has landed, with tail-resumptive
+and one-shot resumptive handlers.
 *Details: [`Ashes.IO`](docs/STANDARD_LIBRARY.md#ashesio) and the built-in
 modules in the standard library; the
 [effects system](docs/LANGUAGE_SPEC.md#20-algebraic-effects-and-handlers).*

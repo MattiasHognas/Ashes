@@ -167,8 +167,12 @@ public sealed partial class Lowering
             // allocations between the watermark and the current cursor are unreachable garbage.
             int armCleanupPreRestoreEndSlot = NewLocal();
             Emit(new IrInst.Label(armCleanupLabel));
+            // A guard expression can perform a one-shot effect operation; its pending post must
+            // survive the failed-arm cleanup.
+            var armCleanupSkipLabel = BeginLivePostsGuard();
             Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot, armCleanupPreRestoreEndSlot));
             Emit(new IrInst.ReclaimArenaChunks(armEndSlot, armCleanupPreRestoreEndSlot));
+            EndLivePostsGuard(armCleanupSkipLabel);
             Emit(new IrInst.Jump(caseFailLabel));
 
             _scopes.Pop();

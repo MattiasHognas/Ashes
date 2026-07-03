@@ -90,10 +90,13 @@ for the remaining roadmap.
   `'perform' must be applied to an effect operation call.`
 
 - `ASH020` — **Invalid handler.** A `handle` expression has a malformed arm (an arm for
-  an unknown effect/operation, a duplicate arm, or a duplicate `return` arm), or uses a
-  handler form the current stage does not yet support.
+  an unknown effect/operation, a duplicate arm, a duplicate `return` arm, or a missing
+  operation for a handled effect), uses `resume` in an unsupported position (supported:
+  tail position, let value, match scrutinee — exactly once per path), or has an arm path
+  that never resumes (aborting arms need unwinding and are not supported).
   Messages include: `Handler arm 'Effect.op' does not name a declared effect operation.`,
-  `Duplicate handler arm for 'Effect.op'.`
+  `Duplicate handler arm for 'Effect.op'.`,
+  `Handler for effect 'Effect' must handle operation 'op'.`
 
 ## Record diagnostics
 

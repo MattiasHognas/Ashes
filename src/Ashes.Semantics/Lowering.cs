@@ -1336,7 +1336,8 @@ public sealed partial class Lowering
             UsesAsync: _usesAsync
         )
         {
-            EffectHandlerGlobals = EffectGlobalCount,
+            // Per-effect evidence slots plus the pending-post register and the live-posts counter.
+            EffectHandlerGlobals = EffectGlobalCount == 0 ? 0 : EffectGlobalCount + 2,
         };
     }
 
@@ -1435,6 +1436,7 @@ public sealed partial class Lowering
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
             Expr.Perform perform => LowerPerform(perform),
             Expr.Handle handle => LowerHandle(handle),
+            EffectPostExpr effectPost => LowerEffectPost(effectPost),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -1643,20 +1645,24 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
     {
         // A bare (uncalled) effect operation reference. Direct application is handled in
-        // LowerCall; a first-class operation value has no Stage 1 lowering, so reject it the same
-        // way uncalled intrinsics are rejected.
+        // LowerCall; a first-class operation value eta-expands to a lambda performing the
+        // operation, so the perform happens where the value is eventually applied. The expansion
+        // needs the operation's arity, so an unsigned operation cannot be used as a value.
         if (_effectSymbols.TryGetValue(qv.Module, out var bareEffectSym))
         {
-            if (!bareEffectSym.Operations.ContainsKey(qv.Name))
+            if (!bareEffectSym.Operations.TryGetValue(qv.Name, out var bareOperation))
             {
                 ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownEffectCode);
-            }
-            else
-            {
-                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' must be called directly.", UnknownEffectCode);
+                return ReturnNeverWithDummyTemp();
             }
 
-            return ReturnNeverWithDummyTemp();
+            if (bareOperation.DeclaredSignature is null)
+            {
+                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownEffectCode);
+                return ReturnNeverWithDummyTemp();
+            }
+
+            return LowerExpr(BuildOperationEtaLambda(qv, CountArrows(bareOperation.DeclaredSignature)));
         }
 
         var resolvedModule = ResolveModuleAlias(qv.Module);
@@ -4152,9 +4158,13 @@ public sealed partial class Lowering
 
                 if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
                 {
-                    // All copy types and/or in-place-reused accumulators: plain reset.
+                    // All copy types and/or in-place-reused accumulators: plain reset. Skipped
+                    // while a one-shot effect post pushed this iteration is still pending — the
+                    // post (and its captures) lives in the iteration's allocations.
+                    var tcoResetSkipLabel = BeginLivePostsGuard();
                     Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
                     Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                    EndLivePostsGuard(tcoResetSkipLabel);
                 }
                 else
                 {
@@ -4188,6 +4198,10 @@ public sealed partial class Lowering
                         // The destination block [W, …) lies entirely below every up-copy
                         // source (which sits above the pre-reset cursor), so these copies
                         // are also disjoint and order-independent.
+                        // Skipped entirely while a one-shot effect post pushed this iteration is
+                        // still pending: the param slots already hold the (unrelocated) new
+                        // values, and nothing is reclaimed, so they stay valid.
+                        var tcoCopySkipLabel = BeginLivePostsGuard();
                         var upCopyTemps = new int[newArgTypes.Length];
                         for (int i = 0; i < newArgTypes.Length; i++)
                         {
@@ -4226,6 +4240,7 @@ public sealed partial class Lowering
                         // Free the chunks abandoned above W (including the Phase A
                         // up-copies, now fully consumed by Phase B).
                         Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                        EndLivePostsGuard(tcoCopySkipLabel);
                     }
                     // else: complex heap types — no arena reset.
                 }
@@ -4543,14 +4558,30 @@ public sealed partial class Lowering
         int callPreRestoreEndSlot = NewLocal();
         if (CanArenaReset(callResultType))
         {
+            // A pending one-shot post (and everything it captures) lives in this window's
+            // allocations; skip the reclaim while any is outstanding.
+            var callResetSkipLabel = BeginLivePostsGuard();
             Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
             Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            EndLivePostsGuard(callResetSkipLabel);
         }
         else
         {
             var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
             if (callCopyOutKind != CopyOutKind.None)
             {
+                // With effects in the program the copy-out is conditional on no post being
+                // pending, so the result is routed through a local slot that the skipped path
+                // leaves holding the original pointer.
+                int callGuardResultSlot = -1;
+                string? callCopySkipLabel = null;
+                if (EffectGlobalCount > 0)
+                {
+                    callGuardResultSlot = NewLocal();
+                    Emit(new IrInst.StoreLocal(callGuardResultSlot, currentTemp));
+                    callCopySkipLabel = BeginLivePostsGuard();
+                }
+
                 Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
                 int copyDest = NewTemp();
                 switch (callCopyOutKind)
@@ -4566,7 +4597,18 @@ public sealed partial class Lowering
                         break;
                 }
                 Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
-                currentTemp = copyDest;
+                if (callGuardResultSlot >= 0)
+                {
+                    Emit(new IrInst.StoreLocal(callGuardResultSlot, copyDest));
+                    EndLivePostsGuard(callCopySkipLabel);
+                    int guardedResultTemp = NewTemp();
+                    Emit(new IrInst.LoadLocal(guardedResultTemp, callGuardResultSlot));
+                    currentTemp = guardedResultTemp;
+                }
+                else
+                {
+                    currentTemp = copyDest;
+                }
             }
         }
 
@@ -5201,6 +5243,10 @@ public sealed partial class Lowering
                     return;
                 case Expr.Perform perform:
                     Visit(perform.Operation, bnd);
+                    return;
+                case EffectPostExpr effectPost:
+                    Visit(effectPost.Value, bnd);
+                    Visit(effectPost.PostLambda, bnd);
                     return;
                 case Expr.Handle handleExpr:
                     Visit(handleExpr.Body, bnd);
