@@ -181,7 +181,7 @@ let run path =
         | Ok(bytes) -> 
             let len = Ashes.Bytes.length(bytes)
             in 
-                let chunks = buildChunks(bytes)(len)(0)(32)([])
+                let chunks = buildChunks(bytes)(len)(0)(128)([])
                 in 
                     let final = Ashes.Parallel.reduce(merge)(Ashes.HashTrie.empty)(foldChunk)(chunks)
                     in 

@@ -13,9 +13,18 @@
 // list in half and evaluate the two halves through `both`. A saturated call at a concrete
 // element type is monomorphized by the compiler, so `both` sees a concrete result and
 // genuinely forks; used polymorphically (or partially applied) they degrade to a sequential —
-// but still correct — evaluation. `map`/`reduce` are the grain-1 defaults. The list helpers are
+// but still correct — evaluation. `map` is the grain-1 default. The list helpers are
 // top-level so the monomorphic specialization references them as static code (never an arena
 // closure that could cross a fork).
+//
+// `reduce` is special-cased further: a saturated call at a concrete result type is executed by
+// a work-conserving runtime queue — worker threads pull elements from a shared index (so a slow
+// element never strands the others behind a static split) and the caller folds `combine` over
+// the results in fixed list order as they arrive. The fold order over the mapped elements is
+// left-to-right list order, while `reduceGrained` combines as a balanced tree and the sequential
+// fallback folds right-to-left — all identical under `reduce`'s contract that `combine` is
+// associative (and `identity` its identity, used only for the empty list; a singleton list
+// yields `f(x)` alone). A non-associative `combine` has no defined fold shape here.
 //
 // Self-contained: uses only core language features.
 

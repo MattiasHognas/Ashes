@@ -304,7 +304,9 @@ public static class StateMachineTransform
 
     /// <summary>
     /// Asserts the structured-parallelism invariant that a <c>both</c>'s fork → join → cleanup group
-    /// stays within a single coroutine segment: no <see cref="IrInst.AwaitTask"/> may appear between
+    /// (and likewise a queued reduce's <see cref="IrInst.ParallelQueueStart"/> →
+    /// <see cref="IrInst.ParallelQueueCleanup"/> group) stays within a single coroutine segment: no
+    /// <see cref="IrInst.AwaitTask"/> may appear between
     /// a <see cref="IrInst.ParallelFork"/> and its matching <see cref="IrInst.ParallelCleanup"/>.
     /// The worker descriptor and worker arena are not serialized into the coroutine state struct, so
     /// a fork straddling an <c>await</c> would leak the worker and dangle its arena on resume.
@@ -324,6 +326,12 @@ public static class StateMachineTransform
                     break;
                 case IrInst.ParallelCleanup cleanup:
                     openForks.Remove(cleanup.DescTemp);
+                    break;
+                case IrInst.ParallelQueueStart queueStart:
+                    openForks.Add(queueStart.DescTarget);
+                    break;
+                case IrInst.ParallelQueueCleanup queueCleanup:
+                    openForks.Remove(queueCleanup.DescTemp);
                     break;
                 case IrInst.AwaitTask when openForks.Count > 0:
                     throw new InvalidOperationException(
@@ -626,6 +634,8 @@ public static class StateMachineTransform
             // read back as garbage on resume.
             IrInst.ParallelFork i => [i.DescTarget],
             IrInst.ParallelJoin i => [i.ResultTarget],
+            IrInst.ParallelQueueStart i => [i.DescTarget],
+            IrInst.ParallelQueueAwait i => [i.ResultTarget],
             _ => []
         };
     }
@@ -751,6 +761,9 @@ public static class StateMachineTransform
             IrInst.ParallelFork p => [p.RightClosureTemp],
             IrInst.ParallelJoin p => [p.DescTemp],
             IrInst.ParallelCleanup p => [p.DescTemp],
+            IrInst.ParallelQueueStart p => [p.FClosureTemp, p.ListTemp],
+            IrInst.ParallelQueueAwait p => [p.DescTemp, p.IndexTemp],
+            IrInst.ParallelQueueCleanup p => [p.DescTemp],
             IrInst.PanicStr p => [p.Source],
             IrInst.JumpIfFalse j => [j.CondTemp],
             IrInst.Return r => [r.Source],
