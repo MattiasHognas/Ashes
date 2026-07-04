@@ -111,8 +111,8 @@ public static class ProjectSupport
 
     private static readonly HashSet<string> ReservedKeywords = new(StringComparer.Ordinal)
     {
-        "let", "rec", "recursive", "in", "if", "then", "else", "match", "with",
-        "fun", "given", "true", "false", "type", "await", "extern", "external",
+        "let", "recursive", "in", "if", "then", "else", "match", "with",
+        "given", "true", "false", "type", "await", "external",
         "effect", "uses", "perform", "handle"
     };
 
