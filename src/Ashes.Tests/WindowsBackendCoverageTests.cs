@@ -823,6 +823,133 @@ public sealed class WindowsBackendCoverageTests
         return Encoding.UTF8.GetString(buffer, 0, total);
     }
 
+    [Test]
+    public async Task Windows_backend_llvm_should_run_a_tcp_echo_server_via_serve()
+    {
+        // Server-side coverage under wine: the Ashes program is the LISTENER
+        // (Ashes.Net.Tcp.Server.serve), the C# test is the CLIENT connecting in over loopback.
+        // Exercises the win-x64 winsock socket/bind/listen/accept path and the accept-park on
+        // WSAPoll readiness, plus the serve accept loop.
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_srv_{Guid.NewGuid():N}.exe");
+        Process? proc = null;
+        try
+        {
+            await File.WriteAllBytesAsync(exePath, exeBytes);
+            var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = tmpDir;
+            proc = Process.Start(psi)!;
+
+            foreach (var payload in new[] { "win-one", "win-two", "win-three" })
+            {
+                var reply = await ConnectSendReceiveWithRetryAsync(port, payload);
+                reply.ShouldBe("echo: " + payload);
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static IrProgram LowerProgramWithImports(string source)
+    {
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
+
+        var diagnostics = new Diagnostics();
+        var program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static int GetFreeLoopbackPort()
+    {
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                var outBytes = Encoding.UTF8.GetBytes(payload);
+                await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var buffer = new byte[4096];
+                int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                return Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    private static void TryKillProcess(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        try
+        {
+            process.WaitForExit();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     private static bool CanRunWindowsRuntimePrograms()
     {
         return TestProcessHelper.CanRunWindowsExecutables();

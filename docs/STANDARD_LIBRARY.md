@@ -159,6 +159,40 @@ Current HTTP support is intentionally small:
 - `receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `close(socket)` returning `Task(Str, Unit)`
 
+### `Ashes.Net.Tcp.Server`
+
+TCP server support. `listen`/`accept` are the primitives; `serve` is the combinator built on them.
+
+- `listen(port)` returning `Task(Str, Socket)` — bind `INADDR_ANY:port`, `listen`, and return the
+  listening socket (non-blocking).
+- `accept(listener)` returning `Task(Str, Socket)` — accept one connection, returning the client
+  socket. Suspends (parks on the listener) until a connection is ready, so it is used inside `async`.
+- `serve(port)(handler)` returning `Task(Str, Unit)` — the server lifecycle. Binds the port, then
+  loops accepting connections and running `handler` on each. `handler : Socket -> Task(E, A)` owns its
+  connection (the socket auto-drops when the handler task completes). A bind/listener failure ends the
+  server with `Error`; a handler's own failure is isolated to its connection and never stops the loop.
+  Consumed with `await` inside `Ashes.Async.run(async ...)`.
+
+`serve` handles connections sequentially (one at a time) for now; concurrent serving is planned (see
+[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
+`Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
+Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
+
+```ash
+import Ashes.Net.Tcp
+import Ashes.Net.Tcp.Server
+let onClient client =
+    async(match await Ashes.Net.Tcp.receive(client)(4096) with
+        | Error(e) -> Error(e)
+        | Ok(msg) ->
+            match await Ashes.Net.Tcp.send(client)(msg) with
+                | Error(e2) -> Error(e2)
+                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve(8080)(onClient)) with
+    | Ok(_u) -> Ashes.IO.print("server stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
 ### `Ashes.Net.Tls`
 
 - `connect(host)(port)` returning `Task(Str, TlsSocket)`
