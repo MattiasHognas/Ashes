@@ -185,6 +185,14 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Debug builds combine with any -O level (CO-21). The pre-pass verify above checks the
+        // unoptimized module; re-verify after the passes so an inliner-mangled debug location or
+        // inlined-at chain is caught here rather than shipped as invalid DWARF. Debug-only, so the
+        // hot non-debug compile path is unaffected.
+        if (options.EmitDebugInfo)
+        {
+            VerifyModule(target);
+        }
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
@@ -201,6 +209,14 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Debug builds combine with any -O level (CO-21). The pre-pass verify above checks the
+        // unoptimized module; re-verify after the passes so an inliner-mangled debug location or
+        // inlined-at chain is caught here rather than shipped as invalid DWARF. Debug-only, so the
+        // hot non-debug compile path is unaffected.
+        if (options.EmitDebugInfo)
+        {
+            VerifyModule(target);
+        }
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
@@ -217,6 +233,14 @@ internal static partial class LlvmCodegen
 
         VerifyModule(target);
         RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        // Debug builds combine with any -O level (CO-21). The pre-pass verify above checks the
+        // unoptimized module; re-verify after the passes so an inliner-mangled debug location or
+        // inlined-at chain is caught here rather than shipped as invalid DWARF. Debug-only, so the
+        // hot non-debug compile path is unaffected.
+        if (options.EmitDebugInfo)
+        {
+            VerifyModule(target);
+        }
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);

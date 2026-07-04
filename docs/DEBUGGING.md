@@ -146,8 +146,8 @@ ashes compile --debug main.ash -o main
 # Short form
 ashes compile -g main.ash
 
-# Compile with debug info and explicit optimization
-ashes compile --debug -O1 main.ash
+# Compile with debug info and explicit optimization (honored, up to -O3)
+ashes compile --debug -O2 main.ash
 
 # Run with debug info
 ashes run --debug main.ash
@@ -158,7 +158,7 @@ ashes run --debug main.ash
 | Effect | Description |
 |--------|-------------|
 | **DWARF metadata** | Embeds `.debug_info`, `.debug_line`, `.debug_abbrev`, etc. into the binary. |
-| **Optimization cap** | Without explicit `-O`, defaults to `-O0`. With explicit `-O`, caps at `-O1`. |
+| **Optimization** | Without explicit `-O`, defaults to `-O0`. An explicit `-O1`/`-O2`/`-O3` is honored (no cap). |
 | **Source mapping** | Each IR instruction carries the source file, line, and column it originated from. |
 | **Compilation output** | An extra `Debug: yes` line appears in the success summary. |
 
@@ -169,12 +169,18 @@ ashes run --debug main.ash
 | `--debug` | `-O0` |
 | `--debug -O0` | `-O0` |
 | `--debug -O1` | `-O1` |
-| `--debug -O2` | `-O1` (capped) |
-| `--debug -O3` | `-O1` (capped) |
+| `--debug -O2` | `-O2` |
+| `--debug -O3` | `-O3` |
 
-Higher optimization levels are capped at `-O1` when debugging is enabled
-because aggressive optimization can eliminate variables, reorder code, and
-inline functions — all of which make source-level debugging unreliable.
+`--debug` defaults to `-O0` for the most faithful single-stepping (no variables
+eliminated, no code reordered or inlined). An explicit optimization level is
+honored so a **profiled** debug build matches the optimized binary's inlining —
+at `-O0`/`-O1` a sampled profile exaggerates call overhead because no inliner
+runs. The emitted DWARF stays valid at every level: the backend re-verifies the
+module after optimization whenever debug info is requested, so an inliner-mangled
+location fails the build rather than shipping as broken debug data. At `-O2`/`-O3`
+line/variable mapping is necessarily coarser (inlined frames, folded variables),
+so prefer `-O0` when stepping and an explicit `-O2` only when profiling.
 
 ---
 

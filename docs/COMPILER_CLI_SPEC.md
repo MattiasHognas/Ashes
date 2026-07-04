@@ -733,7 +733,7 @@ format is target-dependent.
 | Aspect | Effect |
 |--------|--------|
 | **Debug metadata** | Debug information is emitted into the output binary; the exact sections and format depend on the target platform. |
-| **Optimization cap** | Without an explicit `-O` flag, optimization defaults to `-O0`. With an explicit flag, optimization is capped at `-O1` to preserve variable liveness and source mapping. |
+| **Optimization** | Without an explicit `-O` flag, optimization defaults to `-O0` for the most faithful single-stepping. An explicit `-O1`/`-O2`/`-O3` is honored (no cap), so a profiled debug build matches the optimized binary's inlining. The DWARF stays valid at every level — the backend re-verifies the module after optimization when debug info is requested. |
 | **Compile summary** | An extra `Debug: yes` line is printed in the `ashes compile` success output. |
 | **Target triple** | `--debug` does not change the Windows LLVM target triple; the current implementation continues to target `x86_64-pc-windows-msvc`. |
 
@@ -744,8 +744,8 @@ format is target-dependent.
 | `--debug` (no `-O`) | `-O0` |
 | `--debug -O0` | `-O0` |
 | `--debug -O1` | `-O1` |
-| `--debug -O2` | `-O1` (capped) |
-| `--debug -O3` | `-O1` (capped) |
+| `--debug -O2` | `-O2` |
+| `--debug -O3` | `-O3` |
 | `-O3` (no `--debug`) | `-O3` (unchanged) |
 
 ### Example
