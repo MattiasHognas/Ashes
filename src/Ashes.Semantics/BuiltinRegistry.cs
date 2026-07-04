@@ -42,6 +42,8 @@ public static class BuiltinRegistry
         NetTcpSend,
         NetTcpReceive,
         NetTcpClose,
+        NetTcpListen,
+        NetTcpAccept,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,
@@ -327,6 +329,14 @@ public static class BuiltinRegistry
                     ["send"] = new("send", BuiltinValueKind.NetTcpSend, IsCallable: true, Arity: 2),
                     ["receive"] = new("receive", BuiltinValueKind.NetTcpReceive, IsCallable: true, Arity: 2),
                     ["close"] = new("close", BuiltinValueKind.NetTcpClose, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Net.Tcp.Server"] = new(
+                "Ashes.Net.Tcp.Server",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
+                    ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Net.Tls"] = new(
                 "Ashes.Net.Tls",

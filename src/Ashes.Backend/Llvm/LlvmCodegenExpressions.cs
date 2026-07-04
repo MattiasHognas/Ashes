@@ -493,6 +493,10 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle tcpReceiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_receive");
         LlvmBasicBlockHandle checkTcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_close");
         LlvmBasicBlockHandle tcpCloseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_close");
+        LlvmBasicBlockHandle checkTcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_listen");
+        LlvmBasicBlockHandle tcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_listen");
+        LlvmBasicBlockHandle checkTcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_accept");
+        LlvmBasicBlockHandle tcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_accept");
         LlvmBasicBlockHandle checkTlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_connect");
         LlvmBasicBlockHandle tlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_connect");
         LlvmBasicBlockHandle checkTlsHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_handshake");
@@ -586,11 +590,37 @@ internal static partial class LlvmCodegen
             stateIdx,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpClose), 1),
             prefix + "_is_tcp_close");
-        LlvmApi.BuildCondBr(builder, isTcpClose, tcpCloseBlock, checkTlsConnectBlock);
+        LlvmApi.BuildCondBr(builder, isTcpClose, tcpCloseBlock, checkTcpListenBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, tcpCloseBlock);
         LlvmApi.BuildStore(builder,
             EmitNetworkingRuntimeCall(state, "ashes_step_tcp_close_task", [taskPtr], prefix + "_tcp_close_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpListenBlock);
+        LlvmValueHandle isTcpListen = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpListen), 1),
+            prefix + "_is_tcp_listen");
+        LlvmApi.BuildCondBr(builder, isTcpListen, tcpListenBlock, checkTcpAcceptBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpListenBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_tcp_listen_task", [taskPtr], prefix + "_tcp_listen_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTcpAcceptBlock);
+        LlvmValueHandle isTcpAccept = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpAccept), 1),
+            prefix + "_is_tcp_accept");
+        LlvmApi.BuildCondBr(builder, isTcpAccept, tcpAcceptBlock, checkTlsConnectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tcpAcceptBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_tcp_accept_task", [taskPtr], prefix + "_tcp_accept_status"),
             statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 

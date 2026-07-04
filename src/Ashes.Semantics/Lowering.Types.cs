@@ -97,6 +97,8 @@ public sealed partial class Lowering
         NetTcpSend,
         NetTcpReceive,
         NetTcpClose,
+        NetTcpListen,
+        NetTcpAccept,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,

@@ -874,6 +874,8 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpSend
             or BuiltinRegistry.BuiltinValueKind.NetTcpReceive
             or BuiltinRegistry.BuiltinValueKind.NetTcpClose
+            or BuiltinRegistry.BuiltinValueKind.NetTcpListen
+            or BuiltinRegistry.BuiltinValueKind.NetTcpAccept
             or BuiltinRegistry.BuiltinValueKind.NetTlsConnect
             or BuiltinRegistry.BuiltinValueKind.NetTlsSend
             or BuiltinRegistry.BuiltinValueKind.NetTlsReceive
@@ -888,6 +890,8 @@ public sealed partial class Lowering
             or IntrinsicKind.NetTcpSend
             or IntrinsicKind.NetTcpReceive
             or IntrinsicKind.NetTcpClose
+            or IntrinsicKind.NetTcpListen
+            or IntrinsicKind.NetTcpAccept
             or IntrinsicKind.NetTlsConnect
             or IntrinsicKind.NetTlsSend
             or IntrinsicKind.NetTlsReceive
@@ -992,6 +996,54 @@ public sealed partial class Lowering
 
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpConnectTask(taskTemp, hostTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTcpListen(Expr portArg)
+    {
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tcp.Server.listen() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpListenTask(taskTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.Server.accept() expects Socket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpAcceptTask(taskTemp, socketTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
     }
 
@@ -1942,6 +1994,22 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.NetTcpClose,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Unit"])))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpListenBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTcpListen,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"])))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpAcceptBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTcpAccept,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Socket"])))
         );
     }
 
