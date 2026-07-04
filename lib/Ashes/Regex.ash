@@ -23,7 +23,7 @@ let identStart = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
 
 let identCont = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
 
-let rec charIn c chars = 
+let recursive charIn c chars = 
     match Ashes.Text.uncons(chars) with
         | None -> false
         | Some((h, t)) -> 
@@ -31,12 +31,12 @@ let rec charIn c chars =
             then true
             else charIn(c)(t)
 
-let rec strLen text = 
+let recursive strLen text = 
     match Ashes.Text.uncons(text) with
         | None -> 0
         | Some((_h, t)) -> 1 + strLen(t)
 
-let rec strTake n text = 
+let recursive strTake n text = 
     if n <= 0
     then ""
     else 
@@ -44,7 +44,7 @@ let rec strTake n text =
             | None -> ""
             | Some((h, t)) -> h + strTake(n - 1)(t)
 
-let rec tryMatchHere regex text = 
+let recursive tryMatchHere regex text = 
     match regex with
         | REpsilon -> Some(text)
         | RChar(c) -> 
@@ -82,7 +82,7 @@ let rec tryMatchHere regex text =
                 | Some(rest) -> Some(rest)
                 | None -> tryMatchHere(r2)(text)
         | RStar(r) -> 
-            let rec goStar remaining = 
+            let recursive goStar remaining = 
                 match tryMatchHere(r)(remaining) with
                     | None -> Some(remaining)
                     | Some(rest) -> 
@@ -94,7 +94,7 @@ let rec tryMatchHere regex text =
             match tryMatchHere(r)(text) with
                 | None -> None
                 | Some(first) -> 
-                    let rec goPlus remaining = 
+                    let recursive goPlus remaining = 
                         match tryMatchHere(r)(remaining) with
                             | None -> Some(remaining)
                             | Some(rest) -> 
@@ -113,7 +113,7 @@ let matches regex text =
         | Some(rest) -> rest == ""
 
 let find regex text = 
-    (let rec search remaining = 
+    (let recursive search remaining = 
         match tryMatchHere(regex)(remaining) with
             | Some(rest) -> 
                 let matchLen = strLen(remaining) - strLen(rest)
@@ -124,8 +124,8 @@ let find regex text =
                     | Some((_h, t)) -> search(t)
     in search(text))
 
-let rec findAll regex text = 
-    (let rec go remaining = 
+let recursive findAll regex text = 
+    (let recursive go remaining = 
         if remaining == ""
         then []
         else 

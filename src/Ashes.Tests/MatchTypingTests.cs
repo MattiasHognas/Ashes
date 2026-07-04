@@ -12,7 +12,7 @@ public sealed class MatchTypingTests
         var (_, diag) = LowerProgram(
             """
             type LocalMaybe = | None | Some(T)
-            let unwrapOr = fun (opt, def) ->
+            let unwrapOr = given (opt, def) ->
               match opt with
               | None -> def
               | Some(x) -> x

@@ -1,3 +1,3 @@
 let print = 
-    fun (x) -> x
+    given (x) -> x
 in print

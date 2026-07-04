@@ -1,6 +1,6 @@
 // expect: 3
-let rec lastOr xs default = 
-    let rec loop ys = 
+let recursive lastOr xs default = 
+    let recursive loop ys = 
         match ys with
             | [] -> default
             | x :: rest -> 

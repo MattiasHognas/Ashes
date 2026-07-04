@@ -37,7 +37,7 @@ public sealed class SnapshotTests
     [Test]
     public async Task Snapshot_pipeline_for_lambda_program()
     {
-        var source = "let add = fun (x) -> fun (y) -> x + y in Ashes.IO.print(add(10)(32))";
+        var source = "let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))";
         var snapshot = CompileToSnapshot(source);
 
         await Verifier.Verify(snapshot, _settings)

@@ -418,7 +418,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetHover_should_return_type_for_let_binding_name()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
 
         var hover = DocumentService.GetHover(source, source.IndexOf("id", StringComparison.Ordinal));
 
@@ -431,7 +431,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetHover_should_return_type_for_lambda_parameter_name()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
         var parameterPosition = source.IndexOf("(x)", StringComparison.Ordinal) + 1;
 
         var hover = DocumentService.GetHover(source, parameterPosition);
@@ -445,7 +445,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetHover_should_return_type_for_call_expression()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
         var callStart = source.LastIndexOf("id(1)", StringComparison.Ordinal);
         var callEnd = callStart + "id(1)".Length;
 
@@ -509,7 +509,7 @@ public sealed class LspDocumentServiceTests
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
-            const string source = "let id = fun (x) -> x in id(1)";
+            const string source = "let id = given (x) -> x in id(1)";
             File.WriteAllText(mainPath, source);
 
             var definition = DocumentService.GetDefinition(source, source.LastIndexOf("x", StringComparison.Ordinal), mainPath);
@@ -577,7 +577,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetDefinition_should_return_qualified_imported_binding_location()
     {
-        var root = CreateTempProjectDirectory("let add = fun (x) -> x + 1 in add");
+        var root = CreateTempProjectDirectory("let add = given (x) -> x + 1 in add");
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
@@ -630,7 +630,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetDefinition_should_return_unqualified_imported_binding_location()
     {
-        var root = CreateTempProjectDirectory("let add = fun (x) -> x + 1 in add");
+        var root = CreateTempProjectDirectory("let add = given (x) -> x + 1 in add");
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
@@ -658,7 +658,7 @@ public sealed class LspDocumentServiceTests
                && LspSemanticTokenTestHelpers.ExtractTokenText(source, token.Line, token.Character, token.Length) == expectedText;
     }
 
-    private static string CreateTempProjectDirectory(string mathAshSource = "let add_one = fun (x) -> x + 1 in add_one")
+    private static string CreateTempProjectDirectory(string mathAshSource = "let add_one = given (x) -> x + 1 in add_one")
     {
         var root = Path.Combine(Path.GetTempPath(), "ashes_lsp_test_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);

@@ -17,7 +17,7 @@ let bal t =
         | Node(l, v, r) -> mk(l)(v)(r)
 
 let upd by = 
-    (let rec go t = 
+    (let recursive go t = 
         match t with
             | Leaf -> Leaf
             | Node(l, v, r) -> bal(mk(go(l))(v + by)(go(r)))
@@ -28,7 +28,7 @@ let rootVal t =
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let rec loop n t = 
+let recursive loop n t = 
     if n <= 0
     then t
     else loop(n - 1)(upd(1)(t))

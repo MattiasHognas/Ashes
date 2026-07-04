@@ -18,7 +18,7 @@ public sealed class Parser
 
     // While parsing the value of a flat top-level declaration, a following `let` starts the next
     // declaration rather than being absorbed as a whitespace-application argument (per LANGUAGE_SPEC:
-    // a flat top-level `let` value is terminated by EOF or the start of the next `type`/`extern`/`let`).
+    // a flat top-level `let` value is terminated by EOF or the start of the next `type`/`external`/`let`).
     private bool _suppressLetWhitespaceArgument;
 
     // The source column at which the current flat top-level declaration began, or -1 when not parsing
@@ -56,13 +56,13 @@ public sealed class Parser
     public Program ParseProgram()
     {
         // A file is `declaration* expr?` (imports are stripped upstream). Declarations are `type`,
-        // `extern`, flat `let [rec] name = value` (no `in`), and `let rec ... and ...` groups,
+        // `external`, flat `let [rec] name = value` (no `in`), and `let rec ... and ...` groups,
         // freely interleaved and ordered. A `let ... in ...` is an ordinary expression, not a
         // declaration, so it terminates the loop and becomes the (optional) trailing body.
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.Extern or TokenKind.Let or TokenKind.Effect)
+        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Effect)
         {
             if (_current.Kind == TokenKind.Type)
             {
@@ -70,9 +70,9 @@ public sealed class Parser
                 continue;
             }
 
-            if (_current.Kind == TokenKind.Extern)
+            if (_current.Kind == TokenKind.External)
             {
-                items.Add(new TopLevelItem.Extern(ParseExternDecl()));
+                items.Add(new TopLevelItem.External(ParseExternalDecl()));
                 continue;
             }
 
@@ -98,7 +98,7 @@ public sealed class Parser
 
             if (_current.Kind == TokenKind.And)
             {
-                items.Add(ParseRecGroup(header));
+                items.Add(ParseRecursiveGroup(header));
                 continue;
             }
 
@@ -148,11 +148,11 @@ public sealed class Parser
     /// current token is <c>and</c>, consumes <c>and name = value</c> bindings. Reports a parse error
     /// if the group is not introduced by <c>let rec</c>.
     /// </summary>
-    private TopLevelItem.RecGroup ParseRecGroup(LetHeader header)
+    private TopLevelItem.RecursiveGroup ParseRecursiveGroup(LetHeader header)
     {
         if (!header.IsRecursive)
         {
-            _diag.Error(CurrentErrorSpan(), "'and' is only allowed in a 'let rec' binding group.", DiagnosticCodes.ParseError);
+            _diag.Error(CurrentErrorSpan(), "'and' is only allowed in a 'let recursive' binding group.", DiagnosticCodes.ParseError);
         }
 
         var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
@@ -166,19 +166,19 @@ public sealed class Parser
             sugarParams.Add(andSugarParams);
         }
 
-        return new TopLevelItem.RecGroup(bindings) { SugarParams = sugarParams };
+        return new TopLevelItem.RecursiveGroup(bindings) { SugarParams = sugarParams };
     }
 
-    private ExternDecl ParseExternDecl()
+    private ExternalDecl ParseExternalDecl()
     {
         var start = _current.Position;
-        Consume(TokenKind.Extern);
+        Consume(TokenKind.External);
 
         if (_current.Kind == TokenKind.Type)
         {
             Consume(TokenKind.Type);
             var typeName = Consume(TokenKind.Ident).Text;
-            return RegisterExternDecl(new ExternDecl.OpaqueType(typeName), start, LastConsumedEnd);
+            return RegisterExternalDecl(new ExternalDecl.OpaqueType(typeName), start, LastConsumedEnd);
         }
 
         var name = Consume(TokenKind.Ident).Text;
@@ -205,7 +205,7 @@ public sealed class Parser
             symbolName = Consume(TokenKind.String).Text;
         }
 
-        return RegisterExternDecl(new ExternDecl.Function(name, parameterTypes, returnType, symbolName), start, LastConsumedEnd);
+        return RegisterExternalDecl(new ExternalDecl.Function(name, parameterTypes, returnType, symbolName), start, LastConsumedEnd);
     }
 
     private ParsedType ParseFfiType()
@@ -820,14 +820,14 @@ public sealed class Parser
     {
         var start = _current.Position;
         Consume(TokenKind.Let);
-        var isRec = _current.Kind == TokenKind.Rec;
-        if (isRec)
+        var isRecursive = _current.Kind == TokenKind.Recursive;
+        if (isRecursive)
         {
-            Consume(TokenKind.Rec);
+            Consume(TokenKind.Recursive);
         }
 
         var (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet) = ParseLetBinding(start, topLevel);
-        return new LetHeader(start, nameToken, name, isRec, value, sugarParams, typeAnnotation, valueLeadsWithLet);
+        return new LetHeader(start, nameToken, name, isRecursive, value, sugarParams, typeAnnotation, valueLeadsWithLet);
     }
 
     /// <summary>
@@ -847,8 +847,8 @@ public sealed class Parser
             typeAnnotation = ParseTypeExpr();
         }
 
-        // ML-style function sugar: let f x y = body => let f = fun (x) -> fun (y) -> body
-        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = fun x -> ...`)
+        // ML-style function sugar: let f x y = body => let f = given (x) -> given (y) -> body
+        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = given x -> ...`)
         var sugarParams = new List<string>();
         var sugarParamTokens = new List<Token>();
         if (typeAnnotation is null)
@@ -869,7 +869,7 @@ public sealed class Parser
         // value escapes this — `let x = (let y = 2 in y)` is a flat declaration.
         //
         // ML-style parameter sugar also escapes it: `let f x = let g = ... in g` has sugar params,
-        // so the desugared value is a `fun (x) -> (let ... in ...)` Lambda, not a bare `let`. The
+        // so the desugared value is a `given (x) -> (let ... in ...)` Lambda, not a bare `let`. The
         // function's body merely *happens* to lead with `let..in`, which is unambiguous (the `in`
         // belongs to the body) — it is a flat function declaration, never a pyramid head awaiting an
         // outer `in`. Only a paramless binding leading with `let` is the ambiguous pyramid case.
@@ -905,9 +905,9 @@ public sealed class Parser
         var body = ParseExpressionCore();
         if (header.IsRecursive)
         {
-            var letRec = RegisterExpr(new Expr.LetRec(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
-            AstSpans.SetLetRecName(letRec, header.NameToken.Span);
-            return letRec;
+            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            AstSpans.SetLetRecursiveName(letRecursive, header.NameToken.Span);
+            return letRecursive;
         }
 
         var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
@@ -1036,10 +1036,10 @@ public sealed class Parser
 
     private Expr ParseLambda()
     {
-        if (_current.Kind == TokenKind.Fun)
+        if (_current.Kind == TokenKind.Given)
         {
             var start = _current.Position;
-            Consume(TokenKind.Fun);
+            Consume(TokenKind.Given);
             Consume(TokenKind.LParen);
             var paramToken = Consume(TokenKind.Ident);
             var param = paramToken.Text;
@@ -1052,7 +1052,7 @@ public sealed class Parser
             Consume(TokenKind.RParen);
             Consume(TokenKind.Arrow);
             var body = ParseExpressionCore();
-            // Desugar multi-param lambdas: fun (x, y) -> body => fun (x) -> fun (y) -> body
+            // Desugar multi-param lambdas: given (x, y) -> body => given (x) -> given (y) -> body
             for (int i = extraParamTokens.Count - 1; i >= 0; i--)
             {
                 var lambda = RegisterExpr(new Expr.Lambda(extraParamTokens[i].Text, body), start, AstSpans.GetOrDefault(body).End);
@@ -1473,7 +1473,7 @@ public sealed class Parser
         return kind is TokenKind.Ident or TokenKind.Int or TokenKind.Float or TokenKind.String
             or TokenKind.True or TokenKind.False or TokenKind.LBracket
             or TokenKind.Await or TokenKind.Let
-            or TokenKind.If or TokenKind.Match or TokenKind.Fun;
+            or TokenKind.If or TokenKind.Match or TokenKind.Given;
     }
 
     private Expr ParseWhitespaceArgument()
@@ -1484,7 +1484,7 @@ public sealed class Parser
             TokenKind.Let => ParseLet(),
             TokenKind.If => ParseIf(),
             TokenKind.Match => ParseMatch(),
-            TokenKind.Fun => ParseLambda(),
+            TokenKind.Given => ParseLambda(),
             _ => ParsePrimary()
         };
     }
@@ -1678,9 +1678,9 @@ public sealed class Parser
         var body = ParseParenthesizedBody();
         if (header.IsRecursive)
         {
-            var letRec = RegisterExpr(new Expr.LetRec(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
-            AstSpans.SetLetRecName(letRec, header.NameToken.Span);
-            return letRec;
+            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            AstSpans.SetLetRecursiveName(letRecursive, header.NameToken.Span);
+            return letRecursive;
         }
 
         var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
@@ -1906,9 +1906,9 @@ public sealed class Parser
         return typeConstructor;
     }
 
-    private static ExternDecl RegisterExternDecl(ExternDecl externDecl, int start, int end)
+    private static ExternalDecl RegisterExternalDecl(ExternalDecl externalDecl, int start, int end)
     {
-        AstSpans.Set(externDecl, TextSpan.FromBounds(start, end));
-        return externDecl;
+        AstSpans.Set(externalDecl, TextSpan.FromBounds(start, end));
+        return externalDecl;
     }
 }

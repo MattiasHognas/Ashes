@@ -6,6 +6,6 @@ let parseOr text =
 in 
     "42"
     |> parseOr
-    |> Ashes.Result.map(fun (n) -> n + 1)
+    |> Ashes.Result.map(given (n) -> n + 1)
     |> Ashes.Result.default(0)
     |> Ashes.IO.print

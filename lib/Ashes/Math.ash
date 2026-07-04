@@ -35,7 +35,7 @@ let clamp lo hi n =
 
 let remOf a b = a - a / b * b
 
-let rec gcdGo a b = 
+let recursive gcdGo a b = 
     if b == 0
     then a
     else gcdGo(b)(remOf(a)(b))
@@ -62,7 +62,7 @@ let divMod a b =
                 else (q0 + 1, r0 - b)
             else (q0, r0))
 
-let rec powGo acc base exp = 
+let recursive powGo acc base exp = 
     if exp == 0
     then acc
     else 
@@ -76,7 +76,7 @@ let rec powGo acc base exp =
 
 let pow base exp = powGo(1)(base)(exp)
 
-let rec isqrtGo x n = 
+let recursive isqrtGo x n = 
     (let y = (x + n / x) / 2
     in 
         if y < x

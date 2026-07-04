@@ -1,4 +1,4 @@
-// A user-defined nested-rec-return fold (the Map.set shape, written in the entry file) must be
+// A user-defined nested-recursive-return fold (the Map.set shape, written in the entry file) must be
 // reuse-specialized like a stdlib one: constant memory across many iterations, with an in-arm
 // computed tuple value materialized correctly (min/max/sum update on hit).
 // expect: k17=(17,80017,17,1)
@@ -8,7 +8,7 @@ import Ashes.Map.MapTree
 import Ashes.Text
 import Ashes.String
 let upd newKey tenths = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> Ashes.Map.makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) -> 
@@ -34,7 +34,7 @@ let upd newKey tenths =
                         else Ashes.Map.balance(Ashes.Map.makeNode(left)(key)(value)(go(right)))
     in go)
 
-let rec loop i map = 
+let recursive loop i map = 
     if i >= 80020
     then map
     else 

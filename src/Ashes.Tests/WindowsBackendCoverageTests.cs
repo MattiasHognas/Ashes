@@ -25,7 +25,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public void Windows_backend_compile_should_support_compiler_features_used_by_ashes_programs()
     {
-        var bytes = CompileForWindows("let z = 20 in let f = fun (x) -> if x <= z then x + z else x + 1 in Ashes.IO.print(f(22))");
+        var bytes = CompileForWindows("let z = 20 in let f = given (x) -> if x <= z then x + z else x + 1 in Ashes.IO.print(f(22))");
 
         bytes.Length.ShouldBeGreaterThan(256);
         bytes[0].ShouldBe((byte)'M');
@@ -72,10 +72,10 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
-    public void Windows_backend_compile_should_support_user_extern_imports()
+    public void Windows_backend_compile_should_support_user_external_imports()
     {
         var bytes = CompileForWindows(LowerProgram("""
-            extern lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
+            external lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
             Ashes.IO.print(lstrlen("ash" + "es"))
             """));
 
@@ -90,7 +90,7 @@ public sealed class WindowsBackendCoverageTests
     public void Windows_backend_compile_should_support_debug_info_programs()
     {
         var bytes = new WindowsX64LlvmBackend().Compile(
-            LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)"),
+            LowerExpression("let z = 20 in let f = given (x) -> x + z in f(22)"),
             new BackendCompileOptions(BackendOptimizationLevel.O0, EmitDebugInfo: true));
 
         bytes.Length.ShouldBeGreaterThan(256);
@@ -130,13 +130,13 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_closure_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)"));
+        AssertWindowsLlvmCompiles(LowerExpression("let z = 20 in let f = given (x) -> x + z in f(22)"));
     }
 
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_nested_heap_backed_closure_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)"""));
     }
 
     [Test]
@@ -189,7 +189,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))");
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -201,7 +201,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
+        var result = await CompileRunWithWindowsLlvmAsync("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -220,7 +220,7 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
-    public async Task Windows_backend_llvm_should_run_user_extern_imports()
+    public async Task Windows_backend_llvm_should_run_user_external_imports()
     {
         if (!CanRunWindowsRuntimePrograms())
         {
@@ -228,7 +228,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(LowerProgram("""
-            extern lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
+            external lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
             Ashes.IO.print(lstrlen("ash" + "es"))
             """));
         result.Stdout.ShouldBe("5\n");

@@ -9,7 +9,7 @@ type Json(B, N, F, S) =
     | JsonObject(S, Json, Json)
     | JsonObjectEnd
 
-let rec skipWs text = 
+let recursive skipWs text = 
     match Ashes.Text.uncons(text) with
         | None -> ""
         | Some((h, t)) -> 
@@ -26,7 +26,7 @@ let rec skipWs text =
                         then skipWs(t)
                         else text
 
-let rec consumeExact expected txt = 
+let recursive consumeExact expected txt = 
     match Ashes.Text.uncons(expected) with
         | None -> Ok(txt)
         | Some((want, wantRest)) -> 
@@ -37,7 +37,7 @@ let rec consumeExact expected txt =
                     then consumeExact(wantRest)(gotRest)
                     else Error("unexpected character: " + got)
 
-let rec parseStrBody acc text = 
+let recursive parseStrBody acc text = 
     match Ashes.Text.uncons(text) with
         | None -> Error("unterminated string")
         | Some((h, t)) -> 
@@ -83,7 +83,7 @@ let parseQuotedStr text =
             then parseStrBody("")(t)
             else Error("expected '\"' to open string")
 
-let rec takeNum acc text = 
+let recursive takeNum acc text = 
     match Ashes.Text.uncons(text) with
         | None -> (acc, "")
         | Some((h, t)) -> 
@@ -105,7 +105,7 @@ let rec takeNum acc text =
                 | "E" -> takeNum(acc + h)(t)
                 | _ -> (acc, text)
 
-let rec hasFloatMark text = 
+let recursive hasFloatMark text = 
     match Ashes.Text.uncons(text) with
         | None -> false
         | Some((h, t)) -> 
@@ -119,7 +119,7 @@ let rec hasFloatMark text =
                     then true
                     else hasFloatMark(t)
 
-let rec parseValue text = 
+let recursive parseValue text = 
     (let trimmed = skipWs(text)
     in 
         match Ashes.Text.uncons(trimmed) with
@@ -151,7 +151,7 @@ let rec parseValue text =
                             else 
                                 if h == "["
                                 then 
-                                    let rec parseArr cur = 
+                                    let recursive parseArr cur = 
                                         let tc = skipWs(cur)
                                         in 
                                             match Ashes.Text.uncons(tc) with
@@ -181,7 +181,7 @@ let rec parseValue text =
                                 else 
                                     if h == "{"
                                     then 
-                                        let rec parseObj cur = 
+                                        let recursive parseObj cur = 
                                             let tc = skipWs(cur)
                                             in 
                                                 match Ashes.Text.uncons(tc) with
@@ -248,7 +248,7 @@ let parse text =
             then Ok(value)
             else Error("trailing input after JSON value")
 
-let rec escStr acc text = 
+let recursive escStr acc text = 
     match Ashes.Text.uncons(text) with
         | None -> acc
         | Some((h, t)) -> 
@@ -268,8 +268,8 @@ let rec escStr acc text =
                             then escStr(acc + "\\t")(t)
                             else escStr(acc + h)(t)
 
-let rec stringify json = 
-    (let rec strArr elem rest = 
+let recursive stringify json = 
+    (let recursive strArr elem rest = 
         let s = stringify(elem)
         in 
             match rest with
@@ -277,7 +277,7 @@ let rec stringify json =
                 | JsonArray(ne, nr) -> s + "," + strArr(ne)(nr)
                 | _ -> s
     in 
-        let rec strObj rest = 
+        let recursive strObj rest = 
             match rest with
                 | JsonObjectEnd -> ""
                 | JsonObject(k, v, nr) -> ",\"" + escStr("")(k) + "\":" + stringify(v) + strObj(nr)
@@ -298,7 +298,7 @@ let rec stringify json =
                 | JsonObject(key, v, rest) -> "{\"" + escStr("")(key) + "\":" + stringify(v) + strObj(rest) + "}")
 
 let get key json = 
-    (let rec go cur = 
+    (let recursive go cur = 
         match cur with
             | JsonObjectEnd -> Error("key not found: " + key)
             | JsonObject(k, v, rest) -> 
@@ -334,7 +334,7 @@ let isNull json =
         | _ -> false
 
 let index i json = 
-    (let rec go cur idx = 
+    (let recursive go cur idx = 
         match cur with
             | JsonArrayEnd -> Error("JSON array index out of bounds")
             | JsonArray(elem, rest) -> 

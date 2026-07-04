@@ -6,7 +6,7 @@ let original = (("alpha", "beta"), 7, "x" :: "y" :: "z" :: [])
 
 let copy = Ashes.Internal.deepCopy(original)
 
-let rec len xs = 
+let recursive len xs = 
     match xs with
         | [] -> 0
         | _h :: t -> 1 + len(t)

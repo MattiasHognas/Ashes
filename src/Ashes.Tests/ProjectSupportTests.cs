@@ -234,7 +234,7 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
             Directory.CreateDirectory(Path.Combine(root, "src"));
             File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import AddOne\nimport Meaning\nAshes.IO.print(AddOne(Meaning))");
-            File.WriteAllText(Path.Combine(root, "src", "AddOne.ash"), "let add_one = fun (x) -> x + 1 in add_one");
+            File.WriteAllText(Path.Combine(root, "src", "AddOne.ash"), "let add_one = given (x) -> x + 1 in add_one");
             File.WriteAllText(Path.Combine(root, "src", "Meaning.ash"), "41");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
@@ -438,7 +438,7 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "Main.ash"), "import Math\nAshes.IO.print(inc(add(1)(2)))");
             File.WriteAllText(
                 Path.Combine(root, "Math.ash"),
-                "let add = fun (x) -> fun (y) -> x + y in let inc = fun (x) -> x + 1 in inc");
+                "let add = given (x) -> given (y) -> x + y in let inc = given (x) -> x + 1 in inc");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
@@ -466,7 +466,7 @@ public sealed class ProjectSupportTests
             // source comes out unbalanced (ASH003).
             File.WriteAllText(
                 Path.Combine(root, "Calc.ash"),
-                "let sum a b = (let rec go n acc = if n == 0 then acc else go(n - 1)(acc + n) in go(a)(b))");
+                "let sum a b = (let recursive go n acc = if n == 0 then acc else go(n - 1)(acc + n) in go(a)(b))");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
@@ -489,12 +489,12 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "Main.ash"), "import Calc\nAshes.IO.print(total(4))");
 
             // Same parenthesized-letin shape (matching the sugared Json.parseValue / Regex.findAll
-            // form: a top-level `let rec` whose folded body leads with an inner `let rec ... in`), but
-            // for a `let rec` binding, which the stitcher renders via in-place renaming rather than
+            // form: a top-level `let recursive` whose folded body leads with an inner `let recursive ... in`), but
+            // for a `let recursive` binding, which the stitcher renders via in-place renaming rather than
             // nested `let..in` wrapping.
             File.WriteAllText(
                 Path.Combine(root, "Calc.ash"),
-                "let rec total n = (let rec go acc m = if m == 0 then acc else go(acc + m)(m - 1) in go(0)(n))");
+                "let recursive total n = (let recursive go acc m = if m == 0 then acc else go(acc + m)(m - 1) in go(0)(n))");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
@@ -539,7 +539,7 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.Result\nmatch Ashes.Result.map((fun (x) -> x + 1))(Ok(41)) with | Ok(value) -> Ashes.IO.print(value) | Error(_) -> Ashes.IO.print(0)");
+                "import Ashes.Result\nmatch Ashes.Result.map((given (x) -> x + 1))(Ok(41)) with | Ok(value) -> Ashes.IO.print(value) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Result");

@@ -265,7 +265,7 @@ public sealed class CliDiagnosticsTests
             Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
             await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
             await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Math.ash"), "let add = fun (x) -> fun (y) -> x + y in add\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Math.ash"), "let add = given (x) -> given (y) -> x + y in add\n");
             await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "math.ash"), "// expect: 3\nimport Math\nAshes.IO.print(Math.add(1)(2))\n");
 
             var result = await RunCliAsync(["test"], workingDirectory: tempDir);

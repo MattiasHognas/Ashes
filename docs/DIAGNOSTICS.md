@@ -19,7 +19,7 @@ Current codes:
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
 | `ASH013` | Duplicate top-level binding name                              |
 | `ASH014` | Reference to a binding not yet declared (forward reference)   |
-| `ASH015` | `and` used without a preceding `let rec`                      |
+| `ASH015` | `and` used without a preceding `let recursive`                      |
 | `ASH016` | Conflicting unqualified import selectors for the same name    |
 | `ASH017` | Unhandled effect (residual top-level effect row is non-empty) |
 | `ASH018` | Effect not permitted by a closed `uses` row                   |
@@ -43,21 +43,21 @@ and the binding/type import selectors. See
 
 - `ASH013` — **Duplicate top-level binding name.** Two top-level declarations bind
   the same name in the same file (for example two `let x = ...` declarations, or a
-  `let` and a `let rec ... and ...` group that reuse a name). Each top-level binding
+  `let` and a `let recursive ... and ...` group that reuse a name). Each top-level binding
   name must be unique within the file.
   Message: `Duplicate top-level binding 'name'.`
 
 - `ASH014` — **Forward reference.** A declaration refers to a binding that is
   declared later in the file. Top-level scoping is sequential (Model A): a binding is
   visible only to subsequent declarations and the trailing expression, not to earlier
-  ones. Self-recursion requires `let rec`, and mutual recursion requires a
-  `let rec ... and ...` group.
+  ones. Self-recursion requires `let recursive`, and mutual recursion requires a
+  `let recursive ... and ...` group.
   Message: `Binding 'name' is not yet declared at this point.`
 
-- `ASH015` — **`and` without `let rec`.** An `and` clause appears without a preceding
-  `let rec`. Mutual recursion is written `let rec X = ... and Y = ...`; a bare `and`
+- `ASH015` — **`and` without `let recursive`.** An `and` clause appears without a preceding
+  `let recursive`. Mutual recursion is written `let recursive X = ... and Y = ...`; a bare `and`
   (after a plain `let`, or with no preceding binding) is rejected.
-  Message: `'and' requires a preceding 'let rec'.`
+  Message: `'and' requires a preceding 'let recursive'.`
 
 - `ASH016` — **Conflicting unqualified import selectors.** Two unqualified selector
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate

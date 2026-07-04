@@ -2,10 +2,10 @@
 import Ashes.Result
 import Ashes.IO
 let mapped = 
-    Ashes.Result.map(fun (x) -> x + 1)(Ok(41))
+    Ashes.Result.map(given (x) -> x + 1)(Ok(41))
 in 
     let flatMapped = 
-        Ashes.Result.flatMap(fun (x) -> Ok(x + 1))(Ok(41))
+        Ashes.Result.flatMap(given (x) -> Ok(x + 1))(Ok(41))
     in 
         let fallback = Ashes.Result.getOrElse(99)(Error("bad"))
         in 

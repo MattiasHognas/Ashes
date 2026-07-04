@@ -10,14 +10,14 @@ import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
 import Ashes.Async
-let rec sumRange lo hi acc = 
+let recursive sumRange lo hi acc = 
     if lo >= hi
     then acc
     else sumRange(lo + 1)(hi)(acc + lo)
 
 let halves = 
-    fun (u) -> 
-        match Ashes.Parallel.both(fun (v) -> sumRange(0)(500000)(0))(fun (v) -> sumRange(500000)(1000000)(0)) with
+    given (u) -> 
+        match Ashes.Parallel.both(given (v) -> sumRange(0)(500000)(0))(given (v) -> sumRange(500000)(1000000)(0)) with
             | (a, b) -> a + b
 
 let before = halves(0)

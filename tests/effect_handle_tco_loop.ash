@@ -3,9 +3,9 @@
 effect Step =
     | bump : Int -> Int
 
-let rec loop = 
-    fun (i) -> 
-        fun (acc) -> 
+let recursive loop = 
+    given (i) -> 
+        given (acc) -> 
             if i >= 100000
             then acc
             else loop(i + 1)(Step.bump(acc))

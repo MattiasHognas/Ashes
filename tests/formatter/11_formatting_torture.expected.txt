@@ -2,7 +2,7 @@ type Result(E, A) =
     | Ok(A)
     | Error(E)
 
-let rec compute fallback xs =
+let recursive compute fallback xs =
     match xs with
         | [] ->
             if fallback >= 10

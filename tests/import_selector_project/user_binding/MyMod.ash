@@ -1,3 +1,3 @@
 let fn = 
-    fun (x) -> x + 100
+    given (x) -> x + 100
 in fn

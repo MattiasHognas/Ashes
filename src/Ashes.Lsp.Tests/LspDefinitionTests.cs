@@ -33,7 +33,7 @@ public sealed class LspDefinitionTests
         await using var document = TempProjectDocument.Create(
             "DefinitionImported",
             ("Main.ash", source),
-            ("Math.ash", "let add = fun (x) -> x + 1 in add"));
+            ("Math.ash", "let add = given (x) -> x + 1 in add"));
         await using var harness = await LspHarness.StartAsync();
 
         _ = await harness.DidOpenAsync(document.MainUri, source);

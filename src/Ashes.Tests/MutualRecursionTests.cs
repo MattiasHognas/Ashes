@@ -6,7 +6,7 @@ using Shouldly;
 namespace Ashes.Tests;
 
 /// <summary>
-/// End-to-end coverage for top-level mutual-recursion groups (<c>let rec X = ... and Y = ...</c>):
+/// End-to-end coverage for top-level mutual-recursion groups (<c>let recursive X = ... and Y = ...</c>):
 /// the group type-checks as one binding group, every member is in scope in every other member's body,
 /// in subsequent declarations, and in the trailing expression, and the whole thing lowers to native
 /// code that runs and produces the right answer.
@@ -32,8 +32,8 @@ public sealed class MutualRecursionTests
         // isEven/isOdd reference each other; the trailing expression exercises both directions and an
         // odd argument, so a wrong answer in either function changes the printed value.
         var src = """
-            let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)
-            and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)
+            let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)
+            and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)
             let answer = if isEven(8) then (if isOdd(8) then 0 else 42) else 0 in Ashes.IO.print(answer)
             """;
 
@@ -51,9 +51,9 @@ public sealed class MutualRecursionTests
         // `classify` (a later top-level declaration) references isEven, and the trailing expression
         // references isOdd — both must resolve to the group's members under Model-A scoping.
         var src = """
-            let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)
-            and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)
-            let classify = fun (n) -> if isEven(n) then 100 else 200
+            let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)
+            and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)
+            let classify = given (n) -> if isEven(n) then 100 else 200
             let result = classify(4) + (if isOdd(3) then 1 else 0) in Ashes.IO.print(result)
             """;
 
@@ -80,8 +80,8 @@ public sealed class MutualRecursionTests
         var src = """
             let lo = 100
             let hi = 7
-            let rec foo = fun (n) -> if n == 0 then lo else bar(n - 1)
-            and bar = fun (n) -> if n == 0 then hi else foo(n - 1)
+            let recursive foo = given (n) -> if n == 0 then lo else bar(n - 1)
+            and bar = given (n) -> if n == 0 then hi else foo(n - 1)
             let r = foo(4) * 1000 + bar(4) in Ashes.IO.print(r)
             """;
 
@@ -98,17 +98,17 @@ public sealed class MutualRecursionTests
             return;
         }
 
-        // The parser only ever emits a multi-binding RecGroup, so build a one-binding group directly
-        // to confirm a degenerate group still type-checks and lowers like an ordinary `let rec`. The
+        // The parser only ever emits a multi-binding RecursiveGroup, so build a one-binding group directly
+        // to confirm a degenerate group still type-checks and lowers like an ordinary `let recursive`. The
         // declaration and the trailing call are parsed separately and assembled so the trailing
         // expression is not folded into the recursive function's body.
         var diag = new Diagnostics();
-        var parsedDecl = new Parser("let rec fact = fun (n) -> if n == 0 then 1 else n * fact(n - 1)", diag).ParseProgram();
+        var parsedDecl = new Parser("let recursive fact = given (n) -> if n == 0 then 1 else n * fact(n - 1)", diag).ParseProgram();
         var trailing = new Parser("Ashes.IO.print(fact(5))", diag).ParseProgram().Body;
         diag.ThrowIfAny();
 
         var letDecl = parsedDecl.Items.OfType<TopLevelItem.LetDecl>().Single();
-        var singletonGroup = new TopLevelItem.RecGroup(new[] { (letDecl.Name, letDecl.Value) });
+        var singletonGroup = new TopLevelItem.RecursiveGroup(new[] { (letDecl.Name, letDecl.Value) });
         var program = new Program(new TopLevelItem[] { singletonGroup }, trailing);
 
         (await RunProgramAsync(program)).ShouldBe("120\n");
@@ -117,17 +117,17 @@ public sealed class MutualRecursionTests
     [Test]
     public void And_without_let_rec_is_rejected()
     {
-        // Parser-level guard: `and` is only valid after `let rec`.
+        // Parser-level guard: `and` is only valid after `let recursive`.
         var diag = new Diagnostics();
         var src = """
-            let isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)
-            and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)
+            let isEven = given (n) -> if n == 0 then true else isOdd(n - 1)
+            and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)
             Ashes.IO.print(0)
             """;
         _ = new Parser(src, diag).ParseProgram();
 
         diag.StructuredErrors.ShouldNotBeEmpty();
-        diag.Errors.ShouldContain(e => e.Contains("'let rec'", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(e => e.Contains("'let recursive'", StringComparison.Ordinal));
     }
 
     private static async Task<string> CompileRunCaptureProgramAsync(string source)

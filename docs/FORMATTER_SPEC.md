@@ -31,7 +31,7 @@ Top-level declarations
   selector imports keep the selected name as `import M.binding` (optionally
   `import M.binding as x`). The selector's `.binding` is never rewritten into a
   module alias, and an `as` alias is never dropped.
-- Top-level `let` / `let rec` declarations have no trailing `in`; they are formatted
+- Top-level `let` / `let recursive` declarations have no trailing `in`; they are formatted
   like a `let` binding without the `in` line.
 
 Example:
@@ -46,17 +46,17 @@ let greeting = "hello " + name
 Ashes.IO.print(greeting)
 ```
 
-`let rec ... and ...` groups
+`let recursive ... and ...` groups
 
-- The `let rec` binding starts the group. Each `and` clause starts its own line at
-  the same indentation as `let rec` (no blank line between members of the group).
+- The `let recursive` binding starts the group. Each `and` clause starts its own line at
+  the same indentation as `let recursive` (no blank line between members of the group).
 - Each binding's value follows the same multiline rules as any `let` binding.
 
 Example:
 
 ```ash
-let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
-and odd = fun (n) -> if n == 0 then false else even(n - 1)
+let recursive even = given (n) -> if n == 0 then true else odd(n - 1)
+and odd = given (n) -> if n == 0 then false else even(n - 1)
 ```
 
 `let ... in ...`
@@ -78,7 +78,7 @@ in x
 
 Lambdas
 
-- `fun (...) ->` stays on one line when the body fits on one line.
+- `given (...) ->` stays on one line when the body fits on one line.
 - Multiline lambda bodies are indented one level after the arrow.
 
 `if / then / else`

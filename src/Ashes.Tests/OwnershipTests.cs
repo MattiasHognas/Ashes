@@ -93,7 +93,7 @@ public sealed class OwnershipTests
     [Test]
     public void Function_binding_emits_drop()
     {
-        var ir = LowerProgram("let f = fun (x) -> x + 1 in Ashes.IO.print(f(42))");
+        var ir = LowerProgram("let f = given (x) -> x + 1 in Ashes.IO.print(f(42))");
         HasDropInstruction(ir.EntryFunction.Instructions, "Function").ShouldBeTrue();
     }
 

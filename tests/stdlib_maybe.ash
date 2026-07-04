@@ -2,10 +2,10 @@
 import Ashes.Maybe
 import Ashes.IO
 let mapped = 
-    Ashes.Maybe.map(fun (x) -> x + 1)(Some(41))
+    Ashes.Maybe.map(given (x) -> x + 1)(Some(41))
 in 
     let flatMapped = 
-        Ashes.Maybe.flatMap(fun (x) -> Some(x + 1))(Some(41))
+        Ashes.Maybe.flatMap(given (x) -> Some(x + 1))(Some(41))
     in 
         let fallback = Ashes.Maybe.getOrElse(99)(None)
         in 

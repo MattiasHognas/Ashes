@@ -527,7 +527,7 @@ public sealed partial class Lowering
                 currentType = Prune(currentType);
             }
 
-            if (currentType is not TypeRef.TFun fun)
+            if (currentType is not TypeRef.TFun funType)
             {
                 ReportDiagnostic(span, $"Operation '{effectSym.Name}.{qv.Name}' expects {i} argument(s) but got {args.Count}.");
                 return ReturnNeverWithDummyTemp();
@@ -535,10 +535,10 @@ public sealed partial class Lowering
 
             using (PushDiagnosticContext($"in argument #{i + 1} of operation '{effectSym.Name}.{qv.Name}'"))
             {
-                Unify(fun.Arg, argType);
+                Unify(funType.Arg, argType);
             }
 
-            currentType = Prune(fun.Ret);
+            currentType = Prune(funType.Ret);
         }
 
         int resultTemp = EmitPerform(effectSym, qv.Name, argTemps);
@@ -979,9 +979,9 @@ public sealed partial class Lowering
     /// Rewrites the arm's <c>resume</c> calls away. On each execution path, <c>resume</c> must be
     /// called exactly once, in one of the supported positions:
     /// tail — <c>resume(e)</c> becomes <c>e</c>;
-    /// let value — <c>let x = resume(v) in B</c> splits into <c>v</c> plus post <c>fun x -&gt; B</c>;
+    /// let value — <c>let x = resume(v) in B</c> splits into <c>v</c> plus post <c>given x -&gt; B</c>;
     /// match scrutinee — <c>match resume(v) with cases</c> splits into <c>v</c> plus
-    /// <c>fun r -&gt; match r with cases</c>.
+    /// <c>given r -&gt; match r with cases</c>.
     /// A path that never resumes is an aborting arm (needs unwinding) and is rejected.
     /// </summary>
     private bool TryRewriteResume(Expr expr, TypeRef handleResultType, out Expr rewritten, out string error)
@@ -1026,19 +1026,19 @@ public sealed partial class Lowering
                 rewritten = CopySpan(let, let with { Body = letBody });
                 return true;
 
-            case Expr.LetRec letRec:
-                if (ExprReferencesName(letRec.Value, "resume", shadowed: false))
+            case Expr.LetRecursive letRecursive:
+                if (ExprReferencesName(letRecursive.Value, "resume", shadowed: false))
                 {
                     error = UnsupportedResumePosition;
                     return false;
                 }
 
-                if (!TryRewriteResume(letRec.Body, handleResultType, out var letRecBody, out error))
+                if (!TryRewriteResume(letRecursive.Body, handleResultType, out var letRecursiveBody, out error))
                 {
                     return false;
                 }
 
-                rewritten = CopySpan(letRec, letRec with { Body = letRecBody });
+                rewritten = CopySpan(letRecursive, letRecursive with { Body = letRecursiveBody });
                 return true;
 
             case Expr.If iff:
@@ -1106,7 +1106,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Builds the one-shot split node: the resume argument as the value returned to the perform
-    /// site, and <c>fun param -&gt; postBody</c> as the post-resume continuation.
+    /// site, and <c>given param -&gt; postBody</c> as the post-resume continuation.
     /// </summary>
     private Expr BuildEffectPost(string paramName, Expr postBody, Expr resumeArg, TypeRef handleResultType, Expr original)
     {
@@ -1152,10 +1152,10 @@ public sealed partial class Lowering
     {
         int count = 0;
         var current = Prune(type);
-        while (current is TypeRef.TFun fun)
+        while (current is TypeRef.TFun funType)
         {
             count++;
-            current = Prune(fun.Ret);
+            current = Prune(funType.Ret);
         }
 
         return count;
@@ -1167,7 +1167,7 @@ public sealed partial class Lowering
         type = Prune(type);
         return type switch
         {
-            TypeRef.TFun fun => new TypeRef.TFun(DetachRows(fun.Arg), DetachRows(fun.Ret)) { Row = NewTypeVar() },
+            TypeRef.TFun funType => new TypeRef.TFun(DetachRows(funType.Arg), DetachRows(funType.Ret)) { Row = NewTypeVar() },
             TypeRef.TList list => new TypeRef.TList(DetachRows(list.Element)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(DetachRows).ToList()),
             TypeRef.TNamedType named => new TypeRef.TNamedType(named.Symbol, named.TypeArgs.Select(DetachRows).ToList()),
@@ -1177,7 +1177,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Eta-expands a first-class operation reference: <c>Clock.now</c> becomes
-    /// <c>fun a -&gt; Clock.now(a)</c> (curried to the signature's arity), so the perform happens
+    /// <c>given a -&gt; Clock.now(a)</c> (curried to the signature's arity), so the perform happens
     /// at the eventual application site and normal closure lowering applies.
     /// </summary>
     private Expr BuildOperationEtaLambda(Expr.QualifiedVar qv, int arity)

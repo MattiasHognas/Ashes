@@ -143,13 +143,13 @@ Hindley-Milner with let-polymorphism. Don't add syntax/evaluation/typing rules w
 `LANGUAGE_SPEC.md` first.
 
 **Top-level declarations:** a file is `import* declaration* expr?` — a flat sequence of top-level
-`let` / `let rec ... and ...` / `type` / `extern` declarations (no trailing `in`) followed by an
+`let` / `let recursive ... and ...` / `type` / `external` declarations (no trailing `in`) followed by an
 optional trailing expression. Scoping is sequential (Model A): a binding is visible to subsequent
-declarations and the trailing expression, never to earlier ones; self-recursion needs `let rec`,
-mutual recursion needs `let rec X = ... and Y = ...`. Imports support whole-module (`import M`,
+declarations and the trailing expression, never to earlier ones; self-recursion needs `let recursive`,
+mutual recursion needs `let recursive X = ... and Y = ...`. Imports support whole-module (`import M`,
 `import M as X`) and selector forms (`import M.binding [as x]`, `import M.Type [as T]`) that bring
 the name in unqualified, with built-in `Ashes.*` modules resolving via the same path. A module's
-exports are its top-level `let`/`type` declarations only — `extern` and the trailing expression are
+exports are its top-level `let`/`type` declarations only — `external` and the trailing expression are
 never exported, and there is no implicit re-export. The bare-expression and nested `let ... in`
 pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this surface (see
 [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)).

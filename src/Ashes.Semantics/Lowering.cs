@@ -220,12 +220,12 @@ public sealed partial class Lowering
     // Non-recursive top-level functions, by name → (param names, body). When such a function is
     // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
     // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
-    // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecGroup) is excluded.
+    // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecursiveGroup) is excluded.
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
-    //   • single-parameter recursion: let rec f = fun p -> body (LinearParam = p, ArgCount = 1);
-    //   • nested-rec-returning: let f = fun a -> ... -> (let rec go = fun m -> _ in go) — f isn't
+    //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
+    //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
     //     itself recursive but returns a recursive single-param function (LinearParam = m, ArgCount =
     //     outer params + 1, the accumulator being the last applied argument), e.g. Map.set.
     // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
@@ -362,8 +362,8 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TypeSymbol> _typeSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ConstructorSymbol> _constructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeRef.TNamedType> _resolvedTypes = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _externOpaqueTypes = new(StringComparer.Ordinal);
-    private readonly List<IrExternFunction> _externFunctions = new();
+    private readonly HashSet<string> _externalOpaqueTypes = new(StringComparer.Ordinal);
+    private readonly List<IrExternalFunction> _externalFunctions = new();
 
     public IReadOnlyDictionary<string, TypeSymbol> TypeSymbols => _typeSymbols;
     public IReadOnlyDictionary<string, ConstructorSymbol> ConstructorSymbols => _constructorSymbols;
@@ -423,14 +423,14 @@ public sealed partial class Lowering
 
     public IrProgram Lower(Program program)
     {
-        // Type, extern, and effect declarations are registered upfront; their relative order among
+        // Type, external, and effect declarations are registered upfront; their relative order among
         // value bindings does not affect visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
-        RegisterExternDeclarations(program.ExternDecls);
+        RegisterExternalDeclarations(program.ExternalDecls);
         RegisterEffectDeclarations(program.Items);
 
         var valueItems = program.Items
-            .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecGroup)
+            .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
             .ToList();
 
         CollectTopLevelBindingNames(valueItems);
@@ -486,7 +486,7 @@ public sealed partial class Lowering
         Expr.NotEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.If x => ExprHasCallOrAggregate(x.Cond) || ExprHasCallOrAggregate(x.Then) || ExprHasCallOrAggregate(x.Else),
         Expr.Let x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
-        Expr.LetRec x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
+        Expr.LetRecursive x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
         Expr.LetResult x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
         Expr.Lambda x => ExprHasCallOrAggregate(x.Body),
         Expr.Await x => ExprHasCallOrAggregate(x.Task),
@@ -533,7 +533,7 @@ public sealed partial class Lowering
                 // A non-recursive function that returns a nested recursive single-param function
                 // (the Map.set shape) is specialized, not inlined; any other plain function is an
                 // inline candidate for helper rebuilds inside a reuse arm.
-                if (TryGetNestedRecReturn(lam, out var nestedParam, out var nestedArgCount))
+                if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
                 {
                     _specializableFunctions[let.Name] = (lam, nestedParam, nestedArgCount);
                 }
@@ -547,13 +547,13 @@ public sealed partial class Lowering
                 }
             }
 
-            // Single-parameter recursive functions (let rec f = fun p -> body, body not a lambda)
+            // Single-parameter recursive functions (let rec f = given p -> body, body not a lambda)
             // are candidates for in-place-reuse specialization when applied to a unique accumulator.
-            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recLet && Strip(recLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recLam)
+            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet && Strip(recursiveLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recursiveLambda)
             {
-                _specializableFunctions[recLet.Name] = (recLam, recLam.ParamName, 1);
+                _specializableFunctions[recursiveLet.Name] = (recursiveLambda, recursiveLambda.ParamName, 1);
             }
-            else if (item is TopLevelItem.RecGroup { Bindings.Count: 1 } group
+            else if (item is TopLevelItem.RecursiveGroup { Bindings.Count: 1 } group
                 && Strip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
             {
                 _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
@@ -584,9 +584,9 @@ public sealed partial class Lowering
                     RegisterEntryFunction(letExpr.Name, isRecursive: false, letExpr.Value, binderCounts);
                     cur = letExpr.Body;
                     continue;
-                case Expr.LetRec letRecExpr:
-                    RegisterEntryFunction(letRecExpr.Name, isRecursive: true, letRecExpr.Value, binderCounts);
-                    cur = letRecExpr.Body;
+                case Expr.LetRecursive letRecursiveExpr:
+                    RegisterEntryFunction(letRecursiveExpr.Name, isRecursive: true, letRecursiveExpr.Value, binderCounts);
+                    cur = letRecursiveExpr.Body;
                     continue;
                 default:
                     return;
@@ -620,7 +620,7 @@ public sealed partial class Lowering
         // that are not in scope at an inline site inside another function or specialization.
         if (!isRecursive)
         {
-            if (TryGetNestedRecReturn(lam, out var nestedParam, out var nestedArgCount))
+            if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
             {
                 _specializableFunctions[name] = (lam, nestedParam, nestedArgCount);
             }
@@ -649,7 +649,7 @@ public sealed partial class Lowering
         {
             case Expr.Let l: Bump(l.Name); break;
             case Expr.LetResult lr: Bump(lr.Name); break;
-            case Expr.LetRec lrec: Bump(lrec.Name); break;
+            case Expr.LetRecursive lrec: Bump(lrec.Name); break;
             case Expr.Lambda lam: Bump(lam.ParamName); break;
             case Pattern.Var pv: Bump(pv.Name); break;
         }
@@ -699,11 +699,11 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Detects the <c>Map.set</c> shape: a chain of outer parameter lambdas whose innermost body is
-    /// <c>let rec go = (fun m -> _) in go</c> — returning a recursive single-parameter function.
+    /// <c>let rec go = (given m -> _) in go</c> — returning a recursive single-parameter function.
     /// Outputs the recursive parameter to specialize on and the total number of arguments the full
     /// application takes (outer params + the recursive arg).
     /// </summary>
-    private static bool TryGetNestedRecReturn(Expr.Lambda lam, out string linearParam, out int argCount)
+    private static bool TryGetNestedRecursiveReturn(Expr.Lambda lam, out string linearParam, out int argCount)
     {
         linearParam = "";
         argCount = 0;
@@ -715,11 +715,11 @@ public sealed partial class Lowering
             body = inner.Body;
         }
 
-        if (body is Expr.LetRec { Value: Expr.Lambda recValue, Body: Expr.Var recRef } letRec
-            && string.Equals(letRec.Name, recRef.Name, StringComparison.Ordinal)
-            && recValue.Body is not Expr.Lambda)
+        if (body is Expr.LetRecursive { Value: Expr.Lambda recursiveValue, Body: Expr.Var recursiveRef } letRecursive
+            && string.Equals(letRecursive.Name, recursiveRef.Name, StringComparison.Ordinal)
+            && recursiveValue.Body is not Expr.Lambda)
         {
-            linearParam = recValue.ParamName;
+            linearParam = recursiveValue.ParamName;
             argCount = outer + 1;
             return true;
         }
@@ -764,7 +764,7 @@ public sealed partial class Lowering
                 case TopLevelItem.LetDecl let:
                     RegisterTopLevelBindingName(let.Name, let.Value, seen);
                     break;
-                case TopLevelItem.RecGroup group:
+                case TopLevelItem.RecursiveGroup group:
                     foreach (var (name, value) in group.Bindings)
                     {
                         RegisterTopLevelBindingName(name, value, seen);
@@ -794,9 +794,9 @@ public sealed partial class Lowering
         {
             body = valueItems[i] switch
             {
-                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRec(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
+                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRecursive(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
                 TopLevelItem.LetDecl let => new Expr.Let(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
-                TopLevelItem.RecGroup group => DesugarRecGroup(group, body),
+                TopLevelItem.RecursiveGroup group => DesugarRecursiveGroup(group, body),
                 _ => body
             };
         }
@@ -806,28 +806,28 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Desugars a mutual-recursion group (<c>let rec X = ... and Y = ...</c>) into a marker node that
-    /// lowering handles directly. The parser only emits a <see cref="TopLevelItem.RecGroup"/> for a
+    /// lowering handles directly. The parser only emits a <see cref="TopLevelItem.RecursiveGroup"/> for a
     /// genuine multi-binding <c>and</c> group (or a degenerate one-binding group), whose bindings must
     /// all see one another — a property that nesting independent <c>let rec</c> forms cannot express.
     /// The group's names are also in scope for the continuation (subsequent declarations and the
     /// trailing expression) under Model-A scoping; <paramref name="body"/> carries that continuation.
     /// </summary>
-    private Expr DesugarRecGroup(TopLevelItem.RecGroup group, Expr body)
-        => new RecGroupExpr(group.Bindings, body);
+    private Expr DesugarRecursiveGroup(TopLevelItem.RecursiveGroup group, Expr body)
+        => new RecursiveGroupExpr(group.Bindings, body);
 
     /// <summary>
     /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only
     /// ever appears at the top level (never inside a lambda/async body), so the free-variable and
     /// other expression walkers never encounter it; only <see cref="LowerExpr"/> dispatches it.
     /// </summary>
-    private sealed record RecGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body) : Expr;
+    private sealed record RecursiveGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body) : Expr;
 
     /// <summary>
     /// Shared lowering state for the members of a mutual-recursion group. Every member is compiled to
     /// its own IR function but they all share one identical environment, so a member can rebuild any
     /// sibling's closure from its own env pointer (see <see cref="LowerLambdaCore"/>).
     /// </summary>
-    private sealed class RecGroupContext
+    private sealed class RecursiveGroupContext
     {
         public required IReadOnlyList<string> SharedCaptures { get; init; }
         public required int SharedEnvPtrTemp { get; init; }
@@ -840,17 +840,17 @@ public sealed partial class Lowering
     /// lowered against one shared environment, and the names then stay in scope — monomorphically, as
     /// the single <c>let rec</c> form already does — for the continuation.
     /// </summary>
-    private (int, TypeRef) LowerRecGroup(RecGroupExpr group)
+    private (int, TypeRef) LowerRecursiveGroup(RecursiveGroupExpr group)
     {
         var bindings = group.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
 
         // HM recursive-group rule, part 1: introduce a fresh type for every member up front. Function
         // members get an arrow shape so call sites refine arg/return before the body is solved.
-        var recTypes = new TypeRef[bindings.Count];
+        var recordTypes = new TypeRef[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
-            recTypes[i] = FindInnermostLambdaUnderLets(bindings[i].Value) is not null
+            recordTypes[i] = FindInnermostLambdaUnderLets(bindings[i].Value) is not null
                 ? new TypeRef.TFun(NewTypeVar(), NewTypeVar())
                 : NewTypeVar();
         }
@@ -894,11 +894,11 @@ public sealed partial class Lowering
         for (int i = 0; i < bindings.Count; i++)
         {
             labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
-            members[i] = (bindings[i].Name, labels[i], recTypes[i], GetSpan(bindings[i].Value));
+            members[i] = (bindings[i].Name, labels[i], recordTypes[i], GetSpan(bindings[i].Value));
             slots[i] = NewLocal();
         }
 
-        var groupContext = new RecGroupContext
+        var groupContext = new RecursiveGroupContext
         {
             SharedCaptures = sharedCaptures,
             SharedEnvPtrTemp = sharedEnvPtrTemp,
@@ -915,18 +915,18 @@ public sealed partial class Lowering
             var value = bindings[i].Value;
             if (value is not Expr.Lambda lambda)
             {
-                ReportDiagnostic(GetSpan(value), "let rec currently requires a function value.");
+                ReportDiagnostic(GetSpan(value), "let recursive currently requires a function value.");
                 var (fallbackTemp, fallbackType) = LowerExpr(value);
-                Unify(recTypes[i], fallbackType);
+                Unify(recordTypes[i], fallbackType);
                 Emit(new IrInst.StoreLocal(slots[i], fallbackTemp));
-                RecordLocalDebugInfo(slots[i], bindings[i].Name, recTypes[i]);
+                RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);
                 continue;
             }
 
-            var (closureTemp, closureType) = LowerLambdaCore(lambda, selfName: null, selfType: null, stackAllocateClosure: false, recGroup: groupContext, forcedLabel: labels[i]);
-            Unify(recTypes[i], closureType);
-            RecordHoverType(members[i].Span, bindings[i].Name, recTypes[i]);
-            RecordLocalDebugInfo(slots[i], bindings[i].Name, recTypes[i]);
+            var (closureTemp, closureType) = LowerLambdaCore(lambda, selfName: null, selfType: null, stackAllocateClosure: false, recursiveGroup: groupContext, forcedLabel: labels[i]);
+            Unify(recordTypes[i], closureType);
+            RecordHoverType(members[i].Span, bindings[i].Name, recordTypes[i]);
+            RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);
             Emit(new IrInst.StoreLocal(slots[i], closureTemp));
         }
 
@@ -936,7 +936,7 @@ public sealed partial class Lowering
         // dispatch function and rebind each member to a thin wrapper so the existing single-function
         // TCO collapses the whole group into one loop instead of growing the stack through closure
         // calls. Ineligible groups keep the closures lowered above.
-        var tcoSlots = TryLowerMutualRecursionTco(bindings, recTypes, groupNames);
+        var tcoSlots = TryLowerMutualRecursionTco(bindings, recordTypes, groupNames);
 
         // The members stay in scope for the continuation, bound to the slots holding their closures
         // (or their TCO wrappers) — monomorphic, matching the single let rec form.
@@ -945,7 +945,7 @@ public sealed partial class Lowering
         for (int i = 0; i < bindings.Count; i++)
         {
             int memberSlot = tcoSlots?[i] ?? slots[i];
-            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recTypes[i]), members[i].Span);
+            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recordTypes[i]), members[i].Span);
         }
 
         _scopes.Push(child);
@@ -974,7 +974,7 @@ public sealed partial class Lowering
     /// </summary>
     private int[]? TryLowerMutualRecursionTco(
         IReadOnlyList<(string Name, Expr Value)> bindings,
-        TypeRef[] recTypes,
+        TypeRef[] recordTypes,
         HashSet<string> groupNames)
     {
         if (bindings.Count < 2)
@@ -1014,7 +1014,7 @@ public sealed partial class Lowering
         var paramTypes = new List<TypeRef>[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
-            if (!TryGetArrowParamTypes(recTypes[i], arity, out var memberParamTypes))
+            if (!TryGetArrowParamTypes(recordTypes[i], arity, out var memberParamTypes))
             {
                 return null;
             }
@@ -1058,10 +1058,10 @@ public sealed partial class Lowering
         var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, arity);
 
         int dispatchSlot = NewLocal();
-        var dispatchRecType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
+        var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
         var dispatchScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
         {
-            [dispatchName] = new Binding.Local(dispatchSlot, dispatchRecType)
+            [dispatchName] = new Binding.Local(dispatchSlot, dispatchRecursiveType)
         };
         _scopes.Push(dispatchScope);
 
@@ -1077,21 +1077,21 @@ public sealed partial class Lowering
             }
             : null;
         var (dispatchTemp, dispatchType) = LowerLambdaCore(
-            dispatchLambda, dispatchName, dispatchRecType, stackAllocateClosure: false, forcedLabel: dispatchName);
+            dispatchLambda, dispatchName, dispatchRecursiveType, stackAllocateClosure: false, forcedLabel: dispatchName);
         _tcoCtx = savedTcoCtx;
-        Unify(dispatchRecType, dispatchType);
+        Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
 
-        // ── Synthesize and lower one wrapper per member: fun p… -> dispatch(tag, p…). ──
+        // ── Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…). ──
         var wrapperSlots = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
             var wrapperLambda = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
             var (wrapperTemp, wrapperType) = LowerExpr(wrapperLambda);
-            Unify(recTypes[i], wrapperType);
+            Unify(recordTypes[i], wrapperType);
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, wrapperTemp));
-            RecordLocalDebugInfo(slot, bindings[i].Name, recTypes[i]);
+            RecordLocalDebugInfo(slot, bindings[i].Name, recordTypes[i]);
             wrapperSlots[i] = slot;
         }
 
@@ -1100,7 +1100,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Builds <c>fun which -> fun arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
+    /// Builds <c>given which -> given arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
     /// where each arm is a member body with its parameters rebound to the shared dispatch arguments
     /// and its in-group tail calls redirected to <paramref name="dispatchName"/>.
     /// </summary>
@@ -1137,7 +1137,7 @@ public sealed partial class Lowering
         return new Expr.Lambda(DispatchWhichName, body);
     }
 
-    /// <summary>Builds <c>fun w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
+    /// <summary>Builds <c>given w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
     private Expr.Lambda BuildDispatchWrapper(string dispatchName, int tag, int arity)
     {
         Expr body = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tag));
@@ -1178,7 +1178,7 @@ public sealed partial class Lowering
                 };
             case Expr.Let l:
                 return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
-            case Expr.LetRec l:
+            case Expr.LetRecursive l:
                 return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
             case Expr.LetResult l:
                 return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
@@ -1221,7 +1221,7 @@ public sealed partial class Lowering
             case Expr.Let l:
                 CollectGroupTailCalls(l.Body, groupNames, arity, found);
                 break;
-            case Expr.LetRec l:
+            case Expr.LetRecursive l:
                 CollectGroupTailCalls(l.Body, groupNames, arity, found);
                 break;
             case Expr.LetResult l:
@@ -1326,8 +1326,8 @@ public sealed partial class Lowering
             EntryFunction: entry,
             Functions: _funcs,
             StringLiterals: _strings,
-            ExternFunctions: _externFunctions,
-            ExternOpaqueTypes: new HashSet<string>(_externOpaqueTypes, StringComparer.Ordinal),
+            ExternalFunctions: _externalFunctions,
+            ExternalOpaqueTypes: new HashSet<string>(_externalOpaqueTypes, StringComparer.Ordinal),
             UsesPrintInt: _usesPrintInt,
             UsesPrintStr: _usesPrintStr,
             UsesPrintBool: _usesPrintBool,
@@ -1422,8 +1422,8 @@ public sealed partial class Lowering
             Expr.ResultMapErrorPipe pipe => LowerResultMapErrorPipe(pipe),
             Expr.Let let => LowerLet(let),
             Expr.LetResult letResult => LowerLetResult(letResult),
-            Expr.LetRec letRec => LowerLetRec(letRec),
-            RecGroupExpr group => LowerRecGroup(group),
+            Expr.LetRecursive letRecursive => LowerLetRecursive(letRecursive),
+            RecursiveGroupExpr group => LowerRecursiveGroup(group),
             Expr.If iff => LowerIf(iff),
             Expr.Lambda lam => LowerLambda(lam),
             Expr.Call call => LowerCall(call),
@@ -1592,8 +1592,8 @@ public sealed partial class Lowering
                 result = (temp, intrinsic.Type);
                 break;
 
-            case Binding.ExternFunction externFunction:
-                result = EmitExternFunctionThunk(externFunction.Function, externFunction.Type, GetSpan(v));
+            case Binding.ExternalFunction externalFunction:
+                result = EmitExternalFunctionThunk(externalFunction.Function, externalFunction.Type, GetSpan(v));
                 break;
 
             case Binding.PreludeValue value:
@@ -1701,25 +1701,25 @@ public sealed partial class Lowering
 
         // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.
         // Let-bindings create Binding.Scheme; lambda params create Binding.Local.
-        int? recFieldSlot = null;
-        TypeRef? recFieldType = null;
-        if (binding is Binding.Local recLocal)
+        int? recordFieldSlot = null;
+        TypeRef? recordFieldType = null;
+        if (binding is Binding.Local recordLocal)
         {
-            recFieldSlot = recLocal.Slot;
-            recFieldType = Prune(recLocal.Type);
+            recordFieldSlot = recordLocal.Slot;
+            recordFieldType = Prune(recordLocal.Type);
         }
-        else if (binding is Binding.Scheme recScheme)
+        else if (binding is Binding.Scheme recordScheme)
         {
-            recFieldSlot = recScheme.Slot;
-            recFieldType = Prune(Instantiate(recScheme.S));
+            recordFieldSlot = recordScheme.Slot;
+            recordFieldType = Prune(Instantiate(recordScheme.S));
         }
 
-        if (recFieldSlot.HasValue
-            && recFieldType is TypeRef.TNamedType namedRecType
-            && namedRecType.Symbol.Constructors.Count == 1
-            && namedRecType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
+        if (recordFieldSlot.HasValue
+            && recordFieldType is TypeRef.TNamedType namedRecordType
+            && namedRecordType.Symbol.Constructors.Count == 1
+            && namedRecordType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
         {
-            var ctor = namedRecType.Symbol.Constructors[0];
+            var ctor = namedRecordType.Symbol.Constructors[0];
             var fieldNames = ctor.DeclaringSyntax.FieldNames;
             int fieldIdx = -1;
             for (int fi = 0; fi < fieldNames.Count; fi++)
@@ -1734,10 +1734,10 @@ public sealed partial class Lowering
             if (fieldIdx >= 0)
             {
                 int baseTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(baseTemp, recFieldSlot.Value));
+                Emit(new IrInst.LoadLocal(baseTemp, recordFieldSlot.Value));
                 int fieldTemp = NewTemp();
                 Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
-                var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecType);
+                var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecordType);
                 RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
                 return (fieldTemp, fieldType);
             }
@@ -2800,31 +2800,31 @@ public sealed partial class Lowering
         return (resultTemp, Prune(resultType));
     }
 
-    private (int, TypeRef) LowerLetRec(Expr.LetRec letRec)
+    private (int, TypeRef) LowerLetRecursive(Expr.LetRecursive letRecursive)
     {
         int slot = NewLocal();
-        // The module system may wrap a lambda in alias lets: let alias = mangled in fun (x) -> ...
+        // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
-        var innerLambda = FindInnermostLambdaUnderLets(letRec.Value);
-        var recType = innerLambda is not null
+        var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
+        var recursiveType = innerLambda is not null
             ? (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar())
             : NewTypeVar();
-        RecordLocalDebugInfo(slot, letRec.Name, recType);
+        RecordLocalDebugInfo(slot, letRecursive.Name, recursiveType);
 
         var parent = _scopes.Peek();
         var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
         {
-            [letRec.Name] = new Binding.Local(slot, recType, AstSpans.GetLetRecNameOrDefault(letRec))
+            [letRecursive.Name] = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))
         };
         _scopes.Push(child);
 
         (int valTemp, TypeRef valType) valueAndType;
-        if (letRec.Value is Expr.Lambda lam)
+        if (letRecursive.Value is Expr.Lambda lam)
         {
-            // Detect lambda chain for TCO: fun (x) -> fun (y) -> body
+            // Detect lambda chain for TCO: given (x) -> given (y) -> body
             var paramCount = CountLambdaChain(lam);
             var innermostBody = GetInnermostBody(lam);
-            var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRec.Name, paramCount);
+            var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
 
             var savedTcoCtx = _tcoCtx;
             if (hasTailSelfCalls)
@@ -2832,11 +2832,11 @@ public sealed partial class Lowering
                 var tcoParamNames = CollectLambdaParams(lam);
                 _tcoCtx = new TcoContext
                 {
-                    SelfName = letRec.Name,
+                    SelfName = letRecursive.Name,
                     ParamCount = paramCount,
                     ParamNames = tcoParamNames,
                     InTailPosition = false,
-                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam), tcoParamNames, letRec.Name)
+                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam), tcoParamNames, letRecursive.Name)
                 };
             }
             else
@@ -2844,7 +2844,7 @@ public sealed partial class Lowering
                 _tcoCtx = null;
             }
 
-            valueAndType = LowerLambdaRecursive(letRec.Name, recType, lam);
+            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
 
             _tcoCtx = savedTcoCtx;
         }
@@ -2863,10 +2863,10 @@ public sealed partial class Lowering
 
             int aliasCount = 0;
             List<string>? selfAliases = null;
-            var aliasExpr = letRec.Value;
+            var aliasExpr = letRecursive.Value;
             while (aliasExpr is Expr.Let aliasLet)
             {
-                if (aliasLet.Value is Expr.Var selfVar && string.Equals(selfVar.Name, letRec.Name, StringComparison.Ordinal))
+                if (aliasLet.Value is Expr.Var selfVar && string.Equals(selfVar.Name, letRecursive.Name, StringComparison.Ordinal))
                 {
                     // Self-alias: let unmangledName = mangledSelf — skip slot capture, pass as Binding.Self alias.
                     selfAliases ??= new List<string>();
@@ -2887,7 +2887,7 @@ public sealed partial class Lowering
                 aliasExpr = aliasLet.Body;
             }
 
-            valueAndType = LowerLambdaRecursive(letRec.Name, recType, innerLambda, selfAliases: selfAliases);
+            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, innerLambda, selfAliases: selfAliases);
 
             for (int i = 0; i < aliasCount; i++)
             {
@@ -2898,21 +2898,21 @@ public sealed partial class Lowering
         }
         else
         {
-            ReportDiagnostic(GetSpan(letRec.Value), "let rec currently requires a function value.");
-            valueAndType = LowerExpr(letRec.Value);
+            ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
+            valueAndType = LowerExpr(letRecursive.Value);
         }
 
-        Unify(recType, valueAndType.valType);
+        Unify(recursiveType, valueAndType.valType);
 
         // If the user wrote a type annotation, verify it matches the inferred type.
-        if (letRec.TypeAnnotation is { } recAnnotation)
+        if (letRecursive.TypeAnnotation is { } recursiveAnnotation)
         {
-            using var annotationSpan = PushDiagnosticSpan(GetSpan(letRec.Value));
-            var annotatedRecType = ResolveAnnotationType(recAnnotation);
-            Unify(annotatedRecType, recType);
+            using var annotationSpan = PushDiagnosticSpan(GetSpan(letRecursive.Value));
+            var annotatedRecursiveType = ResolveAnnotationType(recursiveAnnotation);
+            Unify(annotatedRecursiveType, recursiveType);
         }
 
-        RecordHoverType(AstSpans.GetLetRecNameOrDefault(letRec), letRec.Name, recType);
+        RecordHoverType(AstSpans.GetLetRecursiveNameOrDefault(letRecursive), letRecursive.Name, recursiveType);
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
 
         // Register an empty-env recursive top-level function so a specialization generated later (in an
@@ -2924,15 +2924,15 @@ public sealed partial class Lowering
         // Generalize against the parent scope (pop the self-binding first) so the scheme quantifies the
         // function's own type vars — otherwise the self-binding keeps them in the environment and two
         // specializations at different element types would share (and conflict on) one monotype.
-        if (_lambdaDepth == 0 && _lastLoweredLambdaEmptyEnv && letRec.Value is Expr.Lambda)
+        if (_lambdaDepth == 0 && _lastLoweredLambdaEmptyEnv && letRecursive.Value is Expr.Lambda)
         {
             var selfScope = _scopes.Pop();
-            var helperScheme = FreshenScheme(Generalize(Prune(recType)));
+            var helperScheme = FreshenScheme(Generalize(Prune(recursiveType)));
             _scopes.Push(selfScope);
-            _topLevelFunctionRefs[letRec.Name] = (_lastLoweredLambdaLabel, helperScheme);
+            _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
         }
 
-        var (bodyTemp, bodyType) = LowerExpr(letRec.Body);
+        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body);
         _scopes.Pop();
         return (bodyTemp, bodyType);
     }
@@ -2987,7 +2987,7 @@ public sealed partial class Lowering
             Expr.Match m => m.Cases.Any(c => HasTailSelfCalls(c.Body, selfName, paramCount)),
             Expr.Let l => HasTailSelfCalls(l.Body, selfName, paramCount),
             Expr.LetResult l => HasTailSelfCalls(l.Body, selfName, paramCount),
-            Expr.LetRec l => HasTailSelfCalls(l.Body, selfName, paramCount),
+            Expr.LetRecursive l => HasTailSelfCalls(l.Body, selfName, paramCount),
             Expr.Call c => IsSelfCallChain(c, selfName, paramCount),
             _ => false
         };
@@ -3106,7 +3106,7 @@ public sealed partial class Lowering
         return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure, selfAliases);
     }
 
-    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null, RecGroupContext? recGroup = null, string? forcedLabel = null)
+    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null, RecursiveGroupContext? recursiveGroup = null, string? forcedLabel = null)
     {
         _usesClosures = true;
 
@@ -3141,16 +3141,16 @@ public sealed partial class Lowering
         // sibling's closure can be reconstructed (via Binding.Self) using the current member's env.
         // Otherwise compute this lambda's own captures and build its env. Remove vars that are not in
         // scope (should not happen if earlier checks).
-        var captures = recGroup is not null
-            ? recGroup.SharedCaptures
+        var captures = recursiveGroup is not null
+            ? recursiveGroup.SharedCaptures
             : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct().ToList();
 
         // At lambda creation site: allocate env if needed
         int envPtrTemp;
-        if (recGroup is not null)
+        if (recursiveGroup is not null)
         {
             // The group's shared env was already allocated and filled once at the group site.
-            envPtrTemp = recGroup.SharedEnvPtrTemp;
+            envPtrTemp = recursiveGroup.SharedEnvPtrTemp;
         }
         else if (captures.Count == 0)
         {
@@ -3264,12 +3264,12 @@ public sealed partial class Lowering
                 scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
             }
         }
-        if (recGroup is not null)
+        if (recursiveGroup is not null)
         {
             // Bind every group member (this one and its siblings) so each resolves to its own IR
             // function. Reconstructing a sibling's closure uses this member's env (LoadLocal 0), which
             // is correct precisely because the whole group shares one identical environment layout.
-            foreach (var member in recGroup.Members)
+            foreach (var member in recursiveGroup.Members)
             {
                 scope[member.Name] = new Binding.Self(member.Label, member.Type, captures.Count * 8, member.Span);
             }
@@ -3934,10 +3934,10 @@ public sealed partial class Lowering
         arity = 0;
         var current = Prune(type);
 
-        while (current is TypeRef.TFun fun)
+        while (current is TypeRef.TFun funType)
         {
             arity++;
-            current = Prune(fun.Ret);
+            current = Prune(funType.Ret);
         }
 
         if (current is TypeRef.TVar resultVar)
@@ -4359,9 +4359,9 @@ public sealed partial class Lowering
             };
         }
 
-        if (rootExpr is Expr.Var externVar && Lookup(externVar.Name) is Binding.ExternFunction externFunction)
+        if (rootExpr is Expr.Var externalVar && Lookup(externalVar.Name) is Binding.ExternalFunction externalFunction)
         {
-            return LowerExternCall(rootExpr, externFunction.Function, collectedArgs);
+            return LowerExternalCall(rootExpr, externalFunction.Function, collectedArgs);
         }
 
         // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
@@ -4517,12 +4517,12 @@ public sealed partial class Lowering
                 // Callee type is an unresolved type variable: constrain it to a function type
                 // so that the occurs check can fire if the argument is the same variable. The
                 // constructed arrow shares the caller's ambient row, so a higher-order parameter
-                // applied here (`fun f -> fun x -> f(x)`) carries its effects to the caller.
+                // applied here (`given f -> given x -> f(x)`) carries its effects to the caller.
                 Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = AmbientRow });
                 currentType = Prune(currentType);
             }
 
-            if (currentType is not TypeRef.TFun fun)
+            if (currentType is not TypeRef.TFun funType)
             {
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
@@ -4533,19 +4533,19 @@ public sealed partial class Lowering
                 : $"in argument #{i + 1} of function call";
             using (PushDiagnosticContext(callContext))
             {
-                Unify(fun.Arg, argType);
+                Unify(funType.Arg, argType);
             }
 
             // The applied arrow's effects happen here: record them in the ambient row.
             using (PushDiagnosticSpan(GetSpan(call)))
             {
-                SubsumeCalleeRow(fun.Row, GetSpan(call));
+                SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
 
             int target = NewTemp();
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
             currentTemp = target;
-            currentType = Prune(fun.Ret);
+            currentType = Prune(funType.Ret);
         }
 
         // Restore arena after the call chain completes.
@@ -4615,24 +4615,24 @@ public sealed partial class Lowering
         return (currentTemp, currentType);
     }
 
-    private (int, TypeRef) LowerExternCall(Expr rootExpr, IrExternFunction externFunction, List<Expr> args)
+    private (int, TypeRef) LowerExternalCall(Expr rootExpr, IrExternalFunction externalFunction, List<Expr> args)
     {
-        if (args.Count != externFunction.ParameterTypes.Count)
+        if (args.Count != externalFunction.ParameterTypes.Count)
         {
-            return ReportArityMismatch(rootExpr, externFunction.ParameterTypes.Count, args.Count);
+            return ReportArityMismatch(rootExpr, externalFunction.ParameterTypes.Count, args.Count);
         }
 
         var loweredArgTemps = new List<int>(args.Count);
         for (int i = 0; i < args.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
-            var expectedType = FromFfiType(externFunction.ParameterTypes[i]);
-            using (PushDiagnosticContext($"in argument #{i + 1} of extern call to '{externFunction.Name}'"))
+            var expectedType = FromFfiType(externalFunction.ParameterTypes[i]);
+            using (PushDiagnosticContext($"in argument #{i + 1} of external call to '{externalFunction.Name}'"))
             {
                 Unify(expectedType, argType);
             }
 
-            if (externFunction.ParameterTypes[i] is FfiType.Str)
+            if (externalFunction.ParameterTypes[i] is FfiType.Str)
             {
                 int cStringTemp = NewTemp();
                 Emit(new IrInst.ToCString(cStringTemp, argTemp));
@@ -4645,31 +4645,31 @@ public sealed partial class Lowering
         }
 
         int target = NewTemp();
-        Emit(new IrInst.CallExtern(target, externFunction.SymbolName, externFunction.LibraryName, loweredArgTemps, externFunction.ParameterTypes, externFunction.ReturnType));
-        if (externFunction.ReturnType is FfiType.Void)
+        Emit(new IrInst.CallExternal(target, externalFunction.SymbolName, externalFunction.LibraryName, loweredArgTemps, externalFunction.ParameterTypes, externalFunction.ReturnType));
+        if (externalFunction.ReturnType is FfiType.Void)
         {
             return LowerUnitValue();
         }
 
-        return (target, FromFfiType(externFunction.ReturnType));
+        return (target, FromFfiType(externalFunction.ReturnType));
     }
 
     /// <summary>
-    /// Synthesizes wrapper <see cref="IrFunction"/>s so that an extern function can be used as
-    /// a first-class closure value. For an extern with N parameters, N curried wrapper functions
+    /// Synthesizes wrapper <see cref="IrFunction"/>s so that an external function can be used as
+    /// a first-class closure value. For an external with N parameters, N curried wrapper functions
     /// are generated: the outermost accumulates one argument per call and the innermost ultimately
-    /// issues the <see cref="IrInst.CallExtern"/> instruction with all collected arguments.
+    /// issues the <see cref="IrInst.CallExternal"/> instruction with all collected arguments.
     ///
-    /// For a 0-parameter extern a meaningful compile error is emitted because a nullary function
+    /// For a 0-parameter external a meaningful compile error is emitted because a nullary function
     /// cannot be represented as a closure that takes an argument.
     /// </summary>
-    private (int, TypeRef) EmitExternFunctionThunk(IrExternFunction externFunc, TypeRef closureType, TextSpan referenceSpan)
+    private (int, TypeRef) EmitExternalFunctionThunk(IrExternalFunction externalFunc, TypeRef closureType, TextSpan referenceSpan)
     {
-        int n = externFunc.ParameterTypes.Count;
+        int n = externalFunc.ParameterTypes.Count;
         if (n == 0)
         {
             int errTemp = NewTemp();
-            ReportDiagnostic(referenceSpan, $"Extern function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
+            ReportDiagnostic(referenceSpan, $"External function '{externalFunc.Name}' has no parameters and cannot be used as a first-class function value.");
             Emit(new IrInst.LoadConstInt(errTemp, 0));
             return (errTemp, closureType);
         }
@@ -4681,7 +4681,7 @@ public sealed partial class Lowering
         var layerLabels = new string[n];
         for (int i = 0; i < n; i++)
         {
-            layerLabels[i] = $"extern_{externFunc.Name}_thunk_{i}_{lambdaId}";
+            layerLabels[i] = $"external_{externalFunc.Name}_thunk_{i}_{lambdaId}";
         }
 
         // Save outer compilation state so we can build sub-functions in isolation.
@@ -4710,14 +4710,14 @@ public sealed partial class Lowering
 
             if (layer == n - 1)
             {
-                // Innermost: load all previously captured args from env then call the extern.
+                // Innermost: load all previously captured args from env then call the external.
                 var callArgTemps = new List<int>(n);
 
                 for (int j = 0; j < layer; j++)
                 {
                     int envArgTemp = NewTemp();
                     Emit(new IrInst.LoadEnv(envArgTemp, j));
-                    if (externFunc.ParameterTypes[j] is FfiType.Str)
+                    if (externalFunc.ParameterTypes[j] is FfiType.Str)
                     {
                         int cStrTemp = NewTemp();
                         Emit(new IrInst.ToCString(cStrTemp, envArgTemp));
@@ -4731,7 +4731,7 @@ public sealed partial class Lowering
 
                 int finalArgTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(finalArgTemp, argSlot));
-                if (externFunc.ParameterTypes[layer] is FfiType.Str)
+                if (externalFunc.ParameterTypes[layer] is FfiType.Str)
                 {
                     int cStrFinalTemp = NewTemp();
                     Emit(new IrInst.ToCString(cStrFinalTemp, finalArgTemp));
@@ -4743,10 +4743,10 @@ public sealed partial class Lowering
                 }
 
                 int callResultTemp = NewTemp();
-                Emit(new IrInst.CallExtern(callResultTemp, externFunc.SymbolName, externFunc.LibraryName, callArgTemps, externFunc.ParameterTypes, externFunc.ReturnType));
+                Emit(new IrInst.CallExternal(callResultTemp, externalFunc.SymbolName, externalFunc.LibraryName, callArgTemps, externalFunc.ParameterTypes, externalFunc.ReturnType));
 
                 int retTemp;
-                if (externFunc.ReturnType is FfiType.Void)
+                if (externalFunc.ReturnType is FfiType.Void)
                 {
                     retTemp = NewTemp();
                     Emit(new IrInst.LoadConstInt(retTemp, 0)); // Unit is represented as 0
@@ -5214,10 +5214,10 @@ public sealed partial class Lowering
                     var boundWithResultVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
                     Visit(l.Body, boundWithResultVar);
                     return;
-                case Expr.LetRec l:
-                    var boundWithRecVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Value, boundWithRecVar);
-                    Visit(l.Body, boundWithRecVar);
+                case Expr.LetRecursive l:
+                    var boundWithRecursiveVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                    Visit(l.Value, boundWithRecursiveVar);
+                    Visit(l.Body, boundWithRecursiveVar);
                     return;
                 case Expr.Lambda lam:
                     var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
@@ -5349,8 +5349,8 @@ public sealed partial class Lowering
                 return new Expr.Let(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
             case Expr.LetResult l:
                 return new Expr.LetResult(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
-            case Expr.LetRec l:
-                return WithShadowed([l.Name], sub => new Expr.LetRec(l.Name, SubstituteVars(l.Value, sub), SubstituteVars(l.Body, sub)));
+            case Expr.LetRecursive l:
+                return WithShadowed([l.Name], sub => new Expr.LetRecursive(l.Name, SubstituteVars(l.Value, sub), SubstituteVars(l.Body, sub)));
             case Expr.Match m:
                 return new Expr.Match(
                     S(m.Value),
@@ -5506,11 +5506,11 @@ public sealed partial class Lowering
             case Expr.LetResult letResult:
                 return UsesNameOnlyAsDirectCallee(letResult.Value, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(letResult.Body, targetName, shadowed || string.Equals(letResult.Name, targetName, StringComparison.Ordinal));
-            case Expr.LetRec letRec:
+            case Expr.LetRecursive letRecursive:
                 {
-                    bool nextShadowed = shadowed || string.Equals(letRec.Name, targetName, StringComparison.Ordinal);
-                    return UsesNameOnlyAsDirectCallee(letRec.Value, targetName, nextShadowed)
-                        && UsesNameOnlyAsDirectCallee(letRec.Body, targetName, nextShadowed);
+                    bool nextShadowed = shadowed || string.Equals(letRecursive.Name, targetName, StringComparison.Ordinal);
+                    return UsesNameOnlyAsDirectCallee(letRecursive.Value, targetName, nextShadowed)
+                        && UsesNameOnlyAsDirectCallee(letRecursive.Body, targetName, nextShadowed);
                 }
             case Expr.Lambda lam:
                 return UsesNameOnlyAsDirectCallee(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
@@ -5570,7 +5570,7 @@ public sealed partial class Lowering
             case Expr.Let l:
                 CollectCtorMatchedScrutinees(l.Body, paramNames, result);
                 break;
-            case Expr.LetRec lr:
+            case Expr.LetRecursive lr:
                 CollectCtorMatchedScrutinees(lr.Body, paramNames, result);
                 break;
             case Expr.Match m:
@@ -5653,7 +5653,7 @@ public sealed partial class Lowering
                 CollectSpecializableCallArgs(l.Value, paramNames, result);
                 CollectSpecializableCallArgs(l.Body, paramNames, result);
                 break;
-            case Expr.LetRec lr:
+            case Expr.LetRecursive lr:
                 CollectSpecializableCallArgs(lr.Value, paramNames, result);
                 CollectSpecializableCallArgs(lr.Body, paramNames, result);
                 break;
@@ -6057,13 +6057,13 @@ public sealed partial class Lowering
         TypeRef? lastParam = null;
         for (int i = 0; i < argCount; i++)
         {
-            if (current is not TypeRef.TFun fun)
+            if (current is not TypeRef.TFun funType)
             {
                 return false;
             }
 
-            lastParam = Prune(fun.Arg);
-            current = Prune(fun.Ret);
+            lastParam = Prune(funType.Arg);
+            current = Prune(funType.Ret);
         }
 
         return lastParam is TypeRef.TNamedType paramNamed
@@ -6083,10 +6083,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun tfun)
+            if (curType is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
 
             concreteParamTypes.Add(Prune(argType));
@@ -6202,10 +6202,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun tfun)
+            if (curType is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
 
             concreteParamTypes.Add(Prune(argType));
@@ -6279,10 +6279,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (Prune(curType) is TypeRef.TFun tfun)
+            if (Prune(curType) is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
         }
 
@@ -6494,11 +6494,11 @@ public sealed partial class Lowering
             case Expr.LetResult letResult:
                 return ExprReferencesName(letResult.Value, targetName, shadowed)
                     || ExprReferencesName(letResult.Body, targetName, shadowed || string.Equals(letResult.Name, targetName, StringComparison.Ordinal));
-            case Expr.LetRec letRec:
+            case Expr.LetRecursive letRecursive:
                 {
-                    bool nextShadowed = shadowed || string.Equals(letRec.Name, targetName, StringComparison.Ordinal);
-                    return ExprReferencesName(letRec.Value, targetName, nextShadowed)
-                        || ExprReferencesName(letRec.Body, targetName, nextShadowed);
+                    bool nextShadowed = shadowed || string.Equals(letRecursive.Name, targetName, StringComparison.Ordinal);
+                    return ExprReferencesName(letRecursive.Value, targetName, nextShadowed)
+                        || ExprReferencesName(letRecursive.Body, targetName, nextShadowed);
                 }
             case Expr.Lambda lam:
                 return ExprReferencesName(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));

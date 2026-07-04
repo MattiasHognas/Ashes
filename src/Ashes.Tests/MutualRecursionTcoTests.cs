@@ -5,7 +5,7 @@ using Shouldly;
 namespace Ashes.Tests;
 
 /// <summary>
-/// Covers mutual-recursion TCO: an eligible <c>let rec … and …</c> group (same arity, identical
+/// Covers mutual-recursion TCO: an eligible <c>let recursive … and …</c> group (same arity, identical
 /// parameter types, a cross-member tail call) is compiled to a single self-recursive dispatch
 /// function so the existing single-function TCO collapses it into one loop. Ineligible groups fall
 /// back to the closure-based lowering.
@@ -17,7 +17,7 @@ public sealed class MutualRecursionTcoTests
     {
         var ir = LowerProgram(
             """
-            let rec isEven n =
+            let recursive isEven n =
                 match n with
                     | 0 -> true
                     | _ -> isOdd(n - 1)
@@ -39,7 +39,7 @@ public sealed class MutualRecursionTcoTests
         // would have two different types, so the merge is unsafe and must be skipped.
         var ir = LowerProgram(
             """
-            let rec ping n =
+            let recursive ping n =
                 match n with
                     | 0 -> "done"
                     | _ -> pong("step")
@@ -58,7 +58,7 @@ public sealed class MutualRecursionTcoTests
         // mutual-recursion transform should not engage.
         var ir = LowerProgram(
             """
-            let rec countDown n =
+            let recursive countDown n =
                 match n with
                     | 0 -> 0
                     | _ -> countDown(n - 1)

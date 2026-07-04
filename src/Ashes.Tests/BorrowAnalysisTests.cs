@@ -35,7 +35,7 @@ public sealed class BorrowAnalysisTests
     [Test]
     public void Function_binding_used_emits_borrow()
     {
-        var ir = LowerProgram("let f = fun (x) -> x + 1 in Ashes.IO.print(f(42))");
+        var ir = LowerProgram("let f = given (x) -> x + 1 in Ashes.IO.print(f(42))");
         HasBorrowInstruction(ir.EntryFunction.Instructions).ShouldBeTrue(
             "Accessing an owned Function binding should emit a Borrow instruction.");
     }

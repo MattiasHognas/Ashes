@@ -23,12 +23,12 @@ let cmp a b =
         then -1
         else 1
 
-let rec inner i lim m = 
+let recursive inner i lim m = 
     if i > lim
     then m
     else inner(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 10)(m))
 
-let rec outer b nb m = 
+let recursive outer b nb m = 
     if b >= nb
     then m
     else outer(b + 1)(nb)(inner(0)(4)(Ashes.Map.set(cmp)(0)(0)(m)))

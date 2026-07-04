@@ -16,13 +16,13 @@ import Ashes.Text
 import Ashes.IO
 import Ashes.Async
 import Ashes.Net.Tls
-let rec psum lo hi = 
+let recursive psum lo hi = 
     if hi - lo <= 1
     then lo
     else 
         let mid = lo + (hi - lo) / 2
         in 
-            match Ashes.Parallel.both(fun (u) -> psum(lo)(mid))(fun (u) -> psum(mid)(hi)) with
+            match Ashes.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
                 | (a, b) -> a + b
 
 let before = psum(0)(1000000)

@@ -46,10 +46,10 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
-    public void Linux_arm64_backend_compile_should_support_user_extern_imports()
+    public void Linux_arm64_backend_compile_should_support_user_external_imports()
     {
         var bytes = new LinuxArm64LlvmBackend().Compile(LowerProgram("""
-            extern strlen(Str) -> Int = "strlen@libc.so.6"
+            external strlen(Str) -> Int = "strlen@libc.so.6"
             Ashes.IO.print(strlen("ash" + "es"))
             """));
 
@@ -100,7 +100,7 @@ public sealed class LinuxArm64BackendCoverageTests
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
             """
             let doubled =
-                match Ashes.Parallel.both(fun (u) -> 3 + 4)(fun (u) -> 5 + 6) with
+                match Ashes.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with
                     | (a, b) -> a + b
             in Ashes.IO.print(Ashes.Text.fromInt(doubled) + "|" + (match await Ashes.Http.get("https://__HOST__:__PORT__/") with
                 | Ok(text) -> text
@@ -136,12 +136,12 @@ public sealed class LinuxArm64BackendCoverageTests
         var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgramWithImports("""
             import Ashes.Parallel
 
-            let rec range lo hi =
+            let recursive range lo hi =
                 if lo >= hi
                 then []
                 else lo :: range(lo + 1)(hi)
 
-            let joined = Ashes.Parallel.reduce(fun (a) -> fun (b) -> a + "," + b)("")(fun (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
+            let joined = Ashes.Parallel.reduce(given (a) -> given (b) -> a + "," + b)("")(given (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
 
             Ashes.IO.print(joined)
             """));
@@ -149,7 +149,7 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_arm64_backend_llvm_should_run_user_extern_imports()
+    public async Task Linux_arm64_backend_llvm_should_run_user_external_imports()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
         {
@@ -157,7 +157,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgram("""
-            extern strlen(Str) -> Int = "strlen@libc.so.6"
+            external strlen(Str) -> Int = "strlen@libc.so.6"
             Ashes.IO.print(strlen("ash" + "es"))
             """));
         result.Stdout.ShouldBe("5\n");

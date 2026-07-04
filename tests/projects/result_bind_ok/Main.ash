@@ -1,7 +1,7 @@
 // expect: 6
 import Ashes.Result
 let addOneIfSmall = 
-    fun (x) -> 
+    given (x) -> 
         if x <= 5
         then Ok(x + 1)
         else Error(0)

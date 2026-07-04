@@ -13,7 +13,7 @@ let isWhitespace head =
                 then true
                 else false
 in 
-    let rec skipWhitespace text = 
+    let recursive skipWhitespace text = 
         match Ashes.Text.uncons(text) with
             | None -> ""
             | Some((head, tail)) -> 
@@ -26,7 +26,7 @@ in
                 | Ok(_) -> true
                 | Error(_) -> false
         in 
-            let rec consumeExact expected text = 
+            let recursive consumeExact expected text = 
                 match Ashes.Text.uncons(expected) with
                     | None -> Ok(text)
                     | Some((wanted, wantedRest)) -> 
@@ -37,7 +37,7 @@ in
                                 then consumeExact(wantedRest)(actualRest)
                                 else Error("unexpected token")
             in 
-                let rec parseStringBody acc text = 
+                let recursive parseStringBody acc text = 
                     match Ashes.Text.uncons(text) with
                         | None -> Error("unterminated string")
                         | Some((head, tail)) -> 
@@ -56,7 +56,7 @@ in
                                 then parseStringBody("")(tail)
                                 else Error("expected string")
                     in 
-                        let rec takeNumberToken acc text = 
+                        let recursive takeNumberToken acc text = 
                             match Ashes.Text.uncons(text) with
                                 | None -> (acc, "")
                                 | Some((head, tail)) -> 
@@ -79,7 +79,7 @@ in
                                                             then takeNumberToken(acc + head)(tail)
                                                             else (acc, text)
                         in 
-                            let rec containsFloatMarker text = 
+                            let recursive containsFloatMarker text = 
                                 match Ashes.Text.uncons(text) with
                                     | None -> false
                                     | Some((head, tail)) -> 
@@ -93,10 +93,10 @@ in
                                                 then true
                                                 else containsFloatMarker(tail)
                             in 
-                                let rec parseValue text = 
+                                let recursive parseValue text = 
                                     let trimmed = skipWhitespace(text)
                                     in 
-                                        let rec parseArrayItems current acc hasValues = 
+                                        let recursive parseArrayItems current acc hasValues = 
                                             let currentTrimmed = skipWhitespace(current)
                                             in 
                                                 match Ashes.Text.uncons(currentTrimmed) with
@@ -125,10 +125,10 @@ in
                                                                                         then Ok(("Array(" + nextAcc + ")", separatorTail))
                                                                                         else Error("expected , or ]")
                                         in 
-                                            let rec parseObjectMembers current acc hasValues = 
+                                            let recursive parseObjectMembers current acc hasValues = 
                                                 let currentTrimmed = skipWhitespace(current)
                                                 in 
-                                                    let rec parseKeyBody keyAcc keyText = 
+                                                    let recursive parseKeyBody keyAcc keyText = 
                                                         match Ashes.Text.uncons(keyText) with
                                                             | None -> Error("unterminated string")
                                                             | Some((keyHead, keyTail)) -> 

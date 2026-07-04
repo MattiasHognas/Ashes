@@ -6,7 +6,7 @@
 // fd-release guarantee itself is verified directly under a low `ulimit -n`.
 import Ashes.Process
 import Ashes.IO
-let rec loop n = 
+let recursive loop n = 
     if n <= 0
     then "ok"
     else 

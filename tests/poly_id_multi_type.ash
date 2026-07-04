@@ -2,10 +2,10 @@
 let id x = x
 in 
     let intId = 
-        id(fun (n) -> n)
+        id(given (n) -> n)
     in 
         let strId = 
-            id(fun (s) -> s)
+            id(given (s) -> s)
         in 
             let _a = intId(1)
             in 

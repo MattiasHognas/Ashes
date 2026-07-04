@@ -332,7 +332,7 @@ public sealed class IrOptimizerTests
     [Test]
     public void Optimizer_runs_on_all_functions()
     {
-        var source = "let add = fun (x) -> fun (y) -> x + y in Ashes.IO.print(add(10)(32))";
+        var source = "let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))";
         var unoptimized = Lower(source);
         var optimized = IrOptimizer.Optimize(unoptimized);
         // All functions should be present (optimizer doesn't remove functions)
@@ -713,7 +713,7 @@ public sealed class IrOptimizerTests
             return;
         }
 
-        var stdout = await CompileOptimizedAndRunAsync("let add = fun (x) -> fun (y) -> x + y in Ashes.IO.print(add(10)(32))");
+        var stdout = await CompileOptimizedAndRunAsync("let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))");
         stdout.ShouldBe("42\n");
     }
 
@@ -726,7 +726,7 @@ public sealed class IrOptimizerTests
         }
 
         var source = """
-            let rec sum = fun (n) -> fun (acc) ->
+            let recursive sum = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else sum(n - 1)(acc + n)
             in Ashes.IO.print(sum(100)(0))

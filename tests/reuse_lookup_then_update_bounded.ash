@@ -10,7 +10,7 @@ type T(A) =
     | Lf
     | Br(T, A, A, T)
 
-let rec uget m k = 
+let recursive uget m k = 
     match m with
         | Lf -> None
         | Br(l, key, v, r) -> 
@@ -21,7 +21,7 @@ let rec uget m k =
                 then uget(l)(k)
                 else uget(r)(k)
 
-let rec uset m k v = 
+let recursive uset m k v = 
     match m with
         | Lf -> Br(Lf)(k)(v)(Lf)
         | Br(l, key, ov, r) -> 
@@ -32,7 +32,7 @@ let rec uset m k v =
                 then Br(uset(l)(k)(v))(key)(ov)(r)
                 else Br(l)(key)(ov)(uset(r)(k)(v))
 
-let rec usum m = 
+let recursive usum m = 
     match m with
         | Lf -> 0
         | Br(l, _k, v, r) -> v + usum(l) + usum(r)
@@ -46,7 +46,7 @@ let addRow m i =
             | None -> uset(m)(k)(i)
             | Some(prev) -> uset(m)(k)(prev + i))
 
-let rec loop i m = 
+let recursive loop i m = 
     if i <= 0
     then m
     else loop(i - 1)(addRow(m)(i))

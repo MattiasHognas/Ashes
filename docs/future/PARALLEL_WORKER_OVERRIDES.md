@@ -25,7 +25,7 @@ then the executable has a maximum worker ceiling of 8. Code may locally request 
 
 ```ashes
 Parallel.withWorkers(4)(
-    fun () ->
+    given () ->
         Parallel.reduce(items)(map)(combine)
 )
 ```
@@ -48,9 +48,9 @@ Nested overrides should be scoped dynamically:
 
 ```ashes
 Parallel.withWorkers(8)(
-    fun () ->
+    given () ->
         Parallel.withWorkers(2)(
-            fun () ->
+            given () ->
                 Parallel.map(f)(items)
         )
 )
@@ -92,13 +92,13 @@ Example:
 
 ```ashes
 let reduceWithWorkers =
-    fun(count) ->
-    fun(combine) ->
-    fun(identity) ->
-    fun(f) ->
-    fun(items) ->
+    given(count) ->
+    given(combine) ->
+    given(identity) ->
+    given(f) ->
+    given(items) ->
         Parallel.withWorkers(count)(
-            fun () ->
+            given () ->
                 Parallel.reduce(combine)(identity)(f)(items)
         )
 ```
@@ -171,7 +171,7 @@ This:
 
 ```ashes
 Parallel.withWorkers(4)(
-    fun () ->
+    given () ->
         Parallel.reduce(combine)(identity)(f)(items)
 )
 ```
@@ -182,7 +182,7 @@ This:
 
 ```ashes
 Parallel.withWorkers(32)(
-    fun () ->
+    given () ->
         Parallel.reduce(combine)(identity)(f)(items)
 )
 ```

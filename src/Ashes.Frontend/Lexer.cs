@@ -414,7 +414,7 @@ public sealed class Lexer
         return text switch
         {
             "let" => TokenKind.Let,
-            "rec" => TokenKind.Rec,
+            "recursive" => TokenKind.Recursive,
             "in" => TokenKind.In,
             "and" => TokenKind.And,
             "if" => TokenKind.If,
@@ -423,12 +423,12 @@ public sealed class Lexer
             "match" => TokenKind.Match,
             "with" => TokenKind.With,
             "when" => TokenKind.When,
-            "fun" => TokenKind.Fun,
+            "given" => TokenKind.Given,
             "true" => TokenKind.True,
             "false" => TokenKind.False,
             "type" => TokenKind.Type,
             "await" => TokenKind.Await,
-            "extern" => TokenKind.Extern,
+            "external" => TokenKind.External,
             "effect" => TokenKind.Effect,
             "uses" => TokenKind.Uses,
             "perform" => TokenKind.Perform,

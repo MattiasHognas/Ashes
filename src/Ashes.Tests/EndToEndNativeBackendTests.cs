@@ -44,7 +44,7 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
-    public async Task Extern_strlen_program_runs_and_prints_expected_output()
+    public async Task External_strlen_program_runs_and_prints_expected_output()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -52,14 +52,14 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            extern strlen(Str) -> Int
+            external strlen(Str) -> Int
             Ashes.IO.print(strlen("ashes"))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("5\n");
     }
 
     [Test]
-    public async Task Extern_unsigned_and_void_program_runs_and_prints_expected_output()
+    public async Task External_unsigned_and_void_program_runs_and_prints_expected_output()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -67,8 +67,8 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            extern srand(u32) -> void = "srand@libc.so.6"
-            extern strlen(Str) -> u64
+            external srand(u32) -> void = "srand@libc.so.6"
+            external strlen(Str) -> u64
             let _ = srand(1)
             in Ashes.IO.print(strlen("ashes"))
             """;
@@ -171,7 +171,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let inc = fun (x) -> x + 1 in Ashes.IO.print(inc(41))";
+        var src = "let inc = given (x) -> x + 1 in Ashes.IO.print(inc(41))";
         (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
     }
 
@@ -183,7 +183,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))";
+        var src = "let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))";
         (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
     }
 
@@ -195,7 +195,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let add = fun (x) -> fun (y) -> x + y in let add10 = add(10) in Ashes.IO.print(add10(32))";
+        var src = "let add = given (x) -> given (y) -> x + y in let add10 = add(10) in Ashes.IO.print(add10(32))";
         (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
     }
 
@@ -207,7 +207,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let rec loop = fun (i) -> if i >= 10 then i else loop(i + 1) in Ashes.IO.print(loop(0))";
+        var src = "let recursive loop = given (i) -> if i >= 10 then i else loop(i + 1) in Ashes.IO.print(loop(0))";
         (await CompileRunCaptureAsync(src)).ShouldBe("10\n");
     }
 
@@ -219,7 +219,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let rec loop = fun (i) -> if i <= 10 then loop(i + 1) else i in Ashes.IO.print(loop(0))";
+        var src = "let recursive loop = given (i) -> if i <= 10 then loop(i + 1) else i in Ashes.IO.print(loop(0))";
         (await CompileRunCaptureAsync(src)).ShouldBe("11\n");
     }
 
@@ -255,7 +255,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let rec sum = fun (xs) -> match xs with | [] -> 0 | x :: rest -> x + sum(rest) in Ashes.IO.print(sum([1, 2, 3]))";
+        var src = "let recursive sum = given (xs) -> match xs with | [] -> 0 | x :: rest -> x + sum(rest) in Ashes.IO.print(sum([1, 2, 3]))";
         (await CompileRunCaptureAsync(src)).ShouldBe("6\n");
     }
 
@@ -267,7 +267,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var src = "let rec len = fun (xs) -> match xs with | [] -> 0 | _ :: rest -> 1 + len(rest) in Ashes.IO.print(len(1 :: 2 :: []))";
+        var src = "let recursive len = given (xs) -> match xs with | [] -> 0 | _ :: rest -> 1 + len(rest) in Ashes.IO.print(len(1 :: 2 :: []))";
         (await CompileRunCaptureAsync(src)).ShouldBe("2\n");
     }
 
@@ -324,7 +324,7 @@ public sealed class EndToEndNativeBackendTests
 
         var src = """
             type LocalMaybe = | None | Some(T)
-            let unwrapOr = fun (opt, def) ->
+            let unwrapOr = given (opt, def) ->
             match opt with
             | None -> def
             | Some(x) -> x
@@ -343,7 +343,7 @@ public sealed class EndToEndNativeBackendTests
 
         var src = """
             type Outcome = | Left(T) | Right(T)
-            let tag = fun (value) ->
+            let tag = given (value) ->
                 match value with
                 | Left(x) -> 1
                 | Right(x) -> 2
@@ -382,7 +382,7 @@ public sealed class EndToEndNativeBackendTests
         // Sum 1..10000 using tail-recursive accumulator — all args are copy types,
         // so arena reset fires on every iteration, keeping heap usage constant.
         var src = """
-            let rec sum = fun (n) -> fun (acc) ->
+            let recursive sum = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else sum (n - 1) (acc + n)
             in Ashes.IO.print(sum 10000 0)
@@ -401,7 +401,7 @@ public sealed class EndToEndNativeBackendTests
         // Even though the body creates intermediate heap allocations (let binding
         // with string), the tail-call args are all Int → arena resets safely.
         var src = """
-            let rec count = fun (n) -> fun (acc) ->
+            let recursive count = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else
                     let tag = "iter" in
@@ -424,7 +424,7 @@ public sealed class EndToEndNativeBackendTests
         // Curried call add(10)(32) returns Int — arena reset reclaims
         // intermediate closures, result must still be correct.
         var src = """
-            let add = fun (x) -> fun (y) -> x + y
+            let add = given (x) -> given (y) -> x + y
             in Ashes.IO.print(add(10)(32))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
@@ -440,8 +440,8 @@ public sealed class EndToEndNativeBackendTests
 
         // f(g(x)) where both return Int — nested per-call watermarks.
         var src = """
-            let double = fun (x) -> x + x
-            in let inc = fun (x) -> x + 1
+            let double = given (x) -> x + x
+            in let inc = given (x) -> x + 1
             in Ashes.IO.print(double(inc(20)))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
@@ -457,7 +457,7 @@ public sealed class EndToEndNativeBackendTests
 
         // Function returning String — per-call arena reset + copy-out.
         var src = """
-            let greet = fun (name) -> "hello " + name
+            let greet = given (name) -> "hello " + name
             in Ashes.IO.print(greet("world"))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("hello world\n");
@@ -474,7 +474,7 @@ public sealed class EndToEndNativeBackendTests
         // Function returning List — per-call arena skip (conservative);
         // list must survive and be usable.
         var src = """
-            let makeList = fun (x) -> x :: [2, 3]
+            let makeList = given (x) -> x :: [2, 3]
             in match makeList(1) with
                 | hd :: _ -> Ashes.IO.print(hd)
                 | [] -> Ashes.IO.print(0)
@@ -492,8 +492,8 @@ public sealed class EndToEndNativeBackendTests
 
         // f(x) + g(y) — two independent call watermarks in one expression.
         var src = """
-            let f = fun (x) -> x * 2
-            in let g = fun (y) -> y * 3
+            let f = given (x) -> x * 2
+            in let g = given (y) -> y * 3
             in Ashes.IO.print(f(7) + g(7))
             """;
         (await CompileRunCaptureProgramAsync(src)).ShouldBe("35\n");
@@ -508,7 +508,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = """
-            let calc = fun (x) ->
+            let calc = given (x) ->
                 let flags = (x | 2) ^ 1
                 in let shifted = (flags & 6) << 2
                 in shifted >> 1

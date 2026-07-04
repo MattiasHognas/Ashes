@@ -10,7 +10,7 @@ public sealed class ReplTests
     public async Task Repl_should_persist_bindings_across_inputs()
     {
         var result = await RunReplAsync(
-            "let add = fun (x) -> fun (y) -> x + y in add",
+            "let add = given (x) -> given (y) -> x + y in add",
             "add(1)(2)",
             ":quit");
 
@@ -24,7 +24,7 @@ public sealed class ReplTests
     public async Task Repl_should_persist_recursive_bindings()
     {
         var result = await RunReplAsync(
-            "let rec loop = fun (n) -> if n <= 0 then 0 else loop(n - 1) in loop",
+            "let recursive loop = given (n) -> if n <= 0 then 0 else loop(n - 1) in loop",
             "loop(2)",
             ":quit");
 
@@ -79,7 +79,7 @@ public sealed class ReplTests
     public async Task Repl_should_echo_function_types_without_printing_values()
     {
         var result = await RunReplAsync(
-            "fun (x) -> x",
+            "given (x) -> x",
             ":quit");
 
         result.ExitCode.ShouldBe(0);

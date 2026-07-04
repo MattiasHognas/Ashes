@@ -7,12 +7,12 @@ import Ashes.IO
 import Ashes.Text
 import Ashes.Bytes
 import Ashes.UInt
-let rec sumBytes bytes i stop acc = 
+let recursive sumBytes bytes i stop acc = 
     if i >= stop
     then acc
     else sumBytes(bytes)(i + 1)(stop)(acc + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i)))
 
-let rec parseTenths bytes i stop sign acc = 
+let recursive parseTenths bytes i stop sign acc = 
     if i >= stop
     then sign * acc
     else 

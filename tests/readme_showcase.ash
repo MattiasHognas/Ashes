@@ -17,7 +17,7 @@ in
             async(let count = 
                 shapes
                 |> list.map(area)
-                |> list.filter(fun (a) -> a >= 10.0)
+                |> list.filter(given (a) -> a >= 10.0)
                 |> list.length
             in count)
         in 

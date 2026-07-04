@@ -86,7 +86,7 @@ let updateStats existing tenths =
                     else mx
                 in (newMin, newMax, sm + tenths, ct + 1)
 
-let rec streamLoop fh map = 
+let recursive streamLoop fh map = 
     match Ashes.File.readLine(fh) with
         | None -> map
         | Some(line) -> 

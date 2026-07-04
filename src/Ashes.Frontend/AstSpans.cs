@@ -12,15 +12,15 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<Expr, SpanBox> ExprSpans = new();
     private static readonly ConditionalWeakTable<Expr.Let, SpanBox> LetNameSpans = new();
     private static readonly ConditionalWeakTable<Expr.LetResult, SpanBox> LetResultNameSpans = new();
-    private static readonly ConditionalWeakTable<Expr.LetRec, SpanBox> LetRecNameSpans = new();
+    private static readonly ConditionalWeakTable<Expr.LetRecursive, SpanBox> LetRecursiveNameSpans = new();
     private static readonly ConditionalWeakTable<Expr.Lambda, SpanBox> LambdaParameterSpans = new();
     private static readonly ConditionalWeakTable<Pattern, SpanBox> PatternSpans = new();
     private static readonly ConditionalWeakTable<TypeDecl, SpanBox> TypeDeclSpans = new();
     private static readonly ConditionalWeakTable<TypeConstructor, SpanBox> TypeConstructorSpans = new();
-    private static readonly ConditionalWeakTable<ExternDecl, SpanBox> ExternDeclSpans = new();
+    private static readonly ConditionalWeakTable<ExternalDecl, SpanBox> ExternalDeclSpans = new();
     private static readonly ConditionalWeakTable<EffectDecl, SpanBox> EffectDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclSpans = new();
-    private static readonly ConditionalWeakTable<TopLevelItem.RecGroup, SpanBox> RecGroupSpans = new();
+    private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupSpans = new();
 
     public static void Set(Expr expr, TextSpan span)
     {
@@ -46,10 +46,10 @@ public static class AstSpans
         LetResultNameSpans.Add(letResultExpr, new SpanBox(span));
     }
 
-    public static void SetLetRecName(Expr.LetRec letRecExpr, TextSpan span)
+    public static void SetLetRecursiveName(Expr.LetRecursive letRecursiveExpr, TextSpan span)
     {
-        LetRecNameSpans.Remove(letRecExpr);
-        LetRecNameSpans.Add(letRecExpr, new SpanBox(span));
+        LetRecursiveNameSpans.Remove(letRecursiveExpr);
+        LetRecursiveNameSpans.Add(letRecursiveExpr, new SpanBox(span));
     }
 
     public static void SetLambdaParameter(Expr.Lambda lambdaExpr, TextSpan span)
@@ -70,10 +70,10 @@ public static class AstSpans
         TypeConstructorSpans.Add(typeConstructor, new SpanBox(span));
     }
 
-    public static void Set(ExternDecl externDecl, TextSpan span)
+    public static void Set(ExternalDecl externalDecl, TextSpan span)
     {
-        ExternDeclSpans.Remove(externDecl);
-        ExternDeclSpans.Add(externDecl, new SpanBox(span));
+        ExternalDeclSpans.Remove(externalDecl);
+        ExternalDeclSpans.Add(externalDecl, new SpanBox(span));
     }
 
     public static void Set(TopLevelItem.LetDecl letDecl, TextSpan span)
@@ -82,10 +82,10 @@ public static class AstSpans
         LetDeclSpans.Add(letDecl, new SpanBox(span));
     }
 
-    public static void Set(TopLevelItem.RecGroup recGroup, TextSpan span)
+    public static void Set(TopLevelItem.RecursiveGroup recursiveGroup, TextSpan span)
     {
-        RecGroupSpans.Remove(recGroup);
-        RecGroupSpans.Add(recGroup, new SpanBox(span));
+        RecursiveGroupSpans.Remove(recursiveGroup);
+        RecursiveGroupSpans.Add(recursiveGroup, new SpanBox(span));
     }
 
     public static TextSpan GetOrDefault(Expr expr)
@@ -108,9 +108,9 @@ public static class AstSpans
         return LetResultNameSpans.TryGetValue(letResultExpr, out var spanBox) ? spanBox.Span : default;
     }
 
-    public static TextSpan GetLetRecNameOrDefault(Expr.LetRec letRecExpr)
+    public static TextSpan GetLetRecursiveNameOrDefault(Expr.LetRecursive letRecursiveExpr)
     {
-        return LetRecNameSpans.TryGetValue(letRecExpr, out var spanBox) ? spanBox.Span : default;
+        return LetRecursiveNameSpans.TryGetValue(letRecursiveExpr, out var spanBox) ? spanBox.Span : default;
     }
 
     public static TextSpan GetLambdaParameterOrDefault(Expr.Lambda lambdaExpr)
@@ -128,9 +128,9 @@ public static class AstSpans
         return TypeConstructorSpans.TryGetValue(typeConstructor, out var spanBox) ? spanBox.Span : default;
     }
 
-    public static TextSpan GetOrDefault(ExternDecl externDecl)
+    public static TextSpan GetOrDefault(ExternalDecl externalDecl)
     {
-        return ExternDeclSpans.TryGetValue(externDecl, out var spanBox) ? spanBox.Span : default;
+        return ExternalDeclSpans.TryGetValue(externalDecl, out var spanBox) ? spanBox.Span : default;
     }
 
     public static void Set(EffectDecl effectDecl, TextSpan span)

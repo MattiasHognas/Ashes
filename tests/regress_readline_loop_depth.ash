@@ -3,7 +3,7 @@
 // A readLine loop over 5000 lines. Before the readLine scratch-buffer fix this
 // overflowed the stack (~64 KB alloca/line) and segfaulted after a few hundred
 // lines; now the buffer is a reused module global, so it counts all 5000.
-let rec loop n = 
+let recursive loop n = 
     match Ashes.IO.readLine(Unit) with
         | None -> n
         | Some(_) -> loop(n + 1)

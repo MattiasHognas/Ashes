@@ -1389,7 +1389,7 @@ public sealed partial class Lowering
             }
         }
 
-        // Scope-independent bindings (intrinsics like `async`, extern functions, prelude values) must be
+        // Scope-independent bindings (intrinsics like `async`, external functions, prelude values) must be
         // re-seeded into the coroutine's fresh function scope so the body still resolves them; slot-based
         // locals/env can't cross the function boundary and are captured above instead. Bottom-up so an
         // inner scope's binding wins.
@@ -1398,7 +1398,7 @@ public sealed partial class Lowering
         {
             foreach (var (bindingName, binding) in enclosingScope)
             {
-                if (binding is Binding.Intrinsic or Binding.ExternFunction or Binding.PreludeValue)
+                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
                 {
                     globalBindings[bindingName] = binding;
                 }
@@ -1470,7 +1470,7 @@ public sealed partial class Lowering
             case Expr.If x: return ExprContainsAwait(x.Cond) || ExprContainsAwait(x.Then) || ExprContainsAwait(x.Else);
             case Expr.Lambda x: return ExprContainsAwait(x.Body);
             case Expr.Let x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
-            case Expr.LetRec x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
+            case Expr.LetRecursive x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
             case Expr.LetResult x: return ExprContainsAwait(x.Value) || ExprContainsAwait(x.Body);
             case Expr.TupleLit x: return x.Elements.Any(ExprContainsAwait);
             case Expr.ListLit x: return x.Elements.Any(ExprContainsAwait);

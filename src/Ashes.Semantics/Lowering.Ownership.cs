@@ -771,8 +771,8 @@ public sealed partial class Lowering
                 return new TypeRef.TList(ResolveFieldType(list.Element, typeParamMap));
             case TypeRef.TTuple tuple:
                 return new TypeRef.TTuple(tuple.Elements.Select(e => ResolveFieldType(e, typeParamMap)).ToList());
-            case TypeRef.TFun fun:
-                return new TypeRef.TFun(ResolveFieldType(fun.Arg, typeParamMap), ResolveFieldType(fun.Ret, typeParamMap));
+            case TypeRef.TFun funType:
+                return new TypeRef.TFun(ResolveFieldType(funType.Arg, typeParamMap), ResolveFieldType(funType.Ret, typeParamMap));
             default:
                 return pruned;
         }

@@ -57,7 +57,7 @@ let balance map =
                     else normalized
 
 let get compare searchKey = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> None
             | Node(_height, left, key, value, right) -> 
@@ -72,7 +72,7 @@ let get compare searchKey =
     in go)
 
 let getStr searchKey = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> None
             | Node(_height, left, key, value, right) -> 
@@ -92,7 +92,7 @@ let contains compare searchKey map =
         | Some(_) -> true
 
 let set compare newKey newValue = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
             | Node(_height, left, key, value, right) -> 
@@ -107,7 +107,7 @@ let set compare newKey newValue =
     in go)
 
 let setStr newKey newValue = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
             | Node(_height, left, key, value, right) -> 
@@ -122,7 +122,7 @@ let setStr newKey newValue =
     in go)
 
 let upsertStr newKey missValue onHit = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> makeNode(Empty)(newKey)(missValue)(Empty)
             | Node(_height, left, key, value, right) -> 
@@ -138,13 +138,13 @@ let upsertStr newKey missValue onHit =
 
 let insert = set
 
-let rec size map = 
+let recursive size map = 
     match map with
         | Empty -> 0
         | Node(_height, left, _key, _value, right) -> 1 + size(left) + size(right)
 
 let foldLeft folder state = 
-    (let rec go acc map = 
+    (let recursive go acc map = 
         match map with
             | Empty -> acc
             | Node(_height, left, key, value, right) -> 
@@ -159,9 +159,9 @@ let toList map =
     in foldLeft(prepend)([])(map))
 
 let fromList compare = 
-    (let rec go entries map = 
+    (let recursive go entries map = 
         match entries with
             | [] -> map
             | (key, value) :: tail -> go(tail)(set(compare)(key)(value)(map))
     in 
-        fun (entries) -> go(entries)(empty))
+        given (entries) -> go(entries)(empty))

@@ -189,7 +189,7 @@ internal static partial class LlvmCodegen
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
+        return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
@@ -205,7 +205,7 @@ internal static partial class LlvmCodegen
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
+        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
@@ -221,7 +221,7 @@ internal static partial class LlvmCodegen
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
         byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternLibraries(program));
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
 
     private static void VerifyModule(LlvmTargetContext target)
@@ -247,9 +247,9 @@ internal static partial class LlvmCodegen
         }
     }
 
-    private static IReadOnlyDictionary<string, string> GetExternLibraries(IrProgram program)
+    private static IReadOnlyDictionary<string, string> GetExternalLibraries(IrProgram program)
     {
-        return program.ExternFunctions
+        return program.ExternalFunctions
             .Where(static f => !string.IsNullOrWhiteSpace(f.LibraryName))
             .ToDictionary(static f => f.SymbolName, static f => f.LibraryName!, StringComparer.Ordinal);
     }
@@ -522,7 +522,7 @@ internal static partial class LlvmCodegen
             // per-thread arena is real ELF TLS: mark the six arena cursors thread-local and LLVM
             // (static reloc → local-exec) emits the mrs tpidr_el0 + TPREL sequence the ELF linker
             // resolves. Enabled for every arm64 image — including dynamically linked (networking /
-            // extern) ones, whose loader reserves this image's local-exec PT_TLS in the static-TLS
+            // external) ones, whose loader reserves this image's local-exec PT_TLS in the static-TLS
             // block independently of the DTV that backs dlopen'd rustls's dynamic TLS.
             // win-x64 keeps these as ordinary globals (overridden by the TEB-TCB slots).
             if (arm64UsesTlsArena)
@@ -1511,7 +1511,7 @@ internal static partial class LlvmCodegen
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
-            IrInst.CallExtern callExtern => StoreTemp(state, callExtern.Target, EmitCallExtern(state, callExtern.SymbolName, callExtern.LibraryName, callExtern.ArgTemps, callExtern.ParameterTypes, callExtern.ReturnType)),
+            IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
@@ -1647,7 +1647,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsTerminateProcessImport,
         LlvmValueHandle WindowsWaitForSingleObjectImport,
         LlvmValueHandle WindowsGetExitCodeProcessImport,
-        Dictionary<string, LlvmValueHandle> WindowsExternImports,
+        Dictionary<string, LlvmValueHandle> WindowsExternalImports,
         LlvmCodegenFlavor Flavor,
         bool UsesProgramArgs,
         bool IsEntry)

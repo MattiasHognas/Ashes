@@ -3,7 +3,7 @@
 import Ashes.File
 import Ashes.IO
 import Ashes.Text
-let rec go fh acc count = 
+let recursive go fh acc count = 
     match Ashes.File.readLine(fh) with
         | None -> acc + "<count=" + Ashes.Text.fromInt(count) + ">"
         | Some(line) -> go(fh)(acc + line + "|")(count + 1)

@@ -10,9 +10,9 @@ public sealed class TopLevelAstTests
     {
         var typeA = new TypeDecl("A", [], [new TypeConstructor("MkA", [])]);
         var letX = new TopLevelItem.LetDecl("x", new Expr.IntLit(1), IsRecursive: false);
-        var ext = new ExternDecl.Function("ext", [], new ParsedType.Named("Int"));
+        var ext = new ExternalDecl.Function("ext", [], new ParsedType.Named("Int"));
         var typeB = new TypeDecl("B", [], [new TypeConstructor("MkB", [])]);
-        var recGroup = new TopLevelItem.RecGroup(
+        var recursiveGroup = new TopLevelItem.RecursiveGroup(
         [
             ("f", new Expr.IntLit(2)),
             ("g", new Expr.IntLit(3)),
@@ -23,9 +23,9 @@ public sealed class TopLevelAstTests
         [
             new TopLevelItem.Type(typeA),
             letX,
-            new TopLevelItem.Extern(ext),
+            new TopLevelItem.External(ext),
             new TopLevelItem.Type(typeB),
-            recGroup,
+            recursiveGroup,
             letY,
         ];
 
@@ -45,7 +45,7 @@ public sealed class TopLevelAstTests
         [
             new TopLevelItem.Type(typeA),
             new TopLevelItem.LetDecl("x", new Expr.IntLit(1), IsRecursive: false),
-            new TopLevelItem.Extern(new ExternDecl.Function("ext", [], new ParsedType.Named("Int"))),
+            new TopLevelItem.External(new ExternalDecl.Function("ext", [], new ParsedType.Named("Int"))),
             new TopLevelItem.Type(typeB),
         ];
 
@@ -58,25 +58,25 @@ public sealed class TopLevelAstTests
     }
 
     [Test]
-    public void ExternDecls_accessor_returns_extern_items_in_order()
+    public void ExternalDecls_accessor_returns_external_items_in_order()
     {
-        var ext1 = new ExternDecl.Function("first", [], new ParsedType.Named("Int"));
-        var ext2 = new ExternDecl.OpaqueType("Handle");
+        var ext1 = new ExternalDecl.Function("first", [], new ParsedType.Named("Int"));
+        var ext2 = new ExternalDecl.OpaqueType("Handle");
 
         TopLevelItem[] items =
         [
-            new TopLevelItem.Extern(ext1),
+            new TopLevelItem.External(ext1),
             new TopLevelItem.Type(new TypeDecl("A", [], [new TypeConstructor("MkA", [])])),
             new TopLevelItem.LetDecl("x", new Expr.IntLit(1), IsRecursive: false),
-            new TopLevelItem.Extern(ext2),
+            new TopLevelItem.External(ext2),
         ];
 
         var program = new Program(items, Body: null);
 
-        var externDecls = program.ExternDecls;
-        externDecls.Count.ShouldBe(2);
-        externDecls[0].ShouldBeSameAs(ext1);
-        externDecls[1].ShouldBeSameAs(ext2);
+        var externalDecls = program.ExternalDecls;
+        externalDecls.Count.ShouldBe(2);
+        externalDecls[0].ShouldBeSameAs(ext1);
+        externalDecls[1].ShouldBeSameAs(ext2);
     }
 
     [Test]
@@ -88,29 +88,29 @@ public sealed class TopLevelAstTests
     }
 
     [Test]
-    public void RecGroup_preserves_binding_order()
+    public void RecursiveGroup_preserves_binding_order()
     {
         var first = new Expr.IntLit(1);
         var second = new Expr.IntLit(2);
-        var recGroup = new TopLevelItem.RecGroup(
+        var recursiveGroup = new TopLevelItem.RecursiveGroup(
         [
             ("even", first),
             ("odd", second),
         ]);
 
-        recGroup.Bindings.Count.ShouldBe(2);
-        recGroup.Bindings[0].Name.ShouldBe("even");
-        recGroup.Bindings[0].Value.ShouldBeSameAs(first);
-        recGroup.Bindings[1].Name.ShouldBe("odd");
-        recGroup.Bindings[1].Value.ShouldBeSameAs(second);
+        recursiveGroup.Bindings.Count.ShouldBe(2);
+        recursiveGroup.Bindings[0].Name.ShouldBe("even");
+        recursiveGroup.Bindings[0].Value.ShouldBeSameAs(first);
+        recursiveGroup.Bindings[1].Name.ShouldBe("odd");
+        recursiveGroup.Bindings[1].Value.ShouldBeSameAs(second);
     }
 
     [Test]
-    public void Back_compat_constructor_orders_types_then_externs_with_body()
+    public void Back_compat_constructor_orders_types_then_externals_with_body()
     {
         var typeA = new TypeDecl("A", [], [new TypeConstructor("MkA", [])]);
         var typeB = new TypeDecl("B", [], [new TypeConstructor("MkB", [])]);
-        var ext = new ExternDecl.Function("ext", [], new ParsedType.Named("Int"));
+        var ext = new ExternalDecl.Function("ext", [], new ParsedType.Named("Int"));
         var body = new Expr.IntLit(42);
 
         var program = new Program([typeA, typeB], [ext], body);
@@ -118,14 +118,14 @@ public sealed class TopLevelAstTests
         program.TypeDecls.Count.ShouldBe(2);
         program.TypeDecls[0].ShouldBeSameAs(typeA);
         program.TypeDecls[1].ShouldBeSameAs(typeB);
-        program.ExternDecls.Count.ShouldBe(1);
-        program.ExternDecls[0].ShouldBeSameAs(ext);
+        program.ExternalDecls.Count.ShouldBe(1);
+        program.ExternalDecls[0].ShouldBeSameAs(ext);
         program.Body.ShouldBeSameAs(body);
 
-        // Items preserve the "types first, then externs" ordering of the legacy constructor.
+        // Items preserve the "types first, then externals" ordering of the legacy constructor.
         program.Items.Count.ShouldBe(3);
         program.Items[0].ShouldBeOfType<TopLevelItem.Type>().Decl.ShouldBeSameAs(typeA);
         program.Items[1].ShouldBeOfType<TopLevelItem.Type>().Decl.ShouldBeSameAs(typeB);
-        program.Items[2].ShouldBeOfType<TopLevelItem.Extern>().Decl.ShouldBeSameAs(ext);
+        program.Items[2].ShouldBeOfType<TopLevelItem.External>().Decl.ShouldBeSameAs(ext);
     }
 }

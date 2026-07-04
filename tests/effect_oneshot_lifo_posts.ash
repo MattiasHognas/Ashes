@@ -4,7 +4,7 @@ effect Trace =
     | note : Str -> Unit
 
 let work = 
-    fun (u) -> 
+    given (u) -> 
         let _ = Trace.note("a")
         in 
             let _ = Trace.note("b")

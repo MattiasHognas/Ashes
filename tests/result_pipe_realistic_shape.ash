@@ -16,7 +16,7 @@ in
             Ok(" 42 ")
             |?> trim
             |?> parse
-            |?> (fun (n) -> n + 1)
+            |?> (given (n) -> n + 1)
         in 
             match x with
                 | Ok(v) -> Ashes.IO.print(v)

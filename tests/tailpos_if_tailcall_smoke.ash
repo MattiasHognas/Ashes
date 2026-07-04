@@ -1,5 +1,5 @@
 // expect: ok
-let rec f x = 
+let recursive f x = 
     if x >= 1
     then 0
     else f(x + 1)

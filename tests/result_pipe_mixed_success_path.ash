@@ -13,7 +13,7 @@ in
     let y = 
         Ok("41")
         |?> parse
-        |?> (fun (n) -> n + 1)
+        |?> (given (n) -> n + 1)
         |!> Parse
     in 
         match y with

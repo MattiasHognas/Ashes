@@ -46,7 +46,7 @@ let fmtMean sum count =
         else -((-sum + count / 2) / count)
     in fmtTenths(rounded))
 
-let rec parseTenthsBytes bytes i stop sign acc = 
+let recursive parseTenthsBytes bytes i stop sign acc = 
     if i >= stop
     then sign * acc
     else 
@@ -74,7 +74,7 @@ let updateStats existing tenths =
                 in (newMin, newMax, sm + tenths, ct + 1)
 
 let upsertMeasurement newKey tenths = 
-    (let rec go map = 
+    (let recursive go map = 
         match map with
             | Empty -> Ashes.Map.makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) -> 
@@ -100,7 +100,7 @@ let upsertMeasurement newKey tenths =
                         else Ashes.Map.balance(Ashes.Map.makeNode(left)(key)(value)(go(right)))
     in go)
 
-let rec foldLines bytes pos hi map = 
+let recursive foldLines bytes pos hi map = 
     if pos >= hi
     then map
     else 
@@ -148,11 +148,11 @@ let mergeValues a b =
                         in (mn, mx, smA + smB, ctA + ctB)
 
 let mergeStation acc key value = 
-    Ashes.Map.upsertStr(key)(value)(fun (existing) -> mergeValues(existing)(value))(acc)
+    Ashes.Map.upsertStr(key)(value)(given (existing) -> mergeValues(existing)(value))(acc)
 
 let merge a b = Ashes.Map.foldLeft(mergeStation)(a)(b)
 
-let rec buildChunks bytes len lo n acc = 
+let recursive buildChunks bytes len lo n acc = 
     if n <= 1
     then (bytes, lo, len) :: acc
     else 
@@ -173,7 +173,7 @@ let formatEntry pair =
             match value with
                 | (mn, mx, sm, ct) -> key + "=" + fmtTenths(mn) + "/" + fmtMean(sm)(ct) + "/" + fmtTenths(mx)
 
-let rec formatAll pairs acc = 
+let recursive formatAll pairs acc = 
     match pairs with
         | [] -> acc
         | h :: t -> formatAll(t)(formatEntry(h) :: acc)

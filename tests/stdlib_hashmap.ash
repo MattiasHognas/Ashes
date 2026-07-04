@@ -9,9 +9,9 @@ let appleVal =
         | None -> -1
 
 let summary = 
-    Ashes.HashMap.foldLeft(fun (acc) -> 
-        fun (_k) -> 
-            fun (v) -> acc + v)(0)(m)
+    Ashes.HashMap.foldLeft(given (acc) -> 
+        given (_k) -> 
+            given (v) -> acc + v)(0)(m)
 in 
     if Ashes.HashMap.size(m) == 3
     then 

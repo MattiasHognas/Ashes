@@ -23,7 +23,7 @@ let rootVal t =
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let rec grow n t = 
+let recursive grow n t = 
     if n <= 0
     then t
     else 
@@ -31,7 +31,7 @@ let rec grow n t =
             | Leaf -> grow(n - 1)(Node(Leaf)(1)(Leaf))
             | Node(l, v, r) -> grow(n - 1)(Node(l)(v + 1)(r))
 
-let rec outer b nb t = 
+let recursive outer b nb t = 
     if b >= nb
     then t
     else outer(b + 1)(nb)(grow(3)(t))
@@ -40,7 +40,7 @@ let seed = Node(Leaf)(0)(Leaf)
 
 let nested = outer(0)(4)(seed)
 
-let rec bump n t = 
+let recursive bump n t = 
     if n <= 0
     then t
     else 

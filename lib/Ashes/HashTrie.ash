@@ -7,7 +7,7 @@ let empty = TrieEmpty
 
 let hashText text = Ashes.Bytes.hash(Ashes.Bytes.fromText(text))
 
-let rec firstDiffShift a b shift = 
+let recursive firstDiffShift a b shift = 
     if a >> shift & 15 == b >> shift & 15
     then firstDiffShift(a)(b)(shift + 4)
     else shift
@@ -96,7 +96,7 @@ let splitPair shift nibA a nibB b =
         else TrieEmpty)
 
 let upsertHashed hash key missValue onHit = 
-    (let rec go t = 
+    (let recursive go t = 
         match t with
             | TrieEmpty -> TrieLeaf(hash)(key)(missValue)(TrieEmpty)
             | TrieLeaf(h2, k2, v2, next) -> 
@@ -159,7 +159,7 @@ let upsertHashed hash key missValue onHit =
     in go)
 
 let getHashed hash key = 
-    (let rec go t = 
+    (let recursive go t = 
         match t with
             | TrieEmpty -> None
             | TrieLeaf(h2, k2, v2, next) -> 
@@ -220,7 +220,7 @@ let getHashed hash key =
     in go)
 
 let foldLeft folder state = 
-    (let rec go acc t = 
+    (let recursive go acc t = 
         match t with
             | TrieEmpty -> acc
             | TrieLeaf(_hash, key, value, next) -> go(folder(acc)(key)(value))(next)
@@ -261,7 +261,7 @@ let toList t =
     (let prepend rest key value = (key, value) :: rest
     in foldLeft(prepend)([])(t))
 
-let rec size t = 
+let recursive size t = 
     match t with
         | TrieEmpty -> 0
         | TrieLeaf(_hash, _key, _value, next) -> 1 + size(next)

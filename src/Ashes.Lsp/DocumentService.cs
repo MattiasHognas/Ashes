@@ -844,7 +844,7 @@ public static partial class DocumentService
                     yield return letDecl.Name;
                     break;
 
-                case TopLevelItem.RecGroup group:
+                case TopLevelItem.RecursiveGroup group:
                     foreach (var (name, _) in group.Bindings)
                     {
                         yield return name;
@@ -883,7 +883,7 @@ public static partial class DocumentService
                     scope[letDecl.Name] = 0;
                     break;
 
-                case TopLevelItem.RecGroup group:
+                case TopLevelItem.RecursiveGroup group:
                     foreach (var (name, _) in group.Bindings)
                     {
                         scope[name] = 0;
@@ -1009,18 +1009,18 @@ public static partial class DocumentService
                     return CollectVisibleBindingsInExpr(letResultExpr.Body, position, bodyScope);
                 }
 
-            case Expr.LetRec letRecExpr:
+            case Expr.LetRecursive letRecursiveExpr:
                 {
                     var recursiveScope = CloneCompletionScope(scope);
-                    recursiveScope[letRecExpr.Name] = 0;
+                    recursiveScope[letRecursiveExpr.Name] = 0;
 
-                    var inValue = CollectVisibleBindingsInExpr(letRecExpr.Value, position, recursiveScope);
+                    var inValue = CollectVisibleBindingsInExpr(letRecursiveExpr.Value, position, recursiveScope);
                     if (inValue.Count > 0)
                     {
                         return inValue;
                     }
 
-                    return CollectVisibleBindingsInExpr(letRecExpr.Body, position, recursiveScope);
+                    return CollectVisibleBindingsInExpr(letRecursiveExpr.Body, position, recursiveScope);
                 }
 
             case Expr.If ifExpr:
@@ -1403,7 +1403,7 @@ public static partial class DocumentService
                     scope[letDecl.Name] = letDefinition;
                     break;
 
-                case TopLevelItem.RecGroup group:
+                case TopLevelItem.RecursiveGroup group:
                     foreach (var (name, value) in group.Bindings)
                     {
                         scope[name] = new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(value));
@@ -1546,24 +1546,24 @@ public static partial class DocumentService
                     return ResolveDefinitionInExpr(letResultExpr.Body, position, currentFilePath, imports, bodyScope);
                 }
 
-            case Expr.LetRec letRecExpr:
+            case Expr.LetRecursive letRecursiveExpr:
                 {
-                    var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetRecNameOrDefault(letRecExpr));
+                    var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetRecursiveNameOrDefault(letRecursiveExpr));
                     if (ContainsPosition(bindingDefinition.Span, position))
                     {
                         return bindingDefinition;
                     }
 
                     var recursiveScope = CloneScope(scope);
-                    recursiveScope[letRecExpr.Name] = bindingDefinition;
+                    recursiveScope[letRecursiveExpr.Name] = bindingDefinition;
 
-                    var inValue = ResolveDefinitionInExpr(letRecExpr.Value, position, currentFilePath, imports, recursiveScope);
+                    var inValue = ResolveDefinitionInExpr(letRecursiveExpr.Value, position, currentFilePath, imports, recursiveScope);
                     if (inValue is not null)
                     {
                         return inValue;
                     }
 
-                    return ResolveDefinitionInExpr(letRecExpr.Body, position, currentFilePath, imports, recursiveScope);
+                    return ResolveDefinitionInExpr(letRecursiveExpr.Body, position, currentFilePath, imports, recursiveScope);
                 }
 
             case Expr.If ifExpr:
@@ -1915,7 +1915,7 @@ public static partial class DocumentService
                     definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(letDecl.Value));
                     return true;
 
-                case TopLevelItem.RecGroup group:
+                case TopLevelItem.RecursiveGroup group:
                     foreach (var (name, value) in group.Bindings)
                     {
                         if (string.Equals(name, exportName, StringComparison.Ordinal))
@@ -1971,15 +1971,15 @@ public static partial class DocumentService
 
                 break;
 
-            case Expr.LetRec letRecExpr:
-                if (string.Equals(letRecExpr.Name, name, StringComparison.Ordinal))
+            case Expr.LetRecursive letRecursiveExpr:
+                if (string.Equals(letRecursiveExpr.Name, name, StringComparison.Ordinal))
                 {
-                    definition = new DefinitionLocation(filePath, AstSpans.GetLetRecNameOrDefault(letRecExpr));
+                    definition = new DefinitionLocation(filePath, AstSpans.GetLetRecursiveNameOrDefault(letRecursiveExpr));
                     return true;
                 }
 
-                if (TryFindBindingDefinition(letRecExpr.Value, name, filePath, out definition)
-                    || TryFindBindingDefinition(letRecExpr.Body, name, filePath, out definition))
+                if (TryFindBindingDefinition(letRecursiveExpr.Value, name, filePath, out definition)
+                    || TryFindBindingDefinition(letRecursiveExpr.Body, name, filePath, out definition))
                 {
                     return true;
                 }

@@ -17,9 +17,9 @@ in
             let merged = Ashes.Map.set(compareInt)(4)("four")(map)
             in 
                 let summary = 
-                    Ashes.Map.foldLeft(fun (acc) -> 
-                        fun (key) -> 
-                            fun (value) -> acc + Ashes.Text.fromInt(key) + "=" + value + ";")("")(merged)
+                    Ashes.Map.foldLeft(given (acc) -> 
+                        given (key) -> 
+                            given (value) -> acc + Ashes.Text.fromInt(key) + "=" + value + ";")("")(merged)
                 in 
                     match Ashes.Map.get(compareInt)(2)(merged) with
                         | None -> Ashes.IO.print("fail")

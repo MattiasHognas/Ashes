@@ -1,4 +1,4 @@
 let add = 
-    fun (x) -> 
-        fun (y) -> x + y
+    given (x) -> 
+        given (y) -> x + y
 in Ashes.IO.print(add(1)("x"))

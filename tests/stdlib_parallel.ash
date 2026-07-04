@@ -5,16 +5,16 @@ import Ashes.IO
 let nums = 1 :: 2 :: 3 :: 4 :: []
 
 let doubled = 
-    Ashes.Parallel.map(fun (x) -> x * 2)(nums)
+    Ashes.Parallel.map(given (x) -> x * 2)(nums)
 
 let sumSq = 
-    Ashes.Parallel.reduce(fun (a) -> 
-        fun (b) -> a + b)(0)(fun (x) -> x * x)(nums)
+    Ashes.Parallel.reduce(given (a) -> 
+        given (b) -> a + b)(0)(given (x) -> x * x)(nums)
 
 let pair = 
-    Ashes.Parallel.both(fun (_u) -> 42)(fun (_u) -> "hi")
+    Ashes.Parallel.both(given (_u) -> 42)(given (_u) -> "hi")
 
-let rec showList xs = 
+let recursive showList xs = 
     match xs with
         | [] -> ""
         | h :: t -> Ashes.Text.fromInt(h) + "," + showList(t)

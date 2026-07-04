@@ -1,4 +1,4 @@
-let rec rpcStartsWith text prefix = 
+let recursive rpcStartsWith text prefix = 
     match Ashes.Text.uncons(prefix) with
         | None -> true
         | Some((ph, pt)) -> 
@@ -9,7 +9,7 @@ let rec rpcStartsWith text prefix =
                     then rpcStartsWith(tt)(pt)
                     else false
 
-let rec rpcDrop text n = 
+let recursive rpcDrop text n = 
     if n <= 0
     then text
     else 
@@ -17,12 +17,12 @@ let rec rpcDrop text n =
             | None -> ""
             | Some((_h, t)) -> rpcDrop(t)(n - 1)
 
-let rec rpcStrLen text = 
+let recursive rpcStrLen text = 
     match Ashes.Text.uncons(text) with
         | None -> 0
         | Some((_h, t)) -> 1 + rpcStrLen(t)
 
-let rec rpcTrimStart text = 
+let recursive rpcTrimStart text = 
     match Ashes.Text.uncons(text) with
         | None -> ""
         | Some((h, t)) -> 
@@ -45,7 +45,7 @@ let parseContentLength line =
                     | Error(_) -> None
         else None)
 
-let rec readHeaders contentLength = 
+let recursive readHeaders contentLength = 
     match Ashes.IO.readLine(Unit) with
         | None -> Error("unexpected EOF reading RPC headers")
         | Some(line) -> 

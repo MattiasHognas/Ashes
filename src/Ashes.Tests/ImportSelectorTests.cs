@@ -66,7 +66,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = fun (x) -> x + x\n" });
+            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -75,7 +75,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double as d\nAshes.IO.print(d(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = fun (x) -> x + x\n" });
+            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -83,7 +83,7 @@ public sealed class ImportSelectorTests
     {
         ["Shapes"] =
             "type Color = | Red | Green\n" +
-            "let name = fun (c) -> match c with | Red -> \"red\" | Green -> \"green\"\n",
+            "let name = given (c) -> match c with | Red -> \"red\" | Green -> \"green\"\n",
     };
 
     [Test]
@@ -155,7 +155,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nimport Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = fun (x) -> x + x\n" });
+            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -179,7 +179,7 @@ public sealed class ImportSelectorTests
         {
             var plan = ProjectSupport.BuildCompilationPlan(WriteProject(
                 "import Util.missing\nAshes.IO.print(0)\n",
-                new Dictionary<string, string> { ["Util"] = "let double = fun (x) -> x + x\n" }));
+                new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" }));
             ProjectSupport.BuildCompilationSource(plan);
         });
         ex.Message.ShouldContain("does not export 'missing'");
@@ -193,7 +193,7 @@ public sealed class ImportSelectorTests
         var modules = new Dictionary<string, string>
         {
             ["B"] = "let secret = 40\n",
-            ["A"] = "import B.secret\nlet helper = fun (x) -> secret + x\n",
+            ["A"] = "import B.secret\nlet helper = given (x) -> secret + x\n",
         };
 
         var stdout = await RunAsync("import A.helper\nAshes.IO.print(helper(2))\n", modules);

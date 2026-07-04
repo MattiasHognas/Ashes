@@ -4,6 +4,6 @@ let parse text =
     then Ok(42)
     else Error(0)
 in 
-    match Ashes.Result.map(fun (n) -> n + 1)(parse("42")) with
+    match Ashes.Result.map(given (n) -> n + 1)(parse("42")) with
         | Ok(value) -> Ashes.IO.print(value)
         | Error(code) -> Ashes.IO.print(code)

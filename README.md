@@ -22,7 +22,7 @@ in
             async(
                 shapes
                 |> list.map area
-                |> list.filter(fun(a) -> a >= 10.0)
+                |> list.filter(given(a) -> a >= 10.0)
                 |> list.length
             )
         in 
@@ -106,7 +106,7 @@ in io.print(name(Green))
 ```ash
 import Ashes.IO as io
 
-let rec sum lst acc =
+let recursive sum lst acc =
     match lst with
         | []        -> acc
         | x :: rest -> sum(rest)(acc + x)
@@ -123,7 +123,7 @@ import Ashes.IO as io
 
 "42"
 |> text.parseInt
-|> result.map(fun (n) -> n + 1)
+|> result.map(given (n) -> n + 1)
 |> result.default(0)
 |> io.print
 ```
@@ -294,7 +294,7 @@ End-to-end tests use `// expect:` directives:
 
 ```ash
 // expect: 15
-let rec sum lst acc =
+let recursive sum lst acc =
     match lst with
         | []        -> acc
         | x :: rest -> sum(rest)(acc + x)
@@ -429,7 +429,7 @@ Everything is persistent (immutable, structure-sharing):
 
 **Won't recursion-as-iteration overflow the stack?**
 No — tail calls compile to constant-stack loops, including cross-member tail
-calls in eligible `let rec ... and ...` groups. Only non-tail recursion
+calls in eligible `let recursive ... and ...` groups. Only non-tail recursion
 consumes a frame per call and is bounded by the thread's stack (OS default on
 the main thread, 1 MiB default for parallel workers).
 *Details: [Tail-Call Optimization](docs/LANGUAGE_SPEC.md#183-tail-call-optimization)

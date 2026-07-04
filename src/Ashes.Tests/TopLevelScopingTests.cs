@@ -71,12 +71,12 @@ public sealed class TopLevelScopingTests
     [Test]
     public void Top_level_mutual_recursion_type_checks_as_one_binding_group()
     {
-        // `let rec ... and ...` is now implemented (semantics-rec-and-groups): the group's members
+        // `let recursive ... and ...` is now implemented (semantics-rec-and-groups): the group's members
         // see one another, so this type-checks and lowers cleanly with no diagnostic. End-to-end
         // behaviour (running the compiled program) is covered by MutualRecursionTests.
         var src = """
-            let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)
-            and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)
+            let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)
+            and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)
             """;
 
         var diag = LowerProgram(src);

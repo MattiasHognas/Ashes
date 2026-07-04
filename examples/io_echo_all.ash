@@ -1,4 +1,4 @@
-let rec loop _ = 
+let recursive loop _ = 
     match Ashes.IO.readLine(Unit) with
         | None -> Unit
         | Some(line) -> 

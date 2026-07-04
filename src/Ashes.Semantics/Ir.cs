@@ -410,7 +410,7 @@ public abstract record IrInst
     public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
 
     public sealed record ToCString(int Target, int StrTemp) : IrInst;
-    public sealed record CallExtern(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;
+    public sealed record CallExternal(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;
 
     /// <summary>
     /// Creates a Task value by allocating a task/state struct and storing
@@ -639,7 +639,7 @@ public abstract record FfiType
     public sealed record Void : FfiType;
 }
 
-public sealed record IrExternFunction(
+public sealed record IrExternalFunction(
     string Name,
     string SymbolName,
     IReadOnlyList<FfiType> ParameterTypes,
@@ -737,8 +737,8 @@ public sealed record IrProgram(
     IrFunction EntryFunction,
     List<IrFunction> Functions,
     List<IrStringLiteral> StringLiterals,
-    List<IrExternFunction> ExternFunctions,
-    IReadOnlySet<string> ExternOpaqueTypes,
+    List<IrExternalFunction> ExternalFunctions,
+    IReadOnlySet<string> ExternalOpaqueTypes,
     bool UsesPrintInt,
     bool UsesPrintStr,
     bool UsesPrintBool,

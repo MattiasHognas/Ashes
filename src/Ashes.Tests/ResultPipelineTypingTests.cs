@@ -11,7 +11,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            let x = Ok(3) |?> (fun (n) -> n + 1)
+            let x = Ok(3) |?> (given (n) -> n + 1)
             in match x with
             | Ok(v) -> Ashes.IO.print(v)
             | Error(_) -> Ashes.IO.print(0)
@@ -25,7 +25,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            let parse = fun (x) -> Ok(x + 1)
+            let parse = given (x) -> Ok(x + 1)
             in let y = Ok(41) |?> parse
             in match y with
             | Ok(v) -> Ashes.IO.print(v)
@@ -57,8 +57,8 @@ public sealed class ResultPipelineTypingTests
             """
             type ParseError = | NotAnInt(String)
             type AppError = | Parse(ParseError)
-            let parse = fun (x) -> if x == "41" then Ok(41) else Error(NotAnInt(x))
-            in let y = Ok("41") |?> parse |?> (fun (n) -> n + 1) |!> Parse
+            let parse = given (x) -> if x == "41" then Ok(41) else Error(NotAnInt(x))
+            in let y = Ok("41") |?> parse |?> (given (n) -> n + 1) |!> Parse
             in match y with
             | Ok(v) -> Ashes.IO.print(v)
             | Error(Parse(NotAnInt(_))) -> Ashes.IO.print(0)

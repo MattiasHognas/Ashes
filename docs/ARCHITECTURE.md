@@ -427,7 +427,7 @@ and whole OS chunks can be returned once they fall out of scope.
 The arena serves heap values; call frames use the ordinary machine stack, and
 the compiler does not install guard handlers — exhausting a stack faults the
 process (SIGSEGV on Linux, stack-overflow exception on Windows). Tail-recursive
-loops (including eligible `let rec ... and ...` groups, which lowering merges
+loops (including eligible `let recursive ... and ...` groups, which lowering merges
 into a single dispatch loop) run in constant stack space; only non-tail
 recursion depth is bounded by these sizes:
 
@@ -496,7 +496,7 @@ deep-handler reduction `handle E[perform op] with h  →  C[handle E[v] with h]`
 context `C` *around* the resumed computation. The arm splits syntactically at its single
 `resume` call: `let x = resume(v) in B` (or `match resume(v) with cases`) becomes the resume
 argument `v` — returned to the perform site exactly like a tail arm — plus a **post-resume
-continuation** `fun x -> B`, handed to the perform site through a reserved pending-post register
+continuation** `given x -> B`, handed to the perform site through a reserved pending-post register
 (one extra evidence global) and pushed onto the handle's shared LIFO posts list (a
 `{closure, next}` cell chain; each frame stores a pointer to the handle's list-head slot). On
 body exit, after the `return` arm, the handle folds the pending posts over the result — LIFO, so

@@ -31,7 +31,7 @@ let share k =
     (let x = Node(Leaf)(k)(Leaf)
     in Node(x)(0)(x))
 
-let rec sgrow n t = 
+let recursive sgrow n t = 
     if n <= 0
     then t
     else 
@@ -39,7 +39,7 @@ let rec sgrow n t =
             | Leaf -> sgrow(n - 1)(Node(Leaf)(1)(Leaf))
             | Node(l, v, r) -> sgrow(n - 1)(Node(l)(v + 1)(r))
 
-let rec souter b nb t = 
+let recursive souter b nb t = 
     if b >= nb
     then t
     else souter(b + 1)(nb)(sgrow(3)(t))

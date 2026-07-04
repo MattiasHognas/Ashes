@@ -17,13 +17,13 @@ type Receipt =
     | stamp: Int
 
 let taxFor : Int -> Int = 
-    fun (cents) -> cents / 10
+    given (cents) -> cents / 10
 
 let priceOf : Str -> Int uses {Prices} = 
-    fun (item) -> perform Prices.lookup(item)
+    given (item) -> perform Prices.lookup(item)
 
 let processOrder = 
-    fun (item) -> 
+    given (item) -> 
         let _ = perform Log.log("processing " + item)
         in 
             let base = perform Prices.lookup(item)
@@ -38,7 +38,7 @@ let processOrder =
                             in Receipt(item = item, base = base, tax = tax, total = total, stamp = t)
 
 let runTest = 
-    fun (work) -> 
+    given (work) -> 
         handle work(Unit) with
             | Prices.lookup(item) -> 
                 match item with
@@ -51,7 +51,7 @@ let runTest =
             | return(r) -> (r, [])
 
 let result = 
-    match runTest(fun (_) -> processOrder("widget")) with
+    match runTest(given (_) -> processOrder("widget")) with
         | (r, logs) -> 
             match (r.base == 200, r.tax == 20, r.total == 220, r.stamp == 1000, logs) with
                 | (true, true, true, true, "processing widget" :: "total 220" :: []) -> "PASS"
