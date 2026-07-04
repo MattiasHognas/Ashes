@@ -226,17 +226,66 @@ constructs already express.
 
 ---
 
-## Networking layers (decided: TCP first)
+## Networking layers (decided: TCP first, HTTPS in scope)
 
-Build the TCP server primitive first, then layer HTTP on top of it.
+The layers stack: a byte transport (plaintext TCP or TLS), then HTTP framing on top of whichever
+transport. HTTPS is not a separate server — it is the HTTP server running over a TLS transport, so the
+handler is byte-for-byte identical between HTTP and HTTPS.
 
-- **TCP server** is the primitive: `bind` / `listen` / `accept` added to `Ashes.Net.Tcp.Server`,
-  reusing the existing `send` / `receive` / `close` and the existing socket wait kinds. `accept`
-  parks on `WaitSocketRead` of the listener.
-- **HTTP server** is a library over the TCP server: request parsing and response serialization,
-  `Ashes.Http.Server`. It reuses the HTTP/1.1 conventions already present on the client side.
-- **TLS server** rides the existing hermetic `rustls` runtime, in a server configuration, once the
-  plaintext path is proven.
+```mermaid
+flowchart TD
+    handler["handler (identical for HTTP and HTTPS)"] --> httpframe["HTTP/1.1 framing (Ashes.Http.Server)"]
+    httpframe --> tcp["TCP transport"]
+    httpframe --> tls["TLS transport (rustls)"]
+    tls --> tcp
+    tcp --> loop["cooperative poll loop"]
+    tls -. "WaitTlsWantRead / WaitTlsWantWrite" .-> loop
+    tcp -. "WaitSocketRead / WaitSocketWrite" .-> loop
+```
+
+- **TCP server** is the base primitive: `bind` / `listen` / `accept` added to `Ashes.Net.Tcp.Server`,
+  reusing the existing `send` / `receive` / `close` and the existing socket wait kinds. `accept` parks
+  on `WaitSocketRead` of the listener.
+- **TLS transport** rides the existing hermetic `rustls` runtime. This is a smaller addition than it
+  looks: the cooperative poll loop already drives rustls connections through `WaitTlsWantRead` /
+  `WaitTlsWantWrite`, the runtime is already embedded per-executable on all three targets
+  (linux-x64, linux-arm64, win-x64), and an accepted TLS connection is the existing `TlsSocket`
+  runtime type. What is genuinely new is the **server side** of rustls: the client path only uses the
+  client-config and certificate-verifier FFI surface, so a server needs the server-config / acceptor
+  surface plus certificate-and-key provisioning (present a chain and private key, do the server half
+  of the handshake, honor SNI). There is already a `tls-server` loopback fixture in the test harness,
+  but it is a C# test helper for exercising the client — not an Ashes-native listener.
+- **HTTP server** is a library over the transport: request parsing and response serialization,
+  `Ashes.Http.Server`, reusing the HTTP/1.1 conventions already present on the client side. It is
+  parameterized over the transport, which is what makes HTTP and HTTPS one code path.
+
+### HTTPS example
+
+The handler is unchanged from the HTTP example; only the listener differs — it takes a TLS config
+(certificate chain and private key) and binds a TLS transport:
+
+```ash
+import Ashes.Http.Server as http
+
+let handle req =
+    match http.path(req) with
+        | "/health" -> http.text(200)("ok")
+        | _ -> http.text(404)("not found")
+in
+    let tls = http.tls("cert.pem")("key.pem")
+    in
+        match Ashes.Async.run(async await http.serveTls(8443)(tls)(handle)) with
+            | Ok(()) -> io.print("server stopped")
+            | Error(e) -> io.print(e)
+```
+
+`serveTls` shares the lifecycle result, the handler contract, and the multi-reactor / per-connection
+arena model with `serve`; TLS is purely the transport underneath. The same applies to raw encrypted
+TCP sessions — a TLS counterpart to `tcp.serve` where the handler receives a `TlsSocket`.
+
+**Sequencing.** Prove the plaintext TCP-then-HTTP path first, then add the TLS transport; but HTTPS is
+a designed-for layer here, not an afterthought — the whole point of parameterizing HTTP over the
+transport is that HTTPS falls out without a second handler model.
 
 ---
 
@@ -253,8 +302,14 @@ Roughly, and to be refined against the codebase:
 - Graceful shutdown wiring (see open questions).
 - `Ashes.Http.Server`: HTTP/1.1 request parser and response serializer, plus response constructors
   (`text`, `json`, status helpers) and accessors (`path`, `method`, headers, body).
+- Server-side TLS: expose the rustls-ffi server-config / acceptor surface (the client path uses only
+  the client-config and verifier symbols), certificate-chain-and-private-key loading, and the
+  server half of the handshake. Wire the accepted `TlsSocket` into the same accept/reactor path; the
+  scheduler's existing `WaitTlsWantRead` / `WaitTlsWantWrite` handling is reused as-is. `serveTls`
+  (HTTP over TLS) and a TLS `tcp.serve` counterpart sit on top of this.
 - Cross-target parity (Windows, arm64) for the accept/reactor path, tracked with the existing
-  cross-target parallelism work.
+  cross-target parallelism work; server-side TLS matches the same three targets the rustls runtime
+  already ships to.
 
 ---
 
@@ -299,6 +354,15 @@ timeout for in-flight work at shutdown.
 
 Keep-alive versus connection-close, `Transfer-Encoding: chunked` on the server side (the client side
 currently rejects it), request size limits, and header/body accessor surface all need pinning down.
+
+### TLS server surface
+
+Certificate and key provisioning (PEM file paths first; ACME / auto-renewal out of scope), the exact
+`http.tls` config shape, ALPN and whether HTTP/2 is negotiated (the server framing is HTTP/1.1 only
+to begin with), SNI and multiple certificates for virtual hosting, TLS-version and cipher policy
+(rustls defaults, TLS 1.2 / 1.3), and whether mutual TLS / client-certificate authentication is in
+scope. The transport plumbing is settled by reusing rustls; these are the server-config policy
+choices to pin down.
 
 ### Capability granularity
 
