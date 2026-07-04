@@ -1,26 +1,25 @@
 # challenges/server — TCP server benchmark
 
-A load/latency benchmark for the Ashes TCP server, with a single-file .NET echo server as a reference
-point. Built to measure how fast the server responds and how it holds up under pressure, and to be
-reused as an optimization baseline (like `challenges/1brc`). Nothing here is discovered or run by CI,
-and the `.ash` files are not format-checked by any gate.
+A load/latency benchmark that compares the Ashes TCP echo server against a .NET echo server on the
+same functionality, and is reusable as an optimization baseline (like `challenges/1brc`). Nothing
+here is discovered or run by CI, and the `.ash` is not format-checked by any gate.
 
-Client and server are both Ashes (dogfooding); orchestration is a shell script.
+The key point: the **same fast .NET load generator drives both servers**, so the comparison isolates
+the *server* (same functionality — an echo server — same client). An earlier version drove the
+servers with an Ashes client that was itself the bottleneck, which hid the difference; using a fast
+common client makes the server the bottleneck, so real differences show.
 
 ## Pieces
 
-- **`echo.ash`** — a minimal echo server on `127.0.0.1:18080` using `Ashes.Net.Tcp.Server.serve`. One
-  `receive` + echo + `close` per connection, so the benchmark measures the server path
-  (accept / receive / send / close + scheduling), not handler work.
-- **`load.ash`** — a load client: does `count` (its first argument) sequential
-  connect/send/recv/close round-trips. Compiled, so it measures the server rather than driver overhead.
-- **`dotnet-echo.cs`** — a single-file .NET echo server (`dotnet run dotnet-echo.cs [port]`,
-  .NET 10 file-based app) used as a reference point. It is concurrent (async accept loop), the natural
-  .NET idiom, so it shows the ceiling; the current Ashes `serve` is sequential, so the gap is the
-  headroom the multi-reactor milestone targets.
-- **`bench.sh`** — compiles the Ashes pieces, then runs the same concurrency sweep against the Ashes
-  server and (if `dotnet` is present) the .NET baseline, printing throughput (req/s) and mean
-  round-trip latency per stage, labeled `ashes` / `dotnet`.
+- **`echo.ash`** — the Ashes echo server on `127.0.0.1:18080` (`Ashes.Net.Tcp.Server.serve`). One
+  `receive` + echo + `close` per connection.
+- **`dotnet-echo.cs`** — a single-file .NET echo server (concurrent async accept loop, the natural
+  .NET idiom), as the reference point.
+- **`loadgen.cs`** — a single-file .NET load generator (the common driver). Does the concurrency and
+  timing itself; each request is one connection (connect → send → read echo → close) and it reports
+  throughput + latency percentiles.
+- **`bench.sh`** — builds all three to plain executables once (the Ashes server via the compiler, the
+  .NET pieces via `dotnet publish`), then runs the same load sweep against each server, labeled.
 
 ## Run
 
@@ -31,20 +30,20 @@ bash challenges/server/bench.sh 50000 1 16 128  # REQUESTS then CONCURRENCY leve
 
 ## Reading the results
 
-`serve` handles connections **sequentially** today, yet it lands in the same ballpark as the
-concurrent .NET baseline on this echo workload (the load client is itself heavy, so throughput is
-partly client-bound). Run-to-run variance is high on a loaded box, so trust the `ashes`-vs-`dotnet`
-comparison *within one invocation* (identical conditions) more than absolute numbers, and interleave
-A/B runs when comparing Ashes builds. The multi-reactor milestone (worker-per-core reactors) will be
-compared against this baseline. Example shape on a quiet box (illustrative):
+`serve` handles connections **sequentially** today; the .NET baseline is concurrent. So Ashes tends to
+win at low/moderate concurrency (less per-connection overhead than thread-pool dispatch), while the
+concurrent .NET server holds tail latency better at high concurrency — which is the headroom the
+multi-reactor milestone (worker-per-core reactors) targets. A loaded box adds variance, so trust the
+`ashes`-vs-`dotnet` comparison within one run and interleave A/B runs across Ashes builds. Example
+shape on a quiet box (illustrative):
 
 ```
-== ashes (serve, sequential) ==
-  ashes    concurrency 1    ~19k req/s   ~0.05 ms
-  ashes    concurrency 8    ~92k req/s   ~0.09 ms
-  ashes    concurrency 64  ~146k req/s   ~0.44 ms
-== dotnet (concurrent baseline) ==
-  dotnet   concurrency 1    ~17k req/s   ~0.06 ms
-  dotnet   concurrency 8    ~92k req/s   ~0.09 ms
-  dotnet   concurrency 64  ~138k req/s   ~0.46 ms
+== ashes server (serve, sequential) ==
+  ashes  conc 1     48k req/s   p50 0.013  p99 0.027 ms
+  ashes  conc 8    190k req/s   p50 0.032  p99 0.075 ms
+  ashes  conc 64   127k req/s   p50 0.312  p99 1.884 ms
+== dotnet server (concurrent) ==
+  dotnet conc 1     37k req/s   p50 0.021  p99 0.033 ms
+  dotnet conc 8    138k req/s   p50 0.048  p99 0.081 ms
+  dotnet conc 64   143k req/s   p50 0.372  p99 0.827 ms
 ```
