@@ -27,8 +27,15 @@
 // only for the empty list; a singleton list yields `f(x)` alone). A non-associative `combine`
 // has no defined fold shape here.
 //
-// Self-contained: uses only core language features.
-
+// `splitChunks(bytes)(sep)(n)` is the record-boundary chunker for the data-parallel byte-scan
+// pattern: it splits `bytes` into up to `n` contiguous `(bytes, lo, hi)` sub-ranges, each ending
+// just after an occurrence of the record separator byte `sep` (so no record straddles a chunk).
+// Feed the result straight to `reduce`: `reduce(merge)(identity)(foldChunk)(splitChunks(bytes)(sep)(n))`.
+// The `reduce` call stays at the caller's concrete result type, so it monomorphizes and genuinely
+// forks — splitChunks itself is pure and does no parallel work, only the boundary-aligned splitting.
+//
+// Uses core language features plus `Ashes.Bytes` (indexOf/length) for the chunker.
+import Ashes.Bytes
 let recursive plLength xs = 
     match xs with
         | [] -> 0
@@ -110,3 +117,20 @@ let reduceWithWorkers count combine identity f xs =
 
 let reduceGrainedWithWorkers count grain combine identity f xs = 
     Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(xs))
+
+let recursive splitChunksGo bytes len sep lo n acc = 
+    if n <= 1
+    then (bytes, lo, len) :: acc
+    else 
+        let target = lo + (len - lo) / n
+        in 
+            let nl = Ashes.Bytes.indexOf(bytes)(sep)(target)
+            in 
+                if nl < 0
+                then (bytes, lo, len) :: acc
+                else 
+                    if nl + 1 >= len
+                    then (bytes, lo, len) :: acc
+                    else splitChunksGo(bytes)(len)(sep)(nl + 1)(n - 1)((bytes, lo, nl + 1) :: acc)
+
+let splitChunks bytes sep n = splitChunksGo(bytes)(Ashes.Bytes.length(bytes))(sep)(0)(n)([])

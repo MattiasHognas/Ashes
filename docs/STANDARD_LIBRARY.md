@@ -314,6 +314,16 @@ or partially applied.
   are exactly `mapGrained(1)` / `reduceGrained(1)`. The result is always identical to the sequential
   equivalent, whatever the grain (grains `< 1` behave as `1`).
 
+#### Chunking a byte buffer
+
+- `splitChunks(bytes)(sep)(n)` returning `List((Bytes, Int, Int))` — split `bytes` into up to `n`
+  contiguous `(bytes, lo, hi)` sub-ranges, each ending just after an occurrence of the record
+  separator byte `sep`, so no record straddles a chunk boundary (the last chunk runs to the buffer
+  end). It is the record-boundary chunker for the data-parallel byte-scan pattern: feed the result
+  straight to `reduce` — `reduce(merge)(identity)(foldChunk)(splitChunks(bytes)(sep)(n))` — so the
+  `reduce` call stays at the caller's concrete result type and genuinely forks. `splitChunks` itself
+  is pure and does the boundary-aligned splitting only (no parallel work).
+
 #### Scoped worker overrides
 
 `--parallel-workers` sets the executable's **compiled maximum** (its hard ceiling, or the detected
