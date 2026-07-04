@@ -1,6 +1,6 @@
 // expect: 1 1001
 
-effect Prices =
+capability Prices =
     | lookup : Str -> Int
 
 let priceOf = 

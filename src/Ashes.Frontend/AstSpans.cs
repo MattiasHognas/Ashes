@@ -18,7 +18,8 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<TypeDecl, SpanBox> TypeDeclSpans = new();
     private static readonly ConditionalWeakTable<TypeConstructor, SpanBox> TypeConstructorSpans = new();
     private static readonly ConditionalWeakTable<ExternalDecl, SpanBox> ExternalDeclSpans = new();
-    private static readonly ConditionalWeakTable<EffectDecl, SpanBox> EffectDeclSpans = new();
+    private static readonly ConditionalWeakTable<CapabilityDecl, SpanBox> EffectDeclSpans = new();
+    private static readonly ConditionalWeakTable<ProvideDecl, SpanBox> ProvideDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupSpans = new();
 
@@ -133,14 +134,25 @@ public static class AstSpans
         return ExternalDeclSpans.TryGetValue(externalDecl, out var spanBox) ? spanBox.Span : default;
     }
 
-    public static void Set(EffectDecl effectDecl, TextSpan span)
+    public static void Set(CapabilityDecl effectDecl, TextSpan span)
     {
         EffectDeclSpans.Remove(effectDecl);
         EffectDeclSpans.Add(effectDecl, new SpanBox(span));
     }
 
-    public static TextSpan GetOrDefault(EffectDecl effectDecl)
+    public static TextSpan GetOrDefault(CapabilityDecl effectDecl)
     {
         return EffectDeclSpans.TryGetValue(effectDecl, out var spanBox) ? spanBox.Span : default;
+    }
+
+    public static void Set(ProvideDecl provideDecl, TextSpan span)
+    {
+        ProvideDeclSpans.Remove(provideDecl);
+        ProvideDeclSpans.Add(provideDecl, new SpanBox(span));
+    }
+
+    public static TextSpan GetOrDefault(ProvideDecl provideDecl)
+    {
+        return ProvideDeclSpans.TryGetValue(provideDecl, out var spanBox) ? spanBox.Span : default;
     }
 }

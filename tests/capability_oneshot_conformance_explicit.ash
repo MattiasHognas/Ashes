@@ -1,13 +1,13 @@
 // expect: PASS
 
-effect Prices =
-    | lookup
+capability Prices =
+    | lookup : Str -> Int
 
-effect Clock =
-    | now
+capability Clock =
+    | now : Unit -> Int
 
-effect Log =
-    | log
+capability Log =
+    | log : Str -> Unit
 
 type Receipt =
     | item: Str
@@ -16,25 +16,25 @@ type Receipt =
     | total: Int
     | stamp: Int
 
-let taxFor = 
+let taxFor : Int -> Int = 
     given (cents) -> cents / 10
 
-let priceOf = 
-    given (item) -> Prices.lookup(item)
+let priceOf : Str -> Int needs {Prices} = 
+    given (item) -> perform Prices.lookup(item)
 
 let processOrder = 
     given (item) -> 
-        let _ = Log.log("processing " + item)
+        let _ = perform Log.log("processing " + item)
         in 
-            let base = Prices.lookup(item)
+            let base = perform Prices.lookup(item)
             in 
                 let tax = taxFor(base)
                 in 
                     let total = base + tax
                     in 
-                        let _ = Log.log("total " + Ashes.Text.fromInt(total))
+                        let _ = perform Log.log("total " + Ashes.Text.fromInt(total))
                         in 
-                            let t = Clock.now(Unit)
+                            let t = perform Clock.now(Unit)
                             in Receipt(item = item, base = base, tax = tax, total = total, stamp = t)
 
 let runTest = 

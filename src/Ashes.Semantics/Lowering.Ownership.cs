@@ -552,7 +552,7 @@ public sealed partial class Lowering
                     // original pointer.
                     int guardResultSlot = -1;
                     string? copySkipLabel = null;
-                    if (EffectGlobalCount > 0)
+                    if (CapabilityGlobalCount > 0)
                     {
                         guardResultSlot = NewLocal();
                         Emit(new IrInst.StoreLocal(guardResultSlot, resultTemp));

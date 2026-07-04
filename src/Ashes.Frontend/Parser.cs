@@ -62,8 +62,21 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Effect)
+        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability or TokenKind.RenamedEffect or TokenKind.Provide)
         {
+            if (_current.Kind == TokenKind.Provide)
+            {
+                items.Add(new TopLevelItem.Provide(ParseProvideDecl()));
+                continue;
+            }
+
+            if (_current.Kind == TokenKind.RenamedEffect)
+            {
+                _diag.Error(CurrentErrorSpan(), "'effect' has been renamed to 'capability'.", DiagnosticCodes.RenamedCapabilityKeyword);
+                items.Add(new TopLevelItem.Capability(ParseCapabilityDecl()));
+                continue;
+            }
+
             if (_current.Kind == TokenKind.Type)
             {
                 items.Add(new TopLevelItem.Type(ParseTypeDecl()));
@@ -76,9 +89,9 @@ public sealed class Parser
                 continue;
             }
 
-            if (_current.Kind == TokenKind.Effect)
+            if (_current.Kind == TokenKind.Capability)
             {
-                items.Add(new TopLevelItem.Effect(ParseEffectDecl()));
+                items.Add(new TopLevelItem.Capability(ParseCapabilityDecl()));
                 continue;
             }
 
@@ -383,12 +396,13 @@ public sealed class Parser
 
     /// <summary>
     /// Parses an <c>effect</c> declaration:
-    /// <c>effect Name [(a, b)] = | op [: TypeExpr] | op2 ...</c>.
+    /// <c>capability Name [(a, b)] = | op [: TypeExpr] | op2 ...</c>.
     /// </summary>
-    private EffectDecl ParseEffectDecl()
+    private CapabilityDecl ParseCapabilityDecl()
     {
         var start = _current.Position;
-        Consume(TokenKind.Effect);
+        // Accept the legacy `effect` spelling too; the rename diagnostic is emitted at the call site.
+        Consume(_current.Kind == TokenKind.RenamedEffect ? TokenKind.RenamedEffect : TokenKind.Capability);
         var name = Consume(TokenKind.Ident).Text;
         var typeParameters = new List<TypeParameter>();
         if (_current.Kind == TokenKind.LParen)
@@ -409,7 +423,7 @@ public sealed class Parser
 
         Consume(TokenKind.Equals);
 
-        var operations = new List<EffectOperation>();
+        var operations = new List<CapabilityOperation>();
         while (_current.Kind == TokenKind.Pipe)
         {
             Consume(TokenKind.Pipe);
@@ -421,15 +435,78 @@ public sealed class Parser
                 signature = ParseTypeExpr();
             }
 
-            operations.Add(new EffectOperation(opName, signature));
+            operations.Add(new CapabilityOperation(opName, signature));
         }
 
         if (operations.Count == 0)
         {
-            _diag.Error(CurrentErrorSpan(), $"Effect '{name}' must declare at least one operation.");
+            _diag.Error(CurrentErrorSpan(), $"Capability '{name}' must declare at least one operation.");
         }
 
-        var decl = new EffectDecl(name, typeParameters, operations);
+        var decl = new CapabilityDecl(name, typeParameters, operations);
+        AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
+        return decl;
+    }
+
+    /// <summary>
+    /// Parses a static provider: <c>provide Name [(TypeArgs)] = | op = expr | op2 = expr</c>.
+    /// </summary>
+    private ProvideDecl ParseProvideDecl()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Provide);
+        var name = Consume(TokenKind.Ident).Text;
+        var typeArgs = new List<TypeExpr>();
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind != TokenKind.RParen)
+            {
+                typeArgs.Add(ParseTypeExpr());
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    typeArgs.Add(ParseTypeExpr());
+                }
+            }
+
+            Consume(TokenKind.RParen);
+        }
+
+        Consume(TokenKind.Equals);
+
+        var bindings = new List<ProvideBinding>();
+        var previousSuppression = _suppressLetWhitespaceArgument;
+        var previousDeclColumn = _topLevelDeclColumn;
+        // Apply the flat top-level boundary so the impl expression does not absorb a following
+        // top-level declaration (e.g. the next `let`) as a whitespace-application argument.
+        _suppressLetWhitespaceArgument = true;
+        _topLevelDeclColumn = GetColumn(start);
+        try
+        {
+            while (_current.Kind == TokenKind.Pipe)
+            {
+                Consume(TokenKind.Pipe);
+                var opName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Equals);
+                // Suppress `|` as a bitwise-or operator so the next `| op = ...` binding terminates the
+                // implementation expression (the same rule match-case bodies use).
+                var impl = ParseMatchCaseBody();
+                bindings.Add(new ProvideBinding(opName, impl));
+            }
+        }
+        finally
+        {
+            _suppressLetWhitespaceArgument = previousSuppression;
+            _topLevelDeclColumn = previousDeclColumn;
+        }
+
+        if (bindings.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Provider for '{name}' must supply at least one operation.");
+        }
+
+        var decl = new ProvideDecl(name, typeArgs, bindings);
         AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
         return decl;
     }
@@ -456,19 +533,24 @@ public sealed class Parser
     /// (<c>A -> B -> C uses {E}</c> is <c>A -> (B -> C uses {E})</c>), so a row parsed after a
     /// non-arrow result bubbles up exactly one level to the arrow that encloses it.
     /// </summary>
-    private (TypeExpr Type, UsesRowSyntax? PendingUses) ParseTypeExprWithUses()
+    private (TypeExpr Type, NeedsRowSyntax? PendingUses) ParseTypeExprWithUses()
     {
         var atom = ParseTypeExprPrimary();
         if (_current.Kind == TokenKind.Arrow)
         {
             Consume(TokenKind.Arrow);
             var (returnType, pendingUses) = ParseTypeExprWithUses();
-            return (new TypeExpr.Arrow(atom, returnType) { Uses = pendingUses }, null);
+            return (new TypeExpr.Arrow(atom, returnType) { Needs = pendingUses }, null);
         }
 
-        if (_current.Kind == TokenKind.Uses)
+        if (_current.Kind is TokenKind.Needs or TokenKind.RenamedUses)
         {
-            return (atom, ParseUsesRow());
+            if (_current.Kind == TokenKind.RenamedUses)
+            {
+                _diag.Error(CurrentErrorSpan(), "'uses' has been renamed to 'needs'.", DiagnosticCodes.RenamedCapabilityKeyword);
+            }
+
+            return (atom, ParseNeedsRow());
         }
 
         return (atom, null);
@@ -478,18 +560,18 @@ public sealed class Parser
     /// Parses a <c>uses</c> row: <c>uses {A, B}</c>, <c>uses {A, B | e}</c>, <c>uses {State(Int)}</c>,
     /// or the bare row variable form <c>uses e</c>.
     /// </summary>
-    private UsesRowSyntax ParseUsesRow()
+    private NeedsRowSyntax ParseNeedsRow()
     {
-        Consume(TokenKind.Uses);
+        Consume(_current.Kind == TokenKind.RenamedUses ? TokenKind.RenamedUses : TokenKind.Needs);
 
         // Bare row variable: `uses e`.
         if (_current.Kind == TokenKind.Ident)
         {
-            return new UsesRowSyntax([], Consume(TokenKind.Ident).Text);
+            return new NeedsRowSyntax([], Consume(TokenKind.Ident).Text);
         }
 
         Consume(TokenKind.LBrace);
-        var effects = new List<EffectRefSyntax>();
+        var effects = new List<CapabilityRefSyntax>();
         string? tailVar = null;
         if (_current.Kind != TokenKind.RBrace)
         {
@@ -508,11 +590,11 @@ public sealed class Parser
         }
 
         Consume(TokenKind.RBrace);
-        return new UsesRowSyntax(effects, tailVar);
+        return new NeedsRowSyntax(effects, tailVar);
     }
 
     /// <summary>Parses one effect reference in a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
-    private EffectRefSyntax ParseEffectRef()
+    private CapabilityRefSyntax ParseEffectRef()
     {
         var name = Consume(TokenKind.Ident).Text;
         var args = new List<TypeExpr>();
@@ -532,7 +614,7 @@ public sealed class Parser
             Consume(TokenKind.RParen);
         }
 
-        return new EffectRefSyntax(name, args);
+        return new CapabilityRefSyntax(name, args);
     }
 
     private TypeExpr ParseTypeExprPrimary()

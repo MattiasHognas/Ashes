@@ -223,6 +223,12 @@ public sealed partial class Lowering
     // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecursiveGroup) is excluded.
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
+    // Non-recursive let-bound functions that perform a parameterized capability operation whose
+    // instance depends on their inputs, and for which a provider exists. Inlining them at a concrete
+    // call site monomorphizes the body so the operation resolves to the provider (a `needs {Ord(a)}`
+    // function called at `Ord(Int)` gets a copy where `Ord.compare` resolves statically).
+    private readonly HashSet<string> _capabilityGenericInline = new(StringComparer.Ordinal);
+
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
     //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
     //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
@@ -433,7 +439,8 @@ public sealed partial class Lowering
         // value bindings does not affect visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternalDeclarations(program.ExternalDecls);
-        RegisterEffectDeclarations(program.Items);
+        RegisterCapabilityDeclarations(program.Items);
+        RegisterProviderDeclarations(program.Items);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
@@ -550,6 +557,16 @@ public sealed partial class Lowering
                     // _topLevelFunctionRefs), which keeps the specialized function small.
                     _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
                     _inlinableDefiningValues[let.Name] = let.Value;
+                }
+
+                // Capability-generic: inline at concrete call sites so a parameterized capability
+                // operation resolves to its provider. Registered independently of the reuse-inline
+                // filter above (which requires an allocation).
+                if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
+                {
+                    _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(let.Name, let.Value);
+                    _capabilityGenericInline.Add(let.Name);
                 }
             }
 
@@ -671,6 +688,15 @@ public sealed partial class Lowering
                 {
                     _inlinableFunctions[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
                     _inlinableDefiningValues[name] = lam;
+                }
+
+                // Capability monomorphization (see RegisterInlinableFunctions): inline at concrete
+                // call sites so a parameterized capability operation resolves to its provider.
+                if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
+                {
+                    _inlinableFunctions.TryAdd(name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(name, lam);
+                    _capabilityGenericInline.Add(name);
                 }
             }
             else if (lam.Body is not Expr.Lambda)
@@ -1420,7 +1446,7 @@ public sealed partial class Lowering
         )
         {
             // Per-effect evidence slots plus the pending-post register and the live-posts counter.
-            EffectHandlerGlobals = EffectGlobalCount == 0 ? 0 : EffectGlobalCount + 2,
+            CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
         };
     }
 
@@ -1519,7 +1545,7 @@ public sealed partial class Lowering
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
             Expr.Perform perform => LowerPerform(perform),
             Expr.Handle handle => LowerHandle(handle),
-            EffectPostExpr effectPost => LowerEffectPost(effectPost),
+            CapabilityPostExpr effectPost => LowerEffectPost(effectPost),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -1731,17 +1757,17 @@ public sealed partial class Lowering
         // LowerCall; a first-class operation value eta-expands to a lambda performing the
         // operation, so the perform happens where the value is eventually applied. The expansion
         // needs the operation's arity, so an unsigned operation cannot be used as a value.
-        if (_effectSymbols.TryGetValue(qv.Module, out var bareEffectSym))
+        if (_capabilitySymbols.TryGetValue(qv.Module, out var bareEffectSym))
         {
             if (!bareEffectSym.Operations.TryGetValue(qv.Name, out var bareOperation))
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownEffectCode);
+                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
             if (bareOperation.DeclaredSignature is null)
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownEffectCode);
+                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
@@ -4175,9 +4201,9 @@ public sealed partial class Lowering
         }
 
         // Effect operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
-        if (rootExpr is Expr.QualifiedVar effectQv && _effectSymbols.TryGetValue(effectQv.Module, out var effectSym))
+        if (rootExpr is Expr.QualifiedVar effectQv && _capabilitySymbols.TryGetValue(effectQv.Module, out var effectSym))
         {
-            return LowerEffectOperationCall(effectSym, effectQv, collectedArgs);
+            return LowerCapabilityOperationCall(effectSym, effectQv, collectedArgs);
         }
 
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result
@@ -4233,6 +4259,21 @@ public sealed partial class Lowering
             && dbgFn.Name.Contains("Map", StringComparison.Ordinal))
         {
             Console.Error.WriteLine($"[reuse] call {dbgFn.Name}: inSpec={_inSpecialization} tokens={_reuseTokens.Count} shadowed={_shadowedInlinables.ContainsKey(dbgFn.Name)} inProgress={_inliningInProgress.Contains(dbgFn.Name)} params={dbgInl.Params.Count} args={collectedArgs.Count}");
+        }
+
+        // Capability monomorphization: a saturated call to a capability-generic function is inlined so
+        // the body lowers with the call's concrete argument types, letting a parameterized capability
+        // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
+        // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
+        if (rootExpr is Expr.Var capGenVar
+            && _capabilityGenericInline.Contains(capGenVar.Name)
+            && !_shadowedInlinables.ContainsKey(capGenVar.Name)
+            && !_inliningInProgress.Contains(capGenVar.Name)
+            && Lookup(capGenVar.Name) is not (Binding.Local or Binding.Env or Binding.EnvScheme)
+            && _inlinableFunctions.TryGetValue(capGenVar.Name, out var capGenInlinable)
+            && capGenInlinable.Params.Count == collectedArgs.Count)
+        {
+            return InlineCall(capGenVar.Name, capGenInlinable.Params, capGenInlinable.Body, collectedArgs);
         }
 
         // The callee may be a plain Var (module code, where the stitcher already rewrote member
@@ -4755,7 +4796,7 @@ public sealed partial class Lowering
                 // leaves holding the original pointer.
                 int callGuardResultSlot = -1;
                 string? callCopySkipLabel = null;
-                if (EffectGlobalCount > 0)
+                if (CapabilityGlobalCount > 0)
                 {
                     callGuardResultSlot = NewLocal();
                     Emit(new IrInst.StoreLocal(callGuardResultSlot, currentTemp));
@@ -5424,7 +5465,7 @@ public sealed partial class Lowering
                 case Expr.Perform perform:
                     Visit(perform.Operation, bnd);
                     return;
-                case EffectPostExpr effectPost:
+                case CapabilityPostExpr effectPost:
                     Visit(effectPost.Value, bnd);
                     Visit(effectPost.PostLambda, bnd);
                     return;

@@ -21,10 +21,13 @@ Current codes:
 | `ASH014` | Reference to a binding not yet declared (forward reference)   |
 | `ASH015` | `and` used without a preceding `let recursive`                      |
 | `ASH016` | Conflicting unqualified import selectors for the same name    |
-| `ASH017` | Unhandled effect (residual top-level effect row is non-empty) |
-| `ASH018` | Effect not permitted by a closed `uses` row                   |
-| `ASH019` | Unknown effect or effect operation                            |
+| `ASH017` | Unsatisfied capability (residual top-level capability row is non-empty) |
+| `ASH018` | Capability not permitted by a closed `needs` row, or a provider used at a non-monomorphizable generic instance |
+| `ASH019` | Unknown capability or capability operation                    |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
+| `ASH025` | Renamed capability keyword (`effect`→`capability`, `uses`→`needs`) |
+| `ASH026` | Duplicate or incomplete static provider (`provide`)            |
+| `ASH027` | Capability satisfied by both a provider and an enclosing handler |
 | `ASH021` | Disallowed form in an inline `module` block                   |
 | `ASH022` | Inline module path collides with a file module of the same path |
 | `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
@@ -68,39 +71,54 @@ and the binding/type import selectors. See
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
 
-## Effect diagnostics
+## Capability diagnostics
 
-These codes cover the algebraic-effects surface (`effect` declarations, `uses` rows,
+These codes cover the capability surface (`capability` declarations, `needs` rows,
 `perform`, `handle ... with`). See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §20 for the
 grammar and typing rules, and [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)
 for the remaining roadmap.
 
-- `ASH017` — **Unhandled effect.** The program's residual effect row at the top level is
+- `ASH017` — **Unsatisfied capability.** The program's residual capability row at the top level is
   non-empty after default built-in handlers are applied: some code reachable from the
-  entry expression performs an effect that no enclosing handler discharges. The span
+  entry expression performs a capability that no enclosing handler discharges. The span
   points at the first perform-site of the offending effect.
-  Message: `Unhandled effect 'Effect': no enclosing handler discharges it.`
+  Message: `Unhandled capability 'Capability': no enclosing handler discharges it.`
 
-- `ASH018` — **Effect not permitted by a closed row.** A function whose written `uses`
-  row is closed performs an effect (directly or by calling an effectful function) that
+- `ASH018` — **Capability not permitted by a closed row.** A function whose written `uses`
+  row is closed performs a capability (directly or by calling a capability-requiring function) that
   the row does not include.
-  Message: `Effect 'Effect' is not permitted by the closed row uses {...}.`
+  Message: `Capability 'Capability' is not permitted by the closed row needs {...}.`
 
-- `ASH019` — **Unknown effect or operation.** A qualified reference names a declared
-  effect but an operation it does not declare, a `uses` row mentions an undeclared
-  effect, or `perform` is applied to something that is not an effect operation call.
-  Messages: `Effect 'Effect' has no operation 'op'.`,
-  `Unknown effect 'Effect' in uses row.`,
-  `'perform' must be applied to an effect operation call.`
+- `ASH019` — **Unknown capability or operation.** A qualified reference names a declared
+  capability but an operation it does not declare, a `needs` row mentions an undeclared
+  capability, or `perform` is applied to something that is not a capability operation call.
+  Messages: `Capability 'Capability' has no operation 'op'.`,
+  `Unknown capability 'Capability' in needs row.`,
+  `'perform' must be applied to a capability operation call.`
 
 - `ASH020` — **Invalid handler.** A `handle` expression has a malformed arm (an arm for
-  an unknown effect/operation, a duplicate arm, a duplicate `return` arm, or a missing
-  operation for a handled effect), uses `resume` in an unsupported position (supported:
+  an unknown capability/operation, a duplicate arm, a duplicate `return` arm, or a missing
+  operation for a handled capability), uses `resume` in an unsupported position (supported:
   tail position, let value, match scrutinee — exactly once per path), or has an arm path
   that never resumes (aborting arms need unwinding and are not supported).
   Messages include: `Handler arm 'Effect.op' does not name a declared effect operation.`,
   `Duplicate handler arm for 'Effect.op'.`,
-  `Handler for effect 'Effect' must handle operation 'op'.`
+  `Handler for capability 'Capability' must handle operation 'op'.`
+
+- `ASH025` — **Renamed capability keyword.** The former spellings `effect` and `uses` were
+  renamed to `capability` and `needs`; using an old spelling reports this with the replacement.
+  Messages: `'effect' has been renamed to 'capability'.`, `'uses' has been renamed to 'needs'.`
+
+- `ASH026` — **Duplicate or incomplete provider.** Two `provide` declarations target the same
+  concrete capability instance, a provider supplies an operation more than once, or a provider is
+  missing one of the capability's operations (a provider must supply all operations exactly once).
+  Messages include: `Duplicate provider for 'Ord(Str)'.`, `Provider for 'Ord(Str)' is missing
+  operation 'compare'.`
+
+- `ASH027` — **Ambiguous capability satisfaction.** At a capability operation call, both a static
+  `provide` for the concrete instance and an enclosing `handle` could satisfy it. There is no
+  hidden precedence — choose one.
+  Message: `Capability 'Clock' is satisfied both by a provider and by an enclosing handler. Choose one.`
 
 ## Inline module diagnostics
 

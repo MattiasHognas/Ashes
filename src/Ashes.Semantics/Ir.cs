@@ -37,14 +37,14 @@ public abstract record TypeRef
     /// One effect instance inside a row: the declared effect plus its type arguments
     /// (e.g. <c>Clock</c> or <c>State(Int)</c>). Only ever appears inside <see cref="TRow"/>.
     /// </summary>
-    public sealed record TEffect(EffectSymbol Symbol, IReadOnlyList<TypeRef> Args) : TypeRef;
+    public sealed record TCapability(CapabilitySymbol Symbol, IReadOnlyList<TypeRef> Args) : TypeRef;
 
     /// <summary>
     /// An effect row: a set of effects plus a tail. <see cref="Tail"/> is a <see cref="TVar"/>
     /// row variable (open row), another <see cref="TRow"/> produced by substitution (flattened on
     /// normalization), or null (closed row).
     /// </summary>
-    public sealed record TRow(IReadOnlyList<TEffect> Effects, TypeRef? Tail) : TypeRef;
+    public sealed record TRow(IReadOnlyList<TCapability> Capabilities, TypeRef? Tail) : TypeRef;
     public sealed record TNamedType(TypeSymbol Symbol, IReadOnlyList<TypeRef> TypeArgs) : TypeRef;
     public sealed record TTypeParam(TypeParameterSymbol Symbol) : TypeRef;
     public sealed record TOpaque(string Name) : TypeRef;
@@ -613,10 +613,10 @@ public abstract record IrInst
     /// <see cref="EffectIndex"/> from its module global (dynamically-scoped handler evidence).
     /// 0 means no handler is installed.
     /// </summary>
-    public sealed record LoadEffectHandler(int Target, int EffectIndex) : IrInst;
+    public sealed record LoadCapabilityHandler(int Target, int EffectIndex) : IrInst;
 
     /// <summary>Stores a handler frame pointer into the effect's module global.</summary>
-    public sealed record StoreEffectHandler(int EffectIndex, int Source) : IrInst;
+    public sealed record StoreCapabilityHandler(int EffectIndex, int Source) : IrInst;
 
     public sealed record Label(string Name) : IrInst;
     public sealed record Jump(string Target) : IrInst;
@@ -762,7 +762,7 @@ public sealed record IrProgram(
     /// dynamically-scoped handler-evidence slot holding a pointer to the innermost installed
     /// handler frame for that effect (0 when none).
     /// </summary>
-    public int EffectHandlerGlobals { get; init; }
+    public int CapabilityHandlerGlobals { get; init; }
 
     public IrProgram(
         IrFunction EntryFunction,

@@ -88,10 +88,10 @@ public abstract record Expr
 
 /// <summary>
 /// One arm of a <c>handle ... with</c> expression. An operation arm has a non-null
-/// <see cref="EffectName"/> (<c>| Clock.now(_) -> ...</c>); the <c>return</c> arm has a null
-/// <see cref="EffectName"/> and <see cref="OperationName"/> <c>"return"</c>.
+/// <see cref="CapabilityName"/> (<c>| Clock.now(_) -> ...</c>); the <c>return</c> arm has a null
+/// <see cref="CapabilityName"/> and <see cref="OperationName"/> <c>"return"</c>.
 /// </summary>
-public sealed record HandlerArm(string? EffectName, string OperationName, IReadOnlyList<Pattern> Parameters, Expr Body);
+public sealed record HandlerArm(string? CapabilityName, string OperationName, IReadOnlyList<Pattern> Parameters, Expr Body);
 
 public readonly record struct MatchCase(Pattern Pattern, Expr Body, Expr? Guard = null);
 
@@ -122,21 +122,30 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
     public bool IsRecord { get; init; }
 }
 
-/// <summary>One operation of an <c>effect</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
-public sealed record EffectOperation(string Name, TypeExpr? Signature);
+/// <summary>One operation of a <c>capability</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
+public sealed record CapabilityOperation(string Name, TypeExpr? Signature);
 
-/// <summary>An <c>effect</c> declaration: <c>effect Clock = | now : Unit -> Int</c>.</summary>
-public sealed record EffectDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<EffectOperation> Operations);
+/// <summary>A <c>capability</c> declaration: <c>capability Clock = | now : Unit -> Int</c>.</summary>
+public sealed record CapabilityDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<CapabilityOperation> Operations);
+
+/// <summary>One operation implementation in a <c>provide</c>: <c>| compare = Ashes.String.compare</c>.</summary>
+public sealed record ProvideBinding(string OperationName, Expr Implementation);
+
+/// <summary>
+/// A static provider: <c>provide Ord(Str) = | compare = ...</c>. Supplies type-directed evidence for a
+/// concrete capability instance (<see cref="CapabilityName"/> applied to <see cref="TypeArgs"/>).
+/// </summary>
+public sealed record ProvideDecl(string CapabilityName, IReadOnlyList<TypeExpr> TypeArgs, IReadOnlyList<ProvideBinding> Bindings);
 
 /// <summary>A single effect reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
-public sealed record EffectRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
+public sealed record CapabilityRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
 
 /// <summary>
 /// A written <c>uses</c> row: <c>uses {A, B}</c> (closed), <c>uses {A, B | e}</c> (open), or
 /// <c>uses e</c> (open, no required effects). The row is closed exactly when <see cref="TailVar"/>
 /// is null.
 /// </summary>
-public sealed record UsesRowSyntax(IReadOnlyList<EffectRefSyntax> Effects, string? TailVar);
+public sealed record NeedsRowSyntax(IReadOnlyList<CapabilityRefSyntax> Capabilities, string? TailVar);
 
 public abstract record ParsedType
 {
@@ -155,7 +164,7 @@ public abstract record TypeExpr
     public sealed record Arrow(TypeExpr From, TypeExpr To) : TypeExpr
     {
         /// <summary>The written <c>uses</c> row, or null when the arrow carries none (pure).</summary>
-        public UsesRowSyntax? Uses { get; init; }
+        public NeedsRowSyntax? Needs { get; init; }
     }
     /// <summary>A tuple type: <c>(Int, Str)</c>.</summary>
     public sealed record TupleType(IReadOnlyList<TypeExpr> Elements) : TypeExpr;
@@ -187,7 +196,10 @@ public abstract record TopLevelItem
     public sealed record External(ExternalDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level <c>effect</c> declaration.</summary>
-    public sealed record Effect(EffectDecl Decl) : TopLevelItem;
+    public sealed record Capability(CapabilityDecl Decl) : TopLevelItem;
+
+    /// <summary>A top-level <c>provide</c> declaration (static capability satisfaction).</summary>
+    public sealed record Provide(ProvideDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
     public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem

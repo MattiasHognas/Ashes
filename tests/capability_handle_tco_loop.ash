@@ -1,6 +1,6 @@
 // expect: 100000
 
-effect Step =
+capability Step =
     | bump : Int -> Int
 
 let recursive loop = 
