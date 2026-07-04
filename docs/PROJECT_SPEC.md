@@ -165,6 +165,15 @@ For non-reserved modules, shipped libraries are only considered after project-lo
 resolution fails to find any match. Reserved `Ashes.*` standard-library modules are
 compiler-provided and are not overridable by project-local modules.
 
+A module path may also be satisfied by an **inline module** — a `module Name = ...`
+declaration inside a file, which is lifted to the submodule `<File>.<Name>` and is
+addressable across files exactly like a separate `<File>/<Name>.ash` (see
+[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §13.1). A path that is satisfied by *both* an inline
+module and a file (e.g. `module Vec` inside `Geom.ash` and a file `Geom/Vec.ash`) is a
+compile-time ambiguity error (`ASH022`). This keeps inline ↔ file promotion transparent:
+moving an inline module out to its own file leaves every `import` and call site unchanged,
+provided no file already occupies the path.
+
 ### 4.5 Cycles
 
 Import cycles are not allowed.

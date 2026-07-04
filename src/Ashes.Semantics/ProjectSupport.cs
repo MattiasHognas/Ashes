@@ -63,6 +63,35 @@ public readonly record struct CombinedCompilationLayout(
 
 public static class ProjectSupport
 {
+    // ── Inline modules (LANGUAGE_SPEC §13.1) ────────────────────────────────────────────────────
+    // An inline `module Name = <indented block>` is lifted, before shaping/combination, into a
+    // synthetic module whose name is the file-composed path (`File.Name`). Within the defining file
+    // a bare qualifier `Name.member` is rewritten to the composed path `File.Name.member`, which the
+    // rest of the pipeline (mangling, qualified-reference resolution, cross-file imports) then treats
+    // exactly like a separate `File/Name.ash` file — so inline ↔ file promotion is transparent.
+
+    /// <summary>A header line <c>module Name =</c> at column <see cref="Indent"/>; the block body is the run of lines indented past it.</summary>
+    private static readonly Regex InlineModuleHeader = new(
+        @"^(?<indent>[ \t]*)module[ \t]+(?<name>[A-Z][A-Za-z0-9_]*)[ \t]*=[ \t]*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>A lifted inline module: its file-composed <see cref="ModuleName"/> and its (rewritten) block source.</summary>
+    private sealed record InlineModule(string ModuleName, string Source);
+
+    /// <summary>Whether a source contains an inline <c>module Name = ...</c> declaration header.</summary>
+    public static bool ContainsInlineModule(string source)
+    {
+        foreach (var line in source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        {
+            if (InlineModuleHeader.IsMatch(line))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private sealed record StandardLibraryModuleDescriptor(string ModuleName, string? ResourceName);
 
     private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive);
@@ -332,6 +361,8 @@ public static class ProjectSupport
         var traversal = new Stack<ProjectModule>();
         var ordered = new List<ProjectModule>();
         var importedStdModules = new HashSet<string>(StringComparer.Ordinal);
+        // Inline submodules lifted from each file, keyed by the file's full path, ordered before the file.
+        var inlineChildrenByPath = new Dictionary<string, List<ProjectModule>>(StringComparer.OrdinalIgnoreCase);
 
         var entryModule = LoadModule(project.EntryModuleName, project.EntryPath);
         Visit(entryModule);
@@ -405,6 +436,22 @@ public static class ProjectSupport
 
             traversal.Pop();
             states[module.FilePath] = 2;
+            // Lifted inline submodules are declared before their file so the file's qualified
+            // references to them resolve in the combined source.
+            if (inlineChildrenByPath.TryGetValue(module.FilePath, out var inlineChildren))
+            {
+                foreach (var child in inlineChildren)
+                {
+                    if (states.TryGetValue(child.FilePath, out var childState) && childState == 2)
+                    {
+                        continue;
+                    }
+
+                    states[child.FilePath] = 2;
+                    ordered.Add(child);
+                }
+            }
+
             ordered.Add(module);
         }
 
@@ -444,6 +491,23 @@ public static class ProjectSupport
                 return module;
             }
 
+            // The path may name an inline submodule of an enclosing file (`import Geom.Vec` where
+            // `Vec` is `module Vec` inside `Geom.ash`). Load the nearest enclosing file, which lifts
+            // and registers its inline submodules, then retry.
+            for (var dot = moduleName.LastIndexOf('.'); dot > 0; dot = moduleName.LastIndexOf('.', dot - 1))
+            {
+                var enclosing = moduleName[..dot];
+                var enclosingMatches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
+                if (enclosingMatches.Count == 1)
+                {
+                    LoadModule(enclosing, enclosingMatches[0]);
+                    if (resolvedByModuleName.TryGetValue(moduleName, out var inlineResolved))
+                    {
+                        return inlineResolved;
+                    }
+                }
+            }
+
             throw new InvalidOperationException(BuildMissingModuleMessage(moduleName, searchRoots, moduleRelativePath));
         }
 
@@ -456,11 +520,47 @@ public static class ProjectSupport
             }
 
             var (imports, source, aliases, selectors) = ParseImports(fullPath);
+
+            // Lift inline `module Name = ...` blocks. The entry file's inline modules keep bare names
+            // (nothing imports the entry across files); every other file prefixes them with its own
+            // module name so `File.Inner` is cross-file addressable and promotion is transparent.
+            var inlineScope = string.Equals(moduleName, project.EntryModuleName, StringComparison.Ordinal) ? "" : moduleName;
+            var (outerSource, inlineModules) = ExpandInlineModules(source, inlineScope, fullPath);
+            source = outerSource;
+            var children = new List<ProjectModule>();
+            foreach (var inline in inlineModules)
+            {
+                if (BuiltinRegistry.IsReservedModuleNamespace(inline.ModuleName)
+                    || inline.ModuleName.StartsWith("Ashes.", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"[ASH023] Inline module '{inline.ModuleName}' shadows a reserved 'Ashes.*' path ({fullPath}).");
+                }
+
+                var candidates = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(inline.ModuleName));
+                if (candidates.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"[ASH022] Module path '{inline.ModuleName}' is defined by both an inline module and a file ({candidates[0]}).");
+                }
+
+                var childModule = new ProjectModule(
+                    inline.ModuleName,
+                    $"{fullPath}#{inline.ModuleName}",
+                    inline.Source,
+                    [],
+                    new Dictionary<string, string>(),
+                    []);
+                children.Add(childModule);
+                resolvedByModuleName[inline.ModuleName] = childModule;
+            }
+
             var aliasMap = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
             (imports, selectors) = NormalizeTypeSelectors(imports, selectors, aliasMap, IsResolvableModule);
             source = ApplySelectorRenames(source, selectors);
             var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
             resolvedByPath[fullPath] = module;
+            inlineChildrenByPath[fullPath] = children;
             if (!resolvedByModuleName.ContainsKey(moduleName))
             {
                 resolvedByModuleName[moduleName] = module;
@@ -482,9 +582,44 @@ public static class ProjectSupport
             }
 
             var relativePath = GetModuleRelativePath(name);
-            return GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
-                || GetShippedLibraryModulePath(relativePath) is not null;
+            if (GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
+                || GetShippedLibraryModulePath(relativePath) is not null)
+            {
+                return true;
+            }
+
+            // A dotted path may name an inline submodule of an enclosing file. Already-registered
+            // inline modules resolve directly; otherwise scan the nearest enclosing file's inline
+            // blocks so `import Geom.Vec` reads as a whole-module import rather than a type selector.
+            return resolvedByModuleName.ContainsKey(name) || IsInlineSubmodulePath(name, searchRoots);
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="name"/> is an inline submodule declared in some enclosing project
+    /// file — i.e. the nearest file whose path prefixes <paramref name="name"/> lifts a module of
+    /// exactly this composed path. A lightweight text scan (no full compile).
+    /// </summary>
+    private static bool IsInlineSubmodulePath(string name, IReadOnlyList<string> searchRoots)
+    {
+        for (var dot = name.LastIndexOf('.'); dot > 0; dot = name.LastIndexOf('.', dot - 1))
+        {
+            var enclosing = name[..dot];
+            var matches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
+            if (matches.Count != 1)
+            {
+                continue;
+            }
+
+            var parsed = ParseImportHeader(File.ReadAllText(matches[0]), matches[0]);
+            var (_, inlineModules) = ExpandInlineModules(parsed.SourceWithoutImports, enclosing, matches[0]);
+            if (inlineModules.Any(m => string.Equals(m.ModuleName, name, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -596,10 +731,28 @@ public static class ProjectSupport
         var traversal = new Stack<ProjectModule>();
 
         var entrySelectors = selectors ?? [];
+
+        // Lift inline `module Name = ...` blocks out of the entry source into synthetic submodules,
+        // ordered before the entry, and use the rewritten outer as the entry source. The entry file's
+        // own inline modules keep their bare names (nothing imports the entry across files), so
+        // same-file imports/aliases/selectors of them need no path rewriting.
+        var (entryOuter, entryInlineModules) = ExpandInlineModules(sourceWithoutImports, "", entryFilePath);
+        var inlineModuleNames = new HashSet<string>(entryInlineModules.Select(m => m.ModuleName), StringComparer.Ordinal);
+        foreach (var inline in entryInlineModules)
+        {
+            orderedModules.Add(new ProjectModule(
+                inline.ModuleName,
+                $"{entryFilePath}#{inline.ModuleName}",
+                inline.Source,
+                [],
+                new Dictionary<string, string>(),
+                []));
+        }
+
         var entryModule = new ProjectModule(
             "Main",
             entryFilePath,
-            ApplySelectorRenames(sourceWithoutImports, entrySelectors),
+            ApplySelectorRenames(entryOuter, entrySelectors),
             importNames.ToList(),
             new Dictionary<string, string>(),
             entrySelectors);
@@ -614,6 +767,13 @@ public static class ProjectSupport
                     Visit(stdModule);
                 }
 
+                continue;
+            }
+
+            // Same-file inline modules are already in orderedModules; a same-file import of one is
+            // satisfied here rather than requiring project mode.
+            if (inlineModuleNames.Contains(importName))
+            {
                 continue;
             }
 
@@ -2195,6 +2355,245 @@ public static class ProjectSupport
     {
         var parsed = ParseImportHeader(File.ReadAllText(filePath), filePath);
         return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases, parsed.ImportSelectors);
+    }
+
+    /// <summary>
+    /// Lifts inline <c>module Name = ...</c> blocks out of an (imports-stripped) module source. The
+    /// enclosing source is returned with each block removed and every bare inline qualifier rewritten
+    /// to its file-composed path; each block is returned as an <see cref="InlineModule"/> with the
+    /// same rewrites applied recursively for nesting. <paramref name="scopeModuleName"/> is the
+    /// composed path of the scope being expanded (the file module name at the top level).
+    /// </summary>
+    public static (string OuterSource, IReadOnlyList<InlineModuleInfo> InlineModules) ExpandInlineModules(
+        string source, string scopeModuleName, string displayPath)
+    {
+        var lifted = new List<InlineModule>();
+        var outer = ExpandInlineModulesCore(source, scopeModuleName, displayPath, lifted);
+        return (outer, lifted.Select(m => new InlineModuleInfo(m.ModuleName, m.Source)).ToList());
+    }
+
+    /// <summary>Public view of a lifted inline module for consumers outside this class (kept minimal).</summary>
+    public sealed record InlineModuleInfo(string ModuleName, string Source);
+
+    private static string ExpandInlineModulesCore(
+        string source, string scopeModuleName, string displayPath, List<InlineModule> lifted)
+    {
+        var lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var outer = new List<string>();
+        var directChildren = new List<(string Name, List<string> Body)>();
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+        var i = 0;
+        while (i < lines.Length)
+        {
+            var header = InlineModuleHeader.Match(lines[i]);
+            if (!header.Success)
+            {
+                outer.Add(lines[i]);
+                i++;
+                continue;
+            }
+
+            var headerIndent = header.Groups["indent"].Value.Length;
+            var name = header.Groups["name"].Value;
+            if (!seenNames.Add(name))
+            {
+                throw new InvalidOperationException(
+                    $"[ASH024] Duplicate inline module '{name}' in this scope ({displayPath}).");
+            }
+
+            if (string.Equals(name, "Ashes", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"[ASH023] Inline module may not be named 'Ashes' (reserved for the standard library) ({displayPath}).");
+            }
+
+            // Body: subsequent lines that are blank or indented past the header column.
+            var body = new List<string>();
+            var j = i + 1;
+            while (j < lines.Length)
+            {
+                var line = lines[j];
+                if (line.Trim().Length == 0)
+                {
+                    body.Add(line);
+                    j++;
+                    continue;
+                }
+
+                if (LeadingWhitespaceWidth(line) <= headerIndent)
+                {
+                    break;
+                }
+
+                body.Add(line);
+                j++;
+            }
+
+            directChildren.Add((name, body));
+            i = j;
+        }
+
+        if (directChildren.Count == 0)
+        {
+            return source;
+        }
+
+        // Rewrite a bare inline qualifier `Name.` to the composed path `<scope>.Name.` so a same-scope
+        // reference resolves to the lifted module exactly as a cross-file `import <scope>.Name` would.
+        // At an empty scope (the entry file) the children keep their bare names — nothing imports the
+        // entry across files — so no rewrite is needed and imports/aliases stay bare.
+        var childNames = directChildren.Select(c => c.Name).ToList();
+        string Compose(string name) => scopeModuleName.Length == 0 ? name : $"{scopeModuleName}.{name}";
+        string Rewrite(string s) => scopeModuleName.Length == 0 ? s : RewriteInlineQualifiers(s, childNames, scopeModuleName);
+
+        foreach (var (name, body) in directChildren)
+        {
+            var composed = Compose(name);
+            var blockSource = Rewrite(Dedent(body));
+            ValidateInlineModuleBody(blockSource, composed, displayPath);
+            var childOuter = ExpandInlineModulesCore(blockSource, composed, displayPath, lifted);
+            lifted.Add(new InlineModule(composed, childOuter));
+        }
+
+        return Rewrite(string.Join('\n', outer));
+    }
+
+    private static int LeadingWhitespaceWidth(string line)
+    {
+        var width = 0;
+        foreach (var ch in line)
+        {
+            if (ch == ' ' || ch == '\t')
+            {
+                width++;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return width;
+    }
+
+    /// <summary>Removes the minimal common leading indentation from a block's non-blank lines so it parses as a top-level module.</summary>
+    private static string Dedent(IReadOnlyList<string> lines)
+    {
+        var minIndent = int.MaxValue;
+        foreach (var line in lines)
+        {
+            if (line.Trim().Length == 0)
+            {
+                continue;
+            }
+
+            minIndent = Math.Min(minIndent, LeadingWhitespaceWidth(line));
+        }
+
+        if (minIndent is int.MaxValue or 0)
+        {
+            return string.Join('\n', lines);
+        }
+
+        return string.Join('\n', lines.Select(line => line.Length >= minIndent ? line[minIndent..] : line));
+    }
+
+    /// <summary>
+    /// Prefixes each bare inline-module qualifier (<c>Name.</c>) with the scope's composed path
+    /// (<c>Scope.Name.</c>), when the head segment is one of <paramref name="childNames"/> and is not
+    /// already part of a longer qualifier. String literals are skipped so an occurrence inside a
+    /// string is never rewritten.
+    /// </summary>
+    private static string RewriteInlineQualifiers(string source, IReadOnlyList<string> childNames, string scopePrefix)
+    {
+        if (childNames.Count == 0)
+        {
+            return source;
+        }
+
+        var alternation = string.Join('|', childNames.Select(Regex.Escape));
+        // Head segment must not be preceded by a word char or a dot (so it is a genuine head, not a
+        // deeper segment), and must be followed by `.` + an identifier start (a qualified reference).
+        var pattern = new Regex($@"(?<![A-Za-z0-9_.])(?<head>{alternation})\.(?=[A-Za-z_])", RegexOptions.CultureInvariant);
+        var sb = new StringBuilder(source.Length + 16);
+        var inString = false;
+        var i = 0;
+        while (i < source.Length)
+        {
+            var ch = source[i];
+            if (ch == '"')
+            {
+                inString = !inString;
+                sb.Append(ch);
+                i++;
+                continue;
+            }
+
+            if (inString)
+            {
+                if (ch == '\\' && i + 1 < source.Length)
+                {
+                    sb.Append(ch).Append(source[i + 1]);
+                    i += 2;
+                    continue;
+                }
+
+                sb.Append(ch);
+                i++;
+                continue;
+            }
+
+            var m = pattern.Match(source, i);
+            if (m.Success && m.Index == i)
+            {
+                sb.Append(scopePrefix).Append('.').Append(m.Groups["head"].Value).Append('.');
+                i += m.Length;
+                continue;
+            }
+
+            sb.Append(ch);
+            i++;
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>Rejects a trailing expression or an <c>external</c>/<c>import</c> in a lifted inline module (ASH021).</summary>
+    private static void ValidateInlineModuleBody(string blockSource, string composedName, string displayPath)
+    {
+        foreach (var raw in blockSource.Split('\n'))
+        {
+            var trimmed = raw.Trim();
+            if (trimmed.StartsWith("import ", StringComparison.Ordinal) || trimmed.StartsWith("import\t", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"[ASH021] Inline module '{composedName}' may not contain an 'import' ({displayPath}).");
+            }
+        }
+
+        var diag = new Diagnostics();
+        var program = new Parser(blockSource, diag).ParseProgram();
+        if (diag.StructuredErrors.Count > 0)
+        {
+            // Let the normal compile surface the syntax error against the combined source.
+            return;
+        }
+
+        foreach (var item in program.Items)
+        {
+            if (item is TopLevelItem.External)
+            {
+                throw new InvalidOperationException(
+                    $"[ASH021] Inline module '{composedName}' may not contain an 'external' declaration ({displayPath}).");
+            }
+        }
+
+        if (program.Body is not null)
+        {
+            throw new InvalidOperationException(
+                $"[ASH021] Inline module '{composedName}' may not contain a trailing expression ({displayPath}).");
+        }
     }
 
     private static string? ReadString(JsonElement root, string name)
