@@ -269,6 +269,85 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_arm64_backend_llvm_should_serve_http_over_the_tcp_server()
+    {
+        // HTTP layer coverage under qemu-aarch64: Ashes.Http.Server.serve parses the request line,
+        // routes on the path, and writes an HTTP/1.1 response; the C# test drives it with raw GETs.
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let route req =
+                match Ashes.Http.Server.path(req) with
+                    | "/health" -> Ashes.Http.Server.text(200)("ok")
+                    | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
+                    | _p -> Ashes.Http.Server.text(404)("not found")
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxArm64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_arm64_http_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            var psi = CreateLinuxArm64ProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            proc = await TestProcessHelper.StartProcessAsync(psi);
+
+            var health = await HttpGetRawWithRetryAsync(port, "/health");
+            health.ShouldContain("HTTP/1.1 200 OK");
+            health.ShouldEndWith("ok");
+
+            var missing = await HttpGetRawWithRetryAsync(port, "/nope");
+            missing.ShouldContain("HTTP/1.1 404 Not Found");
+            missing.ShouldEndWith("not found");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<string> HttpGetRawWithRetryAsync(int port, string path)
+    {
+        var request = $"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    [Test]
     public async Task Linux_arm64_backend_llvm_should_run_a_tcp_echo_server_via_serve()
     {
         // Server-side coverage: an Ashes program that is the LISTENER (Ashes.Net.Tcp.Server.serve),
