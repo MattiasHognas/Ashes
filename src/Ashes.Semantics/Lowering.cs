@@ -3322,6 +3322,14 @@ public sealed partial class Lowering
 
         _lambdaDepth++;
 
+        // A lambda body is its own function and is NOT run through StateMachineTransform, so an `await`
+        // inside it must lower to a blocking RunTask, not a coroutine-split AwaitTask. Only the body of
+        // an `async(E)` (lowered via EmitCoroutineBody) is a suspending coroutine. Without this reset,
+        // `_inCoroutineBody` leaks from an enclosing async into nested lambdas, emitting AwaitTask into a
+        // never-split function — which corrupts heap results across the un-split await (segfault).
+        var savedInCoroutineBody = _inCoroutineBody;
+        _inCoroutineBody = false;
+
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
         // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
@@ -3799,6 +3807,7 @@ public sealed partial class Lowering
         }
 
         _lambdaDepth--;
+        _inCoroutineBody = savedInCoroutineBody;
 
         _linearReuseNames.Clear();
         foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
