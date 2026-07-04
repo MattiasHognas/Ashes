@@ -385,38 +385,92 @@ Shape of the reference server:
 The registry is a committed phase, not an optional someday. It comes after Phase 2 only because it feeds
 the lock/cache pipeline that Phase 2 builds.
 
+Each phase decomposes into ordered, roughly PR-sized steps that are independently shippable and testable.
+Every phase leads with a **spec-first** step: per the repository rules, the relevant docs
+(`PROJECT_SPEC.md`, `COMPILER_CLI_SPEC.md`, `DIAGNOSTICS.md`, and for Phase 3 a new registry-API doc) are
+updated before the behavior, and diagnostic codes are allocated up front. Each step below names its
+acceptance signal.
+
 ### Phase 1 — path dependencies, namespacing, plumbing
 
-- Define the local/path dependency manifest shape and the namespace rule (§2).
-- Teach `LoadProject` to resolve direct `path` dependencies to absolute source roots.
-- Establish the resolved-roots seam feeding `BuildCompilationPlan`, and the auto-restore hook in
-  `build`/`run`/`test`.
-- Enforce the namespace discipline (hard ownership; a library exporting a module outside its namespace
-  is an error).
-- Tests proving modules from a path dependency are importable under its namespace.
+Goal: one Ashes project can depend on another on disk, imported under its namespace. No lock, cache,
+remote fetch, or transitive graph.
 
-Non-goals for Phase 1: no lock file, no cache, no remote fetch, no transitive graph.
+1. **Spec + diagnostics.** Update `PROJECT_SPEC.md` (dependency object shape incl. `path`, and the
+   `namespace` field/§2 rule), `COMPILER_CLI_SPEC.md` (new `add`/`remove` shape, `restore`, retire
+   `install`), and allocate `DIAGNOSTICS.md` codes for: namespace-lint violation, dependency-not-found,
+   dependency-is-not-a-project, and cross-dependency namespace collision. *Acceptance: docs merged, codes
+   reserved.*
+2. **Manifest model.** Extend `AshesProject` with dependency data and a resolved
+   `{ Name, Namespace, Root }` list; teach `LoadProject` to parse `dependencies` (string vs object form)
+   and resolve `path` entries to absolute source roots. Update the manual `AshesProject` constructors in
+   tests/runner. *Acceptance: `LoadProject` returns resolved path-dependency roots.*
+3. **Resolved-roots seam.** Append resolved dependency roots to the effective search roots before
+   `BuildCompilationPlan`; `ResolveImport` unchanged. *Acceptance: a program importing `Dep.Module` from a
+   path dependency compiles and runs.*
+4. **Namespace discipline.** Enforce that a dependency exports modules only under its declared namespace,
+   and detect cross-dependency namespace collisions; emit the allocated diagnostics. *Acceptance: a
+   dependency exporting outside its namespace fails with the code.*
+5. **CLI.** `RunAdd`/`RunRemove` write the object shape (`--path`, `--dev`); retire `install`; add
+   `restore` (Phase 1 = validate + materialize path dependencies, no cache); wire the auto-restore hook in
+   `build`/`run`/`test` (a validation pass for path deps). Update `PackageManagementCliTests`. *Acceptance:
+   the CLI round-trips a path dependency and `run` auto-validates it.*
+6. **Shared consumers.** `Ashes.Lsp/DocumentService.cs` and `Ashes.TestRunner/Runner.cs` consume the same
+   resolved-roots view. *Acceptance: LSP go-to-definition resolves into a path dependency; project-mode
+   tests import one.*
+7. **End-to-end tests.** A multi-package `.ash` fixture covering import-from-path-dependency and the
+   namespace-violation error. *Acceptance: fixtures pass in `ashes test`.*
 
 ### Phase 2 — lock file, cache, git, transitive resolution, workspaces
 
-- Add `ashes.lock` and the content-addressed cache.
-- Add git dependencies and full transitive resolution with the Cargo-model resolver (§6).
-- Add `ashes tree` / `ashes why`, and workspaces (§10).
-- The compiler/LSP/test runner consume the resolved lock, not ad hoc walking.
+Goal: reproducible, transitive, cached resolution; git dependencies; workspaces.
+
+1. **Spec + diagnostics.** Update `PROJECT_SPEC.md` (`ashes.lock` format, `git` dependency shape,
+   `workspace.members`) and `COMPILER_CLI_SPEC.md` (`restore --frozen/--offline`, `tree`, `why`, `update`);
+   allocate codes for version conflict, stale lock, hash mismatch, and dependency-graph cycle. *Acceptance:
+   docs merged, codes reserved.*
+2. **Content-addressed cache.** Cache layout under `$XDG_CACHE_HOME/ashes`, source-tree hashing (`ash1:`),
+   and read/write. *Acceptance: a resolved source tree round-trips through the cache by hash.*
+3. **Resolver.** Build the dependency graph and the Cargo-model selector (§6): SemVer parse, highest-
+   compatible selection, single version per package, conflict as a typed error. A pure function producing a
+   resolved set. *Acceptance: unit tests for selection and conflict.*
+4. **Lock file.** Write/read `ashes.lock`; `restore` materializes from it and verifies hashes; `--frozen`
+   fails on drift. *Acceptance: restore is idempotent and hash-verified; `--frozen` catches a changed
+   manifest.*
+5. **Git dependencies.** Fetch by `rev`/`tag`/`branch` into the cache, pinned by hash. *Acceptance: a git
+   dependency resolves and locks reproducibly.*
+6. **Auto-restore.** `build`/`run`/`test` detect a stale or missing lock and restore (unless
+   `--frozen`/`--offline`). *Acceptance: editing `ashes.json` then `ashes run` restores automatically.*
+7. **Inspection.** `ashes tree` and `ashes why <pkg>`. *Acceptance: both render the resolved graph.*
+8. **Workspaces.** Parse `workspace.members`; one lock/graph/cache/out-dir; union member roots via a
+   `LoadProject` extension. *Acceptance: members import each other with no intermediate publish.*
 
 ### Phase 3 — the registry
 
-- Define the registry API and build the reference **registry server** — a standalone .NET 10 minimal-API
-  app with pluggable filesystem storage (§7, §12.1), living outside the compiler `src/` tree.
-- Registry-authoritative source storage, immutable versions, per-namespace ownership, and API-token auth
-  (§7.1–7.2).
-- Client integration: `ashes login` / `publish` / `yank`, the `registries` config and per-dependency
-  `registry` selection (§7.4), plus `update` / `outdated` / `vendor --offline` flows.
-- Stand up the canonical public instance; document self-hosting.
-- The `ashes capabilities` audit graduates to a first-class command, and the capability snapshot is
-  written into the lock, as built-in capabilities mature.
-- Mirroring (pull-through cache) and object-store/database storage are later, client-transparent
-  additions to the same server (§7.5).
+Goal: a self-hostable registry server (§7, §12.1) and the client integration that uses it.
+
+1. **Spec + diagnostics.** Author a new registry-API doc (read/publish/yank endpoints, auth, storage
+   contract); update `COMPILER_CLI_SPEC.md` (`login`, `publish`, `yank`, the `registries` config, per-
+   dependency `registry`); allocate codes for auth failure, namespace-owned-by-another-account,
+   immutable-version-overwrite, and yanked-version. *Acceptance: docs merged, codes reserved.*
+2. **Server scaffolding.** New top-level `registry/` .NET 10 minimal-API app; the storage interface plus a
+   filesystem implementation; the read endpoints (resolve, download). *Acceptance: a locally-run server
+   resolves and serves a hand-seeded package.*
+3. **Server publish + auth.** Accounts and API tokens; namespace ownership with first-claim and co-owners;
+   publish validation (append-only, namespace lint, hash computation, capability extraction); `yank`.
+   *Acceptance: an authorized publish stores an immutable version; an unauthorized or overwriting publish
+   is rejected.*
+4. **Client integration.** Registry HTTP client; the `registries` config and per-dependency `registry`
+   selection; the lock's `registry+<url>` source; download-and-verify against the cache. *Acceptance: a
+   project resolves and builds a package from a running registry.*
+5. **Client verbs.** `ashes login`, `ashes publish`, `ashes yank`. *Acceptance: a full publish → resolve →
+   build loop against a local server.*
+6. **Capabilities.** `ashes capabilities` as a first-class command; write the capability snapshot into the
+   lock. *Acceptance: the command reports each dependency's introduced capability row.*
+7. **Operate + document.** Stand up the canonical public instance and document self-hosting.
+
+Deferred, client-transparent additions to the same server: mirroring (pull-through cache) and object-store
+/ database storage for scale (§7.5).
 
 ---
 
