@@ -2397,12 +2397,31 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   display(true)    // resolves to provide Show(Bool)  — same function, two instances
   ```
 
-  Two shapes are **not** monomorphized and require a handler (or a concrete-at-the-call-site
-  rewrite): a **recursive** generic function (it can't be inlined), and a **higher-order** one — a
-  `Cap.op` inside a closure passed to another function (e.g. the comparator handed to `foldLeft`),
-  where the closure's element type is pinned only after it is lowered. Both report a clear
-  diagnostic. Fully general resolution there needs dictionary passing; see
-  [future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md).
+- **Generic resolution (dictionary passing).** A function that uses a capability operation at a
+  generic type and is **annotated** with an explicit `needs {Cap(a)}` row is compiled by dictionary
+  passing: each operation of each parameterized needed capability becomes a hidden parameter, the
+  operation calls in the body reference it, and every call site supplies the implementation — from a
+  provider (concrete instance) or by threading the caller's own hidden parameter (still-abstract
+  instance). Because the operation is a runtime value, this covers the shapes inlining cannot:
+  **recursive** and **higher-order** generics.
+
+  ```
+  let min : List(a) -> a needs {Ord(a)} =
+      given (items) ->
+          match items with
+              | [] -> io.panic("empty")
+              | x :: xs ->
+                  list.foldLeft(given (best) -> given (next) ->     // Ord.compare inside a closure
+                      if Ord.compare(next)(best) < 0 then next else best)(x)(xs)
+
+  min([5, 3, 1])   // Ord(Int) provider threaded in — no handler needed
+  ```
+
+  A `needs` row may mix dynamic and static capabilities (`needs {Clock, Ord(a)}`): the
+  unparameterized ones (`Clock`) are still satisfied by a handler or provider dynamically, while the
+  parameterized ones (`Ord(a)`) are dictionary-passed. A generic use with **no** `needs` annotation
+  is not dictionary-passed; the compiler reports a diagnostic suggesting the annotation (or a
+  concrete call site / handler).
 
 ## 20.7 Worked Example
 

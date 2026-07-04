@@ -1,4 +1,4 @@
-// expect-compile-error: used at a generic type here
+// expect: 1
 import Ashes.List
 capability Ord(a) =
     | compare : a -> a -> Int
@@ -8,7 +8,7 @@ provide Ord(Int) =
         given (a) -> 
             given (b) -> a - b
 
-let minOf = 
+let minOf : a -> List(a) -> a needs {Ord(a)} = 
     given (first) -> 
         given (items) -> 
             Ashes.List.foldLeft(given (best) -> 
