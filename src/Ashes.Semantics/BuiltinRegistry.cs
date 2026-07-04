@@ -332,7 +332,7 @@ public static class BuiltinRegistry
                 }),
             ["Ashes.Net.Tcp.Server"] = new(
                 "Ashes.Net.Tcp.Server",
-                null,
+                "Ashes.Semantics.StdLib.Ashes.Net.Tcp.Server.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
