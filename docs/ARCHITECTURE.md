@@ -596,6 +596,22 @@ across `Ashes.Parallel` workers is unspecified (per-thread evidence belongs with
 work), and a `handle` whose body suspends (`await`) is unspecified — handler frames are
 stack-allocated and do not survive coroutine suspension.
 
+### Static providers and generic dictionary passing
+
+A `provide` (registered in `Lowering.CapabilityDictionaries`/`Lowering.Capabilities`) satisfies a
+capability *statically*. At a concrete instance the operation compiles to a direct call to the
+provider's implementation — no evidence global. Generic uses take two forms. A non-recursive generic
+function whose body performs a parameterized operation is **monomorphized by inlining** at each
+concrete call site. A function annotated with an explicit `needs {Cap(a)}` row is instead compiled by
+**dictionary passing** (`RegisterAndTransformDictionaryFunctions`, a pre-lowering AST pass): each
+operation of each parameterized needed capability becomes a hidden leading parameter, `Cap.op` in the
+body is rewritten to reference it, and calls to dictionary functions are threaded — self and sibling
+calls syntactically (so the parameter is captured by any nested closure), external calls at lowering
+(`LowerDictionaryFunctionCall`), where the concrete instance is recovered from the pinned argument
+types and supplied from a provider. This is the strategy that reaches recursive and higher-order
+generics, which inlining cannot. Unparameterized capabilities in a `needs` row stay on the dynamic
+(handler/provider) path even when the row also carries a dictionary-passed one.
+
 ---
 
 ## Linking

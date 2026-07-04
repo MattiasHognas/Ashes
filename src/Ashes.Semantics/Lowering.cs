@@ -442,6 +442,11 @@ public sealed partial class Lowering
         RegisterCapabilityDeclarations(program.Items);
         RegisterProviderDeclarations(program.Items);
 
+        // Compile generic (parameterized-`needs`) functions to dictionary-passing form: each needed
+        // operation becomes a hidden parameter. Runs after capability/provider registration and
+        // before value collection so the rest of the pipeline sees ordinary functions.
+        program = RegisterAndTransformDictionaryFunctions(program);
+
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
             .ToList();
@@ -3658,10 +3663,16 @@ public sealed partial class Lowering
 
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
         bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
+        // If this lambda parameter is a capability op-parameter, mark it active so a call at a
+        // still-abstract instance inside the body threads it.
+        var opParamScope = EnterOpParamScope(lam.ParamName);
+        bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
         var (bodyTemp, bodyType) = LowerExpr(lam.Body);
         _ambientRow = savedAmbientRow;
+        PopDictFnShadow(lam.ParamName, pushedDictShadow);
+        ExitOpParamScope(opParamScope);
         if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
         if (isInnermostTco && savedTcoCtx is not null)
         {
@@ -4204,6 +4215,21 @@ public sealed partial class Lowering
         if (rootExpr is Expr.QualifiedVar effectQv && _capabilitySymbols.TryGetValue(effectQv.Module, out var effectSym))
         {
             return LowerCapabilityOperationCall(effectSym, effectQv, collectedArgs);
+        }
+
+        // Call to a generic function compiled to dictionary-passing form: supply its leading operation
+        // arguments (provider or threaded op-parameter) before the real arguments.
+        // Calls inside a dictionary function's body were threaded syntactically (an op-parameter is in
+        // scope). Only an *external* call — none in scope — resolves its operations from providers. The
+        // callee may be a plain `Var` (same file) or a qualified `Module.fn` cross-module reference,
+        // which resolves to the stitched flat name.
+        if (_activeOpParams.Count == 0
+            && collectedArgs.Count > 0
+            && ResolveSpecializableCalleeName(rootExpr) is { } dictFnName
+            && (rootExpr is not Expr.Var dfv || !_shadowedDictFns.Contains(dfv.Name))
+            && _dictFunctions.TryGetValue(dictFnName, out var dictInfo))
+        {
+            return LowerDictionaryFunctionCall(dictInfo, rootExpr, dictFnName, collectedArgs, GetSpan(call));
         }
 
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result

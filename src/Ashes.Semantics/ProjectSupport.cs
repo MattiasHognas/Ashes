@@ -94,7 +94,7 @@ public static class ProjectSupport
 
     private sealed record StandardLibraryModuleDescriptor(string ModuleName, string? ResourceName);
 
-    private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive);
+    private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive, string? Annotation = null);
 
     private sealed record ModuleBindingGroup(IReadOnlyList<ModuleBindingFragment> Bindings, bool IsRecursiveGroup);
 
@@ -914,7 +914,6 @@ public static class ProjectSupport
 
         // Flat modules contribute genuine top-level declarations, which must precede the legacy
         // nested-let pyramid (everything after the first pyramid `let ... in` is the trailing body).
-        var flatDeclarationEmitted = false;
         foreach (var module in nonEntryModules.Where(module => shapes[module.ModuleName].IsFlat))
         {
             var start = prefix.Length;
@@ -922,7 +921,6 @@ public static class ProjectSupport
             if (prefix.Length > start)
             {
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
-                flatDeclarationEmitted = true;
             }
         }
 
@@ -938,11 +936,15 @@ public static class ProjectSupport
             }
         }
 
-        // A flat top-level declaration ends with a newline, not an `in`. Without a following legacy
-        // nested-let binding to open the trailing body, the entry expression would be absorbed as a
-        // whitespace/parenthesized-application argument of the last flat value, so introduce a boundary
-        // binding whose `in` makes the entry expression a proper let body.
-        if (flatDeclarationEmitted && !legacyBindingEmitted)
+        // A hoisted flat declaration (a flat `let` value, or a `provide` whose implementation is an
+        // expression) ends with a newline, not an `in`. Without a following legacy nested-let binding
+        // to open the trailing body, the parenthesized entry expression would be absorbed as an
+        // application argument of that last value (e.g. `given (y) -> x - y` swallowing `(entry)` as
+        // `y(entry)`), so introduce a boundary binding whose `in` makes the entry a proper let body.
+        // The `let` boundary is safe because flat-value/provider parsing suppresses `let` as an
+        // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
+        bool moduleContentPrecedesEntry = prefix.Length > entryShape.TypeDeclarationsSource.Length;
+        if (moduleContentPrecedesEntry && !legacyBindingEmitted)
         {
             prefix.Append("let __ashes_module_boundary = 0 in ");
         }
@@ -1257,8 +1259,17 @@ public static class ProjectSupport
                     ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
                     : ApplyAliases(binding.ValueSource, aliases);
 
-                prefix.Append($"{moduleBindingName}_{binding.Name}")
-                    .Append(" = (")
+                prefix.Append($"{moduleBindingName}_{binding.Name}");
+                // Keep a `needs {Cap(a)}` annotation on the stitched binding: it is what marks a generic
+                // dictionary-passing function, so dropping it would leave an exported generic capability
+                // function unresolved. Capability and type-variable names in the row are program-global,
+                // so they need no alias rewriting.
+                if (binding.Annotation is { Length: > 0 } annotation)
+                {
+                    prefix.Append(" : ").Append(annotation);
+                }
+
+                prefix.Append(" = (")
                     .Append(renderedValue)
                     .Append(')');
             }
@@ -1552,6 +1563,7 @@ public static class ProjectSupport
         // the source leaves the flat `let` declarations and the trailing expression for the entry path.
         var hoistedSpans = new List<(int Start, int End)>();
         var hasFlatBinding = false;
+        var hoistedCapabilityOrProvide = false;
         var cursor = 0;
 
         foreach (var item in program.Items)
@@ -1587,6 +1599,7 @@ public static class ProjectSupport
 
                         typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
+                        hoistedCapabilityOrProvide = true;
                         cursor = span.End;
                         break;
                     }
@@ -1602,6 +1615,7 @@ public static class ProjectSupport
 
                         typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
+                        hoistedCapabilityOrProvide = true;
                         cursor = span.End;
                         break;
                     }
@@ -1622,13 +1636,13 @@ public static class ProjectSupport
 
                 case TopLevelItem.LetDecl letDecl:
                     {
-                        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource))
+                        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource, out var annotation))
                         {
                             return false;
                         }
 
                         groups.Add(new ModuleBindingGroup(
-                            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive)],
+                            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive, annotation)],
                             letDecl.IsRecursive));
                         hasFlatBinding = true;
                         break;
@@ -1657,12 +1671,14 @@ public static class ProjectSupport
             }
         }
 
-        // Without a genuine top-level `let`/`let rec` declaration there is nothing flat to export: a
-        // module that is only type declarations followed by a nested `let ... in` pyramid (its bindings
-        // live in Program.Body, not Program.Items) must keep the legacy text-based shaping, which
-        // extracts those bindings and preserves the entry expression. Bailing here is what keeps the
-        // legacy `type T = ...` + `let f = ... in f` module form working.
-        if (!hasFlatBinding)
+        // Without a genuine top-level `let`/`let rec` declaration there is normally nothing flat to
+        // export, so a module keeps the legacy text-based shaping (which extracts pyramid bindings from
+        // Program.Body and preserves the entry expression). The one exception: a module that hoists a
+        // capability or provider but has no value bindings is still genuinely flat — shape it here (with
+        // empty binding groups) so those declarations hoist, rather than falling back to a text path
+        // that mis-parses `provide`/`capability`. A pyramid body still forces legacy (its bindings must
+        // be extracted).
+        if (!hasFlatBinding && (!hoistedCapabilityOrProvide || program.Body is Expr.Let or Expr.LetRecursive))
         {
             return false;
         }
@@ -1719,8 +1735,13 @@ public static class ProjectSupport
     /// </summary>
     private static bool TryExtractFlatBindingValue(string source, Expr value, ref int cursor, out string valueSource)
     {
+        return TryExtractFlatBindingValue(source, value, ref cursor, out valueSource, out _);
+    }
+
+    private static bool TryExtractFlatBindingValue(string source, Expr value, ref int cursor, out string valueSource, out string? annotation)
+    {
         valueSource = string.Empty;
-        if (!TryScanFlatLetHeader(source, cursor, out var parameters, out var valueStart))
+        if (!TryScanFlatLetHeader(source, cursor, out var parameters, out var valueStart, out annotation))
         {
             return false;
         }
@@ -1811,8 +1832,14 @@ public static class ProjectSupport
     /// </summary>
     private static bool TryScanFlatLetHeader(string source, int from, out IReadOnlyList<string> parameters, out int valueStart)
     {
+        return TryScanFlatLetHeader(source, from, out parameters, out valueStart, out _);
+    }
+
+    private static bool TryScanFlatLetHeader(string source, int from, out IReadOnlyList<string> parameters, out int valueStart, out string? annotation)
+    {
         parameters = [];
         valueStart = from;
+        annotation = null;
         if (from < 0 || from >= source.Length)
         {
             return false;
@@ -1841,7 +1868,10 @@ public static class ProjectSupport
 
         if (token.Kind == TokenKind.Colon)
         {
-            // Annotated binding: skip the type expression up to the value-introducing `=`.
+            // Annotated binding: skip the type expression up to the value-introducing `=`, capturing
+            // the annotation source so a stitched module binding can keep it (a `needs {Cap(a)}` row is
+            // what marks a generic dictionary-passing function).
+            var annotationStart = from + token.Position + token.Text.Length;
             var depth = 0;
             while (token.Kind != TokenKind.EOF)
             {
@@ -1857,6 +1887,7 @@ public static class ProjectSupport
                         depth--;
                         break;
                     case TokenKind.Equals when depth == 0:
+                        annotation = source[annotationStart..(from + token.Position)].Trim();
                         valueStart = from + token.Position + token.Text.Length;
                         return true;
                 }

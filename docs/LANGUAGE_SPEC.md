@@ -2229,15 +2229,15 @@ production and fixed in tests, with no `Clock`/`Logger` parameter polluting ever
 A capability requirement is satisfied in one of two ways: by a **handler** (`handle ... with`) — a
 scoped, dynamic implementation — or by a static **provider** (`provide Capability(args) = ...`, §20.6)
 that supplies a fixed implementation for a concrete instance, resolved at compile time. Providers
-resolve **concrete** instances (`Clock`, `Ord(Str)`); resolving a requirement at a *generic*
-instance still needs monomorphization and is the remaining phase (see
-[future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md)).
+resolve concrete instances (`Clock`, `Ord(Str)`) directly, and generic requirements (`needs {Ord(a)}`)
+by monomorphization or dictionary passing (§20.6); providers are program-global across modules.
 
-Implementation status: capability declarations, `needs` rows, capability typing, the
-unsatisfied-capability diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot
-resumptive** arms are implemented, as are first-class operation values (for operations with
-explicit signatures) and capabilities declared in imported project modules. The former `effect` /
-`uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
+Implementation status: the full surface is implemented — capability declarations, `needs` rows,
+capability typing, the unsatisfied-capability diagnostic, `handle`/`perform` with
+**tail-resumptive and one-shot resumptive** arms, first-class operation values (for operations with
+explicit signatures), static `provide` with concrete and generic (monomorphized / dictionary-passed)
+resolution, and capabilities and providers declared in imported project modules. The former
+`effect` / `uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
 (`ASH025`). Aborting arms (a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
@@ -2397,12 +2397,44 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   display(true)    // resolves to provide Show(Bool)  — same function, two instances
   ```
 
-  Two shapes are **not** monomorphized and require a handler (or a concrete-at-the-call-site
-  rewrite): a **recursive** generic function (it can't be inlined), and a **higher-order** one — a
-  `Cap.op` inside a closure passed to another function (e.g. the comparator handed to `foldLeft`),
-  where the closure's element type is pinned only after it is lowered. Both report a clear
-  diagnostic. Fully general resolution there needs dictionary passing; see
-  [future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md).
+- **Generic resolution (dictionary passing).** A function that uses a capability operation at a
+  generic type and is **annotated** with an explicit `needs {Cap(a)}` row is compiled by dictionary
+  passing: each operation of each parameterized needed capability becomes a hidden parameter, the
+  operation calls in the body reference it, and every call site supplies the implementation — from a
+  provider (concrete instance) or by threading the caller's own hidden parameter (still-abstract
+  instance). Because the operation is a runtime value, this covers the shapes inlining cannot:
+  **recursive** and **higher-order** generics.
+
+  ```
+  let min : List(a) -> a needs {Ord(a)} =
+      given (items) ->
+          match items with
+              | [] -> io.panic("empty")
+              | x :: xs ->
+                  list.foldLeft(given (best) -> given (next) ->     // Ord.compare inside a closure
+                      if Ord.compare(next)(best) < 0 then next else best)(x)(xs)
+
+  min([5, 3, 1])   // Ord(Int) provider threaded in — no handler needed
+  ```
+
+  A `needs` row may mix dynamic and static capabilities (`needs {Clock, Ord(a)}`): the
+  unparameterized ones (`Clock`) are still satisfied by a handler or provider dynamically, while the
+  parameterized ones (`Ord(a)`) are dictionary-passed. A generic use with **no** `needs` annotation
+  is not dictionary-passed; the compiler reports a diagnostic suggesting the annotation (or a
+  concrete call site / handler).
+
+- **Providers are program-global (coherence).** A `provide` is visible across the whole program, in
+  every module, regardless of imports — like an instance in a coherent typeclass system. A capability
+  declared in one module and a `provide` for it in another both satisfy a `needs` requirement anywhere,
+  and a generic function annotated `needs {Cap(a)}` may be defined in one module and called from
+  another; the provider is resolved (or the dictionary threaded) at the call site. Because providers
+  are global, a duplicate `provide` for the same concrete instance is a program-wide error (`ASH026`),
+  which is what keeps resolution coherent — the same instance always resolves the same way.
+
+  One case is not yet supported across modules: a dictionary-passing function that itself calls an
+  *imported* dictionary-passing function through a qualified reference (`Other.f`) at a still-generic
+  type — the caller's dictionary is not threaded across the module boundary. Define such a wrapper in
+  the module that provides the function, or call it at a concrete type.
 
 ## 20.7 Worked Example
 

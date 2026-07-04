@@ -651,7 +651,7 @@ public sealed partial class Lowering
             // function). Point at that, rather than the plain "no handler or provider".
             if (HasAnyProvider(capability.Symbol.Name))
             {
-                ReportDiagnostic(span, $"Capability '{capability.Symbol.Name}' is provided for concrete instances, but this use is inside a generic function that could not be monomorphized (a recursive or higher-order generic). Call it at a concrete type directly, or install a handler.", CapabilityNotPermittedCode);
+                ReportDiagnostic(span, $"Capability '{capability.Symbol.Name}' is used at a generic type here. Annotate the enclosing function with an explicit `needs {{{capability.Symbol.Name}(...)}}` row so it can receive the capability, or call it at a concrete type / install a handler.", CapabilityNotPermittedCode);
                 continue;
             }
 
