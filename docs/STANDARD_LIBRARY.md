@@ -206,6 +206,39 @@ hermetic `rustls` runtime embedded per TLS-using executable. No
 external OpenSSL installation is required. Hostname verification and
 system-trust validation are mandatory for successful TLS connections.
 
+### `Ashes.Http.Server`
+
+A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
+runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
+
+- `HttpRequest` — a parsed request; access it with `method(req)` / `path(req)`.
+- `HttpResponse` — a response; build one with `text(status)(body)`.
+- `method(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`).
+- `path(req)` — `HttpRequest -> Str`, the request path (e.g. `"/health"`).
+- `text(status)(body)` — `Int -> Str -> HttpResponse`, a response with the given status code and body.
+- `serve(port)(handler)` — `Int -> (HttpRequest -> HttpResponse) -> Task(Str, Unit)`. Binds the port
+  and, per connection, reads one request, parses the request line, runs `handler`, writes the
+  response, and closes (`Connection: close`). Consumed with `Ashes.Async.run`.
+
+This is intentionally small: the request line + a single `receive` per connection, and a synchronous
+handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
+[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `Content-Length` is computed with
+`Ashes.String.length` (character count — equal to the byte count for ASCII bodies).
+
+```ash
+import Ashes.IO
+import Ashes.Http.Server
+import Ashes.Async
+let route req =
+    match Ashes.Http.Server.path(req) with
+        | "/health" -> Ashes.Http.Server.text(200)("ok")
+        | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
+        | _p -> Ashes.Http.Server.text(404)("not found")
+in match Ashes.Async.run(Ashes.Http.Server.serve(8080)(route)) with
+    | Ok(_u) -> Ashes.IO.print("stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
 ## Shipped Helper Modules
 
 These modules are compiler-shipped and live under the reserved `Ashes.*`

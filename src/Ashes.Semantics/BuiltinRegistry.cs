@@ -338,6 +338,10 @@ public static class BuiltinRegistry
                     ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
                     ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1)
                 }),
+            ["Ashes.Http.Server"] = new(
+                "Ashes.Http.Server",
+                "Ashes.Semantics.StdLib.Ashes.Http.Server.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Net.Tls"] = new(
                 "Ashes.Net.Tls",
                 null,
