@@ -493,7 +493,7 @@ splits the file into per-core chunks and folds each on a worker (`CO-14`), const
 that resolves to a stitched shipped/user-module binding (`Ashes_String_indexOf`, …)
 as a captured free variable, while still skipping intrinsics (`Ashes.IO.print`,
 `Ashes.Text.uncons`). So `Ashes.Map`/`Ashes.String` calls now work directly inside
-lambdas and `let rec` bodies — the alias workaround is no longer needed (and
+lambdas and `let recursive` bodies — the alias workaround is no longer needed (and
 `brc.ash` no longer uses it). Regression test:
 `tests/regress_module_in_lambda_body.ash`. Original finding below.
 
@@ -501,7 +501,7 @@ lambdas and `let rec` bodies — the alias workaround is no longer needed (and
 (`Ashes.Map`, `Ashes.String`, `Ashes.List`, … — the `.ash` modules under
 `lib/Ashes/`, as opposed to intrinsic modules like `Ashes.IO`/`Ashes.Text`) is only
 resolved when it appears in a **plain-value binding or the trailing expression**. If
-it appears inside a **function body** (a `let f x = …` lambda, or any `let rec`
+it appears inside a **function body** (a `let f x = …` lambda, or any `let recursive`
 body) it fails with `Unknown module 'Ashes.String'`
 (`src/Ashes.Semantics/Lowering.cs:990`). The import stitcher's reference collection
 (`CollectReferencedNames` in `src/Ashes.Semantics/ProjectSupport.cs`) does not reach
@@ -512,7 +512,7 @@ Minimal repro (fails):
 ```ash
 import Ashes.String
 import Ashes.IO
-let rec f n =
+let recursive f n =
     if n <= 0
     then 0
     else Ashes.String.indexOf("abc")("b")   // Unknown module 'Ashes.String'
@@ -527,7 +527,7 @@ import Ashes.String
 import Ashes.IO
 let strIndexOf = Ashes.String.indexOf       // plain-value binding: resolved + stitched
 in
-    let rec f n =
+    let recursive f n =
         if n <= 0
         then 0
         else strIndexOf("abc")("b")          // local, not a module ref: fine
