@@ -758,6 +758,15 @@ public static class Runner
             return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
         }
 
+        // A file with inline `module` blocks but no imports still needs the stitching layout so the
+        // blocks are lifted into submodules; the raw parser has no inline-module construct.
+        if (ProjectSupport.ContainsInlineModule(source))
+        {
+            var parsed = ProjectSupport.ParseImportHeader(source, filePath);
+            var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, filePath, parsed.ImportSelectors);
+            return CompileToImage(layout.Source, targetId, backendOptions, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+        }
+
         return CompileToImage(source, targetId, backendOptions);
     }
 

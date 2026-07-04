@@ -1034,6 +1034,24 @@ async Task<int> RunFmtAsync(string[] a)
     foreach (var file in files)
     {
         var src = await File.ReadAllTextAsync(file);
+        // Inline `module` blocks are a compile-time stitching construct with no AST node, so the
+        // formatter cannot model them. Leave such files untouched (the author's layout is
+        // authoritative) rather than error or mangle; full formatting fidelity is future work.
+        if (ProjectSupport.ContainsInlineModule(src))
+        {
+            if (!writeInPlace)
+            {
+                if (files.Count > 1)
+                {
+                    AnsiConsole.Write(new Rule(file).RuleStyle("grey").LeftJustified());
+                }
+
+                AnsiConsole.Write(new Text(src));
+            }
+
+            continue;
+        }
+
         var formattingOptions = EditorConfigFormattingOptionsResolver.ResolveForPath(file);
         var lineEnding = formattingOptions.NewLine;
         var (leadingComments, sourceWithoutComments) = ExtractLeadingComments(src, lineEnding);

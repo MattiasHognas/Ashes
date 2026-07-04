@@ -1443,6 +1443,59 @@ There is **no implicit re-export**: names a module itself imported from other
 modules are not re-exported to its importers. Each importer must import what it
 needs directly.
 
+### Inline Modules
+
+A file may declare **inline modules** — nested, named namespaces — directly in
+its body, so related `let` / `type` declarations can be grouped under a
+qualifier without spawning a new file. This is purely a compile-time namespacing
+feature: an inline module has no runtime representation, is not a value, and is
+erased during lowering exactly as a file module is.
+
+```
+module Geometry =
+    let pi = 3.14159
+    let area = given (r) -> pi * r * r
+
+Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
+```
+
+- **Introducer.** `module Name =` (a capitalized `UpperCamel` name), followed by
+  a **layout block**: the run of lines indented past the `module` keyword. The
+  block ends at the first line dedented back to (or past) the `module` column —
+  the same column rule the parser uses to find the next top-level item. `module`
+  is recognized only in this declaration position; it remains an ordinary
+  identifier elsewhere.
+- **Members.** `let`, `let recursive ... and ...`, `type`, and nested `module`
+  declarations — the same forms a file may contain. A `module` block may **not**
+  contain a trailing expression or an `external` declaration.
+- **Identity.** An inline module is an **exported submodule** of its file:
+  `File.Inner.member` is path-addressable from other files, so promoting an
+  inline module to its own file (`File/Inner.ash`) leaves every `import` and call
+  site unchanged. A separate inline module and a file that resolve to the *same*
+  path are a compile-time ambiguity error.
+- **Exports.** Identical to file modules (above): all top-level `let` bindings,
+  all `let recursive ... and ...` groups, and all `type` declarations with their
+  constructors are exported; nested modules are exported as submodules. No
+  implicit re-export.
+- **Scoping (Model A).** Inside a block the same sequential rule as the top level
+  holds: a declaration sees earlier declarations in the block, never later ones;
+  self-recursion needs `let recursive`, mutual recursion `let recursive ... and`.
+  Like a file module, an inline module does not implicitly capture the enclosing
+  file's unqualified bindings — it reaches other namespaces the same way any
+  module does, by qualified access or `import`. This is what keeps inline ↔ file
+  promotion transparent.
+- **Access.** By qualified path (`Geometry.area`), or by bringing names in with
+  the ordinary `import` machinery — whole-module (`import Geometry`), alias
+  (`import Geometry as G`), or selector (`import Geometry.area as a`, including
+  through nesting: `import Json.Parse.value as pv`).
+- **Reserved.** An inline module may not be named `Ashes` or shadow any `Ashes.*`
+  path.
+
+Diagnostics `ASH021`–`ASH024` cover the inline-module surface (see
+[DIAGNOSTICS.md](DIAGNOSTICS.md)); unknown-member, unknown-selector, and
+import-collision cases reuse `ASH013`–`ASH016`, since inline modules resolve
+through the same path as file modules.
+
 ## 13.2 Ashes.IO Module
 
 The built-in `Ashes.IO` module exports:

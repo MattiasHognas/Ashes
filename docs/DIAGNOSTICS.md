@@ -25,6 +25,10 @@ Current codes:
 | `ASH018` | Effect not permitted by a closed `uses` row                   |
 | `ASH019` | Unknown effect or effect operation                            |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
+| `ASH021` | Disallowed form in an inline `module` block                   |
+| `ASH022` | Inline module path collides with a file module of the same path |
+| `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
+| `ASH024` | Duplicate inline module name in the same scope                |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
@@ -97,6 +101,31 @@ for the remaining roadmap.
   Messages include: `Handler arm 'Effect.op' does not name a declared effect operation.`,
   `Duplicate handler arm for 'Effect.op'.`,
   `Handler for effect 'Effect' must handle operation 'op'.`
+
+## Inline module diagnostics
+
+These cover inline (`module Name = ...`) declarations. Inline modules resolve through the
+same path as file modules, so unknown-member, unknown-selector, and import-collision cases
+reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §13.1 for the surface.
+
+- `ASH021` — **Disallowed form in an inline module.** A `module` block contains a trailing
+  expression or an `external` declaration — neither is permitted (a module block is
+  declarations only, and `external` is a file-level FFI concern that is never exported).
+  Message: `Inline module 'Name' may not contain a trailing expression.` /
+  `Inline module 'Name' may not contain an 'external' declaration.`
+
+- `ASH022` — **Inline/file module collision.** An inline module and a project file resolve to
+  the same module path (e.g. `module Vec` inside `Geom.ash` and a file `Geom/Vec.ash`). A
+  module path must resolve to exactly one module.
+  Message: `Module path 'Geom.Vec' is defined by both an inline module and a file.`
+
+- `ASH023` — **Reserved inline module name.** An inline module is named `Ashes`, or its
+  composed path shadows a reserved `Ashes.*` path.
+  Message: `Inline module may not be named 'Ashes' (reserved for the standard library).`
+
+- `ASH024` — **Duplicate inline module.** Two inline modules with the same name are declared in
+  the same scope (the same file level, or the same enclosing module).
+  Message: `Duplicate inline module 'Name' in this scope.`
 
 ## Record diagnostics
 
