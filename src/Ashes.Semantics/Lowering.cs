@@ -5850,6 +5850,11 @@ public sealed partial class Lowering
                 case IrInst.CopyOutList:
                 case IrInst.CopyOutClosure:
                 case IrInst.CopyOutTcoListCell:
+                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+                    {
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected by instruction kind: {inst}");
+                    }
+
                     return false;
             }
         }
