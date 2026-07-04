@@ -581,60 +581,103 @@ public sealed partial class Lowering
         var binderCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         CountBinders(body, binderCounts);
 
+        // Collect the entry let-chain's function candidates: single-binder (unshadowed) lambda
+        // bindings not already registered from a flat top-level item.
+        var candidates = new List<(string Name, bool IsRecursive, Expr.Lambda Lam)>();
+        var candidateNames = new HashSet<string>(StringComparer.Ordinal);
         var cur = body;
-        while (true)
+        while (cur is Expr.Let or Expr.LetRecursive)
         {
-            switch (cur)
+            (string name, bool isRecursive, Expr value, Expr next) = cur switch
             {
-                case Expr.Let letExpr:
-                    RegisterEntryFunction(letExpr.Name, isRecursive: false, letExpr.Value, binderCounts);
-                    cur = letExpr.Body;
-                    continue;
-                case Expr.LetRecursive letRecursiveExpr:
-                    RegisterEntryFunction(letRecursiveExpr.Name, isRecursive: true, letRecursiveExpr.Value, binderCounts);
-                    cur = letRecursiveExpr.Body;
-                    continue;
-                default:
-                    return;
-            }
-        }
-    }
+                Expr.Let l => (l.Name, false, l.Value, l.Body),
+                Expr.LetRecursive lr => (lr.Name, true, lr.Value, lr.Body),
+                _ => throw new InvalidOperationException(),
+            };
 
-    private void RegisterEntryFunction(string name, bool isRecursive, Expr value, Dictionary<string, int> binderCounts)
-    {
-        if (binderCounts.GetValueOrDefault(name) != 1
-            || _specializableFunctions.ContainsKey(name)
-            || _inlinableFunctions.ContainsKey(name)
-            || value is not Expr.Lambda lam)
+            if (binderCounts.GetValueOrDefault(name) == 1
+                && !_specializableFunctions.ContainsKey(name)
+                && !_inlinableFunctions.ContainsKey(name)
+                && value is Expr.Lambda lam)
+            {
+                candidates.Add((name, isRecursive, lam));
+                candidateNames.Add(name);
+            }
+
+            cur = next;
+        }
+
+        if (candidates.Count == 0)
         {
             return;
         }
 
-        // A reuse specialization is generated in an isolated scope, where only stitched top-level
-        // bindings (module functions — inlined or called by-label) and intrinsics resolve. An entry
-        // function that references any OTHER user binding (a lexical sibling) would fail to lower
-        // inside its spec, so only self-contained functions are registered.
-        var free = FreeVars(lam, new HashSet<string>(StringComparer.Ordinal) { name });
-        if (!free.All(_topLevelBindingNames.Contains))
+        // A candidate is REGISTERABLE iff every free variable of its body resolves at an inline or
+        // specialization site — i.e. is a stitched module binding, a constructor, an
+        // already-registered function, or another registerable candidate. (A registerable function
+        // therefore captures nothing that isn't globally resolvable, so it reaches _topLevelFunctionRefs
+        // as an empty-env by-label callee.) Referencing any OTHER user sibling — a captured value, a
+        // non-registerable helper — would fail to lower inside a spec (the earlier bug this gate guards),
+        // so drop it. Compute the maximal registerable set by removing violators to a fixpoint.
+        var freeVarsByName = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var (name, _, lam) in candidates)
         {
-            return;
+            freeVarsByName[name] = FreeVars(lam, new HashSet<string>(StringComparer.Ordinal) { name });
         }
 
-        // Only the SPECIALIZABLE shapes are registered from the entry body — never the inlinable
-        // helper set. A module helper's free names are other module bindings, resolvable by-label
-        // from any inline site; a user helper's body may reference arbitrary earlier user bindings
-        // that are not in scope at an inline site inside another function or specialization.
-        if (!isRecursive)
+        bool GloballyResolvable(string n) =>
+            _topLevelBindingNames.Contains(n)
+            || _constructorSymbols.ContainsKey(n)
+            || _specializableFunctions.ContainsKey(n)
+            || _inlinableFunctions.ContainsKey(n);
+
+        var registerable = new HashSet<string>(candidateNames, StringComparer.Ordinal);
+        bool changed = true;
+        while (changed)
         {
-            if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
+            changed = false;
+            foreach (var name in candidateNames)
             {
-                _specializableFunctions[name] = (lam, nestedParam, nestedArgCount);
+                if (!registerable.Contains(name))
+                {
+                    continue;
+                }
+
+                if (freeVarsByName[name].Any(fv => !GloballyResolvable(fv) && !registerable.Contains(fv)))
+                {
+                    registerable.Remove(name);
+                    changed = true;
+                }
             }
         }
-        else if (lam.Body is not Expr.Lambda)
+
+        // Register each registerable candidate, in let-chain order, exactly like a flat top-level item:
+        // the nested-recursive-return / single-param-recursive shapes become reuse specializations, and
+        // any other non-recursive helper with an allocating body becomes an inlinable rebuild helper.
+        foreach (var (name, isRecursive, lam) in candidates)
         {
-            // Single-parameter recursive function — a direct reuse-specialization candidate.
-            _specializableFunctions[name] = (lam, lam.ParamName, 1);
+            if (!registerable.Contains(name))
+            {
+                continue;
+            }
+
+            if (!isRecursive)
+            {
+                if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
+                {
+                    _specializableFunctions[name] = (lam, nestedParam, nestedArgCount);
+                }
+                else if (ExprHasCallOrAggregate(GetInnermostBody(lam)))
+                {
+                    _inlinableFunctions[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+                    _inlinableDefiningValues[name] = lam;
+                }
+            }
+            else if (lam.Body is not Expr.Lambda)
+            {
+                // Single-parameter recursive function — a direct reuse-specialization candidate.
+                _specializableFunctions[name] = (lam, lam.ParamName, 1);
+            }
         }
     }
 
