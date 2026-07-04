@@ -465,6 +465,16 @@ public abstract record IrInst
     public sealed record ParallelCleanup(int DescTemp) : IrInst;
 
     /// <summary>
+    /// Loads the current dynamically-scoped worker override (the runtime global set by
+    /// <c>Ashes.Parallel.withWorkers</c>); 0 means "unset — use the compiled max". Used by
+    /// <c>withWorkers</c> lowering to save/restore the enclosing scope's value.
+    /// </summary>
+    public sealed record LoadParallelWorkerOverride(int Target) : IrInst;
+
+    /// <summary>Stores a value into the worker-override global (0 clears it).</summary>
+    public sealed record StoreParallelWorkerOverride(int Source) : IrInst;
+
+    /// <summary>
     /// Work-conserving parallel reduce (queued lowering of Ashes.Parallel.reduce). Snapshots the
     /// list elements into a shared queue region, spawns up to the worker-cap worker threads that
     /// pull element indexes from a shared atomic counter, record <c>f(element)</c> per index, and
