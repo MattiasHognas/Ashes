@@ -447,6 +447,8 @@ public static class IrOptimizer
             IrInst.NetTcpSend n => n with { SocketTemp = R(n.SocketTemp), TextTemp = R(n.TextTemp) },
             IrInst.NetTcpReceive n => n with { SocketTemp = R(n.SocketTemp), MaxBytesTemp = R(n.MaxBytesTemp) },
             IrInst.NetTcpClose n => n with { SocketTemp = R(n.SocketTemp) },
+            IrInst.NetTcpListen n => n with { PortTemp = R(n.PortTemp) },
+            IrInst.NetTcpAccept n => n with { SocketTemp = R(n.SocketTemp) },
             IrInst.BytesEmpty b => b,
             IrInst.BytesSingleton b => b with { ByteTemp = R(b.ByteTemp) },
             IrInst.BytesLength b => b with { BytesTemp = R(b.BytesTemp) },
@@ -497,6 +499,8 @@ public static class IrOptimizer
             IrInst.CreateTcpSendTask t => t with { SocketTemp = R(t.SocketTemp), TextTemp = R(t.TextTemp) },
             IrInst.CreateTcpReceiveTask t => t with { SocketTemp = R(t.SocketTemp), MaxBytesTemp = R(t.MaxBytesTemp) },
             IrInst.CreateTcpCloseTask t => t with { SocketTemp = R(t.SocketTemp) },
+            IrInst.CreateTcpListenTask t => t with { PortTemp = R(t.PortTemp) },
+            IrInst.CreateTcpAcceptTask t => t with { SocketTemp = R(t.SocketTemp) },
             IrInst.CreateHttpGetTask t => t with { UrlTemp = R(t.UrlTemp) },
             IrInst.CreateHttpPostTask t => t with { UrlTemp = R(t.UrlTemp), BodyTemp = R(t.BodyTemp) },
             IrInst.CreateTlsConnectTask t => t with { HostTemp = R(t.HostTemp), PortTemp = R(t.PortTemp) },
@@ -1367,6 +1371,8 @@ public static class IrOptimizer
             case IrInst.NetTcpSend n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.TextTemp); break;
             case IrInst.NetTcpReceive n: usedTemps.Add(n.SocketTemp); usedTemps.Add(n.MaxBytesTemp); break;
             case IrInst.NetTcpClose n: usedTemps.Add(n.SocketTemp); break;
+            case IrInst.NetTcpListen n: usedTemps.Add(n.PortTemp); break;
+            case IrInst.NetTcpAccept n: usedTemps.Add(n.SocketTemp); break;
             case IrInst.BytesEmpty: break;
             case IrInst.BytesSingleton b: usedTemps.Add(b.ByteTemp); break;
             case IrInst.BytesLength b: usedTemps.Add(b.BytesTemp); break;
@@ -1412,6 +1418,8 @@ public static class IrOptimizer
             case IrInst.CreateTcpSendTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.TextTemp); break;
             case IrInst.CreateTcpReceiveTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.MaxBytesTemp); break;
             case IrInst.CreateTcpCloseTask t: usedTemps.Add(t.SocketTemp); break;
+            case IrInst.CreateTcpListenTask t: usedTemps.Add(t.PortTemp); break;
+            case IrInst.CreateTcpAcceptTask t: usedTemps.Add(t.SocketTemp); break;
             case IrInst.CreateHttpGetTask t: usedTemps.Add(t.UrlTemp); break;
             case IrInst.CreateHttpPostTask t: usedTemps.Add(t.UrlTemp); usedTemps.Add(t.BodyTemp); break;
             case IrInst.CreateTlsConnectTask t: usedTemps.Add(t.HostTemp); usedTemps.Add(t.PortTemp); break;

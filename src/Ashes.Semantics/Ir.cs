@@ -208,6 +208,8 @@ public abstract record IrInst
     public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
     public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
+    public sealed record NetTcpListen(int Target, int PortTemp) : IrInst;
+    public sealed record NetTcpAccept(int Target, int SocketTemp) : IrInst;
 
     // Ashes.Bytes operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
     public sealed record BytesEmpty(int Target) : IrInst;
@@ -553,6 +555,18 @@ public abstract record IrInst
     public sealed record CreateTcpCloseTask(int Target, int SocketTemp) : IrInst;
 
     /// <summary>
+    /// Creates a leaf networking task for TCP listen (bind + listen on a local port).
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpListenTask(int Target, int PortTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP accept (accept one connection from a listener).
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpAcceptTask(int Target, int SocketTemp) : IrInst;
+
+    /// <summary>
     /// Creates a leaf networking task for HTTP GET.
     /// The task is completed by the runtime/task runner rather than a coroutine body.
     /// </summary>
@@ -699,6 +713,10 @@ public static class TaskStructLayout
     public const long StateTcpReceive = -12;
     /// <summary>State index value indicating a leaf TCP close task.</summary>
     public const long StateTcpClose = -13;
+    /// <summary>State index value indicating a leaf TCP listen task.</summary>
+    public const long StateTcpListen = -16;
+    /// <summary>State index value indicating a leaf TCP accept task.</summary>
+    public const long StateTcpAccept = -17;
     /// <summary>State index value indicating a leaf HTTP GET task.</summary>
     public const long StateHttpGet = -14;
     /// <summary>State index value indicating a leaf HTTP POST task.</summary>
