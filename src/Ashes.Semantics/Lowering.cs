@@ -57,6 +57,10 @@ public sealed partial class Lowering
     // StateMachineTransform), not a blocking driver (IrInst.RunTask). Outside any coroutine body an
     // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
     private bool _inCoroutineBody;
+
+    // The `async` intrinsic binding, created once at root-scope setup and re-seeded into every lambda
+    // scope so a function body can itself build a task with `async(E)`.
+    private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
     // Source location tracking for debug info
@@ -414,7 +418,10 @@ public sealed partial class Lowering
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        rootScope["async"] = CreateAsyncTaskBinding();
+        // Create the `async` binding once (it allocates a generalized type var) and reuse the same
+        // instance in every lambda scope, so re-seeding it does not consume a fresh type var per lambda.
+        _asyncBinding = CreateAsyncTaskBinding();
+        rootScope["async"] = _asyncBinding;
         if (_hasAshesIO)
         {
             AddStdIOBindings(rootScope);
@@ -3361,6 +3368,14 @@ public sealed partial class Lowering
 
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        // Re-seed the always-available root-scope intrinsic `async` (like AddStdIOBindings below) so a
+        // function body may itself build a task with `async(E)` — e.g. a `serve`/handler combinator.
+        // Without this, `async` (an unqualified root-scope binding) is invisible inside any lambda body.
+        // Reuse the cached instance so no fresh type var is consumed per lambda.
+        if (_asyncBinding is not null)
+        {
+            scope["async"] = _asyncBinding;
+        }
         if (_hasAshesIO)
         {
             AddStdIOBindings(scope);
