@@ -12,6 +12,7 @@ and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not he
 | [Parallel Worker Overrides](PARALLEL_WORKER_OVERRIDES.md) | Planned | Treat `--parallel-workers` as the executable’s default/hard maximum, and add scoped `Ashes.Parallel.withWorkers` plus `*WithWorkers` stdlib helpers to locally request lower worker caps without changing compilation itself |
 | [Server Support](SERVER_SUPPORT.md) | Planned | Add first-class HTTP server support for native Ashes programs, keeping the API explicit and functional while preserving Ashes’ no-external-runtime model |
 | [Inline Modules](INLINE_MODULES.md) | Planned | Allow compile-time nested modules within a source file for zero-cost namespacing, enabling local organization and seamless promotion from inline to file modules without changing call sites |
+| [Unified Capabilities](UNIFIED_CAPABILITIES.md) | Planned | Rename effects into a broader `capability` model, replacing `uses` with `needs` and adding `provide` for static/type-directed capability satisfaction alongside dynamic `handle` |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ---
