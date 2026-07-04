@@ -693,7 +693,7 @@ public static class ProjectSupport
         return program.Body switch
         {
             Expr.Let letExpr when letExpr.Body is Expr.Var bodyVar && string.Equals(letExpr.Name, bodyVar.Name, StringComparison.Ordinal) => letExpr.Name,
-            Expr.LetRec letRecExpr when letRecExpr.Body is Expr.Var bodyVar && string.Equals(letRecExpr.Name, bodyVar.Name, StringComparison.Ordinal) => letRecExpr.Name,
+            Expr.LetRecursive letRecursiveExpr when letRecursiveExpr.Body is Expr.Var bodyVar && string.Equals(letRecursiveExpr.Name, bodyVar.Name, StringComparison.Ordinal) => letRecursiveExpr.Name,
             Expr.Var varExpr => varExpr.Name,
             _ => null
         };
@@ -942,8 +942,8 @@ public static class ProjectSupport
                 case TopLevelItem.LetDecl letDecl:
                     names.Add(letDecl.Name);
                     break;
-                case TopLevelItem.RecGroup recGroup:
-                    foreach (var (name, _) in recGroup.Bindings)
+                case TopLevelItem.RecursiveGroup recursiveGroup:
+                    foreach (var (name, _) in recursiveGroup.Bindings)
                     {
                         names.Add(name);
                     }
@@ -963,9 +963,9 @@ public static class ProjectSupport
                     names.Add(letExpr.Name);
                     expr = letExpr.Body;
                     break;
-                case Expr.LetRec letRecExpr:
-                    names.Add(letRecExpr.Name);
-                    expr = letRecExpr.Body;
+                case Expr.LetRecursive letRecursiveExpr:
+                    names.Add(letRecursiveExpr.Name);
+                    expr = letRecursiveExpr.Body;
                     break;
                 default:
                     expr = null;
@@ -1360,9 +1360,9 @@ public static class ProjectSupport
 
     /// <summary>
     /// Shapes a module written in the flat top-level declaration form (a sequence of
-    /// <c>let</c> / <c>let rec ... and ...</c> / <c>type</c> / <c>extern</c> declarations followed by
+    /// <c>let</c> / <c>let rec ... and ...</c> / <c>type</c> / <c>external</c> declarations followed by
     /// an optional trailing expression). The export set is exactly the top-level <c>let</c>/recgroup
-    /// names; <c>extern</c> declarations and the trailing expression are dropped. Returns
+    /// names; <c>external</c> declarations and the trailing expression are dropped. Returns
     /// <see langword="false"/> for the legacy nested <c>let ... in</c> pyramid (no top-level items)
     /// or any source the real parser rejects, so the caller falls back to text-based shaping.
     /// </summary>
@@ -1388,7 +1388,7 @@ public static class ProjectSupport
         var typeDeclarations = new StringBuilder();
         var groups = new List<ModuleBindingGroup>();
         // Spans of declarations hoisted out of the entry expression (type decls, which the stitcher
-        // emits up front, and `extern`, which is never part of the body). Removing exactly these from
+        // emits up front, and `external`, which is never part of the body). Removing exactly these from
         // the source leaves the flat `let` declarations and the trailing expression for the entry path.
         var hoistedSpans = new List<(int Start, int End)>();
         var hasFlatBinding = false;
@@ -1431,10 +1431,10 @@ public static class ProjectSupport
                         break;
                     }
 
-                case TopLevelItem.Extern externItem:
+                case TopLevelItem.External externalItem:
                     {
-                        // `extern` is never exported and carries no value the stitcher needs; skip it.
-                        var span = AstSpans.GetOrDefault(externItem.Decl);
+                        // `external` is never exported and carries no value the stitcher needs; skip it.
+                        var span = AstSpans.GetOrDefault(externalItem.Decl);
                         if (span.End <= span.Start || span.End > source.Length)
                         {
                             return false;
@@ -1459,10 +1459,10 @@ public static class ProjectSupport
                         break;
                     }
 
-                case TopLevelItem.RecGroup recGroup:
+                case TopLevelItem.RecursiveGroup recursiveGroup:
                     {
                         var members = new List<ModuleBindingFragment>();
-                        foreach (var (name, value) in recGroup.Bindings)
+                        foreach (var (name, value) in recursiveGroup.Bindings)
                         {
                             if (!TryExtractFlatBindingValue(source, value, ref cursor, out var valueSource))
                             {
@@ -1495,7 +1495,7 @@ public static class ProjectSupport
         // For an imported (non-entry) module the trailing expression is dropped and the stitcher uses
         // the binding groups, so RawExpressionSource is unused. For an entry module it is the program
         // body, so preserve the flat `let` declarations and trailing expression here (with the hoisted
-        // type/extern declarations removed, since those are emitted up front) rather than discarding it.
+        // type/external declarations removed, since those are emitted up front) rather than discarding it.
         shape = new ModuleSourceShape(
             TypeDeclarationsSource: typeDeclarations.ToString(),
             RawExpressionSource: RemoveSpans(source, hoistedSpans).Trim(),
@@ -1508,7 +1508,7 @@ public static class ProjectSupport
 
     /// <summary>
     /// Returns <paramref name="source"/> with the given (already source-ordered, non-overlapping)
-    /// spans removed, preserving everything in between. Used to strip hoisted type/extern declarations
+    /// spans removed, preserving everything in between. Used to strip hoisted type/external declarations
     /// out of the flat entry expression while keeping the flat <c>let</c> declarations and trailing
     /// expression intact.
     /// </summary>
@@ -2008,8 +2008,8 @@ public static class ProjectSupport
                 case TopLevelItem.LetDecl letDecl:
                     Visit(letDecl.Value);
                     break;
-                case TopLevelItem.RecGroup recGroup:
-                    foreach (var binding in recGroup.Bindings)
+                case TopLevelItem.RecursiveGroup recursiveGroup:
+                    foreach (var binding in recursiveGroup.Bindings)
                     {
                         Visit(binding.Value);
                     }
@@ -2122,9 +2122,9 @@ public static class ProjectSupport
                     Visit(letResultExpr.Value);
                     Visit(letResultExpr.Body);
                     break;
-                case Expr.LetRec letRecExpr:
-                    Visit(letRecExpr.Value);
-                    Visit(letRecExpr.Body);
+                case Expr.LetRecursive letRecursiveExpr:
+                    Visit(letRecursiveExpr.Value);
+                    Visit(letRecursiveExpr.Body);
                     break;
                 case Expr.If ifExpr:
                     Visit(ifExpr.Cond);

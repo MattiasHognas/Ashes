@@ -61,7 +61,7 @@ public static class IrOptimizer
     //      bracket instruction in it is a no-op and is removed;
     //  (b) straight-line caller regions: a Save…Restore(+Reclaim) triple with no label, jump,
     //      or potentially-allocating instruction between save and restore is removed.
-    // Anything not on the explicit non-allocating whitelist (indirect calls, externs,
+    // Anything not on the explicit non-allocating whitelist (indirect calls, externals,
     // intrinsics that build values, copy-outs, allocs) keeps its brackets.
 
     private static bool IsNonAllocatingInst(IrInst inst, HashSet<string> nonAllocatingFns) => inst switch
@@ -415,7 +415,7 @@ public static class IrOptimizer
             IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
             IrInst.CallKnown ck => ck with { EnvTemp = R(ck.EnvTemp), ArgTemp = R(ck.ArgTemp) },
             IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
-            IrInst.CallExtern c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
+            IrInst.CallExternal c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
             // ADTs.
             IrInst.SetAdtField sf => sf with { Ptr = R(sf.Ptr), Source = R(sf.Source) },
@@ -1336,7 +1336,7 @@ public static class IrOptimizer
             case IrInst.CallClosure cc: usedTemps.Add(cc.ClosureTemp); usedTemps.Add(cc.ArgTemp); break;
             case IrInst.CallKnown ck: usedTemps.Add(ck.EnvTemp); usedTemps.Add(ck.ArgTemp); break;
             case IrInst.ToCString c: usedTemps.Add(c.StrTemp); break;
-            case IrInst.CallExtern c:
+            case IrInst.CallExternal c:
                 foreach (var argTemp in c.ArgTemps) usedTemps.Add(argTemp);
                 break;
             case IrInst.SetAdtField sf: usedTemps.Add(sf.Ptr); usedTemps.Add(sf.Source); break;

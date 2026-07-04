@@ -98,7 +98,7 @@ public sealed class MutualRecursionTests
             return;
         }
 
-        // The parser only ever emits a multi-binding RecGroup, so build a one-binding group directly
+        // The parser only ever emits a multi-binding RecursiveGroup, so build a one-binding group directly
         // to confirm a degenerate group still type-checks and lowers like an ordinary `let recursive`. The
         // declaration and the trailing call are parsed separately and assembled so the trailing
         // expression is not folded into the recursive function's body.
@@ -108,7 +108,7 @@ public sealed class MutualRecursionTests
         diag.ThrowIfAny();
 
         var letDecl = parsedDecl.Items.OfType<TopLevelItem.LetDecl>().Single();
-        var singletonGroup = new TopLevelItem.RecGroup(new[] { (letDecl.Name, letDecl.Value) });
+        var singletonGroup = new TopLevelItem.RecursiveGroup(new[] { (letDecl.Name, letDecl.Value) });
         var program = new Program(new TopLevelItem[] { singletonGroup }, trailing);
 
         (await RunProgramAsync(program)).ShouldBe("120\n");

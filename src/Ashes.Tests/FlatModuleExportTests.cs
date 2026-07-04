@@ -29,7 +29,7 @@ public sealed class FlatModuleExportTests
     }
 
     [Test]
-    public void Flat_module_drops_trailing_expression_and_excludes_extern()
+    public void Flat_module_drops_trailing_expression_and_excludes_external()
     {
         var dir = WriteModules(
             ("B", "external getpid() -> Int = \"getpid\"\nlet inc = given (x) -> x + 1\ninc(41)\n"),

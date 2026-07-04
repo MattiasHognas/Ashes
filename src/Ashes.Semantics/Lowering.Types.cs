@@ -199,7 +199,7 @@ public sealed partial class Lowering
         }
 
         public sealed record Intrinsic(IntrinsicKind Kind, TypeScheme S) : Binding(S.Body);
-        public sealed record ExternFunction(IrExternFunction Function, TypeRef T) : Binding(T);
+        public sealed record ExternalFunction(IrExternalFunction Function, TypeRef T) : Binding(T);
         public sealed record PreludeValue(PreludeValueKind Kind, TypeScheme S) : Binding(S.Body);
 
         public sealed record Scheme(int Slot, TypeScheme S, TextSpan? Span = null) : Binding(S.Body)

@@ -8,7 +8,7 @@ namespace Ashes.Tests;
 /// Targeted tests to cover previously untested code paths in DocumentService:
 ///  – .Span property accessors on DiagnosticItem / HoverItem / DefinitionItem
 ///  – GetCompletions / GetDefinition inside binary expressions
-///  – ResolveDefinitionInExpr branches: binary, LetResult, LetRec, If, Lambda, Call, Cons
+///  – ResolveDefinitionInExpr branches: binary, LetResult, LetRecursive, If, Lambda, Call, Cons
 ///  – ResolveDefinitionInPattern branches: Cons, Tuple
 ///  – ValidateStandaloneImports unknown Ashes module path
 ///  – GetHover / GetDefinition null return paths

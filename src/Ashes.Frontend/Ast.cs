@@ -43,7 +43,7 @@ public abstract record Expr
         public TypeExpr? TypeAnnotation { get; init; }
     }
     public sealed record LetResult(string Name, Expr Value, Expr Body) : Expr;
-    public sealed record LetRec(string Name, Expr Value, Expr Body) : Expr
+    public sealed record LetRecursive(string Name, Expr Value, Expr Body) : Expr
     {
         /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let rec f x y = ...</c> instead of <c>let rec f = fun (x) -> fun (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
@@ -163,15 +163,15 @@ public abstract record TypeExpr
     public sealed record UnitType : TypeExpr;
 }
 
-public abstract record ExternDecl
+public abstract record ExternalDecl
 {
-    public sealed record OpaqueType(string Name) : ExternDecl;
+    public sealed record OpaqueType(string Name) : ExternalDecl;
 
     public sealed record Function(
         string Name,
         IReadOnlyList<ParsedType> ParameterTypes,
         ParsedType ReturnType,
-        string? SymbolName = null) : ExternDecl;
+        string? SymbolName = null) : ExternalDecl;
 }
 
 /// <summary>
@@ -183,8 +183,8 @@ public abstract record TopLevelItem
     /// <summary>A top-level <c>type</c> declaration.</summary>
     public sealed record Type(TypeDecl Decl) : TopLevelItem;
 
-    /// <summary>A top-level <c>extern</c> declaration.</summary>
-    public sealed record Extern(ExternDecl Decl) : TopLevelItem;
+    /// <summary>A top-level <c>external</c> declaration.</summary>
+    public sealed record External(ExternalDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level <c>effect</c> declaration.</summary>
     public sealed record Effect(EffectDecl Decl) : TopLevelItem;
@@ -207,7 +207,7 @@ public abstract record TopLevelItem
     /// A mutual-recursion group: <c>let rec A = ... and B = ...</c>. Every binding is implicitly
     /// recursive within the group and visible to the others regardless of order.
     /// </summary>
-    public sealed record RecGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem
+    public sealed record RecursiveGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem
     {
         /// <summary>
         /// ML-style sugar parameters per binding, parallel to <see cref="Bindings"/> by index. An
@@ -243,9 +243,9 @@ public sealed record Program
         this.Body = Body!;
     }
 
-    /// <summary>Back-compat constructor: separated type/extern declarations plus a trailing expression.</summary>
-    public Program(IReadOnlyList<TypeDecl> TypeDecls, IReadOnlyList<ExternDecl> ExternDecls, Expr Body)
-        : this(BuildItems(TypeDecls, ExternDecls), Body)
+    /// <summary>Back-compat constructor: separated type/external declarations plus a trailing expression.</summary>
+    public Program(IReadOnlyList<TypeDecl> TypeDecls, IReadOnlyList<ExternalDecl> ExternalDecls, Expr Body)
+        : this(BuildItems(TypeDecls, ExternalDecls), Body)
     {
     }
 
@@ -259,23 +259,23 @@ public sealed record Program
     public IReadOnlyList<TypeDecl> TypeDecls =>
         Items.OfType<TopLevelItem.Type>().Select(item => item.Decl).ToList();
 
-    /// <summary>The <c>extern</c> declarations in source order, derived from <see cref="Items"/>.</summary>
-    public IReadOnlyList<ExternDecl> ExternDecls =>
-        Items.OfType<TopLevelItem.Extern>().Select(item => item.Decl).ToList();
+    /// <summary>The <c>external</c> declarations in source order, derived from <see cref="Items"/>.</summary>
+    public IReadOnlyList<ExternalDecl> ExternalDecls =>
+        Items.OfType<TopLevelItem.External>().Select(item => item.Decl).ToList();
 
     private static IReadOnlyList<TopLevelItem> BuildItems(
         IReadOnlyList<TypeDecl> typeDecls,
-        IReadOnlyList<ExternDecl> externDecls)
+        IReadOnlyList<ExternalDecl> externalDecls)
     {
-        var items = new List<TopLevelItem>(typeDecls.Count + externDecls.Count);
+        var items = new List<TopLevelItem>(typeDecls.Count + externalDecls.Count);
         foreach (var typeDecl in typeDecls)
         {
             items.Add(new TopLevelItem.Type(typeDecl));
         }
 
-        foreach (var externDecl in externDecls)
+        foreach (var externalDecl in externalDecls)
         {
-            items.Add(new TopLevelItem.Extern(externDecl));
+            items.Add(new TopLevelItem.External(externalDecl));
         }
 
         return items;

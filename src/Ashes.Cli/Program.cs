@@ -450,8 +450,8 @@ static bool TryExtractPersistentBinding(string source, out ReplBinding binding)
             binding = new ReplBinding(letExpr.Name, Formatter.Format(letExpr.Value).Trim(), false);
             return true;
 
-        case Expr.LetRec letRecExpr when letRecExpr.Body is Expr.Var recBodyVar && string.Equals(recBodyVar.Name, letRecExpr.Name, StringComparison.Ordinal):
-            binding = new ReplBinding(letRecExpr.Name, Formatter.Format(letRecExpr.Value).Trim(), true);
+        case Expr.LetRecursive letRecursiveExpr when letRecursiveExpr.Body is Expr.Var recursiveBodyVar && string.Equals(recursiveBodyVar.Name, letRecursiveExpr.Name, StringComparison.Ordinal):
+            binding = new ReplBinding(letRecursiveExpr.Name, Formatter.Format(letRecursiveExpr.Value).Trim(), true);
             return true;
 
         default:

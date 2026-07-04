@@ -113,7 +113,7 @@ internal static partial class LlvmCodegen
         return destRef;
     }
 
-    private static LlvmValueHandle EmitCallExtern(
+    private static LlvmValueHandle EmitCallExternal(
         LlvmCodegenState state,
         string symbolName,
         string? libraryName,
@@ -129,10 +129,10 @@ internal static partial class LlvmCodegen
         {
             if (string.IsNullOrWhiteSpace(libraryName))
             {
-                throw new InvalidOperationException($"Windows extern symbol '{symbolName}' requires an explicit DLL name using symbol@library.");
+                throw new InvalidOperationException($"Windows external symbol '{symbolName}' requires an explicit DLL name using symbol@library.");
             }
 
-            LlvmValueHandle import = GetOrAddWindowsExternImport(state, symbolName);
+            LlvmValueHandle import = GetOrAddWindowsExternalImport(state, symbolName);
             function = LlvmApi.BuildLoad2(state.Target.Builder, state.I8Ptr, import, "ffi_import");
         }
         else
@@ -161,16 +161,16 @@ internal static partial class LlvmCodegen
             : result;
     }
 
-    private static LlvmValueHandle GetOrAddWindowsExternImport(LlvmCodegenState state, string symbolName)
+    private static LlvmValueHandle GetOrAddWindowsExternalImport(LlvmCodegenState state, string symbolName)
     {
-        if (state.WindowsExternImports.TryGetValue(symbolName, out LlvmValueHandle import))
+        if (state.WindowsExternalImports.TryGetValue(symbolName, out LlvmValueHandle import))
         {
             return import;
         }
 
         import = LlvmApi.AddGlobal(state.Target.Module, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "__imp_" + symbolName);
         LlvmApi.SetLinkage(import, LlvmLinkage.External);
-        state.WindowsExternImports[symbolName] = import;
+        state.WindowsExternalImports[symbolName] = import;
         return import;
     }
 

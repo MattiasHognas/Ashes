@@ -44,7 +44,7 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
-    public async Task Extern_strlen_program_runs_and_prints_expected_output()
+    public async Task External_strlen_program_runs_and_prints_expected_output()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -59,7 +59,7 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
-    public async Task Extern_unsigned_and_void_program_runs_and_prints_expected_output()
+    public async Task External_unsigned_and_void_program_runs_and_prints_expected_output()
     {
         if (!OperatingSystem.IsLinux())
         {

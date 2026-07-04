@@ -112,9 +112,9 @@ public sealed partial class Lowering
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 
-    private static TextSpan GetSpan(ExternDecl externDecl)
+    private static TextSpan GetSpan(ExternalDecl externalDecl)
     {
-        var span = AstSpans.GetOrDefault(externDecl);
+        var span = AstSpans.GetOrDefault(externalDecl);
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 

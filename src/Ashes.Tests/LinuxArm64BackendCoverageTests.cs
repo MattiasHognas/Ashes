@@ -46,7 +46,7 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
-    public void Linux_arm64_backend_compile_should_support_user_extern_imports()
+    public void Linux_arm64_backend_compile_should_support_user_external_imports()
     {
         var bytes = new LinuxArm64LlvmBackend().Compile(LowerProgram("""
             external strlen(Str) -> Int = "strlen@libc.so.6"
@@ -149,7 +149,7 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_arm64_backend_llvm_should_run_user_extern_imports()
+    public async Task Linux_arm64_backend_llvm_should_run_user_external_imports()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
         {

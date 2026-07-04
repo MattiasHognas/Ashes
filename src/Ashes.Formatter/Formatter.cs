@@ -40,12 +40,12 @@ public static class Formatter
         // trailing expression. Exactly one blank line separates adjacent items, and one blank line
         // separates the last item from the trailing expression. Each writer below ends the item with
         // a single newline; the blank line is the extra '\n' inserted before each subsequent block.
-        // Consecutive `extern` declarations are the one exception: they stay grouped as a block with
+        // Consecutive `external` declarations are the one exception: they stay grouped as a block with
         // no blank line between them (matching established formatting of FFI declaration blocks).
         TopLevelItem? previous = null;
         foreach (var item in program.Items)
         {
-            if (previous is not null && !(previous is TopLevelItem.Extern && item is TopLevelItem.Extern))
+            if (previous is not null && !(previous is TopLevelItem.External && item is TopLevelItem.External))
             {
                 sb.Append('\n');
             }
@@ -173,8 +173,8 @@ public static class Formatter
             case TopLevelItem.Type t:
                 WriteTypeDecl(sb, t.Decl, options);
                 return;
-            case TopLevelItem.Extern e:
-                WriteExternDecl(sb, e.Decl);
+            case TopLevelItem.External e:
+                WriteExternalDecl(sb, e.Decl);
                 return;
             case TopLevelItem.Effect eff:
                 WriteEffectDecl(sb, eff.Decl, options);
@@ -182,8 +182,8 @@ public static class Formatter
             case TopLevelItem.LetDecl let:
                 WriteLetDecl(sb, let, preferPipelines, options);
                 return;
-            case TopLevelItem.RecGroup group:
-                WriteRecGroup(sb, group, preferPipelines, options);
+            case TopLevelItem.RecursiveGroup group:
+                WriteRecursiveGroup(sb, group, preferPipelines, options);
                 return;
         }
     }
@@ -220,7 +220,7 @@ public static class Formatter
         WriteTopLevelValue(sb, value, preferPipelines, options);
     }
 
-    private static void WriteRecGroup(StringBuilder sb, TopLevelItem.RecGroup group, bool preferPipelines, FormattingOptions options)
+    private static void WriteRecursiveGroup(StringBuilder sb, TopLevelItem.RecursiveGroup group, bool preferPipelines, FormattingOptions options)
     {
         // `let rec NAME0 = <value0>` followed by one `and NAMEi = <valuei>` line per remaining
         // binding, each at the same indentation column as `let`. The whole group is one block with
@@ -271,7 +271,7 @@ public static class Formatter
         // body) rather than this flat declaration's value. Parenthesize it — the higher parent
         // precedence makes the let-writer wrap itself in `(...)` — so the round-trip stays a flat
         // declaration and formatting is idempotent.
-        var parentPrec = value is Expr.Let or Expr.LetResult or Expr.LetRec ? PrecCall : 0;
+        var parentPrec = value is Expr.Let or Expr.LetResult or Expr.LetRecursive ? PrecCall : 0;
         WriteExpr(sb, value, options.IndentSize, parentPrec, preferPipelines, options);
         if (!EndsWithNewLine(sb, "\n"))
         {
@@ -401,16 +401,16 @@ public static class Formatter
         sb.Append('}');
     }
 
-    private static void WriteExternDecl(StringBuilder sb, ExternDecl decl)
+    private static void WriteExternalDecl(StringBuilder sb, ExternalDecl decl)
     {
         switch (decl)
         {
-            case ExternDecl.OpaqueType opaqueType:
+            case ExternalDecl.OpaqueType opaqueType:
                 sb.Append("external type ");
                 sb.Append(opaqueType.Name);
                 sb.Append('\n');
                 break;
-            case ExternDecl.Function func:
+            case ExternalDecl.Function func:
                 sb.Append("external ");
                 sb.Append(func.Name);
                 sb.Append('(');
@@ -526,8 +526,8 @@ public static class Formatter
                 WriteLetResult(sb, l, indent, parentPrec, preferPipelines, options);
                 return;
 
-            case Expr.LetRec l:
-                WriteLetRec(sb, l, indent, parentPrec, preferPipelines, options);
+            case Expr.LetRecursive l:
+                WriteLetRecursive(sb, l, indent, parentPrec, preferPipelines, options);
                 return;
 
             case Expr.If i:
@@ -627,7 +627,7 @@ public static class Formatter
         }
     }
 
-    private static void WriteLetRec(StringBuilder sb, Expr.LetRec l, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    private static void WriteLetRecursive(StringBuilder sb, Expr.LetRecursive l, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
     {
         var needsParens = parentPrec > PrecLetIfLambda;
         if (needsParens)
@@ -639,10 +639,10 @@ public static class Formatter
         sb.Append(l.Name);
 
         // Type annotation: let rec x : Type = ...
-        if (l.TypeAnnotation is { } letRecTypeAnnotation)
+        if (l.TypeAnnotation is { } letRecursiveTypeAnnotation)
         {
             sb.Append(" : ");
-            WriteTypeExpr(sb, letRecTypeAnnotation);
+            WriteTypeExpr(sb, letRecursiveTypeAnnotation);
         }
 
         // ML-style sugar: let rec f x y = <value>
@@ -1390,7 +1390,7 @@ public static class Formatter
                     }
 
                     // Function position: if it's a lambda/let/if/add, parenthesize
-                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If
+                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
                         or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
                         or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
                         or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
@@ -1613,7 +1613,7 @@ public static class Formatter
 
     private static bool CanBePipelineFunction(Expr expr)
     {
-        return expr is not (Expr.Let or Expr.LetResult or Expr.LetRec or Expr.If or Expr.Match or Expr.Handle);
+        return expr is not (Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If or Expr.Match or Expr.Handle);
     }
 
     private static string EscapeString(string s)

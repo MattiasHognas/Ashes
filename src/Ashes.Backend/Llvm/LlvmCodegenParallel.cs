@@ -79,7 +79,7 @@ internal static partial class LlvmCodegen
     // ParallelDescWorkerArenaEnd, exited/ctid word at ParallelDescExited) so EmitCloneWorker's
     // hardcoded ctid offset applies to both layouts; offset 0 holds the queue-region back-pointer.
     private const int ParallelQueueRecDesc = 0;
-    private const int ParallelQueueRecBytes = 64;
+    private const int ParallelQueueRecordBytes = 64;
 
     private const string ParallelQueueWorkerFnName = "__ashes_parallel_queue_worker";
     private const string ParallelQueueDrainFnName = "__ashes_parallel_queue_drain";
@@ -1118,10 +1118,10 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildMul(builder, count, eight, "parq_elem_bytes"),
             LlvmApi.BuildMul(builder, totalItems, LlvmApi.ConstInt(i64, 16, 0), "parq_tree_bytes"),
             "parq_payload_bytes");
-        LlvmValueHandle recBytes = LlvmApi.BuildMul(builder, maxWorkers, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_rec_bytes");
+        LlvmValueHandle recordBytes = LlvmApi.BuildMul(builder, maxWorkers, LlvmApi.ConstInt(i64, ParallelQueueRecordBytes, 0), "parq_rec_bytes");
         LlvmValueHandle regionBytes = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildAdd(builder, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), payloadBytes, "parq_header_payload"),
-            recBytes, "parq_region_bytes");
+            recordBytes, "parq_region_bytes");
         LlvmValueHandle desc = EmitAllocateOsMemory(state, regionBytes, "parq_region");
         // mmap/VirtualAlloc zero-fill, so the two claim counters, flags, and worker count start 0.
         StoreMemory(state, desc, ParallelQueueCount, count, "parq_desc_n");
@@ -1157,7 +1157,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, fillDone);
 
         // ── Spawn workers (each claims a slot; stop at the cap or maxWorkers) ────────────────
-        LlvmValueHandle recsBase = LlvmApi.BuildAdd(builder, elemsBase, payloadBytes, "parq_recs_base");
+        LlvmValueHandle recordsBase = LlvmApi.BuildAdd(builder, elemsBase, payloadBytes, "parq_recs_base");
         LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
             LlvmApi.GetNamedGlobal(target.Module, ParallelActiveCounterName), i64, "parq_counter_addr");
         LlvmApi.BuildStore(builder, zero, spawnedSlot);
@@ -1183,9 +1183,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, spawnDone);
 
         LlvmApi.PositionBuilderAtEnd(builder, spawnBody);
-        LlvmValueHandle recAddr = LlvmApi.BuildAdd(builder, recsBase,
-            LlvmApi.BuildMul(builder, spawned, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_rec_off"), "parq_rec");
-        StoreMemory(state, recAddr, ParallelQueueRecDesc, desc, "parq_rec_desc");
+        LlvmValueHandle recordAddr = LlvmApi.BuildAdd(builder, recordsBase,
+            LlvmApi.BuildMul(builder, spawned, LlvmApi.ConstInt(i64, ParallelQueueRecordBytes, 0), "parq_rec_off"), "parq_rec");
+        StoreMemory(state, recordAddr, ParallelQueueRecDesc, desc, "parq_rec_desc");
         // The worker's per-thread control region, exactly as in EmitParallelFork: on x64/win a TCB
         // pre-wired to a fresh arena chunk; on arm64 a zeroed TLS block the worker initializes itself.
         LlvmValueHandle workerTcb = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)MainTcbSizeBytes, 0), "parq_tcb");
@@ -1200,15 +1200,15 @@ internal static partial class LlvmCodegen
             StoreMemory(state, chunk, 0, zero, "parq_chunk_prevbase");
         }
 
-        StoreMemory(state, recAddr, ParallelDescWorkerTcb, workerTcb, "parq_rec_tcb");
+        StoreMemory(state, recordAddr, ParallelDescWorkerTcb, workerTcb, "parq_rec_tcb");
         if (IsLinuxFlavor(flavor))
         {
             long parallelStackBytes = ParallelStackBytesFor(state);
             LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack");
-            StoreMemory(state, recAddr, ParallelDescWorkerStack, stack, "parq_rec_stack");
-            StoreMemory(state, recAddr, ParallelDescExited, LlvmApi.ConstInt(i64, 1, 0), "parq_rec_exited1");
+            StoreMemory(state, recordAddr, ParallelDescWorkerStack, stack, "parq_rec_stack");
+            StoreMemory(state, recordAddr, ParallelDescExited, LlvmApi.ConstInt(i64, 1, 0), "parq_rec_exited1");
             LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack_top");
-            EmitCloneWorker(state, recAddr, stackTop, ParallelQueueWorkerFnName);
+            EmitCloneWorker(state, recordAddr, stackTop, ParallelQueueWorkerFnName);
         }
         else
         {
@@ -1216,8 +1216,8 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle createThreadType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I8Ptr, state.I8Ptr, state.I64, state.I64]);
             LlvmValueHandle stackSize = LlvmApi.ConstInt(state.I64, (ulong)(target.ParallelWorkerStackBytes ?? 0), 0);
             LlvmValueHandle handle = EmitWindowsImportCall(state, "__imp_CreateThread", createThreadType,
-                [zero, stackSize, workerFn, LlvmApi.BuildIntToPtr(builder, recAddr, state.I8Ptr, "parq_rec_ptr"), zero, zero], "parq_create_thread");
-            StoreMemory(state, recAddr, ParallelDescWorkerStack, handle, "parq_rec_handle");
+                [zero, stackSize, workerFn, LlvmApi.BuildIntToPtr(builder, recordAddr, state.I8Ptr, "parq_rec_ptr"), zero, zero], "parq_create_thread");
+            StoreMemory(state, recordAddr, ParallelDescWorkerStack, handle, "parq_rec_handle");
         }
 
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, spawned, LlvmApi.ConstInt(i64, 1, 0), "parq_spawned_next"), spawnedSlot);
@@ -1292,7 +1292,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle payloadBytes = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildMul(builder, count, LlvmApi.ConstInt(i64, 8, 0), "parq_cleanup_elem_bytes"),
             LlvmApi.BuildMul(builder, totalItems, LlvmApi.ConstInt(i64, 16, 0), "parq_cleanup_tree_bytes"), "parq_cleanup_payload_bytes");
-        LlvmValueHandle recsBase = LlvmApi.BuildAdd(builder,
+        LlvmValueHandle recordsBase = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildAdd(builder, desc, LlvmApi.ConstInt(i64, ParallelQueueHeaderBytes, 0), "parq_cleanup_payload"),
             payloadBytes, "parq_cleanup_recs");
         LlvmValueHandle wSlot = LlvmApi.BuildAlloca(builder, i64, "parq_cleanup_w");
@@ -1309,9 +1309,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasMore, bodyBlock, regionBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-        LlvmValueHandle recAddr = LlvmApi.BuildAdd(builder, recsBase,
-            LlvmApi.BuildMul(builder, w, LlvmApi.ConstInt(i64, ParallelQueueRecBytes, 0), "parq_cleanup_rec_off"), "parq_cleanup_rec");
-        LlvmValueHandle workerTcb = LoadMemory(state, recAddr, ParallelDescWorkerTcb, "parq_cleanup_tcb");
+        LlvmValueHandle recordAddr = LlvmApi.BuildAdd(builder, recordsBase,
+            LlvmApi.BuildMul(builder, w, LlvmApi.ConstInt(i64, ParallelQueueRecordBytes, 0), "parq_cleanup_rec_off"), "parq_cleanup_rec");
+        LlvmValueHandle workerTcb = LoadMemory(state, recordAddr, ParallelDescWorkerTcb, "parq_cleanup_tcb");
         LlvmValueHandle arenaEnd;
         if (IsLinuxFlavor(flavor))
         {
@@ -1321,11 +1321,11 @@ internal static partial class LlvmCodegen
             var exitCheck = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exit_check");
             var exitWait = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exit_wait");
             var exitDone = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "parq_cleanup_exited");
-            LlvmValueHandle exitedAddr = LlvmApi.BuildAdd(builder, recAddr, LlvmApi.ConstInt(i64, ParallelDescExited, 0), "parq_cleanup_exited_addr");
+            LlvmValueHandle exitedAddr = LlvmApi.BuildAdd(builder, recordAddr, LlvmApi.ConstInt(i64, ParallelDescExited, 0), "parq_cleanup_exited_addr");
             LlvmApi.BuildBr(builder, exitCheck);
 
             LlvmApi.PositionBuilderAtEnd(builder, exitCheck);
-            LlvmValueHandle exited = LoadMemory(state, recAddr, ParallelDescExited, "parq_cleanup_exited_val");
+            LlvmValueHandle exited = LoadMemory(state, recordAddr, ParallelDescExited, "parq_cleanup_exited_val");
             LlvmValueHandle stillRunning = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, exited, zero, "parq_cleanup_still_running");
             LlvmApi.BuildCondBr(builder, stillRunning, exitWait, exitDone);
 
@@ -1341,14 +1341,14 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildBr(builder, exitCheck);
 
             LlvmApi.PositionBuilderAtEnd(builder, exitDone);
-            EmitFreeOsMemory(state, LoadMemory(state, recAddr, ParallelDescWorkerStack, "parq_cleanup_stack"), ParallelStackBytesFor(state), "parq_cleanup_stack");
+            EmitFreeOsMemory(state, LoadMemory(state, recordAddr, ParallelDescWorkerStack, "parq_cleanup_stack"), ParallelStackBytesFor(state), "parq_cleanup_stack");
             arenaEnd = flavor == LlvmCodegenFlavor.LinuxArm64
-                ? LoadMemory(state, recAddr, ParallelDescWorkerArenaEnd, "parq_cleanup_arena_end")
+                ? LoadMemory(state, recordAddr, ParallelDescWorkerArenaEnd, "parq_cleanup_arena_end")
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
         }
         else
         {
-            LlvmValueHandle handle = LoadMemory(state, recAddr, ParallelDescWorkerStack, "parq_cleanup_handle");
+            LlvmValueHandle handle = LoadMemory(state, recordAddr, ParallelDescWorkerStack, "parq_cleanup_handle");
             LlvmTypeHandle waitType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
             EmitWindowsImportCall(state, "__imp_WaitForSingleObject", waitType,
                 [handle, LlvmApi.ConstInt(state.I32, 0xFFFFFFFFUL, 0)], "parq_cleanup_wait");

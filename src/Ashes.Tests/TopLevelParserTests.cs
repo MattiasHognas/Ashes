@@ -15,7 +15,7 @@ public sealed class TopLevelParserTests
     }
 
     [Test]
-    public void ParseProgram_should_parse_interleaved_type_let_and_extern_declarations_in_order()
+    public void ParseProgram_should_parse_interleaved_type_let_and_external_declarations_in_order()
     {
         var program = ParseProgram("type Foo = | Bar\nlet x = 1\nexternal foo() -> Int\n0");
 
@@ -29,8 +29,8 @@ public sealed class TopLevelParserTests
         letItem.IsRecursive.ShouldBeFalse();
         letItem.Value.ShouldBe(new Expr.IntLit(1));
 
-        var externItem = program.Items[2].ShouldBeOfType<TopLevelItem.Extern>();
-        externItem.Decl.ShouldBeOfType<ExternDecl.Function>().Name.ShouldBe("foo");
+        var externalItem = program.Items[2].ShouldBeOfType<TopLevelItem.External>();
+        externalItem.Decl.ShouldBeOfType<ExternalDecl.Function>().Name.ShouldBe("foo");
 
         program.Body.ShouldBe(new Expr.IntLit(0));
     }
@@ -270,7 +270,7 @@ public sealed class TopLevelParserTests
 
         var fItem = program.Items[0].ShouldBeOfType<TopLevelItem.LetDecl>();
         fItem.Name.ShouldBe("f");
-        fItem.Value.ShouldBeOfType<Expr.LetRec>().Name.ShouldBe("go");
+        fItem.Value.ShouldBeOfType<Expr.LetRecursive>().Name.ShouldBe("go");
 
         var gItem = program.Items[1].ShouldBeOfType<TopLevelItem.LetDecl>();
         gItem.Name.ShouldBe("g");
@@ -291,7 +291,7 @@ public sealed class TopLevelParserTests
 
         var fItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
         fItem.Name.ShouldBe("f");
-        fItem.Value.ShouldBeOfType<Expr.LetRec>().Name.ShouldBe("go");
+        fItem.Value.ShouldBeOfType<Expr.LetRecursive>().Name.ShouldBe("go");
 
         program.Body.ShouldNotBeNull();
     }
@@ -311,7 +311,7 @@ public sealed class TopLevelParserTests
     {
         var program = ParseProgram("let recursive a = b\nand b = a");
 
-        var group = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.RecGroup>();
+        var group = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.RecursiveGroup>();
         group.Bindings.Count.ShouldBe(2);
         group.Bindings[0].Name.ShouldBe("a");
         group.Bindings[0].Value.ShouldBe(new Expr.Var("b"));

@@ -557,8 +557,8 @@ public static class BuiltinRegistry
                 case TopLevelItem.LetDecl letDecl:
                     exports.Add(letDecl.Name);
                     break;
-                case TopLevelItem.RecGroup recGroup:
-                    foreach (var (name, _) in recGroup.Bindings)
+                case TopLevelItem.RecursiveGroup recursiveGroup:
+                    foreach (var (name, _) in recursiveGroup.Bindings)
                     {
                         exports.Add(name);
                     }
@@ -581,9 +581,9 @@ public static class BuiltinRegistry
                     exports.Add(letExpr.Name);
                     expr = letExpr.Body;
                     break;
-                case Expr.LetRec letRecExpr:
-                    exports.Add(letRecExpr.Name);
-                    expr = letRecExpr.Body;
+                case Expr.LetRecursive letRecursiveExpr:
+                    exports.Add(letRecursiveExpr.Name);
+                    expr = letRecursiveExpr.Body;
                     break;
                 default:
                     expr = null;

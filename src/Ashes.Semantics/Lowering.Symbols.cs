@@ -36,45 +36,45 @@ public sealed partial class Lowering
     /// <c>TypeName { field1 = e1, field2 = e2 }</c>.
     /// Field values are reordered to match the declared field order.
     /// </summary>
-    private (int, TypeRef) LowerRecordLit(Expr.RecordLit recLit)
+    private (int, TypeRef) LowerRecordLit(Expr.RecordLit recordLit)
     {
-        if (!_constructorSymbols.TryGetValue(recLit.TypeName, out var ctor))
+        if (!_constructorSymbols.TryGetValue(recordLit.TypeName, out var ctor))
         {
-            if (!_typeSymbols.TryGetValue(recLit.TypeName, out var typeSym))
+            if (!_typeSymbols.TryGetValue(recordLit.TypeName, out var typeSym))
             {
-                ReportDiagnostic(GetSpan(recLit), $"Unknown record type '{recLit.TypeName}'.");
+                ReportDiagnostic(GetSpan(recordLit), $"Unknown record type '{recordLit.TypeName}'.");
                 return ReturnNeverWithDummyTemp();
             }
 
             // Type exists but no matching constructor — not a record type
-            ReportDiagnostic(GetSpan(recLit), $"Type '{recLit.TypeName}' is not a record type.");
+            ReportDiagnostic(GetSpan(recordLit), $"Type '{recordLit.TypeName}' is not a record type.");
             return ReturnNeverWithDummyTemp();
         }
 
         var fieldNames = ctor.DeclaringSyntax.FieldNames;
         if (fieldNames.Count == 0)
         {
-            ReportDiagnostic(GetSpan(recLit), $"Type '{recLit.TypeName}' is not a record type.");
+            ReportDiagnostic(GetSpan(recordLit), $"Type '{recordLit.TypeName}' is not a record type.");
             return ReturnNeverWithDummyTemp();
         }
 
-        if (recLit.Fields.Count == 0 && ctor.Arity > 0)
+        if (recordLit.Fields.Count == 0 && ctor.Arity > 0)
         {
-            ReportDiagnostic(GetSpan(recLit), $"Record literal for '{recLit.TypeName}' must provide all {ctor.Arity} field(s).");
+            ReportDiagnostic(GetSpan(recordLit), $"Record literal for '{recordLit.TypeName}' must provide all {ctor.Arity} field(s).");
             return ReturnNeverWithDummyTemp();
         }
 
         // Validate that all provided fields exist, and that all required fields are present
         var providedByName = new Dictionary<string, Expr>(StringComparer.Ordinal);
-        foreach (var (name, value) in recLit.Fields)
+        foreach (var (name, value) in recordLit.Fields)
         {
             if (!fieldNames.Contains(name, StringComparer.Ordinal))
             {
-                ReportDiagnostic(GetSpan(recLit), $"Record type '{recLit.TypeName}' has no field '{name}'.");
+                ReportDiagnostic(GetSpan(recordLit), $"Record type '{recordLit.TypeName}' has no field '{name}'.");
             }
             else if (providedByName.ContainsKey(name))
             {
-                ReportDiagnostic(GetSpan(recLit), $"Field '{name}' is provided more than once in record literal for '{recLit.TypeName}'.");
+                ReportDiagnostic(GetSpan(recordLit), $"Field '{name}' is provided more than once in record literal for '{recordLit.TypeName}'.");
             }
             else
             {
@@ -86,7 +86,7 @@ public sealed partial class Lowering
         {
             if (!providedByName.ContainsKey(fn))
             {
-                ReportDiagnostic(GetSpan(recLit), $"Missing field '{fn}' in record literal for '{recLit.TypeName}'.");
+                ReportDiagnostic(GetSpan(recordLit), $"Missing field '{fn}' in record literal for '{recordLit.TypeName}'.");
                 return ReturnNeverWithDummyTemp();
             }
         }
@@ -101,21 +101,21 @@ public sealed partial class Lowering
     /// <c>{ target with field1 = e1, field2 = e2 }</c>.
     /// Produces a fresh ADT with unchanged fields copied and specified fields replaced.
     /// </summary>
-    private (int, TypeRef) LowerRecordUpdate(Expr.RecordUpdate recUpdate)
+    private (int, TypeRef) LowerRecordUpdate(Expr.RecordUpdate recordUpdate)
     {
-        var (targetTemp, targetType) = LowerExpr(recUpdate.Target);
+        var (targetTemp, targetType) = LowerExpr(recordUpdate.Target);
         var prunedTarget = Prune(targetType);
 
         if (prunedTarget is not TypeRef.TNamedType namedType)
         {
-            ReportDiagnostic(GetSpan(recUpdate), $"Record update requires a record type, got {Pretty(prunedTarget)}.");
+            ReportDiagnostic(GetSpan(recordUpdate), $"Record update requires a record type, got {Pretty(prunedTarget)}.");
             return ReturnNeverWithDummyTemp();
         }
 
         var typeSymbol = namedType.Symbol;
         if (typeSymbol.Constructors.Count != 1 || typeSymbol.Constructors[0].DeclaringSyntax.FieldNames.Count == 0)
         {
-            ReportDiagnostic(GetSpan(recUpdate), $"Type '{typeSymbol.Name}' is not a record type and cannot be updated with '{{ with }}'.");
+            ReportDiagnostic(GetSpan(recordUpdate), $"Type '{typeSymbol.Name}' is not a record type and cannot be updated with '{{ with }}'.");
             return ReturnNeverWithDummyTemp();
         }
 
@@ -124,17 +124,17 @@ public sealed partial class Lowering
 
         // Validate update fields
         var updateByName = new Dictionary<string, Expr>(StringComparer.Ordinal);
-        foreach (var (name, value) in recUpdate.Updates)
+        foreach (var (name, value) in recordUpdate.Updates)
         {
             if (!fieldNames.Contains(name, StringComparer.Ordinal))
             {
-                ReportDiagnostic(GetSpan(recUpdate), $"Record type '{typeSymbol.Name}' has no field '{name}'.");
+                ReportDiagnostic(GetSpan(recordUpdate), $"Record type '{typeSymbol.Name}' has no field '{name}'.");
                 return ReturnNeverWithDummyTemp();
             }
 
             if (updateByName.ContainsKey(name))
             {
-                ReportDiagnostic(GetSpan(recUpdate), $"Field '{name}' is updated more than once in record update for '{typeSymbol.Name}'.");
+                ReportDiagnostic(GetSpan(recordUpdate), $"Field '{name}' is updated more than once in record update for '{typeSymbol.Name}'.");
             }
             else
             {
@@ -260,20 +260,20 @@ public sealed partial class Lowering
         }
     }
 
-    private void RegisterExternDeclarations(IReadOnlyList<ExternDecl> externDecls)
+    private void RegisterExternalDeclarations(IReadOnlyList<ExternalDecl> externalDecls)
     {
-        foreach (var opaqueType in externDecls.OfType<ExternDecl.OpaqueType>())
+        foreach (var opaqueType in externalDecls.OfType<ExternalDecl.OpaqueType>())
         {
-            if (!_externOpaqueTypes.Add(opaqueType.Name))
+            if (!_externalOpaqueTypes.Add(opaqueType.Name))
             {
                 ReportDiagnostic(GetSpan(opaqueType), $"Duplicate external type '{opaqueType.Name}'.");
             }
         }
 
-        foreach (var function in externDecls.OfType<ExternDecl.Function>())
+        foreach (var function in externalDecls.OfType<ExternalDecl.Function>())
         {
-            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternParsedType(function, t, allowVoid: false)).ToList();
-            var returnType = ResolveExternParsedType(function, function.ReturnType, allowVoid: true);
+            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternalParsedType(function, t, allowVoid: false)).ToList();
+            var returnType = ResolveExternalParsedType(function, function.ReturnType, allowVoid: true);
             if (parameterTypes.Any(t => t is null) || returnType is null)
             {
                 continue;
@@ -290,61 +290,61 @@ public sealed partial class Lowering
                 symbolName = symbolName[..atIndex];
             }
 
-            var irFunction = new IrExternFunction(
+            var irFunction = new IrExternalFunction(
                 function.Name,
                 symbolName,
                 resolvedParameterTypes.Select(t => t.FfiType).ToList(),
                 returnType.FfiType,
                 string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
-            _externFunctions.Add(irFunction);
+            _externalFunctions.Add(irFunction);
 
             var type = BuildFunctionType(resolvedParameterTypes.Select(t => t.SourceType).ToList(), returnType.SourceType);
-            _scopes.Peek()[function.Name] = new Binding.ExternFunction(irFunction, type);
+            _scopes.Peek()[function.Name] = new Binding.ExternalFunction(irFunction, type);
         }
     }
 
-    private ResolvedExternType? ResolveExternParsedType(ExternDecl externDecl, ParsedType parsedType, bool allowVoid)
+    private ResolvedExternalType? ResolveExternalParsedType(ExternalDecl externalDecl, ParsedType parsedType, bool allowVoid)
     {
         if (parsedType is ParsedType.Pointer pointer)
         {
-            var pointee = ResolveExternParsedType(externDecl, pointer.Pointee, allowVoid: false);
+            var pointee = ResolveExternalParsedType(externalDecl, pointer.Pointee, allowVoid: false);
             return pointee is null
                 ? null
-                : new ResolvedExternType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
+                : new ResolvedExternalType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
         }
 
         if (parsedType is not ParsedType.Named named)
         {
-            ReportDiagnostic(GetSpan(externDecl), "Unsupported external type syntax.");
+            ReportDiagnostic(GetSpan(externalDecl), "Unsupported external type syntax.");
             return null;
         }
 
         return named.Name switch
         {
-            "Int" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.Int()),
-            "u8" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(8)),
-            "u16" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(16)),
-            "u32" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(32)),
-            "u64" => new ResolvedExternType(new TypeRef.TInt(), new FfiType.UInt(64)),
-            "Float" => new ResolvedExternType(new TypeRef.TFloat(), new FfiType.Float()),
-            "Bool" => new ResolvedExternType(new TypeRef.TBool(), new FfiType.Bool()),
-            "Str" => new ResolvedExternType(new TypeRef.TStr(), new FfiType.Str()),
-            "void" when allowVoid => new ResolvedExternType(_resolvedTypes["Unit"], new FfiType.Void()),
-            "void" => ReportVoidParameterExternType(externDecl),
-            _ when _externOpaqueTypes.Contains(named.Name) => new ResolvedExternType(new TypeRef.TOpaque(named.Name), new FfiType.Opaque(named.Name)),
-            _ => ReportUnsupportedExternType(externDecl, named.Name)
+            "Int" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.Int()),
+            "u8" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(8)),
+            "u16" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(16)),
+            "u32" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(32)),
+            "u64" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(64)),
+            "Float" => new ResolvedExternalType(new TypeRef.TFloat(), new FfiType.Float()),
+            "Bool" => new ResolvedExternalType(new TypeRef.TBool(), new FfiType.Bool()),
+            "Str" => new ResolvedExternalType(new TypeRef.TStr(), new FfiType.Str()),
+            "void" when allowVoid => new ResolvedExternalType(_resolvedTypes["Unit"], new FfiType.Void()),
+            "void" => ReportVoidParameterExternalType(externalDecl),
+            _ when _externalOpaqueTypes.Contains(named.Name) => new ResolvedExternalType(new TypeRef.TOpaque(named.Name), new FfiType.Opaque(named.Name)),
+            _ => ReportUnsupportedExternalType(externalDecl, named.Name)
         };
     }
 
-    private ResolvedExternType? ReportUnsupportedExternType(ExternDecl externDecl, string name)
+    private ResolvedExternalType? ReportUnsupportedExternalType(ExternalDecl externalDecl, string name)
     {
-        ReportDiagnostic(GetSpan(externDecl), $"Type '{name}' is not supported in external declarations.");
+        ReportDiagnostic(GetSpan(externalDecl), $"Type '{name}' is not supported in external declarations.");
         return null;
     }
 
-    private ResolvedExternType? ReportVoidParameterExternType(ExternDecl externDecl)
+    private ResolvedExternalType? ReportVoidParameterExternalType(ExternalDecl externalDecl)
     {
-        ReportDiagnostic(GetSpan(externDecl), "Type 'void' is only supported as an external return type.");
+        ReportDiagnostic(GetSpan(externalDecl), "Type 'void' is only supported as an external return type.");
         return null;
     }
 
@@ -359,7 +359,7 @@ public sealed partial class Lowering
         return result;
     }
 
-    private sealed record ResolvedExternType(TypeRef SourceType, FfiType FfiType);
+    private sealed record ResolvedExternalType(TypeRef SourceType, FfiType FfiType);
 
     private void RegisterBuiltinSymbols()
     {

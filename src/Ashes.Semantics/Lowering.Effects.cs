@@ -1026,19 +1026,19 @@ public sealed partial class Lowering
                 rewritten = CopySpan(let, let with { Body = letBody });
                 return true;
 
-            case Expr.LetRec letRec:
-                if (ExprReferencesName(letRec.Value, "resume", shadowed: false))
+            case Expr.LetRecursive letRecursive:
+                if (ExprReferencesName(letRecursive.Value, "resume", shadowed: false))
                 {
                     error = UnsupportedResumePosition;
                     return false;
                 }
 
-                if (!TryRewriteResume(letRec.Body, handleResultType, out var letRecBody, out error))
+                if (!TryRewriteResume(letRecursive.Body, handleResultType, out var letRecursiveBody, out error))
                 {
                     return false;
                 }
 
-                rewritten = CopySpan(letRec, letRec with { Body = letRecBody });
+                rewritten = CopySpan(letRecursive, letRecursive with { Body = letRecursiveBody });
                 return true;
 
             case Expr.If iff:

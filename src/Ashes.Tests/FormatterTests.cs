@@ -311,7 +311,7 @@ public sealed class FormatterTests
     public void Format_should_write_letrec()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
-            new Expr.LetRec(
+            new Expr.LetRecursive(
                 "loop",
                 new Expr.Lambda("i", new Expr.Var("i")),
                 new Expr.Var("loop")));
@@ -566,7 +566,7 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_round_trip_extern_function_declaration()
+    public void Format_should_round_trip_external_function_declaration()
     {
         const string source = "external strlen(Str) -> Int\nstrlen(\"abc\")\n";
 
@@ -580,7 +580,7 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_round_trip_extern_function_with_symbol_name()
+    public void Format_should_round_trip_external_function_with_symbol_name()
     {
         const string source = "external getpid() -> Int = \"getpid\"\ngetpid()\n";
 
@@ -590,7 +590,7 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_round_trip_extern_opaque_type_and_functions()
+    public void Format_should_round_trip_external_opaque_type_and_functions()
     {
         const string source = "external type Handle\nexternal makeHandle(Int) -> Handle\nexternal disposeHandle(Handle) -> Int\nmakeHandle(42)\n";
 
@@ -604,7 +604,7 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_round_trip_nested_extern_pointer_types()
+    public void Format_should_round_trip_nested_external_pointer_types()
     {
         const string source = "external type Handle\nexternal fill(**u8) -> *Handle\n0\n";
 

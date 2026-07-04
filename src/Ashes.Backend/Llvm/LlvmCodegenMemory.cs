@@ -341,7 +341,7 @@ internal static partial class LlvmCodegen
     //   * Static executable (pure compute / parallelism): no loader runs, so the kernel leaves
     //     TPIDR_EL0 zero. We point it at a zeroed BSS block that backs the arena — MainTcbSizeBytes
     //     (512) easily covers the 16-byte reserve + the six i64 cursors.
-    //   * Dynamic executable (networking dlopen's rustls; user externs): the loader already set up
+    //   * Dynamic executable (networking dlopen's rustls; user externals): the loader already set up
     //     TPIDR_EL0 and the static-TLS block (reserving this image's PT_TLS at the same TPREL the
     //     linker baked in), and its DTV backs the dlopen'd module's dynamic TLS. We must NOT clobber
     //     it — doing so breaks rustls/libc thread-local access.

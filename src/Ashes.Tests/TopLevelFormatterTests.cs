@@ -60,17 +60,17 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
-    public void Let_declaration_and_a_following_extern_are_separated_by_one_blank_line()
+    public void Let_declaration_and_a_following_external_are_separated_by_one_blank_line()
     {
         // `external` is a top-level declaration like any other: a preceding `let` is separated from it
-        // by exactly one blank line (the grouping exception below applies only between two externs).
+        // by exactly one blank line (the grouping exception below applies only between two externals).
         var formatted = Format("let f = 1\nexternal strlen(Str) -> Int\nf\n");
 
         formatted.ShouldBe("let f = 1\n\nexternal strlen(Str) -> Int\n\nf\n");
     }
 
     [Test]
-    public void Consecutive_extern_declarations_stay_grouped_as_a_block()
+    public void Consecutive_external_declarations_stay_grouped_as_a_block()
     {
         // FFI declaration blocks keep adjacent `external` lines together with no blank line between
         // them, separated from the trailing expression by one blank line (matches FormatterTests).
@@ -104,7 +104,7 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
-    public void Rec_group_formats_as_a_single_block_with_each_and_at_let_indentation()
+    public void Recursive_group_formats_as_a_single_block_with_each_and_at_let_indentation()
     {
         var formatted = Format("let recursive a = 1\nand b = 2\n");
 
@@ -112,7 +112,7 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
-    public void Rec_group_with_three_members_formats_as_a_single_block()
+    public void Recursive_group_with_three_members_formats_as_a_single_block()
     {
         var formatted = Format("let recursive a = 1\nand b = 2\nand c = 3\n");
 
@@ -120,7 +120,7 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
-    public void Rec_group_with_multiline_values_keeps_each_and_on_its_own_line()
+    public void Recursive_group_with_multiline_values_keeps_each_and_on_its_own_line()
     {
         var formatted = Format("let recursive even = given (n) -> n\nand odd = given (n) -> n\n");
 
@@ -162,7 +162,7 @@ public sealed class TopLevelFormatterTests
     }
 
     [Test]
-    public void Rec_group_preserves_parameter_sugar_per_binding()
+    public void Recursive_group_preserves_parameter_sugar_per_binding()
     {
         var formatted = Format("let recursive even n = odd n\nand odd n = even n\n");
 

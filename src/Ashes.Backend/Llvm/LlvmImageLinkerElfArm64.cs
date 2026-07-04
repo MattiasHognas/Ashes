@@ -34,7 +34,7 @@ internal static partial class LlvmImageLinker
         byte[] objectBytes,
         string entrySymbolName,
         LinkedImagePayload? linkedPayload = null,
-        IReadOnlyDictionary<string, string>? externLibraries = null)
+        IReadOnlyDictionary<string, string>? externalLibraries = null)
     {
         ulong textVa = ElfBaseVa + (ulong)PageSize;
         ulong objectTextVa = textVa + (ulong)Arm64TrampolineLength;
@@ -64,7 +64,7 @@ internal static partial class LlvmImageLinker
 
         ulong tlsTprelBase = (16UL + tlsAlign - 1) & ~(tlsAlign - 1);
 
-        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed, externLibraries);
+        List<LinuxDynamicImport> imports = CollectLinuxDynamicImports(objectBytes, parsed, externalLibraries);
         int textFileOffset = PageSize;
         int codeLength = Arm64TrampolineLength + parsed.TextBytes.Length + imports.Count * Arm64ImportStubLength;
         int dataFileOffset = Align(textFileOffset + codeLength, PageSize);

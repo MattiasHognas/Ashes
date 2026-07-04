@@ -109,16 +109,16 @@ public sealed partial class Lowering
     // is `let rec go = (fun acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
     // function. Such a function is registered in _maFuncs with the FULL parameter list (outer params +
     // acc) and body B, so its saturated (outerCount+1)-arg application is analyzable; the inner recursive
-    // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRec / CallReach) with
+    // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRecursive / CallReach) with
     // the outer params held at identity and the accumulator bound to x. Maps registered name → the inner
     // recursive binder name, the outer parameter names, and the accumulator parameter name.
-    private readonly Dictionary<string, (string RecName, List<string> Outer, string Acc)> _maNestedRec =
+    private readonly Dictionary<string, (string RecursiveName, List<string> Outer, string Acc)> _maNestedRecursive =
         new(StringComparer.Ordinal);
 
     // The nested-rec context of the function currently being analyzed by ComputeResultReach (set per pass,
     // null for ordinary functions). Lets CallReach recognize the inner `go(x)` self-call and map it to the
     // enclosing function's summary. Func is the registered (full-param) function name.
-    private (string Func, string RecName, List<string> Outer, string Acc)? _maSelfRec;
+    private (string Func, string RecursiveName, List<string> Outer, string Acc)? _maSelfRecursive;
 
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
@@ -136,7 +136,7 @@ public sealed partial class Lowering
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
         _maResultReach.Clear();
-        _maNestedRec.Clear();
+        _maNestedRecursive.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -180,7 +180,7 @@ public sealed partial class Lowering
                 RegisterBindings(l.Value);
                 RegisterBindings(l.Body);
                 return;
-            case Expr.LetRec lr:
+            case Expr.LetRecursive lr:
                 RegisterOneBinding(lr.Name, lr.Value);
                 RegisterBindings(lr.Value);
                 RegisterBindings(lr.Body);
@@ -236,14 +236,14 @@ public sealed partial class Lowering
         _maValueRhs[name] = stripped;
         if (stripped is Expr.Lambda lam)
         {
-            if (TryGetNestedRecReturnShape(lam, out var outer, out var accParam, out var recName, out var innerBody))
+            if (TryGetNestedRecursiveReturnShape(lam, out var outer, out var accParam, out var recursiveName, out var innerBody))
             {
                 // Register the Map.set-shape with the accumulator as a real trailing parameter and the
                 // inner recursive body as the function body, so its full (outer + accumulator) application
-                // is analyzable. The inner `go(x)` self-call is resolved in CallReach via _maSelfRec.
+                // is analyzable. The inner `go(x)` self-call is resolved in CallReach via _maSelfRecursive.
                 var full = new List<string>(outer) { accParam };
                 _maFuncs[name] = (full, innerBody);
-                _maNestedRec[name] = (recName, outer, accParam);
+                _maNestedRecursive[name] = (recursiveName, outer, accParam);
             }
             else
             {
@@ -258,16 +258,16 @@ public sealed partial class Lowering
     /// single-parameter lambda whose own body is not a further lambda). Outputs the outer parameter names,
     /// the accumulator parameter name, the recursive binder name, and the inner body B.
     /// </summary>
-    private static bool TryGetNestedRecReturnShape(
+    private static bool TryGetNestedRecursiveReturnShape(
         Expr.Lambda lam,
         out List<string> outer,
         out string accParam,
-        out string recName,
+        out string recursiveName,
         out Expr innerBody)
     {
         outer = new List<string>();
         accParam = string.Empty;
-        recName = string.Empty;
+        recursiveName = string.Empty;
         innerBody = lam;
         Expr body = lam;
         while (body is Expr.Lambda inner)
@@ -276,13 +276,13 @@ public sealed partial class Lowering
             body = inner.Body;
         }
 
-        if (body is Expr.LetRec { Value: Expr.Lambda recValue, Body: Expr.Var recRef } letRec
-            && string.Equals(letRec.Name, recRef.Name, StringComparison.Ordinal)
-            && recValue.Body is not Expr.Lambda)
+        if (body is Expr.LetRecursive { Value: Expr.Lambda recursiveValue, Body: Expr.Var recursiveRef } letRecursive
+            && string.Equals(letRecursive.Name, recursiveRef.Name, StringComparison.Ordinal)
+            && recursiveValue.Body is not Expr.Lambda)
         {
-            accParam = recValue.ParamName;
-            recName = letRec.Name;
-            innerBody = recValue.Body;
+            accParam = recursiveValue.ParamName;
+            recursiveName = letRecursive.Name;
+            innerBody = recursiveValue.Body;
             return true;
         }
 
@@ -532,7 +532,7 @@ public sealed partial class Lowering
 
                 return FirstFound(TryFindLocalLet(name, lr.Value), () => TryFindLocalLet(name, lr.Body));
 
-            case Expr.LetRec lrec:
+            case Expr.LetRecursive lrec:
                 // A self-referential binding is never a fresh construction; only search its subtrees.
                 if (string.Equals(lrec.Name, name, StringComparison.Ordinal))
                 {
@@ -753,11 +753,11 @@ public sealed partial class Lowering
                 }
 
                 _maReachToken = 0;
-                _maSelfRec = _maNestedRec.TryGetValue(name, out var nr)
-                    ? (name, nr.RecName, nr.Outer, nr.Acc)
+                _maSelfRecursive = _maNestedRecursive.TryGetValue(name, out var nr)
+                    ? (name, nr.RecursiveName, nr.Outer, nr.Acc)
                     : null;
                 var computed = StripSyntheticTokens(ResultReach(info.Body, env));
-                _maSelfRec = null;
+                _maSelfRecursive = null;
                 var merged = ReachJoin(_maResultReach[name], computed);
                 if (!ReachEquals(_maResultReach[name], merged))
                 {
@@ -1024,7 +1024,7 @@ public sealed partial class Lowering
                 return ResultReach(l.Body, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
             case Expr.LetResult lr:
                 return ResultReach(lr.Body, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
-            case Expr.LetRec lrec:
+            case Expr.LetRecursive lrec:
                 // A self-referential local binding is not modeled; treat any use of it as poison.
                 return ResultReach(lrec.Body, ExtendEnv(env, lrec.Name, ReachPoisoned()));
 
@@ -1185,9 +1185,9 @@ public sealed partial class Lowering
         // enclosing function's own (growing) summary: substitute the accumulator parameter's reach with
         // reach(x) and hold every outer parameter at its identity reach in env. This closes the recursion
         // through the standard monotone fixpoint (the self summary starts at bottom and only grows).
-        if (_maSelfRec is { } sr
+        if (_maSelfRecursive is { } sr
             && head is Expr.Var rv
-            && string.Equals(rv.Name, sr.RecName, StringComparison.Ordinal)
+            && string.Equals(rv.Name, sr.RecursiveName, StringComparison.Ordinal)
             && args.Count == 1)
         {
             if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
@@ -1491,7 +1491,7 @@ public sealed partial class Lowering
             case Expr.LetResult lr:
                 return OverApplyReachSym(
                     lr.Body, extra, idx, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
-            case Expr.LetRec lrec:
+            case Expr.LetRecursive lrec:
                 return OverApplyReachSym(
                     lrec.Body, extra, idx, ExtendEnv(env, lrec.Name, ReachPoisoned()));
 
@@ -1577,7 +1577,7 @@ public sealed partial class Lowering
                 return MaxPathOccurrences(name, lr.Value)
                     + (string.Equals(lr.Name, name, StringComparison.Ordinal) ? 0 : MaxPathOccurrences(name, lr.Body));
 
-            case Expr.LetRec lrec:
+            case Expr.LetRecursive lrec:
                 // Recursive: the bound name is in scope for both value and body.
                 return string.Equals(lrec.Name, name, StringComparison.Ordinal)
                     ? 0
@@ -1790,7 +1790,7 @@ public sealed partial class Lowering
                 CollectCallsAndEscapes(lr.Body, enclosing);
                 return;
 
-            case Expr.LetRec lrec:
+            case Expr.LetRecursive lrec:
                 WalkBindingValue(lrec.Name, lrec.Value, enclosing);
                 CollectCallsAndEscapes(lrec.Body, enclosing);
                 return;

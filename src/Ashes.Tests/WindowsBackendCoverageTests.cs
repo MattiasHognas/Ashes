@@ -72,7 +72,7 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
-    public void Windows_backend_compile_should_support_user_extern_imports()
+    public void Windows_backend_compile_should_support_user_external_imports()
     {
         var bytes = CompileForWindows(LowerProgram("""
             external lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
@@ -220,7 +220,7 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
-    public async Task Windows_backend_llvm_should_run_user_extern_imports()
+    public async Task Windows_backend_llvm_should_run_user_external_imports()
     {
         if (!CanRunWindowsRuntimePrograms())
         {

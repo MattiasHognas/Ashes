@@ -227,8 +227,8 @@ parsing.** Verified in the source:
   `moduleName.Replace('.', '_')`, plus `BuildModuleBindingPrefix`), rewrites qualified references,
   and concatenates everything into one combined source (`BuildCompilationLayoutCore` /
   `BuildEntryExpression`) that is then parsed and lowered as a single program.
-- **The AST top level is flat.** `Ashes.Frontend/Ast.cs` has `TopLevelItem.{Type, Extern, LetDecl,
-  RecGroup}` and a trailing `Program.Body`. There is no module node. The parser delimits top-level
+- **The AST top level is flat.** `Ashes.Frontend/Ast.cs` has `TopLevelItem.{Type, External, Effect, LetDecl,
+  RecursiveGroup}` and a trailing `Program.Body`. There is no module node. The parser delimits top-level
   items by source column (`_topLevelDeclColumn`, `StartsNextTopLevelItem` in `Parser.cs`).
 
 Consequence: `Geom.Vec.add` already becomes the flat symbol `Geom_Vec_add` once `Geom.Vec` is a
