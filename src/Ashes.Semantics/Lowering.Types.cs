@@ -46,7 +46,7 @@ public sealed partial class Lowering
         public HashSet<string> LoopInvariantParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain
-        // (fun a -> fun b -> body). The chain's innermost lambda owns the tail-call loop label; a
+        // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a
         // nested let-bound lambda inside the body is a separate frame and must not be mistaken for it.
         public bool DescendingChain { get; set; } = true;
 

@@ -106,7 +106,7 @@ public sealed partial class Lowering
     private int _maOverAppDepth;
 
     // Nested-rec-return (Map.set-shape) functions: a chain of outer-parameter lambdas whose innermost body
-    // is `let rec go = (fun acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
+    // is `let rec go = (given acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
     // function. Such a function is registered in _maFuncs with the FULL parameter list (outer params +
     // acc) and body B, so its saturated (outerCount+1)-arg application is analyzable; the inner recursive
     // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRecursive / CallReach) with
@@ -254,7 +254,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Recognizes the nested-rec-return (Map.set) shape: a chain of outer-parameter lambdas whose innermost
-    /// body is <c>let rec go = (fun acc -&gt; B) in go</c> (the letrec binder returned bare, its value a
+    /// body is <c>let rec go = (given acc -&gt; B) in go</c> (the letrec binder returned bare, its value a
     /// single-parameter lambda whose own body is not a further lambda). Outputs the outer parameter names,
     /// the accumulator parameter name, the recursive binder name, and the inner body B.
     /// </summary>

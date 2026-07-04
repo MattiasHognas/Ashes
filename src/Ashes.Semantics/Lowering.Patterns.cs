@@ -1397,9 +1397,9 @@ public sealed partial class Lowering
             TypeRef.TList list => new TypeRef.TList(SubstituteTypeParameters(list.Element, typeParameterMap)),
             TypeRef.TPtr pointer => new TypeRef.TPtr(SubstituteTypeParameters(pointer.Pointee, typeParameterMap)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(element => SubstituteTypeParameters(element, typeParameterMap)).ToList()),
-            TypeRef.TFun fun => new TypeRef.TFun(
-                SubstituteTypeParameters(fun.Arg, typeParameterMap),
-                SubstituteTypeParameters(fun.Ret, typeParameterMap)),
+            TypeRef.TFun funType => new TypeRef.TFun(
+                SubstituteTypeParameters(funType.Arg, typeParameterMap),
+                SubstituteTypeParameters(funType.Ret, typeParameterMap)),
             TypeRef.TNamedType named => new TypeRef.TNamedType(
                 named.Symbol,
                 named.TypeArgs.Select(typeArg => SubstituteTypeParameters(typeArg, typeParameterMap)).ToList()),
@@ -1424,7 +1424,7 @@ public sealed partial class Lowering
             TypeRef.TTypeParam tp => tp.Symbol.Name,
             TypeRef.TList list => $"List<{FormatConstructorParameterType(list.Element)}>",
             TypeRef.TTuple tuple => $"({string.Join(", ", tuple.Elements.Select(FormatConstructorParameterType))})",
-            TypeRef.TFun fun => $"{FormatConstructorParameterType(fun.Arg)} -> {FormatConstructorParameterType(fun.Ret)}",
+            TypeRef.TFun funType => $"{FormatConstructorParameterType(funType.Arg)} -> {FormatConstructorParameterType(funType.Ret)}",
             TypeRef.TNamedType named when named.TypeArgs.Count == 0 => named.Symbol.Name,
             TypeRef.TNamedType named => $"{named.Symbol.Name}<{string.Join(", ", named.TypeArgs.Select(FormatConstructorParameterType))}>",
             _ => type.GetType().Name

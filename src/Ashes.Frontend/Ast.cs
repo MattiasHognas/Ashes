@@ -37,7 +37,7 @@ public abstract record Expr
 
     public sealed record Let(string Name, Expr Value, Expr Body) : Expr
     {
-        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c> instead of <c>let f = fun (x) -> fun (y) -> ...</c>.</summary>
+        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c> instead of <c>let f = given (x) -> given (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
         /// <summary>Optional user-supplied type annotation, e.g. <c>let x : Int = 42</c> or <c>let f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
@@ -45,7 +45,7 @@ public abstract record Expr
     public sealed record LetResult(string Name, Expr Value, Expr Body) : Expr;
     public sealed record LetRecursive(string Name, Expr Value, Expr Body) : Expr
     {
-        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let rec f x y = ...</c> instead of <c>let rec f = fun (x) -> fun (y) -> ...</c>.</summary>
+        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let rec f x y = ...</c> instead of <c>let rec f = given (x) -> given (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
         /// <summary>Optional user-supplied type annotation: <c>let rec f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
@@ -53,7 +53,7 @@ public abstract record Expr
 
     public sealed record If(Expr Cond, Expr Then, Expr Else) : Expr;
 
-    public sealed record Lambda(string ParamName, Expr Body) : Expr; // fun (x) -> expr
+    public sealed record Lambda(string ParamName, Expr Body) : Expr; // given (x) -> expr
     public sealed record Call(Expr Func, Expr Arg) : Expr           // f(x) or f x
     {
         /// <summary>When true, the formatter prints <c>f x</c> instead of <c>f(x)</c>.</summary>
@@ -194,7 +194,7 @@ public abstract record TopLevelItem
     {
         /// <summary>
         /// ML-style sugar parameters. When non-empty, the formatter prints <c>let f x y = ...</c>
-        /// instead of <c>let f = fun (x) -> fun (y) -> ...</c>. Codegen is unaffected: the value is
+        /// instead of <c>let f = given (x) -> given (y) -> ...</c>. Codegen is unaffected: the value is
         /// already the desugared nested-lambda form regardless of this list.
         /// </summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];

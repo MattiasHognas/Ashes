@@ -124,7 +124,7 @@ internal static partial class LlvmCodegen
                 TypeRef.TNever => "Never",
                 TypeRef.TList list => $"List<{FormatTypeName(list.Element)}>",
                 TypeRef.TTuple tuple => $"({string.Join(", ", tuple.Elements.Select(FormatTypeName))})",
-                TypeRef.TFun fun => $"({FormatTypeName(fun.Arg)} -> {FormatTypeName(fun.Ret)})",
+                TypeRef.TFun funType => $"({FormatTypeName(funType.Arg)} -> {FormatTypeName(funType.Ret)})",
                 TypeRef.TNamedType named => named.TypeArgs.Count == 0
                     ? named.Symbol.Name
                     : $"{named.Symbol.Name}<{string.Join(", ", named.TypeArgs.Select(FormatTypeName))}>",

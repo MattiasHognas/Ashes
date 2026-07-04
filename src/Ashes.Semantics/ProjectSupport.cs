@@ -1762,7 +1762,7 @@ public static class ProjectSupport
         // ML-style function sugar: `let f x y = body` binds `f` to nested lambdas over `x`, `y`.
         // The parameters appear as bare identifiers between the name and `=` (a `let f : T = ...`
         // type annotation uses a leading colon and never carries sugar params), so collect them
-        // here and re-wrap the value as explicit `fun` lambdas — otherwise the binding would keep
+        // here and re-wrap the value as explicit `given` lambdas — otherwise the binding would keep
         // only the body and drop the parameters (binding `f` to an open expression referencing the
         // undefined parameter names).
         var sugarParams = new List<string>();

@@ -847,8 +847,8 @@ public sealed class Parser
             typeAnnotation = ParseTypeExpr();
         }
 
-        // ML-style function sugar: let f x y = body => let f = fun (x) -> fun (y) -> body
-        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = fun x -> ...`)
+        // ML-style function sugar: let f x y = body => let f = given (x) -> given (y) -> body
+        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = given x -> ...`)
         var sugarParams = new List<string>();
         var sugarParamTokens = new List<Token>();
         if (typeAnnotation is null)
@@ -869,7 +869,7 @@ public sealed class Parser
         // value escapes this — `let x = (let y = 2 in y)` is a flat declaration.
         //
         // ML-style parameter sugar also escapes it: `let f x = let g = ... in g` has sugar params,
-        // so the desugared value is a `fun (x) -> (let ... in ...)` Lambda, not a bare `let`. The
+        // so the desugared value is a `given (x) -> (let ... in ...)` Lambda, not a bare `let`. The
         // function's body merely *happens* to lead with `let..in`, which is unambiguous (the `in`
         // belongs to the body) — it is a flat function declaration, never a pyramid head awaiting an
         // outer `in`. Only a paramless binding leading with `let` is the ambiguous pyramid case.
@@ -1052,7 +1052,7 @@ public sealed class Parser
             Consume(TokenKind.RParen);
             Consume(TokenKind.Arrow);
             var body = ParseExpressionCore();
-            // Desugar multi-param lambdas: fun (x, y) -> body => fun (x) -> fun (y) -> body
+            // Desugar multi-param lambdas: given (x, y) -> body => given (x) -> given (y) -> body
             for (int i = extraParamTokens.Count - 1; i >= 0; i--)
             {
                 var lambda = RegisterExpr(new Expr.Lambda(extraParamTokens[i].Text, body), start, AstSpans.GetOrDefault(body).End);

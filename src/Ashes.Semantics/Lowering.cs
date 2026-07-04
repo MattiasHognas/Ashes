@@ -224,8 +224,8 @@ public sealed partial class Lowering
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
-    //   • single-parameter recursion: let rec f = fun p -> body (LinearParam = p, ArgCount = 1);
-    //   • nested-rec-returning: let f = fun a -> ... -> (let rec go = fun m -> _ in go) — f isn't
+    //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
+    //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
     //     itself recursive but returns a recursive single-param function (LinearParam = m, ArgCount =
     //     outer params + 1, the accumulator being the last applied argument), e.g. Map.set.
     // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
@@ -547,7 +547,7 @@ public sealed partial class Lowering
                 }
             }
 
-            // Single-parameter recursive functions (let rec f = fun p -> body, body not a lambda)
+            // Single-parameter recursive functions (let rec f = given p -> body, body not a lambda)
             // are candidates for in-place-reuse specialization when applied to a unique accumulator.
             else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet && Strip(recursiveLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recursiveLambda)
             {
@@ -699,7 +699,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Detects the <c>Map.set</c> shape: a chain of outer parameter lambdas whose innermost body is
-    /// <c>let rec go = (fun m -> _) in go</c> — returning a recursive single-parameter function.
+    /// <c>let rec go = (given m -> _) in go</c> — returning a recursive single-parameter function.
     /// Outputs the recursive parameter to specialize on and the total number of arguments the full
     /// application takes (outer params + the recursive arg).
     /// </summary>
@@ -1082,7 +1082,7 @@ public sealed partial class Lowering
         Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
 
-        // ── Synthesize and lower one wrapper per member: fun p… -> dispatch(tag, p…). ──
+        // ── Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…). ──
         var wrapperSlots = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
@@ -1100,7 +1100,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Builds <c>fun which -> fun arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
+    /// Builds <c>given which -> given arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
     /// where each arm is a member body with its parameters rebound to the shared dispatch arguments
     /// and its in-group tail calls redirected to <paramref name="dispatchName"/>.
     /// </summary>
@@ -1137,7 +1137,7 @@ public sealed partial class Lowering
         return new Expr.Lambda(DispatchWhichName, body);
     }
 
-    /// <summary>Builds <c>fun w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
+    /// <summary>Builds <c>given w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
     private Expr.Lambda BuildDispatchWrapper(string dispatchName, int tag, int arity)
     {
         Expr body = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tag));
@@ -2803,7 +2803,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerLetRecursive(Expr.LetRecursive letRecursive)
     {
         int slot = NewLocal();
-        // The module system may wrap a lambda in alias lets: let alias = mangled in fun (x) -> ...
+        // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
         var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
         var recursiveType = innerLambda is not null
@@ -2821,7 +2821,7 @@ public sealed partial class Lowering
         (int valTemp, TypeRef valType) valueAndType;
         if (letRecursive.Value is Expr.Lambda lam)
         {
-            // Detect lambda chain for TCO: fun (x) -> fun (y) -> body
+            // Detect lambda chain for TCO: given (x) -> given (y) -> body
             var paramCount = CountLambdaChain(lam);
             var innermostBody = GetInnermostBody(lam);
             var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
@@ -3934,10 +3934,10 @@ public sealed partial class Lowering
         arity = 0;
         var current = Prune(type);
 
-        while (current is TypeRef.TFun fun)
+        while (current is TypeRef.TFun funType)
         {
             arity++;
-            current = Prune(fun.Ret);
+            current = Prune(funType.Ret);
         }
 
         if (current is TypeRef.TVar resultVar)
@@ -4517,12 +4517,12 @@ public sealed partial class Lowering
                 // Callee type is an unresolved type variable: constrain it to a function type
                 // so that the occurs check can fire if the argument is the same variable. The
                 // constructed arrow shares the caller's ambient row, so a higher-order parameter
-                // applied here (`fun f -> fun x -> f(x)`) carries its effects to the caller.
+                // applied here (`given f -> given x -> f(x)`) carries its effects to the caller.
                 Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = AmbientRow });
                 currentType = Prune(currentType);
             }
 
-            if (currentType is not TypeRef.TFun fun)
+            if (currentType is not TypeRef.TFun funType)
             {
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
@@ -4533,19 +4533,19 @@ public sealed partial class Lowering
                 : $"in argument #{i + 1} of function call";
             using (PushDiagnosticContext(callContext))
             {
-                Unify(fun.Arg, argType);
+                Unify(funType.Arg, argType);
             }
 
             // The applied arrow's effects happen here: record them in the ambient row.
             using (PushDiagnosticSpan(GetSpan(call)))
             {
-                SubsumeCalleeRow(fun.Row, GetSpan(call));
+                SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
 
             int target = NewTemp();
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
             currentTemp = target;
-            currentType = Prune(fun.Ret);
+            currentType = Prune(funType.Ret);
         }
 
         // Restore arena after the call chain completes.
@@ -6057,13 +6057,13 @@ public sealed partial class Lowering
         TypeRef? lastParam = null;
         for (int i = 0; i < argCount; i++)
         {
-            if (current is not TypeRef.TFun fun)
+            if (current is not TypeRef.TFun funType)
             {
                 return false;
             }
 
-            lastParam = Prune(fun.Arg);
-            current = Prune(fun.Ret);
+            lastParam = Prune(funType.Arg);
+            current = Prune(funType.Ret);
         }
 
         return lastParam is TypeRef.TNamedType paramNamed
@@ -6083,10 +6083,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun tfun)
+            if (curType is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
 
             concreteParamTypes.Add(Prune(argType));
@@ -6202,10 +6202,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun tfun)
+            if (curType is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
 
             concreteParamTypes.Add(Prune(argType));
@@ -6279,10 +6279,10 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             argTemps[i] = argTemp;
-            if (Prune(curType) is TypeRef.TFun tfun)
+            if (Prune(curType) is TypeRef.TFun nestedFunType)
             {
-                Unify(tfun.Arg, argType);
-                curType = Prune(tfun.Ret);
+                Unify(nestedFunType.Arg, argType);
+                curType = Prune(nestedFunType.Ret);
             }
         }
 
