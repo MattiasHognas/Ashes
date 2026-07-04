@@ -116,16 +116,18 @@ let recursive foldLines bytes pos hi map =
             in 
                 let sep = Ashes.Bytes.indexOf(bytes)(59)(pos)
                 in 
-                    if sep < 0
-                    then foldLines(bytes)(lineEnd + 1)(hi)(map)
-                    else 
-                        if sep >= lineEnd
-                        then foldLines(bytes)(lineEnd + 1)(hi)(map)
+                    let map2 = 
+                        if sep < 0
+                        then map
                         else 
-                            let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
-                            in 
-                                let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
-                                in foldLines(bytes)(lineEnd + 1)(hi)(upsertMeasurement(name)(tenths)(map))
+                            if sep >= lineEnd
+                            then map
+                            else 
+                                let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
+                                in 
+                                    let tenths = parseTenthsBytes(bytes)(sep + 1)(lineEnd)(1)(0)
+                                    in upsertMeasurement(name)(tenths)(map)
+                    in foldLines(bytes)(lineEnd + 1)(hi)(map2)
 
 let foldChunk triple = 
     match triple with

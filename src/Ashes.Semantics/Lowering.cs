@@ -340,6 +340,12 @@ public sealed partial class Lowering
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
     private readonly HashSet<string> _linearSpecializationAccumulators = new(StringComparer.Ordinal);
 
+    // Per-function map from a let-bound local's slot to its binding value AST. Lets the reset-safety
+    // check (IsStableAccumulatorExpr) trace a `let m2 = match … in loop(m2)` accumulator back to its
+    // binding: m2 is address-stable when every leaf of that match/if is itself stable. Cleared at each
+    // function boundary because local slots are numbered per function.
+    private readonly Dictionary<int, Expr> _letBindingValues = new();
+
     // Inlinable-function names currently shadowed by a more-local binding (lambda param / let), so a
     // call to that name is NOT the top-level helper and must not be inlined. Counter per name (a name
     // can be shadowed at multiple nesting levels).
@@ -2656,6 +2662,9 @@ public sealed partial class Lowering
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valueTemp));
         RecordLocalDebugInfo(slot, let.Name, valueType);
+        // Record the binding value so a later tail call `loop(<this name>)` can prove the accumulator
+        // address-stable by tracing it back through this let into the value's match/if leaves.
+        _letBindingValues[slot] = let.Value;
         var scheme = Generalize(Prune(valueType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
 
@@ -3246,11 +3255,13 @@ public sealed partial class Lowering
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
+        var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
+        _letBindingValues.Clear();
 
         // new function state
         _inst.Clear();
@@ -3717,6 +3728,8 @@ public sealed partial class Lowering
         foreach (var t in savedReuseResultTemps) _reuseResultTemps.Add(t);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(savedReuseTokens);
+        _letBindingValues.Clear();
+        foreach (var kv in savedLetBindingValues) _letBindingValues[kv.Key] = kv.Value;
 
         // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
@@ -3779,7 +3792,26 @@ public sealed partial class Lowering
         switch (expr)
         {
             case Expr.Var v:
-                return isAcc(v.Name);
+                if (isAcc(v.Name))
+                {
+                    return true;
+                }
+
+                // Trace a let-bound accumulator (`let m2 = match … in loop(m2)`) back through its
+                // binding: m2 is address-stable when the binding value is a match/if (or nested lets)
+                // whose every leaf is itself a stable accumulator expr (the accumulator threaded
+                // unchanged, or an in-place-reuse call on it). Lookup resolves to the live innermost
+                // slot, so a shadowing rebind naturally picks the right binding. In the fold-recording
+                // path the name's scope has been popped, so Lookup fails and this stays conservative.
+                if (Lookup(v.Name) is { } vb
+                    && TryGetBindingSlot(vb, out var vslot)
+                    && _letBindingValues.TryGetValue(vslot, out var boundValue))
+                {
+                    return AccumulatorBindingLeavesStable(boundValue, isAcc, selfSpan, selfParamCount,
+                        new HashSet<string>(StringComparer.Ordinal), 0);
+                }
+
+                return false;
             case Expr.Call:
                 {
                     var args = new List<Expr>();
@@ -3814,6 +3846,74 @@ public sealed partial class Lowering
                 }
             default:
                 return false;
+        }
+    }
+
+    private static bool TryGetBindingSlot(Binding binding, out int slot)
+    {
+        switch (binding)
+        {
+            case Binding.Local local:
+                slot = local.Slot;
+                return true;
+            case Binding.Scheme scheme:
+                slot = scheme.Slot;
+                return true;
+            default:
+                slot = -1;
+                return false;
+        }
+    }
+
+    // Whether every leaf of a let-binding VALUE preserves the accumulator's address, so a var bound to
+    // it is itself a stable accumulator. Walks If arms, Match case bodies, and nested Let bodies, and
+    // checks each leaf via IsStableAccumulatorExpr. Tracks binders introduced INSIDE the value (match
+    // pattern variables, nested let names) and removes them from the accumulator predicate at leaves,
+    // so a leaf reference to a name that merely coincides with the accumulator's is never mistaken for
+    // it (soundness). Depth-bounded against pathological chains.
+    private bool AccumulatorBindingLeavesStable(Expr value, Func<string, bool> isAcc, TextSpan? selfSpan,
+        int selfParamCount, HashSet<string> shadowed, int depth)
+    {
+        if (depth > 24)
+        {
+            return false;
+        }
+
+        switch (value)
+        {
+            case Expr.If iff:
+                return AccumulatorBindingLeavesStable(iff.Then, isAcc, selfSpan, selfParamCount, shadowed, depth + 1)
+                    && AccumulatorBindingLeavesStable(iff.Else, isAcc, selfSpan, selfParamCount, shadowed, depth + 1);
+            case Expr.Match m:
+                foreach (var c in m.Cases)
+                {
+                    var caseShadow = shadowed;
+                    var binders = new HashSet<string>(StringComparer.Ordinal);
+                    CollectPatternBinders(c.Pattern, binders);
+                    if (binders.Count > 0)
+                    {
+                        caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                        caseShadow.UnionWith(binders);
+                    }
+
+                    if (!AccumulatorBindingLeavesStable(c.Body, isAcc, selfSpan, selfParamCount, caseShadow, depth + 1))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            case Expr.Let let:
+                var bodyShadow = shadowed.Contains(let.Name)
+                    ? shadowed
+                    : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+                return AccumulatorBindingLeavesStable(let.Body, isAcc, selfSpan, selfParamCount, bodyShadow, depth + 1);
+            default:
+                return IsStableAccumulatorExpr(
+                    value,
+                    name => !shadowed.Contains(name) && isAcc(name),
+                    selfSpan,
+                    selfParamCount);
         }
     }
 
