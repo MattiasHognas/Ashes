@@ -1,6 +1,6 @@
 # Unified Capabilities: `capability` / `provide` / `needs` / `handle`
 
-**Status:** Phases 1-3 shipped. The rename; static `provide` for concrete instances; generic resolution by monomorphization (non-recursive) and by dictionary passing (recursive/higher-order, on functions annotated `needs {Cap(a)}`); mixed dynamic+static `needs` rows. See LANGUAGE_SPEC.md section 20. Phase 4 (provider import/export across modules) remains.## Goal
+**Status:** Phases 1-3 shipped. The rename; static `provide` for concrete instances; generic resolution by monomorphization (non-recursive) and by dictionary passing (recursive/higher-order, on functions annotated `needs {Cap(a)}`); mixed dynamic+static `needs` rows. See LANGUAGE_SPEC.md section 20. Phase 4 is done too: providers are program-global (coherent) across modules, a capability/provider/generic function declared in one module is usable from another, and provider/handler ambiguity is rejected (ASH027).## Goal
 
 Unify Ashes’ current algebraic effects model with a future type-directed constraint model under one language concept: **capabilities**.
 
@@ -363,7 +363,7 @@ Capability 'Clock' is satisfied both by a provider and by a handler. Choose one.
 - Lower static capability calls to direct function calls / dictionaries / specialized code.
 - Ensure no runtime handler evidence is emitted for statically provided capabilities.
 
-### Phase 4 — Ambiguity and import/export rules
+### Phase 4 — Ambiguity and import/export rules — DONE
 
 - Define and implement module visibility for providers.
 - Decide whether providers must be imported explicitly.

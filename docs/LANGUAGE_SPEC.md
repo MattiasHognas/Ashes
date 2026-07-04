@@ -2423,6 +2423,14 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   is not dictionary-passed; the compiler reports a diagnostic suggesting the annotation (or a
   concrete call site / handler).
 
+- **Providers are program-global (coherence).** A `provide` is visible across the whole program, in
+  every module, regardless of imports — like an instance in a coherent typeclass system. A capability
+  declared in one module and a `provide` for it in another both satisfy a `needs` requirement anywhere,
+  and a generic function annotated `needs {Cap(a)}` may be defined in one module and called from
+  another; the provider is resolved (or the dictionary threaded) at the call site. Because providers
+  are global, a duplicate `provide` for the same concrete instance is a program-wide error (`ASH026`),
+  which is what keeps resolution coherent — the same instance always resolves the same way.
+
 ## 20.7 Worked Example
 
 The same business code runs under any handler; only the interpretation changes:

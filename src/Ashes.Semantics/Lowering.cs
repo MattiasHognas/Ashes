@@ -4220,14 +4220,16 @@ public sealed partial class Lowering
         // Call to a generic function compiled to dictionary-passing form: supply its leading operation
         // arguments (provider or threaded op-parameter) before the real arguments.
         // Calls inside a dictionary function's body were threaded syntactically (an op-parameter is in
-        // scope). Only an *external* call — none in scope — resolves its operations from providers.
-        if (rootExpr is Expr.Var dictFnVar
-            && _activeOpParams.Count == 0
-            && _dictFunctions.TryGetValue(dictFnVar.Name, out var dictInfo)
-            && !_shadowedDictFns.Contains(dictFnVar.Name)
-            && collectedArgs.Count > 0)
+        // scope). Only an *external* call — none in scope — resolves its operations from providers. The
+        // callee may be a plain `Var` (same file) or a qualified `Module.fn` cross-module reference,
+        // which resolves to the stitched flat name.
+        if (_activeOpParams.Count == 0
+            && collectedArgs.Count > 0
+            && ResolveSpecializableCalleeName(rootExpr) is { } dictFnName
+            && (rootExpr is not Expr.Var dfv || !_shadowedDictFns.Contains(dfv.Name))
+            && _dictFunctions.TryGetValue(dictFnName, out var dictInfo))
         {
-            return LowerDictionaryFunctionCall(dictInfo, dictFnVar, collectedArgs, GetSpan(call));
+            return LowerDictionaryFunctionCall(dictInfo, rootExpr, dictFnName, collectedArgs, GetSpan(call));
         }
 
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result

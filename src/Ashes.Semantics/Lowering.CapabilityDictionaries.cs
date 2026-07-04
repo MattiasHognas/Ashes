@@ -276,9 +276,9 @@ public sealed partial class Lowering
     /// a still-abstract instance) ahead of the real arguments. Requires at least one real argument so
     /// the instance is pinned by unification.
     /// </summary>
-    private (int, TypeRef) LowerDictionaryFunctionCall(DictFnInfo info, Expr.Var fnVar, List<Expr> realArgs, TextSpan span)
+    private (int, TypeRef) LowerDictionaryFunctionCall(DictFnInfo info, Expr fnExpr, string fnName, List<Expr> realArgs, TextSpan span)
     {
-        var (fnTemp, fnTypeRaw) = LowerExpr(fnVar);
+        var (fnTemp, fnTypeRaw) = LowerExpr(fnExpr);
 
         // Peel one arrow per op-parameter to expose the (body-shared) op-parameter types.
         var opTypes = new List<TypeRef>(info.Ops.Count);
@@ -294,7 +294,7 @@ public sealed partial class Lowering
 
             if (cursor is not TypeRef.TFun fun)
             {
-                ReportDiagnostic(span, $"'{fnVar.Name}' is not applied as a capability-generic function.", UnknownCapabilityCode);
+                ReportDiagnostic(span, $"'{fnName}' is not applied as a capability-generic function.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
@@ -324,7 +324,7 @@ public sealed partial class Lowering
 
             if (currentType is not TypeRef.TFun fun)
             {
-                ReportDiagnostic(span, $"'{fnVar.Name}' applied to too many arguments.", UnknownCapabilityCode);
+                ReportDiagnostic(span, $"'{fnName}' applied to too many arguments.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
