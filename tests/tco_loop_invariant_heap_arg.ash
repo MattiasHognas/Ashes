@@ -12,7 +12,7 @@ import Ashes.Map
 import Ashes.String
 import Ashes.Bytes
 import Ashes.UInt
-let rec loop tag i n m = 
+let recursive loop tag i n m = 
     if i >= n
     then m
     else 

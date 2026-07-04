@@ -7,7 +7,7 @@ public sealed class LspHoverTests
     [Test]
     public async Task Hover_should_return_inferred_type_for_binding_name()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
         await using var document = TempDocument.Create("HoverBinding.ash", source);
         await using var harness = await LspHarness.StartAsync();
 
@@ -27,7 +27,7 @@ public sealed class LspHoverTests
     [Test]
     public async Task Hover_should_return_expression_type_for_call_result()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
         await using var document = TempDocument.Create("HoverExpression.ash", source);
         await using var harness = await LspHarness.StartAsync();
 

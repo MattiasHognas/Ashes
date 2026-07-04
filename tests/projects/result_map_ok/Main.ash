@@ -1,7 +1,7 @@
 // expect: 2
 import Ashes.Result
 let inc = 
-    fun (x) -> x + 1
+    given (x) -> x + 1
 in 
     match Result.map(inc)(Ok(1)) with
         | Ok(x) -> Ashes.IO.print(x)

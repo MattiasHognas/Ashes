@@ -17,13 +17,13 @@ type Receipt =
     | stamp: Int
 
 let taxFor = 
-    fun (cents) -> cents / 10
+    given (cents) -> cents / 10
 
 let priceOf = 
-    fun (item) -> Prices.lookup(item)
+    given (item) -> Prices.lookup(item)
 
 let processOrder = 
-    fun (item) -> 
+    given (item) -> 
         let _ = Log.log("processing " + item)
         in 
             let base = Prices.lookup(item)
@@ -38,7 +38,7 @@ let processOrder =
                             in Receipt(item = item, base = base, tax = tax, total = total, stamp = t)
 
 let runTest = 
-    fun (work) -> 
+    given (work) -> 
         handle work(Unit) with
             | Prices.lookup(item) -> resume(200)
             | Clock.now(_) -> resume(1000)
@@ -46,6 +46,6 @@ let runTest =
             | return(r) -> r
 
 let receipt = 
-    runTest(fun (_) -> processOrder("widget"))
+    runTest(given (_) -> processOrder("widget"))
 
 Ashes.IO.print(receipt.item + " total=" + Ashes.Text.fromInt(receipt.total) + " stamp=" + Ashes.Text.fromInt(receipt.stamp))

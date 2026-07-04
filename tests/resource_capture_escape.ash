@@ -8,9 +8,9 @@ import Ashes.IO
 let reader = 
     match Ashes.File.open("escape_input.txt") with
         | Error(_e) -> 
-            fun (x) -> "no-file"
+            given (x) -> "no-file"
         | Ok(fh) -> 
-            fun (x) -> 
+            given (x) -> 
                 match Ashes.File.readChunk(fh)(5) with
                     | Error(_) -> "read-err"
                     | Ok(chunk) -> chunk

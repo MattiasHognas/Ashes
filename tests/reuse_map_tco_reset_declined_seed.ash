@@ -33,12 +33,12 @@ let getv m k =
         | None -> -1
         | Some(v) -> v
 
-let rec innerFold i lim m = 
+let recursive innerFold i lim m = 
     if i > lim
     then m
     else innerFold(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 7)(m))
 
-let rec rounds r acc m = 
+let recursive rounds r acc m = 
     if r <= 0
     then acc + getv(m)(1)
     else 

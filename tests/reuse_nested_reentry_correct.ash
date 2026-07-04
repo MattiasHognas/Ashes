@@ -22,12 +22,12 @@ let cmp a b =
         then -1
         else 1
 
-let rec setFold i lim m = 
+let recursive setFold i lim m = 
     if i > lim
     then m
     else setFold(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 3)(m))
 
-let rec outer batch nbatch m = 
+let recursive outer batch nbatch m = 
     if batch >= nbatch
     then m
     else outer(batch + 1)(nbatch)(setFold(0)(99)(m))

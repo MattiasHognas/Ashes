@@ -40,7 +40,7 @@ let fmtMean sum count =
         else -((-sum + count / 2) / count)
     in fmtTenths(rounded))
 
-let rec parseTenthsBytes bytes i stop sign acc = 
+let recursive parseTenthsBytes bytes i stop sign acc = 
     if i >= stop
     then sign * acc
     else 
@@ -83,7 +83,7 @@ let parseFixed bytes start stop =
                 then -(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 100 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 2)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 4)) - 5328)
                 else parseTenthsBytes(bytes)(start)(stop)(1)(0))
 
-let rec foldLines bytes pos hi map = 
+let recursive foldLines bytes pos hi map = 
     if pos >= hi
     then map
     else 
@@ -112,7 +112,7 @@ let rec foldLines bytes pos hi map =
                                 in 
                                     let tenths = parseFixed(bytes)(sep + 1)(lineEnd)
                                     in 
-                                        foldLines(bytes)(lineEnd + 1)(hi)(Ashes.HashTrie.upsertHashed(nameHash)(name)((tenths, tenths, tenths, 1))(fun (old) -> updateStats(old)(tenths))(map))
+                                        foldLines(bytes)(lineEnd + 1)(hi)(Ashes.HashTrie.upsertHashed(nameHash)(name)((tenths, tenths, tenths, 1))(given (old) -> updateStats(old)(tenths))(map))
 
 let foldChunk triple = 
     match triple with
@@ -135,16 +135,16 @@ let mergeValues a b =
                         in (mn, mx, smA + smB, ctA + ctB)
 
 let mergeStation acc key value = 
-    Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(key))(key)(value)(fun (existing) -> mergeValues(existing)(value))(acc)
+    Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(key))(key)(value)(given (existing) -> mergeValues(existing)(value))(acc)
 
-let rec mergeEntries entries acc = 
+let recursive mergeEntries entries acc = 
     match entries with
         | [] -> acc
         | (key, value) :: tail -> mergeEntries(tail)(mergeStation(acc)(key)(value))
 
 let merge a b = mergeEntries(Ashes.HashTrie.toList(b))(a)
 
-let rec buildChunks bytes len lo n acc = 
+let recursive buildChunks bytes len lo n acc = 
     if n <= 1
     then (bytes, lo, len) :: acc
     else 
@@ -165,12 +165,12 @@ let formatEntry pair =
             match value with
                 | (mn, mx, sm, ct) -> key + "=" + fmtTenths(mn) + "/" + fmtMean(sm)(ct) + "/" + fmtTenths(mx)
 
-let rec formatAll pairs acc = 
+let recursive formatAll pairs acc = 
     match pairs with
         | [] -> acc
         | h :: t -> formatAll(t)(formatEntry(h) :: acc)
 
-let rec sortEntries entries acc = 
+let recursive sortEntries entries acc = 
     match entries with
         | [] -> acc
         | (key, value) :: tail -> sortEntries(tail)(Ashes.Map.setStr(key)(value)(acc))

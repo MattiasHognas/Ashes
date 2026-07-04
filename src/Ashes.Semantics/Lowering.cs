@@ -915,7 +915,7 @@ public sealed partial class Lowering
             var value = bindings[i].Value;
             if (value is not Expr.Lambda lambda)
             {
-                ReportDiagnostic(GetSpan(value), "let rec currently requires a function value.");
+                ReportDiagnostic(GetSpan(value), "let recursive currently requires a function value.");
                 var (fallbackTemp, fallbackType) = LowerExpr(value);
                 Unify(recTypes[i], fallbackType);
                 Emit(new IrInst.StoreLocal(slots[i], fallbackTemp));
@@ -2898,7 +2898,7 @@ public sealed partial class Lowering
         }
         else
         {
-            ReportDiagnostic(GetSpan(letRec.Value), "let rec currently requires a function value.");
+            ReportDiagnostic(GetSpan(letRec.Value), "let recursive currently requires a function value.");
             valueAndType = LowerExpr(letRec.Value);
         }
 
@@ -4627,7 +4627,7 @@ public sealed partial class Lowering
         {
             var (argTemp, argType) = LowerExpr(args[i]);
             var expectedType = FromFfiType(externFunction.ParameterTypes[i]);
-            using (PushDiagnosticContext($"in argument #{i + 1} of extern call to '{externFunction.Name}'"))
+            using (PushDiagnosticContext($"in argument #{i + 1} of external call to '{externFunction.Name}'"))
             {
                 Unify(expectedType, argType);
             }
@@ -4669,7 +4669,7 @@ public sealed partial class Lowering
         if (n == 0)
         {
             int errTemp = NewTemp();
-            ReportDiagnostic(referenceSpan, $"Extern function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
+            ReportDiagnostic(referenceSpan, $"External function '{externFunc.Name}' has no parameters and cannot be used as a first-class function value.");
             Emit(new IrInst.LoadConstInt(errTemp, 0));
             return (errTemp, closureType);
         }

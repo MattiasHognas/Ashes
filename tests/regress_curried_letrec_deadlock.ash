@@ -1,4 +1,4 @@
-// Regression: a curried 2-argument `let rec` whose BOTH recursive-call arguments
+// Regression: a curried 2-argument `let recursive` whose BOTH recursive-call arguments
 // are freshly heap-allocated string tails used to deadlock (rt_sigsuspend) at
 // recursion depth >= 12, at every -O level. The defect was in the TCO back-edge
 // copy-out: compacting both fresh heap args down to the arena watermark with

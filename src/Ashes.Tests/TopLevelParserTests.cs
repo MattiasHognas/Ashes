@@ -17,7 +17,7 @@ public sealed class TopLevelParserTests
     [Test]
     public void ParseProgram_should_parse_interleaved_type_let_and_extern_declarations_in_order()
     {
-        var program = ParseProgram("type Foo = | Bar\nlet x = 1\nextern foo() -> Int\n0");
+        var program = ParseProgram("type Foo = | Bar\nlet x = 1\nexternal foo() -> Int\n0");
 
         program.Items.Count.ShouldBe(3);
 
@@ -258,11 +258,11 @@ public sealed class TopLevelParserTests
     [Test]
     public void ParseProgram_should_treat_a_complete_bare_let_in_value_followed_by_a_declaration_as_a_flat_declaration()
     {
-        // `let f = let rec go = ... in go` is a complete `let..in` expression; followed by another
+        // `let f = let recursive go = ... in go` is a complete `let..in` expression; followed by another
         // top-level declaration it is a flat decl, not the nested pyramid (which needs an outer `in`).
         var diag = new Diagnostics();
         var program = new Parser(
-            "let f = let rec go = fun (x) -> x in go\nlet g = 1",
+            "let f = let recursive go = given (x) -> x in go\nlet g = 1",
             diag).ParseProgram();
 
         diag.Errors.ShouldBeEmpty();
@@ -284,7 +284,7 @@ public sealed class TopLevelParserTests
     {
         var diag = new Diagnostics();
         var program = new Parser(
-            "let f = let rec go = fun (x) -> x in go\nf(5)",
+            "let f = let recursive go = given (x) -> x in go\nf(5)",
             diag).ParseProgram();
 
         diag.Errors.ShouldBeEmpty();
@@ -299,7 +299,7 @@ public sealed class TopLevelParserTests
     [Test]
     public void ParseProgram_should_parse_single_let_rec_as_a_recursive_declaration()
     {
-        var program = ParseProgram("let rec loop x = loop x\n0");
+        var program = ParseProgram("let recursive loop x = loop x\n0");
 
         var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
         letItem.Name.ShouldBe("loop");
@@ -309,7 +309,7 @@ public sealed class TopLevelParserTests
     [Test]
     public void ParseProgram_should_parse_let_rec_and_group_into_a_rec_group()
     {
-        var program = ParseProgram("let rec a = b\nand b = a");
+        var program = ParseProgram("let recursive a = b\nand b = a");
 
         var group = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.RecGroup>();
         group.Bindings.Count.ShouldBe(2);

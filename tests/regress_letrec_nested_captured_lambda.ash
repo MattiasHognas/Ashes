@@ -1,4 +1,4 @@
-// Regression: a top-level `let rec` whose body is a nested NON-recursive
+// Regression: a top-level `let recursive` whose body is a nested NON-recursive
 // `let`-bound lambda that captures an outer parameter (`n`), combined with a
 // self-recursive tail call, used to crash LLVM codegen with
 //   KeyNotFoundException: The given key 'lambda_2_body' was not present in the dictionary
@@ -8,7 +8,7 @@
 //
 // total(4)(0) = 4 + 3 + 2 + 1 + 0 = 10
 // expect: 10
-let rec total n acc = 
+let recursive total n acc = 
     (let helper x = x + n
     in 
         if n == 0

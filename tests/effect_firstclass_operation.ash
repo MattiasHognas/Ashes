@@ -6,7 +6,7 @@ effect Prices =
 let lookupFn = Prices.lookup
 
 let both = 
-    fun (f) -> f("a") + f("b")
+    given (f) -> f("a") + f("b")
 
 let result = 
     handle both(lookupFn) with

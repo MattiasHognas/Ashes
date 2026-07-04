@@ -12,7 +12,7 @@ public enum TokenKind
 
     Let,
     LetQuestion,
-    Rec,
+    Recursive,
     In,
     And,
 
@@ -23,7 +23,7 @@ public enum TokenKind
     With,
     When,
 
-    Fun,
+    Given,
     True,
     False,
     Type,
@@ -61,7 +61,7 @@ public enum TokenKind
     RBrace, // }
     Await,
     LetBang,
-    Extern,
+    External,
     Effect,
     Uses,
     Perform,

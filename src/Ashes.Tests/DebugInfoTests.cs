@@ -156,7 +156,7 @@ public sealed class DebugInfoTests
     [Test]
     public void Lowering_tags_lambda_function_instructions()
     {
-        var source = "let f = fun (x) -> x + 1 in f(41)";
+        var source = "let f = given (x) -> x + 1 in f(41)";
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         diag.Errors.Count.ShouldBe(0);
@@ -293,7 +293,7 @@ public sealed class DebugInfoTests
 
         var sourcePath = Path.Combine(tempRoot, "lambda.ash");
         var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "lambda.exe" : "lambda");
-        await File.WriteAllTextAsync(sourcePath, "let f = fun (x) -> x + 1 in f(41)");
+        await File.WriteAllTextAsync(sourcePath, "let f = given (x) -> x + 1 in f(41)");
 
         try
         {

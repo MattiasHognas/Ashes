@@ -1,5 +1,5 @@
 // expect: 2
-let rec a n = 
+let recursive a n = 
     match n with
         | 0 -> 0
         | _ -> b(n - 1)

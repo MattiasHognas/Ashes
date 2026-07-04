@@ -1,6 +1,6 @@
 // expect: 5 8 1000002
 // In-place reuse specialization of the Map.set shape: a multi-parameter function that returns a
-// nested recursive single-parameter function (let f a = (let rec go t = ... in go)). A loop applying
+// nested recursive single-parameter function (let f a = (let recursive go t = ... in go)). A loop applying
 // it to its accumulator (loop(...)(upd(1)(t))) deep-copies the accumulator once at entry, specializes
 // upd into upd$reuse whose nested go has a linear parameter (so its match-then-rebuild reuses nodes
 // in place, helper rebuilds inline), and routes the call there. With a pure-rewrite body this runs in
@@ -13,7 +13,7 @@ type Tree(A) =
 let mk l v r = Node(l)(v)(r)
 
 let upd by = 
-    (let rec go t = 
+    (let recursive go t = 
         match t with
             | Leaf -> Leaf
             | Node(l, v, r) -> mk(go(l))(v + by)(go(r))
@@ -24,7 +24,7 @@ let rootVal t =
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let rec loop n t = 
+let recursive loop n t = 
     if n <= 0
     then t
     else loop(n - 1)(upd(1)(t))

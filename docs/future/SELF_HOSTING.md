@@ -6,7 +6,7 @@
 | Byte type (`u8`) and byte literals | Yes |
 | Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`) | Yes |
 | Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`) | Yes |
-| FFI surface (`extern` functions/types, pointer signatures, symbol@library imports) | Yes |
+| FFI surface (`external` functions/types, pointer signatures, symbol@library imports) | Yes |
 | Immutable `Bytes` type with indexed access and append helpers | Yes |
 | Little-endian byte encode/decode helpers (`u16/u32/u64`) | Yes |
 | Binary file output (`Ashes.File.writeBytes`) | Yes |

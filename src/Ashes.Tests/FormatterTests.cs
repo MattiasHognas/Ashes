@@ -180,7 +180,7 @@ public sealed class FormatterTests
                 "x",
                 new Expr.Let("y", new Expr.IntLit(1), new Expr.Var("y"))));
 
-        formatted.ShouldBe("fun (x) -> \n    let y = 1\n    in y\n");
+        formatted.ShouldBe("given (x) -> \n    let y = 1\n    in y\n");
     }
 
     [Test]
@@ -191,7 +191,7 @@ public sealed class FormatterTests
                 new Expr.Lambda("x", new Expr.Var("x")),
                 new Expr.IntLit(1)));
 
-        formatted.ShouldBe("((fun (x) -> x))(1)\n");
+        formatted.ShouldBe("((given (x) -> x))(1)\n");
     }
 
     [Test]
@@ -316,7 +316,7 @@ public sealed class FormatterTests
                 new Expr.Lambda("i", new Expr.Var("i")),
                 new Expr.Var("loop")));
 
-        formatted.ShouldBe("let rec loop = \n    fun (i) -> i\nin loop\n");
+        formatted.ShouldBe("let recursive loop = \n    given (i) -> i\nin loop\n");
     }
 
     [Test]
@@ -497,7 +497,7 @@ public sealed class FormatterTests
     [Test]
     public void Format_rec_let_sugar_is_preserved()
     {
-        const string source = "let rec loop i = \n    if i >= 10\n    then i\n    else loop(i + 1)\nin Ashes.IO.print(loop(0))\n";
+        const string source = "let recursive loop i = \n    if i >= 10\n    then i\n    else loop(i + 1)\nin Ashes.IO.print(loop(0))\n";
         var diag = new Ashes.Frontend.Diagnostics();
         var program = new Ashes.Frontend.Parser(source, diag).ParseExpression();
         var formatted = Ashes.Formatter.Formatter.Format(program);
@@ -516,7 +516,7 @@ public sealed class FormatterTests
                     new Expr.Lambda("y", new Expr.Add(new Expr.Var("x"), new Expr.Var("y")))),
                 new Expr.Var("add")));
 
-        formatted.ShouldBe("let add = \n    fun (x) -> \n        fun (y) -> x + y\nin add\n");
+        formatted.ShouldBe("let add = \n    given (x) -> \n        given (y) -> x + y\nin add\n");
     }
 
     [Test]
@@ -568,51 +568,51 @@ public sealed class FormatterTests
     [Test]
     public void Format_should_round_trip_extern_function_declaration()
     {
-        const string source = "extern strlen(Str) -> Int\nstrlen(\"abc\")\n";
+        const string source = "external strlen(Str) -> Int\nstrlen(\"abc\")\n";
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("extern strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
+        formatted.ShouldBe("external strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
 
         // Idempotent: second pass produces the same output
         var secondPass = FormatFixtureSource(formatted);
-        secondPass.ShouldBe("extern strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
+        secondPass.ShouldBe("external strlen(Str) -> Int\n\nstrlen(\"abc\")\n");
     }
 
     [Test]
     public void Format_should_round_trip_extern_function_with_symbol_name()
     {
-        const string source = "extern getpid() -> Int = \"getpid\"\ngetpid()\n";
+        const string source = "external getpid() -> Int = \"getpid\"\ngetpid()\n";
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("extern getpid() -> Int = \"getpid\"\n\ngetpid(Unit)\n");
+        formatted.ShouldBe("external getpid() -> Int = \"getpid\"\n\ngetpid(Unit)\n");
     }
 
     [Test]
     public void Format_should_round_trip_extern_opaque_type_and_functions()
     {
-        const string source = "extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\nmakeHandle(42)\n";
+        const string source = "external type Handle\nexternal makeHandle(Int) -> Handle\nexternal disposeHandle(Handle) -> Int\nmakeHandle(42)\n";
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
+        formatted.ShouldBe("external type Handle\nexternal makeHandle(Int) -> Handle\nexternal disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
 
         // Idempotent: second pass produces the same output
         var secondPass = FormatFixtureSource(formatted);
-        secondPass.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\nextern disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
+        secondPass.ShouldBe("external type Handle\nexternal makeHandle(Int) -> Handle\nexternal disposeHandle(Handle) -> Int\n\nmakeHandle(42)\n");
     }
 
     [Test]
     public void Format_should_round_trip_nested_extern_pointer_types()
     {
-        const string source = "extern type Handle\nextern fill(**u8) -> *Handle\n0\n";
+        const string source = "external type Handle\nexternal fill(**u8) -> *Handle\n0\n";
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("extern type Handle\nextern fill(**u8) -> *Handle\n\n0\n");
+        formatted.ShouldBe("external type Handle\nexternal fill(**u8) -> *Handle\n\n0\n");
 
         var secondPass = FormatFixtureSource(formatted);
-        secondPass.ShouldBe("extern type Handle\nextern fill(**u8) -> *Handle\n\n0\n");
+        secondPass.ShouldBe("external type Handle\nexternal fill(**u8) -> *Handle\n\n0\n");
     }
 }

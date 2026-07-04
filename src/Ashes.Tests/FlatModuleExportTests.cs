@@ -8,9 +8,9 @@ namespace Ashes.Tests;
 
 /// <summary>
 /// Covers module export computation for the flat top-level declaration form (a sequence of
-/// <c>let</c> / <c>let rec ... and ...</c> / <c>type</c> / <c>extern</c> declarations with no
+/// <c>let</c> / <c>let recursive ... and ...</c> / <c>type</c> / <c>external</c> declarations with no
 /// <c>let ... in</c> pyramid). Exports must be exactly the top-level let/recgroup/type names;
-/// <c>extern</c> and the trailing expression are never exported, and importers must compile and run.
+/// <c>external</c> and the trailing expression are never exported, and importers must compile and run.
 /// </summary>
 public sealed class FlatModuleExportTests
 {
@@ -18,7 +18,7 @@ public sealed class FlatModuleExportTests
     public void Flat_module_exports_top_level_let_names()
     {
         var dir = WriteModules(
-            ("B", "let inc = fun (x) -> x + 1\nlet double = fun (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(6))\n"));
 
         var source = BuildProjectSource(dir, "Main");
@@ -32,12 +32,12 @@ public sealed class FlatModuleExportTests
     public void Flat_module_drops_trailing_expression_and_excludes_extern()
     {
         var dir = WriteModules(
-            ("B", "extern getpid() -> Int = \"getpid\"\nlet inc = fun (x) -> x + 1\ninc(41)\n"),
+            ("B", "external getpid() -> Int = \"getpid\"\nlet inc = given (x) -> x + 1\ninc(41)\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(41))\n"));
 
         var source = BuildProjectSource(dir, "Main");
 
-        // The exported let binding survives, but the extern and the trailing expression do not.
+        // The exported let binding survives, but the external and the trailing expression do not.
         source.ShouldContain("B_inc = ");
         source.ShouldNotContain("getpid");
         source.ShouldNotContain("B_getpid");
@@ -49,7 +49,7 @@ public sealed class FlatModuleExportTests
     public async Task Flat_module_qualified_use_compiles_and_runs()
     {
         var dir = WriteModules(
-            ("B", "let inc = fun (x) -> x + 1\nlet double = fun (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(6))\n"));
 
         var stdout = await BuildAndRunAsync(dir, "Main");
@@ -61,7 +61,7 @@ public sealed class FlatModuleExportTests
     public async Task Flat_module_unqualified_use_compiles_and_runs()
     {
         var dir = WriteModules(
-            ("B", "let inc = fun (x) -> x + 1\nlet double = fun (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(double(6))\n"));
 
         var stdout = await BuildAndRunAsync(dir, "Main");
@@ -74,8 +74,8 @@ public sealed class FlatModuleExportTests
     {
         var dir = WriteModules(
             ("B",
-                "let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)\n" +
-                "and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)\n"),
+                "let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)\n" +
+                "and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)\n"),
             ("Main", "import B\nAshes.IO.print(B.isEven(10))\n"));
 
         var stdout = await BuildAndRunAsync(dir, "Main");

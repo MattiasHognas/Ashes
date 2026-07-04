@@ -48,9 +48,9 @@ To keep the feature aligned with the language's no-runtime, no-typeclass design:
 |---|---|---|
 | Introducer | `module Name =` | Mirrors `let name =` / `type Name =`; `module` is a new contextual keyword |
 | Block delimiter | **Layout (column-based)**, no `end` — *but see Open Questions* | Ashes has no block terminators anywhere (`match`, `let … in`, top-level items are all layout/column-delimited); an `end` keyword would be foreign. The body is the run of declarations indented past the `module` keyword. **Caveat:** the Strategy-A text splitter is markedly simpler with an explicit terminator, so confirm this before coding |
-| Members | `let`, `let rec … and …`, `type`, nested `module` | The same declaration forms a file may contain |
+| Members | `let`, `let recursive … and …`, `type`, nested `module` | The same declaration forms a file may contain |
 | Trailing expression | **Not allowed** inside a module | File modules already *ignore* their trailing expression (LANGUAGE_SPEC §13.1); an inline module is declarations only |
-| `extern` | **Not allowed** inside a module | `extern` is a file-level FFI concern and is never exported anyway |
+| `external` | **Not allowed** inside a module | `external` is a file-level FFI concern and is never exported anyway |
 | Naming | `UpperCamel`, like type and module names | Distinguishes a module qualifier from a value binding at a glance |
 | Identity | An inline module is an **exported submodule** of its file | `File.Inner.member` is path-addressable from other files, so inline ↔ file promotion is transparent |
 | Scoping | Sequential (Model A), same as top level | A member sees earlier file bindings and earlier members; nothing sees it before its declaration |
@@ -175,12 +175,12 @@ separate `Geom/Vec.ash` file does not change the import or the call site.
 
 - **Scoping (Model A).** Inside a `module` block the same sequential rule as the top level holds: a
   declaration is visible to later declarations in the block and to nested blocks, never to earlier
-  ones. Self-recursion needs `let rec`; mutual recursion needs `let rec … and …`. The module's
+  ones. Self-recursion needs `let recursive`; mutual recursion needs `let recursive … and …`. The module's
   members are visible *after* the block to the rest of the file via qualified access or `import`.
 - **A module sees its enclosing scope.** Bindings declared in the file *before* the `module` block
   are in scope inside it (still Model A). Bindings after the block are not.
 - **Exports.** Identical to file modules (LANGUAGE_SPEC §13.1 “Module Exports”): all top-level
-  `let` bindings, all `let rec … and …` groups, all `type` declarations (with their constructors),
+  `let` bindings, all `let recursive … and …` groups, all `type` declarations (with their constructors),
   and all nested `module`s are exported. There is no implicit re-export — what a module imports is
   not re-exported.
 - **Resolution and collisions.** A module path resolves to **exactly one** module. If a path is
@@ -200,7 +200,7 @@ New codes (next free range after `ASH016`):
 
 | Code | When |
 |------|------|
-| `ASH017` | `module` block contains a disallowed form (trailing expression or `extern`) |
+| `ASH017` | `module` block contains a disallowed form (trailing expression or `external`) |
 | `ASH018` | Inline module path collides with a file module of the same path (ambiguous resolution) |
 | `ASH019` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
 | `ASH020` | Duplicate inline module name in the same scope |
@@ -286,7 +286,7 @@ consider promoting to Strategy B if nesting/formatting fidelity demands it.
       module list before selector resolution runs.
 - [ ] **Reserved / collision / duplicate checks:** reject `module Ashes` (`ASH019`),
       inline-vs-file path collisions (`ASH018`), duplicate inline names in one scope (`ASH020`), and
-      a disallowed `extern`/trailing-expression inside a block (`ASH017`).
+      a disallowed `external`/trailing-expression inside a block (`ASH017`).
 - [ ] **Exports:** a lifted module is exported under its composed path; verify no implicit
       re-export (already the case — `GetExportNames` is per-module).
 

@@ -2,7 +2,7 @@
 // expect: Hello, Ashes file streaming!
 import Ashes.File
 import Ashes.IO
-let rec readAll fh acc = 
+let recursive readAll fh acc = 
     match Ashes.File.readChunk(fh)(4) with
         | Error(_e) -> acc + "[err]"
         | Ok(chunk) -> 

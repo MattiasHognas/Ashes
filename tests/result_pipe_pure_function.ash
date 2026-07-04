@@ -1,6 +1,6 @@
 // expect: 4
 let x = 
-    Ok(3) |?> (fun (n) -> n + 1)
+    Ok(3) |?> (given (n) -> n + 1)
 in 
     match x with
         | Ok(v) -> Ashes.IO.print(v)

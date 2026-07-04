@@ -8,7 +8,7 @@ type Tree =
     | Leaf
     | Node(Tree, Int, Tree)
 
-let rec loop n t = 
+let recursive loop n t = 
     if n <= 0
     then t
     else 

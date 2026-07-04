@@ -7,10 +7,10 @@ effect B =
     | getB : Unit -> Int
 
 let work = 
-    fun (u) -> A.getA(Unit) + B.getB(Unit)
+    given (u) -> A.getA(Unit) + B.getB(Unit)
 
 let handleB = 
-    fun (w) -> 
+    given (w) -> 
         handle w(Unit) with
             | B.getB(_) -> resume(2)
             | return(r) -> r

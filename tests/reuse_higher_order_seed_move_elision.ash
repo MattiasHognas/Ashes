@@ -29,14 +29,14 @@ let rootVal t =
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let rec build n = 
+let recursive build n = 
     if n <= 0
     then Leaf
     else Node(build(n - 1))(n)(Leaf)
 
 let pick t = t
 
-let rec grow n t = 
+let recursive grow n t = 
     if n <= 0
     then t
     else 
@@ -44,7 +44,7 @@ let rec grow n t =
             | Leaf -> grow(n - 1)(Node(Leaf)(1)(Leaf))
             | Node(l, v, r) -> grow(n - 1)(Node(l)(v + 1)(r))
 
-let rec accum n t = 
+let recursive accum n t = 
     if n <= 0
     then t
     else 
@@ -52,7 +52,7 @@ let rec accum n t =
             | Leaf -> accum(n - 1)(Node(Leaf)(10)(Leaf))
             | Node(l, v, r) -> accum(n - 1)(Node(l)(v + 10)(r))
 
-let rec bump n t = 
+let recursive bump n t = 
     if n <= 0
     then t
     else 
@@ -60,7 +60,7 @@ let rec bump n t =
             | Leaf -> bump(n - 1)(Node(Leaf)(100)(Leaf))
             | Node(l, v, r) -> bump(n - 1)(Node(l)(v + 100)(r))
 
-let rec dbump n t = 
+let recursive dbump n t = 
     if n <= 0
     then t
     else 
@@ -68,7 +68,7 @@ let rec dbump n t =
             | Leaf -> dbump(n - 1)(Node(Leaf)(50)(Leaf))
             | Node(l, v, r) -> dbump(n - 1)(Node(l)(v + 50)(r))
 
-let rec outer b nb t = 
+let recursive outer b nb t = 
     if b >= nb
     then t
     else outer(b + 1)(nb)(grow(3)(t))

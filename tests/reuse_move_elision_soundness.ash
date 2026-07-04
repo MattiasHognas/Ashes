@@ -29,17 +29,17 @@ let getv m k =
         | None -> -1
         | Some(v) -> v
 
-let rec setFold i lim m = 
+let recursive setFold i lim m = 
     if i > lim
     then m
     else setFold(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 3)(m))
 
-let rec outer b nb m = 
+let recursive outer b nb m = 
     if b >= nb
     then m
     else outer(b + 1)(nb)(setFold(0)(99)(m))
 
-let rec bumpKey5 b nb m = 
+let recursive bumpKey5 b nb m = 
     if b >= nb
     then m
     else bumpKey5(b + 1)(nb)(Ashes.Map.set(cmp)(5)(900 + b)(m))

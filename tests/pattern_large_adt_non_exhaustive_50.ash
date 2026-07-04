@@ -52,7 +52,7 @@ type BigInst =
     | Inst49
 
 let instToInt = 
-    fun (i) -> 
+    given (i) -> 
         match i with
             | Inst00 -> 0
             | Inst04 -> 4

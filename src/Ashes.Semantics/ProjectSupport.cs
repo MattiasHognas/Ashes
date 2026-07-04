@@ -111,8 +111,9 @@ public static class ProjectSupport
 
     private static readonly HashSet<string> ReservedKeywords = new(StringComparer.Ordinal)
     {
-        "let", "rec", "in", "if", "then", "else", "match", "with",
-        "fun", "true", "false", "type", "await"
+        "let", "rec", "recursive", "in", "if", "then", "else", "match", "with",
+        "fun", "given", "true", "false", "type", "await", "extern", "external",
+        "effect", "uses", "perform", "handle"
     };
 
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;
@@ -1066,7 +1067,7 @@ public static class ProjectSupport
             prefix.Append("let ");
             if (group.IsRecursiveGroup)
             {
-                prefix.Append("rec ");
+                prefix.Append("recursive ");
             }
 
             for (var i = 0; i < group.Bindings.Count; i++)
@@ -1570,7 +1571,7 @@ public static class ProjectSupport
         var body = source[valueStart..valueEnd].Trim();
         for (var i = parameters.Count - 1; i >= 0; i--)
         {
-            body = $"fun ({parameters[i]}) -> {body}";
+            body = $"given ({parameters[i]}) -> {body}";
         }
 
         valueSource = body;
@@ -1651,7 +1652,7 @@ public static class ProjectSupport
             token = lexer.Next();
         }
 
-        if (token.Kind == TokenKind.Rec)
+        if (token.Kind == TokenKind.Recursive)
         {
             token = lexer.Next();
         }
@@ -1744,7 +1745,7 @@ public static class ProjectSupport
 
         var next = lexer.Next();
         var isRecursive = false;
-        if (next.Kind == TokenKind.Rec)
+        if (next.Kind == TokenKind.Recursive)
         {
             isRecursive = true;
             next = lexer.Next();
@@ -1803,7 +1804,7 @@ public static class ProjectSupport
                     var valueSource = source[valueStart..current.Position].Trim();
                     for (var i = sugarParams.Count - 1; i >= 0; i--)
                     {
-                        valueSource = $"fun ({sugarParams[i]}) -> {valueSource}";
+                        valueSource = $"given ({sugarParams[i]}) -> {valueSource}";
                     }
 
                     remaining = source[(current.Position + current.Text.Length)..].TrimStart();

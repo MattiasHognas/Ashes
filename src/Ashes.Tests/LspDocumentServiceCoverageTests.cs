@@ -31,7 +31,7 @@ public sealed class LspDocumentServiceCoverageTests
     [Test]
     public void HoverItem_Span_should_equal_TextSpan_from_Start_and_End()
     {
-        const string source = "let id = fun (x) -> x in id(1)";
+        const string source = "let id = given (x) -> x in id(1)";
 
         var hover = DocumentService.GetHover(source, source.IndexOf("id", StringComparison.Ordinal));
 
@@ -274,14 +274,14 @@ public sealed class LspDocumentServiceCoverageTests
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
-            const string source = "let rec f = fun (x) -> if x == 0 then 1 else f(x) in f(3)";
+            const string source = "let recursive f = given (x) -> if x == 0 then 1 else f(x) in f(3)";
             File.WriteAllText(mainPath, source);
             var fInCall = source.LastIndexOf("f(3)");
 
             var definition = DocumentService.GetDefinition(source, fInCall, mainPath);
 
             definition.ShouldNotBeNull();
-            definition.Value.Start.ShouldBe(source.IndexOf("let rec f", StringComparison.Ordinal) + 8);
+            definition.Value.Start.ShouldBe(source.IndexOf("let recursive f", StringComparison.Ordinal) + 14);
         }
         finally
         {
@@ -296,7 +296,7 @@ public sealed class LspDocumentServiceCoverageTests
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
-            const string source = "let g = fun (x) -> x in let z = 7 in g(z)";
+            const string source = "let g = given (x) -> x in let z = 7 in g(z)";
             File.WriteAllText(mainPath, source);
             var zInArg = source.LastIndexOf('z');
 
@@ -470,7 +470,7 @@ public sealed class LspDocumentServiceCoverageTests
         // Math.ash has an outer `let helper` and an inner `let add`.
         // Looking up Math.add requires TryFindBindingDefinition to recurse
         // past the outer let (name mismatch) into its body.
-        var root = CreateTempProjectDir("let helper = 1 in let add = fun (x) -> x + helper in add");
+        var root = CreateTempProjectDir("let helper = 1 in let add = given (x) -> x + helper in add");
         try
         {
             var mainPath = Path.Combine(root, "Main.ash");
@@ -482,7 +482,7 @@ public sealed class LspDocumentServiceCoverageTests
 
             definition.ShouldNotBeNull();
             // 'add' is defined in Math.ash at "let add" (after "let helper = 1 in ")
-            var mathSource = "let helper = 1 in let add = fun (x) -> x + helper in add";
+            var mathSource = "let helper = 1 in let add = given (x) -> x + helper in add";
             definition.Value.Start.ShouldBe(mathSource.IndexOf("let add", StringComparison.Ordinal) + 4);
         }
         finally

@@ -12,7 +12,7 @@ import Ashes.String
 import Ashes.Bytes
 import Ashes.UInt
 import Ashes.Parallel
-let rec countInto bytes i hi map = 
+let recursive countInto bytes i hi map = 
     if i >= hi
     then map
     else 

@@ -109,7 +109,7 @@ public sealed class ParserEdgeCaseTests
     [Test]
     public void Parse_should_support_lambda_with_multiple_parameters()
     {
-        var expr = Parse("fun (a, b) -> a");
+        var expr = Parse("given (a, b) -> a");
 
         // Multi-param lambda desugars to nested lambdas
         var outer = expr.ShouldBeOfType<Expr.Lambda>();
@@ -121,7 +121,7 @@ public sealed class ParserEdgeCaseTests
     [Test]
     public void Parse_should_support_single_parameter_lambda()
     {
-        var expr = Parse("fun (x) -> x").ShouldBeOfType<Expr.Lambda>();
+        var expr = Parse("given (x) -> x").ShouldBeOfType<Expr.Lambda>();
 
         expr.ParamName.ShouldBe("x");
         expr.Body.ShouldBe(new Expr.Var("x"));
@@ -164,7 +164,7 @@ public sealed class ParserEdgeCaseTests
     [Test]
     public void Parse_should_support_let_rec()
     {
-        var expr = Parse("let rec f = fun (x) -> f(x) in f(1)");
+        var expr = Parse("let recursive f = given (x) -> f(x) in f(1)");
 
         var letRec = expr.ShouldBeOfType<Expr.LetRec>();
         letRec.Name.ShouldBe("f");
@@ -322,7 +322,7 @@ public sealed class ParserEdgeCaseTests
     [Test]
     public void Parse_should_support_let_rec_sugar_params()
     {
-        var expr = Parse("let rec f x y = f y x in f 1 2");
+        var expr = Parse("let recursive f x y = f y x in f 1 2");
 
         var letRec = expr.ShouldBeOfType<Expr.LetRec>();
         letRec.SugarParams.Count.ShouldBe(2);

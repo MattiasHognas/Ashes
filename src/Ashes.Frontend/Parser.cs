@@ -62,7 +62,7 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.Extern or TokenKind.Let or TokenKind.Effect)
+        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Effect)
         {
             if (_current.Kind == TokenKind.Type)
             {
@@ -70,7 +70,7 @@ public sealed class Parser
                 continue;
             }
 
-            if (_current.Kind == TokenKind.Extern)
+            if (_current.Kind == TokenKind.External)
             {
                 items.Add(new TopLevelItem.Extern(ParseExternDecl()));
                 continue;
@@ -152,7 +152,7 @@ public sealed class Parser
     {
         if (!header.IsRecursive)
         {
-            _diag.Error(CurrentErrorSpan(), "'and' is only allowed in a 'let rec' binding group.", DiagnosticCodes.ParseError);
+            _diag.Error(CurrentErrorSpan(), "'and' is only allowed in a 'let recursive' binding group.", DiagnosticCodes.ParseError);
         }
 
         var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
@@ -172,7 +172,7 @@ public sealed class Parser
     private ExternDecl ParseExternDecl()
     {
         var start = _current.Position;
-        Consume(TokenKind.Extern);
+        Consume(TokenKind.External);
 
         if (_current.Kind == TokenKind.Type)
         {
@@ -820,10 +820,10 @@ public sealed class Parser
     {
         var start = _current.Position;
         Consume(TokenKind.Let);
-        var isRec = _current.Kind == TokenKind.Rec;
+        var isRec = _current.Kind == TokenKind.Recursive;
         if (isRec)
         {
-            Consume(TokenKind.Rec);
+            Consume(TokenKind.Recursive);
         }
 
         var (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet) = ParseLetBinding(start, topLevel);
@@ -1036,10 +1036,10 @@ public sealed class Parser
 
     private Expr ParseLambda()
     {
-        if (_current.Kind == TokenKind.Fun)
+        if (_current.Kind == TokenKind.Given)
         {
             var start = _current.Position;
-            Consume(TokenKind.Fun);
+            Consume(TokenKind.Given);
             Consume(TokenKind.LParen);
             var paramToken = Consume(TokenKind.Ident);
             var param = paramToken.Text;
@@ -1473,7 +1473,7 @@ public sealed class Parser
         return kind is TokenKind.Ident or TokenKind.Int or TokenKind.Float or TokenKind.String
             or TokenKind.True or TokenKind.False or TokenKind.LBracket
             or TokenKind.Await or TokenKind.Let
-            or TokenKind.If or TokenKind.Match or TokenKind.Fun;
+            or TokenKind.If or TokenKind.Match or TokenKind.Given;
     }
 
     private Expr ParseWhitespaceArgument()
@@ -1484,7 +1484,7 @@ public sealed class Parser
             TokenKind.Let => ParseLet(),
             TokenKind.If => ParseIf(),
             TokenKind.Match => ParseMatch(),
-            TokenKind.Fun => ParseLambda(),
+            TokenKind.Given => ParseLambda(),
             _ => ParsePrimary()
         };
     }

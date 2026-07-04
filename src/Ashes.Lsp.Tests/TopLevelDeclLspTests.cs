@@ -79,8 +79,8 @@ public sealed class TopLevelDeclLspTests
     public void Hover_should_report_type_for_mutually_recursive_group_member()
     {
         const string source =
-            "let rec isEven = fun (n) -> if n == 0 then true else isOdd(n - 1)\n"
-            + "and isOdd = fun (n) -> if n == 0 then false else isEven(n - 1)\n"
+            "let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)\n"
+            + "and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)\n"
             + "isEven(4)";
         var hover = DocumentService.GetHover(source, source.IndexOf("isOdd", StringComparison.Ordinal));
 
@@ -129,7 +129,7 @@ public sealed class TopLevelDeclLspTests
         // The CLI's `fmt` parses the source and calls Ashes.Formatter.Formatter.Format on the program.
         // Re-run that exact path here and assert the LSP's Format delegates to it identically (parity),
         // rather than comparing against a frozen literal.
-        const string source = "type Color =\n| Red\n| Green\nlet  answer=40+2\nlet rec loop = fun (n) -> if n == 0 then 0 else loop(n - 1)\nanswer";
+        const string source = "type Color =\n| Red\n| Green\nlet  answer=40+2\nlet recursive loop = given (n) -> if n == 0 then 0 else loop(n - 1)\nanswer";
 
         var options = new global::Ashes.Formatter.FormattingOptions { NewLine = "\n" };
         var diag = new Diagnostics();

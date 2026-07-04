@@ -7,9 +7,9 @@ effect Clock =
     | now : Unit -> Int
 
 let priceOf : Str -> Int uses {Prices} = 
-    fun (item) -> Prices.lookup(item)
+    given (item) -> Prices.lookup(item)
 
 let bad : Str -> Int uses {Prices} = 
-    fun (item) -> priceOf(item) + Clock.now(Unit)
+    given (item) -> priceOf(item) + Clock.now(Unit)
 
 Ashes.IO.print("unreachable")

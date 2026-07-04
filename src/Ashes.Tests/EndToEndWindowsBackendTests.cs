@@ -87,7 +87,7 @@ public sealed class EndToEndWindowsBackendTests
             return;
         }
 
-        var src = "let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))";
+        var src = "let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))";
         (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
     }
 

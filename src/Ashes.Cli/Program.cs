@@ -349,7 +349,7 @@ static string BuildReplSessionSource(IReadOnlyList<ReplBinding> bindings, string
 
 static string WrapWithBinding(ReplBinding binding, string bodySource)
 {
-    var keyword = binding.IsRecursive ? "let rec" : "let";
+    var keyword = binding.IsRecursive ? "let recursive" : "let";
     return $"{keyword} {binding.Name} = {binding.ValueSource}\nin {bodySource}";
 }
 

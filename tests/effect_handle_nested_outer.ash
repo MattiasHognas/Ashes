@@ -4,7 +4,7 @@ effect Ask =
     | ask : Unit -> Int
 
 let inner = 
-    fun (u) -> 
+    given (u) -> 
         handle Ask.ask(Unit) with
             | Ask.ask(_) -> 
                 let outerValue = Ask.ask(Unit)

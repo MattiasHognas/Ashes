@@ -193,7 +193,7 @@ public static class Formatter
         sb.Append("let ");
         if (decl.IsRecursive)
         {
-            sb.Append("rec ");
+            sb.Append("recursive ");
         }
         sb.Append(decl.Name);
 
@@ -227,7 +227,7 @@ public static class Formatter
         // no blank lines between members.
         for (int i = 0; i < group.Bindings.Count; i++)
         {
-            sb.Append(i == 0 ? "let rec " : "and ");
+            sb.Append(i == 0 ? "let recursive " : "and ");
             sb.Append(group.Bindings[i].Name);
 
             // ML-style sugar: let rec f x y = <value>, unwrapping one lambda layer per parameter.
@@ -406,12 +406,12 @@ public static class Formatter
         switch (decl)
         {
             case ExternDecl.OpaqueType opaqueType:
-                sb.Append("extern type ");
+                sb.Append("external type ");
                 sb.Append(opaqueType.Name);
                 sb.Append('\n');
                 break;
             case ExternDecl.Function func:
-                sb.Append("extern ");
+                sb.Append("external ");
                 sb.Append(func.Name);
                 sb.Append('(');
                 sb.Append(string.Join(", ", func.ParameterTypes.Select(WriteParsedType)));
@@ -635,7 +635,7 @@ public static class Formatter
             sb.Append('(');
         }
 
-        sb.Append("let rec ");
+        sb.Append("let recursive ");
         sb.Append(l.Name);
 
         // Type annotation: let rec x : Type = ...
@@ -802,7 +802,7 @@ public static class Formatter
             sb.Append('(');
         }
 
-        sb.Append("fun (");
+        sb.Append("given (");
         sb.Append(lam.ParamName);
         sb.Append(") -> ");
 

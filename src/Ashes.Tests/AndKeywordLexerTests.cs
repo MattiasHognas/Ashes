@@ -18,12 +18,12 @@ public sealed class AndKeywordLexerTests
     [Test]
     public void And_should_lex_as_keyword_within_let_rec_group()
     {
-        var tokens = LexAll("let rec f = 1 and g = 2");
+        var tokens = LexAll("let recursive f = 1 and g = 2");
 
         tokens.Select(t => t.Kind).ShouldBe(
         [
             TokenKind.Let,
-            TokenKind.Rec,
+            TokenKind.Recursive,
             TokenKind.Ident,
             TokenKind.Equals,
             TokenKind.Int,

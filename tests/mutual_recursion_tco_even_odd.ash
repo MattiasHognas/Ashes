@@ -1,5 +1,5 @@
 // expect: true
-let rec isEven n = 
+let recursive isEven n = 
     match n with
         | 0 -> true
         | _ -> isOdd(n - 1)

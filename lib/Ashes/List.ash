@@ -1,5 +1,5 @@
 let foldLeft f initial xs = 
-    (let rec go acc rest = 
+    (let recursive go acc rest = 
         match rest with
             | [] -> acc
             | head :: tail -> go(f(acc)(head))(tail)
@@ -8,27 +8,27 @@ let foldLeft f initial xs =
 let fold = foldLeft
 
 let reverse xs = 
-    (let rec go acc rest = 
+    (let recursive go acc rest = 
         match rest with
             | [] -> acc
             | head :: tail -> go(head :: acc)(tail)
     in go([])(xs))
 
 let length xs = 
-    (let rec go acc rest = 
+    (let recursive go acc rest = 
         match rest with
             | [] -> acc
             | _ :: tail -> go(acc + 1)(tail)
     in go(0)(xs))
 
 let map f = 
-    (let rec mapGo xs = 
+    (let recursive mapGo xs = 
         match xs with
             | [] -> []
             | head :: tail -> f(head) :: mapGo(tail)
     in mapGo)
 
-let rec filter predicate xs = 
+let recursive filter predicate xs = 
     match xs with
         | [] -> []
         | head :: tail -> 
@@ -37,7 +37,7 @@ let rec filter predicate xs =
             else filter(predicate)(tail)
 
 let append left right = 
-    (let rec go rest = 
+    (let recursive go rest = 
         match rest with
             | [] -> right
             | head :: tail -> head :: go(tail)

@@ -1,4 +1,4 @@
-let rec compute fallback xs = 
+let recursive compute fallback xs = 
     match xs with
         | [] -> 
             if fallback >= 10

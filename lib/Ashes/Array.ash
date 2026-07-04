@@ -59,7 +59,7 @@ let balance tree =
                                 else rotateLeft(makeNode(left)(index)(value)(rotateRight(right)))
                     else normalized
 
-let rec getNode searchIndex tree = 
+let recursive getNode searchIndex tree = 
     match tree with
         | TreeEmpty -> None
         | TreeNode(_height, left, index, value, right) -> 
@@ -70,7 +70,7 @@ let rec getNode searchIndex tree =
                 then getNode(searchIndex)(left)
                 else getNode(searchIndex)(right)
 
-let rec setNode targetIndex newValue tree = 
+let recursive setNode targetIndex newValue tree = 
     match tree with
         | TreeEmpty -> TreeEmpty
         | TreeNode(_height, left, index, value, right) -> 
@@ -81,7 +81,7 @@ let rec setNode targetIndex newValue tree =
                 then balance(makeNode(setNode(targetIndex)(newValue)(left))(index)(value)(right))
                 else balance(makeNode(left)(index)(value)(setNode(targetIndex)(newValue)(right)))
 
-let rec insertNode newIndex newValue tree = 
+let recursive insertNode newIndex newValue tree = 
     match tree with
         | TreeEmpty -> makeNode(TreeEmpty)(newIndex)(newValue)(TreeEmpty)
         | TreeNode(_height, left, index, value, right) -> 
@@ -114,7 +114,7 @@ let append value array =
         | (arrayLength, root) -> (arrayLength + 1, insertNode(arrayLength)(value)(root))
 
 let toList array = 
-    (let rec go tree acc = 
+    (let recursive go tree acc = 
         match tree with
             | TreeEmpty -> acc
             | TreeNode(_height, left, _index, value, right) -> 
@@ -127,7 +127,7 @@ let toList array =
             | (_arrayLength, root) -> go(root)([]))
 
 let fromList values = 
-    (let rec go remaining array = 
+    (let recursive go remaining array = 
         match remaining with
             | [] -> array
             | head :: tail -> go(tail)(append(head)(array))

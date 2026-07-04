@@ -28,7 +28,7 @@ let strCompare a b =
             in 
                 let blen = Ashes.Bytes.length(bb)
                 in 
-                    let rec go i = 
+                    let recursive go i = 
                         if i >= alen
                         then 
                             if i >= blen
@@ -108,7 +108,7 @@ let hBalance tree =
 let get searchKey map = 
     (let target = hashKey(searchKey)
     in 
-        let rec go tree = 
+        let recursive go tree = 
             match tree with
                 | HEmpty -> None
                 | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) -> 
@@ -130,7 +130,7 @@ let contains searchKey map =
 let set newKey newValue map = 
     (let target = hashKey(newKey)
     in 
-        let rec go tree = 
+        let recursive go tree = 
             match tree with
                 | HEmpty -> hMake(HEmpty)(target)(newKey)(newValue)(HEmpty)
                 | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) -> 
@@ -146,13 +146,13 @@ let set newKey newValue map =
 
 let insert = set
 
-let rec size map = 
+let recursive size map = 
     match map with
         | HEmpty -> 0
         | HNode(_h, left, _hk, _k, _v, right) -> 1 + size(left) + size(right)
 
 let foldLeft folder state map = 
-    (let rec go acc tree = 
+    (let recursive go acc tree = 
         match tree with
             | HEmpty -> acc
             | HNode(_h, left, _hk, key, value, right) -> 

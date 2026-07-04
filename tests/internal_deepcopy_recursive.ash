@@ -16,7 +16,7 @@ let m = Ashes.Map.set(cmp)(3)("three")(Ashes.Map.set(cmp)(1)("one")(Ashes.Map.se
 let copy = Ashes.Internal.deepCopy(m)
 
 let summary = 
-    Ashes.Map.foldLeft(fun (acc) -> 
-        fun (k) -> 
-            fun (v) -> acc + Ashes.Text.fromInt(k) + "=" + v + ";")("")(copy)
+    Ashes.Map.foldLeft(given (acc) -> 
+        given (k) -> 
+            given (v) -> acc + Ashes.Text.fromInt(k) + "=" + v + ";")("")(copy)
 in Ashes.IO.print(summary + "|" + Ashes.Text.fromInt(Ashes.Map.size(copy)))

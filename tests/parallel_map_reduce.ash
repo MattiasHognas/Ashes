@@ -2,19 +2,19 @@
 import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
-let rec range lo hi = 
+let recursive range lo hi = 
     if lo >= hi
     then []
     else lo :: range(lo + 1)(hi)
 
 let nums = range(0)(500)
 
-let rec seqMap f xs = 
+let recursive seqMap f xs = 
     match xs with
         | [] -> []
         | h :: t -> f(h) :: seqMap(f)(t)
 
-let rec eq xs ys = 
+let recursive eq xs ys = 
     match xs with
         | [] -> 
             match ys with
@@ -29,23 +29,23 @@ let rec eq xs ys =
                     else 0
 
 let mapPar = 
-    Ashes.Parallel.map(fun (x) -> x * 2)(nums)
+    Ashes.Parallel.map(given (x) -> x * 2)(nums)
 
 let mapSeq = 
-    seqMap(fun (x) -> x * 2)(nums)
+    seqMap(given (x) -> x * 2)(nums)
 
 let sumPar = 
-    Ashes.Parallel.reduce(fun (a) -> 
-        fun (b) -> a + b)(0)(fun (x) -> x)(nums)
+    Ashes.Parallel.reduce(given (a) -> 
+        given (b) -> a + b)(0)(given (x) -> x)(nums)
 
 let sumDoublePar = 
-    Ashes.Parallel.reduce(fun (a) -> 
-        fun (b) -> a + b)(0)(fun (x) -> x * 2)(nums)
+    Ashes.Parallel.reduce(given (a) -> 
+        given (b) -> a + b)(0)(given (x) -> x * 2)(nums)
 
 let strsPar = 
-    Ashes.Parallel.map(fun (x) -> Ashes.Text.fromInt(x))(range(0)(10))
+    Ashes.Parallel.map(given (x) -> Ashes.Text.fromInt(x))(range(0)(10))
 
-let rec joinStr xs = 
+let recursive joinStr xs = 
     match xs with
         | [] -> ""
         | h :: t -> h + "," + joinStr(t)

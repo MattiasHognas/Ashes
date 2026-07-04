@@ -3,9 +3,9 @@
 effect Count =
     | tick : Unit -> Int
 
-let rec spin = 
-    fun (i) -> 
-        fun (acc) -> 
+let recursive spin = 
+    given (i) -> 
+        given (acc) -> 
             if i >= 5
             then acc
             else spin(i + 1)(acc + Count.tick(Unit))

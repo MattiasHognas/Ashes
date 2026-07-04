@@ -15,22 +15,22 @@ import Ashes.Text
 type Acc =
     | Acc(Int, Int)
 
-let rec llen xs acc = 
+let recursive llen xs acc = 
     match xs with
         | [] -> acc
         | h :: t -> llen(t)(acc + 1)
 
-let rec slen text acc = 
+let recursive slen text acc = 
     match Ashes.Text.uncons(text) with
         | None -> acc
         | Some((_h, tl)) -> slen(tl)(acc + 1)
 
-let rec loopA s xs n = 
+let recursive loopA s xs n = 
     if n <= 0
     then llen(xs)(0) + slen(s)(0)
     else loopA(s + "z")(n :: xs)(n - 1)
 
-let rec loopB s p n = 
+let recursive loopB s p n = 
     match p with
         | Acc(a, b) -> 
             if n <= 0

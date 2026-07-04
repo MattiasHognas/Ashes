@@ -195,7 +195,7 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Lambda_with_let_and_int_body_emits_SaveArenaState()
     {
-        var ir = LowerProgram("let f = fun (x) -> let y = x + 1 in y + 2 in Ashes.IO.print(f(42))");
+        var ir = LowerProgram("let f = given (x) -> let y = x + 1 in y + 2 in Ashes.IO.print(f(42))");
         // The lambda function should have SaveArenaState from the inner let scope
         var lambdaFunc = ir.Functions.First();
         HasSaveArenaState(lambdaFunc.Instructions).ShouldBeTrue(
@@ -377,7 +377,7 @@ public sealed class ArenaDeallocationTests
     {
         var ir = LowerProgram(
             """
-            let rec sum = fun (n) -> fun (acc) ->
+            let recursive sum = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else sum (n - 1) (acc + n)
             in sum 100 0
@@ -400,7 +400,7 @@ public sealed class ArenaDeallocationTests
     {
         var ir = LowerProgram(
             """
-            let rec sum = fun (n) -> fun (acc) ->
+            let recursive sum = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else sum (n - 1) (acc + n)
             in sum 100 0
@@ -431,7 +431,7 @@ public sealed class ArenaDeallocationTests
     {
         var ir = LowerProgram(
             """
-            let rec sum = fun (n) -> fun (acc) ->
+            let recursive sum = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else sum (n - 1) (acc + n)
             in sum 100 0
@@ -471,7 +471,7 @@ public sealed class ArenaDeallocationTests
         // allows the iteration's arena to be reclaimed while the accumulator survives.
         var ir = LowerProgram(
             """
-            let rec build = fun (n) -> fun (acc) ->
+            let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) (n :: acc)
             in build 5 []
@@ -501,7 +501,7 @@ public sealed class ArenaDeallocationTests
         // SaveArenaState is always emitted at loop body start for the per-iteration watermark.
         var ir = LowerProgram(
             """
-            let rec build = fun (n) -> fun (acc) ->
+            let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) (n :: acc)
             in build 5 []
@@ -523,7 +523,7 @@ public sealed class ArenaDeallocationTests
         // can be copied out via CopyOutTcoListCell(InnerList).
         var ir = LowerProgram(
             """
-            let rec build = fun (n) -> fun (acc) ->
+            let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ([n] :: acc)
             in build 5 []
@@ -577,10 +577,10 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void TCO_single_param_with_int_arg_emits_RestoreArenaState()
     {
-        // Single-parameter TCO: let rec countdown = fun n -> if n == 0 then 0 else countdown (n - 1)
+        // Single-parameter TCO: let recursive countdown = given n -> if n == 0 then 0 else countdown (n - 1)
         var ir = LowerProgram(
             """
-            let rec countdown = fun (n) ->
+            let recursive countdown = given (n) ->
                 if n == 0 then 0
                 else countdown (n - 1)
             in countdown 100
@@ -615,7 +615,7 @@ public sealed class ArenaDeallocationTests
         // copies the cell AND the string to new arena locations.
         var ir = LowerProgram(
             """
-            let rec build = fun (n) -> fun (acc) ->
+            let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ("x" :: acc)
             in build 5 []
@@ -673,10 +673,10 @@ public sealed class ArenaDeallocationTests
         // closure struct and its environment.
         var ir = LowerProgram(
             """
-            let rec build = fun (n) -> fun (f) ->
+            let recursive build = given (n) -> given (f) ->
                 if n == 0 then f 0
-                else build (n - 1) (fun (x) -> x + n)
-            in build 5 (fun (x) -> x)
+                else build (n - 1) (given (x) -> x + n)
+            in build 5 (given (x) -> x)
             """);
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
@@ -745,7 +745,7 @@ public sealed class ArenaDeallocationTests
             """
             type Box =
                 | Box(Int)
-            let rec build = fun (n) -> fun (acc) ->
+            let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) (Box(n))
             in build 5 (Box(0))
@@ -948,7 +948,7 @@ public sealed class ArenaDeallocationTests
     {
         var ir = LowerProgram(
             """
-            let add = fun (x) -> x + 1
+            let add = given (x) -> x + 1
             in add(41)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -965,7 +965,7 @@ public sealed class ArenaDeallocationTests
         var ir = LowerProgram(
             """
             let z = 20
-            in let addZ = fun (x) -> x + z
+            in let addZ = given (x) -> x + z
             in addZ(22)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1143,7 +1143,7 @@ public sealed class ArenaDeallocationTests
     {
         // Closures may capture heap pointers in their env, so copy-out is
         // unsafe until escape analysis / recursive copy-out is implemented.
-        var ir = LowerProgram("let s = \"hello\" in fun (y) -> y + 1");
+        var ir = LowerProgram("let s = \"hello\" in given (y) -> y + 1");
         ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
             "Closure result should NOT emit CopyOutClosure (env may contain heap pointers).");
     }
@@ -1165,7 +1165,7 @@ public sealed class ArenaDeallocationTests
             """
             type Box =
                 | Box(Int)
-            let wrap = fun (x) -> Box(x)
+            let wrap = given (x) -> Box(x)
             in wrap(42)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1187,7 +1187,7 @@ public sealed class ArenaDeallocationTests
         // add(10)(32) returns Int — per-call watermark should save+restore.
         var ir = LowerProgram(
             """
-            let add = fun (x) -> fun (y) -> x + y
+            let add = given (x) -> given (y) -> x + y
             in add(10)(32)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1216,7 +1216,7 @@ public sealed class ArenaDeallocationTests
     {
         var ir = LowerProgram(
             """
-            let inc = fun (x) -> x + 1
+            let inc = given (x) -> x + 1
             in inc(5)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1239,7 +1239,7 @@ public sealed class ArenaDeallocationTests
         // toString returns String — per-call watermark should save+restore+copy-out.
         var ir = LowerProgram(
             """
-            let toString = fun (x) -> "result"
+            let toString = given (x) -> "result"
             in toString(42)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1266,7 +1266,7 @@ public sealed class ArenaDeallocationTests
         // Sequence should be: RestoreArenaState → CopyOutArena → ReclaimArenaChunks
         var ir = LowerProgram(
             """
-            let toString = fun (x) -> "result"
+            let toString = given (x) -> "result"
             in toString(42)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1293,7 +1293,7 @@ public sealed class ArenaDeallocationTests
         // Copy-type result: RestoreArenaState → ReclaimArenaChunks (no CopyOutArena).
         var ir = LowerProgram(
             """
-            let inc = fun (x) -> x + 1
+            let inc = given (x) -> x + 1
             in inc(5)
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1316,7 +1316,7 @@ public sealed class ArenaDeallocationTests
         // emit RestoreArenaState + CopyOutList for deep cons-chain copy-out.
         var ir = LowerProgram(
             """
-            let id = fun (xs) -> xs
+            let id = given (xs) -> xs
             in id([1, 2, 3])
             """);
         var instructions = ir.EntryFunction.Instructions;
@@ -1338,7 +1338,7 @@ public sealed class ArenaDeallocationTests
         // Arena restoration should still occur for non-copy-out-eligible types.
         var ir = LowerProgram(
             """
-            let add = fun (x) -> fun (y) -> x + y
+            let add = given (x) -> given (y) -> x + y
             in let adder = add(5)
             in adder(10)
             """);

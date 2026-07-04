@@ -28,7 +28,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_compile_should_support_compiler_features_used_by_ashes_programs()
     {
-        var bytes = CompileForLinux("let z = 20 in let f = fun (x) -> if x <= z then x + z else x + 1 in Ashes.IO.print(f(22))");
+        var bytes = CompileForLinux("let z = 20 in let f = given (x) -> if x <= z then x + z else x + 1 in Ashes.IO.print(f(22))");
 
         bytes.Length.ShouldBeGreaterThan(256);
         bytes[0].ShouldBe((byte)0x7F);
@@ -49,7 +49,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_parallel_worker_stack_size_tunable_is_honored()
     {
-        var ir = LowerExpression("match Ashes.Parallel.both(fun (u) -> 3 + 4)(fun (u) -> 5 + 6) with | (a, b) -> Ashes.IO.print(a + b)");
+        var ir = LowerExpression("match Ashes.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with | (a, b) -> Ashes.IO.print(a + b)");
 
         byte[] unset = new LinuxX64LlvmBackend().Compile(ir);
         byte[] explicitDefault = new LinuxX64LlvmBackend().Compile(ir,
@@ -161,13 +161,13 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_closure_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("let z = 20 in let f = fun (x) -> x + z in f(22)"));
+        AssertLinuxLlvmCompiles(LowerExpression("let z = 20 in let f = given (x) -> x + z in f(22)"));
     }
 
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_nested_heap_backed_closure_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)"""));
+        AssertLinuxLlvmCompiles(LowerExpression("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in f(22)"""));
     }
 
     [Test]
@@ -178,7 +178,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = fun (x) -> x + z in Ashes.IO.print(f(22))");
+        var result = await CompileRunWithLinuxLlvmAsync("let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))");
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -190,7 +190,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithLinuxLlvmAsync("""let mk = fun (x) -> fun (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
+        var result = await CompileRunWithLinuxLlvmAsync("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
         result.Stdout.ShouldBe("42\n");
     }
 

@@ -31,8 +31,22 @@ Line comments are supported:
 
 The following words are **reserved keywords** and cannot be used as identifiers:
 
-`let`, `rec`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `fun`,
-`true`, `false`, `type`, `extern`, `await`, `import`, `as`
+`let`, `recursive`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `when`, `given`,
+`true`, `false`, `type`, `external`, `await`, `import`, `as`,
+`effect`, `uses`, `perform`, `handle`
+
+Two principles govern the keyword set:
+
+1. **Words for meaning, symbols for plumbing.** Keywords carry semantics and are full English
+   words. Structural tokens — `->`, `=`, `|`, `(...)`, `{...}`, `::` — are plumbing and stay
+   symbolic; no arrow is ever replaced with a word.
+2. **No abbreviations.** A keyword is written out in full: `recursive`, not `rec`; `external`,
+   not `extern`; `given`, not `fun`.
+
+The former spellings `fun`, `rec`, and `extern` were renamed to `given`, `recursive`, and
+`external` as a breaking change; the old spellings are no longer keywords and are ordinary
+identifiers today. Pre-rename sources are migrated by rewriting the three keywords (the
+canonical formatter of a pre-rename compiler emits exactly the forms the rewrite expects).
 
 Programs are composed using nested expressions such as:
 
@@ -103,13 +117,13 @@ optional trailing expression:
 
 ```
 file        ::= import* declaration* expr?
-declaration ::= let | letrec | type | extern
-letrec      ::= "let" "rec" binding ("and" binding)*
+declaration ::= let | letrec | type | external
+letrec      ::= "let" "recursive" binding ("and" binding)*
 ```
 
 - `import` lines come first (see §13.1).
-- `declaration` is a top-level `let`, a `let rec ... and ...` group, a `type`
-  declaration, or an `extern` declaration. Top-level `let`/`let rec` declarations
+- `declaration` is a top-level `let`, a `let recursive ... and ...` group, a `type`
+  declaration, or an `external` declaration. Top-level `let`/`let recursive` declarations
   do **not** take a trailing `in`; their scope is the rest of the file.
 - The optional trailing `expr` is the program's entry point.
 
@@ -124,8 +138,8 @@ type Color =
 
 let name = "world"
 
-let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
-and odd = fun (n) -> if n == 0 then false else even(n - 1)
+let recursive even = given (n) -> if n == 0 then true else odd(n - 1)
+and odd = given (n) -> if n == 0 then false else even(n - 1)
 
 Ashes.IO.print("hello " + name)
 ```
@@ -142,23 +156,23 @@ Top-level binding scope is **sequential**, following OCaml/F# ordering:
 - Two top-level declarations may not bind the same name (diagnostic `ASH013`).
 
 A plain top-level `let f = ...` cannot refer to itself; self-recursion requires
-`let rec` exactly as in nested `let` bindings (see §6).
+`let recursive` exactly as in nested `let` bindings (see §6).
 
-### Mutual recursion (`let rec ... and ...`)
+### Mutual recursion (`let recursive ... and ...`)
 
-`let rec` may be followed by one or more `and` clauses to declare a group of
+`let recursive` may be followed by one or more `and` clauses to declare a group of
 mutually recursive bindings:
 
 ```ash
-let rec even = fun (n) -> if n == 0 then true else odd(n - 1)
-and odd = fun (n) -> if n == 0 then false else even(n - 1)
+let recursive even = given (n) -> if n == 0 then true else odd(n - 1)
+and odd = given (n) -> if n == 0 then false else even(n - 1)
 ```
 
-- Every binding in a `let rec ... and ...` group is visible to **every other**
+- Every binding in a `let recursive ... and ...` group is visible to **every other**
   binding in the same group (and to all subsequent declarations).
-- `and` is only valid as a continuation of a `let rec`. An `and` clause that does
-  not follow a `let rec` is an error (diagnostic `ASH015`).
-- Like nested `let rec`, each binding in the group is monomorphic within the group
+- `and` is only valid as a continuation of a `let recursive`. An `and` clause that does
+  not follow a `let recursive` is an error (diagnostic `ASH015`).
+- Like nested `let recursive`, each binding in the group is monomorphic within the group
   (no polymorphic recursion; see §6 and §14.2).
 
 ### Trailing expression
@@ -477,7 +491,7 @@ Both Result workflows are valid:
 
 let bumpIfOk1 result =
     result
-    |?> (fun (n) -> n + 1)
+    |?> (given (n) -> n + 1)
 
 let bumpIfOk2 result =
     let? n = result
@@ -543,7 +557,7 @@ When type parameters are omitted, a payload naming the declaring type itself (a
 self-recursive field, e.g. `Node(Tree, Int, Tree)`) or a primitive type (`Int`,
 `Bool`, `Str`, `Bytes`, `Float`) is a concrete field type, **not** an inferred type
 parameter; only genuinely unbound payload names are treated as implicit parameters.
-This lets a self-recursive ADT be built by a recursive function (`let rec build n =
+This lets a self-recursive ADT be built by a recursive function (`let recursive build n =
 … Node(build(n - 1)) …`) without the self-referential field being over-generalized.
 
 Rules:
@@ -608,7 +622,7 @@ Rules:
 - Named-argument call syntax (`Name(field = value, ...)`) is only valid for
   record construction. All fields must be provided; field order does not matter.
 - Named arguments are not accepted for ordinary (non-record) function calls.
-- Field access (`rec.field`) works on bindings of record types.
+- Field access (`recursive.field`) works on bindings of record types.
 - Record update (`base with field = value`) produces a fresh value; the original
   is unchanged. `with` binds looser than function application and the binary
   operators, so `f p with x = a + b` parses as `(f p) with x = (a + b)`.
@@ -638,36 +652,36 @@ Bindings are:
 - scoped to the `in` expression
 - expression-based
 
-## 5.1 Extern Declarations
+## 5.1 External Declarations
 
-Top-level `extern` declarations expose C ABI functions to Ashes code.
+Top-level `external` declarations expose C ABI functions to Ashes code.
 
 Syntax:
 
-extern strlen(Str) -> Int
-extern getpid() -> Int = "getpid"
-extern type LLVMModuleRef
-extern LLVMModuleCreateWithName(Str) -> LLVMModuleRef
+external strlen(Str) -> Int
+external getpid() -> Int = "getpid"
+external type LLVMModuleRef
+external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 
 Rules:
 
-- `extern` declarations appear before the program body, alongside `type`
+- `external` declarations appear before the program body, alongside `type`
   declarations.
-- Supported extern parameter and return types are `Int`, `u8`, `u16`, `u32`,
-  `u64`, `Float`, `Bool`, `Str`, opaque extern types declared with
-  `extern type`, and pointers to supported extern types using `*T`.
-  Unsigned extern parameters and returns use Ashes unsigned values at call
-  sites and are converted to the requested C ABI width at the extern boundary.
-- `void` is supported for extern return types and produces Ashes `Unit`.
+- Supported external parameter and return types are `Int`, `u8`, `u16`, `u32`,
+  `u64`, `Float`, `Bool`, `Str`, opaque external types declared with
+  `external type`, and pointers to supported external types using `*T`.
+  Unsigned external parameters and returns use Ashes unsigned values at call
+  sites and are converted to the requested C ABI width at the external boundary.
+- `void` is supported for external return types and produces Ashes `Unit`.
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
-- Opaque extern types are represented as native pointer-sized words and are
+- Opaque external types are represented as native pointer-sized words and are
   intended for handles such as LLVM-C references.
-- Pointer extern types are represented as native pointers and may be nested for
+- Pointer external types are represented as native pointers and may be nested for
   C buffer and out-parameter APIs such as `*u8` and `**LLVMModuleRef`.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
-  or DLL. Windows extern imports require an explicit DLL name.
-- Extern functions must be called directly; they are not first-class function
+  or DLL. Windows external imports require an explicit DLL name.
+- External functions must be called directly; they are not first-class function
   values in this initial FFI surface.
 
 ## 5.2 Result Binding
@@ -729,30 +743,30 @@ Type expression syntax:
 - Function types: `Int -> Bool`
 - Tuple types: `(Int, Str)`
 
-Type annotations are also accepted on `let rec` bindings.
+Type annotations are also accepted on `let recursive` bindings.
 
 ---
 
 # 6. Recursive Bindings
 
-Recursive bindings must be declared with `rec`.
+Recursive bindings must be declared with `recursive`.
 
 Syntax:
 
-let rec name = value
+let recursive name = value
 in body
 
 Example:
 
-let rec loop i =
+let recursive loop i =
     if i >= 10
     then i
     else loop(i + 1)
 in Ashes.IO.print(loop(0))
 
-Without `rec`, a binding cannot reference itself.
+Without `recursive`, a binding cannot reference itself.
 
-`let rec` bindings are **monomorphic**: during inference, the recursive name is bound to a
+`let recursive` bindings are **monomorphic**: during inference, the recursive name is bound to a
 single monotype (a non-generalized type, which may still contain type variables). This
 means the function may not be used at multiple distinct types within its own definition
 (no polymorphic recursion). Non-recursive `let` bindings are generalized and may be used
@@ -760,7 +774,7 @@ polymorphically.
 
 Self-recursive calls in tail position are guaranteed not to consume additional stack
 frames. Tail-position arguments are still evaluated strictly before the recursive jump is
-performed. Cross-member tail calls in a `let rec ... and ...` group are also
+performed. Cross-member tail calls in a `let recursive ... and ...` group are also
 constant-stack when the group members share a common parameter shape; non-tail recursive
 calls consume one stack frame per active call. See §18.3 for the exact conditions and
 stack-depth limits.
@@ -769,15 +783,15 @@ stack-depth limits.
 
 # 7. Functions
 
-Anonymous functions are declared using `fun`.
+Anonymous functions are declared using `given`.
 
 Syntax:
 
-fun (param1, param2, ...) -> expr
+given (param1, param2, ...) -> expr
 
 Example:
 
-let add = fun (x, y) -> x + y
+let add = given (x, y) -> x + y
 in Ashes.IO.print(add(10, 5))
 
 Functions:
@@ -889,7 +903,7 @@ whitespace arguments.
     let add x y = x + y
     in Ashes.IO.print (add 3 4)
 
-    let rec loop x y =
+    let recursive loop x y =
         if x >= 100000
         then y
         else loop (x + 1) (y + 1)
@@ -898,27 +912,27 @@ whitespace arguments.
 ## 7.2 Parameter Sugar
 
 A binding may list its parameters directly to the left of `=`. This is pure
-syntax sugar for a binding whose value is a chain of nested `fun` lambdas — each
-parameter desugars to exactly one `fun` layer:
+syntax sugar for a binding whose value is a chain of nested `given` lambdas — each
+parameter desugars to exactly one `given` layer:
 
 let f a b = body
 
 is exactly equivalent to:
 
-let f = fun (a) -> fun (b) -> body
+let f = given (a) -> given (b) -> body
 
-So `let id x = x` is `let id = fun (x) -> x`, and a curried two-argument binding
+So `let id x = x` is `let id = given (x) -> x`, and a curried two-argument binding
 spells the nested-lambda form more compactly:
 
-let rec sum lst acc =
+let recursive sum lst acc =
     match lst with
         | [] -> acc
         | x :: rest -> sum(rest)(acc + x)
 in Ashes.IO.print(sum([1, 2, 3])(0))
 
-The sugar applies to plain `let`, `let rec`, and nested `let ... in` bindings
+The sugar applies to plain `let`, `let recursive`, and nested `let ... in` bindings
 alike. Parameter sugar is the idiomatic way to write a named function; the
-explicit `fun` form remains valid and is what the sugar expands to.
+explicit `given` form remains valid and is what the sugar expands to.
 
 ---
 
@@ -1292,7 +1306,7 @@ in first
 
 Example:
 
-let rec sum lst acc =
+let recursive sum lst acc =
     match lst with
         | [] -> acc
         | x :: rest -> sum(rest)(acc + x)
@@ -1300,8 +1314,8 @@ in Ashes.IO.print(sum([1, 2, 3])(1))
 
 Default-value list utilities are written as regular user code, for example:
 
-let rec lastOr xs default =
-    let rec loop ys =
+let recursive lastOr xs default =
+    let recursive loop ys =
         match ys with
             | [] -> default
             | x :: rest ->
@@ -1417,12 +1431,12 @@ selectors are checked against that set. For example `import Ashes.IO.print` and
 When a file is imported as a module, its exports are:
 
 - all top-level `let` bindings,
-- all bindings of top-level `let rec ... and ...` groups, and
+- all bindings of top-level `let recursive ... and ...` groups, and
 - all top-level `type` declarations (and their constructors).
 
 The following are **never** exported:
 
-- `extern` declarations, and
+- `external` declarations, and
 - the trailing expression.
 
 There is **no implicit re-export**: names a module itself imported from other
@@ -1712,7 +1726,7 @@ Example:
 
 ## 14.2 Recursion and Polymorphism
 
-`let rec` bindings are monomorphic during inference. The recursive name is checked
+`let recursive` bindings are monomorphic during inference. The recursive name is checked
 using a single monotype inside its own definition, so polymorphic recursion is not inferred.
 
 ## 14.3 Infinite Types (Occurs Check)
@@ -1729,12 +1743,12 @@ Common patterns that typecheck:
 
 Common patterns that do not typecheck:
 
-- polymorphic recursion in a `let rec` definition
+- polymorphic recursion in a `let recursive` definition
 - self-application that would create an infinite type
 - list elements differ in type
 - match branches differ in return type
 - cons tail is not a list
-- recursive binding lacks `rec`
+- recursive binding lacks `recursive`
 
 ---
 
@@ -1944,7 +1958,7 @@ compiler. When the compiler detects that a recursive call is in tail
 position, it rewrites the call as a jump back to the function entry,
 reusing the current stack frame. This means recursive functions like:
 
-    let rec sum n acc =
+    let recursive sum n acc =
         if n == 0 then acc
         else sum(n - 1)(acc + n)
     in sum(1000000)(0)
@@ -1953,7 +1967,7 @@ run in constant stack space, without risk of stack overflow.
 
 ### 18.3.1 Mutual Recursion
 
-Cross-member tail calls in a `let rec ... and ...` group are also compiled
+Cross-member tail calls in a `let recursive ... and ...` group are also compiled
 to constant-stack loops when all of the following hold:
 
 - every member of the group has the same number of parameters (arity >= 1),
@@ -2242,7 +2256,7 @@ row-polymorphic unification:
   and handler arms, then generalized with let-polymorphism.
 - **A function's row** is the union of the rows of the operations it performs and the rows of the
   functions it calls, minus any effects it handles internally. Rows are inferred open and
-  generalized at `let`, so a pure function like `fun (x) -> x` receives a row-polymorphic type
+  generalized at `let`, so a pure function like `given (x) -> x` receives a row-polymorphic type
   usable in any context.
 - **Calling** a function whose row includes effect `E` inside a function whose written (closed)
   row does not include `E` is a compile-time error (`ASH018`).
@@ -2294,17 +2308,17 @@ effect Prices =
 effect Clock =
     | now : Unit -> Int
 
-let priceOf : Str -> Int uses {Prices} = fun (item) -> perform Prices.lookup(item)
+let priceOf : Str -> Int uses {Prices} = given (item) -> perform Prices.lookup(item)
 
-let order = fun (item) -> (priceOf(item), Clock.now(Unit))
+let order = given (item) -> (priceOf(item), Clock.now(Unit))
 
-let runTest = fun (work) ->
+let runTest = given (work) ->
     handle work(Unit) with
         | Prices.lookup(_) -> resume(200)
         | Clock.now(_) -> resume(1000)
         | return(r) -> r
 
-runTest(fun (_) -> order("widget"))
+runTest(given (_) -> order("widget"))
 ```
 
 The optional-`perform` and optional-annotation decisions are backed by a paired conformance

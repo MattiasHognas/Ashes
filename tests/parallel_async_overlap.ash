@@ -13,12 +13,12 @@ import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
 import Ashes.Async
-let rec sumRange lo hi acc = 
+let recursive sumRange lo hi acc = 
     if lo >= hi
     then acc
     else sumRange(lo + 1)(hi)(acc + lo)
 
-let rec tlen text acc = 
+let recursive tlen text acc = 
     match Ashes.Text.uncons(text) with
         | None -> acc
         | Some((_h, t)) -> tlen(t)(acc + 1)
@@ -32,7 +32,7 @@ let taskB =
     async(match await Ashes.Async.task(0) with
         | Error(_) -> 0
         | Ok(_) -> 
-            match Ashes.Parallel.both(fun (u) -> sumRange(0)(500000)(0))(fun (u) -> sumRange(500000)(1000000)(0)) with
+            match Ashes.Parallel.both(given (u) -> sumRange(0)(500000)(0))(given (u) -> sumRange(500000)(1000000)(0)) with
                 | (a, b) -> a + b)
 in 
     match Ashes.Async.run(Ashes.Async.all([taskA, taskB])) with

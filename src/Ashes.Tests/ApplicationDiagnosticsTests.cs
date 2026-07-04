@@ -9,7 +9,7 @@ public sealed class ApplicationDiagnosticsTests
     [Test]
     public void Oversaturated_call_reports_expected_and_provided_argument_counts()
     {
-        var diag = LowerExpression("let add = fun (x, y) -> x + y in Ashes.IO.print(add(1, 2, 3))");
+        var diag = LowerExpression("let add = given (x, y) -> x + y in Ashes.IO.print(add(1, 2, 3))");
 
         diag.Errors.ShouldContain(x => x.Contains("Call to 'add' expects 2 argument(s) but got 3.", StringComparison.Ordinal));
         diag.Errors.ShouldNotContain(x => x.Contains("print() does not support type Never yet.", StringComparison.Ordinal));
@@ -18,7 +18,7 @@ public sealed class ApplicationDiagnosticsTests
     [Test]
     public void Calling_partial_value_with_too_many_arguments_reports_remaining_arity()
     {
-        var diag = LowerExpression("let add = fun (x, y) -> x + y in let add1 = add(1) in Ashes.IO.print(add1(1, 2))");
+        var diag = LowerExpression("let add = given (x, y) -> x + y in let add1 = add(1) in Ashes.IO.print(add1(1, 2))");
 
         diag.Errors.ShouldContain(x => x.Contains("Call to 'add1' expects 1 argument(s) but got 2.", StringComparison.Ordinal));
         diag.Errors.ShouldNotContain(x => x.Contains("print() does not support type Never yet.", StringComparison.Ordinal));
@@ -37,7 +37,7 @@ public sealed class ApplicationDiagnosticsTests
     [Test]
     public void Call_argument_type_mismatch_reports_argument_context()
     {
-        var diag = LowerExpression("let add = fun (x, y) -> x + y in Ashes.IO.print(add(1, \"x\"))");
+        var diag = LowerExpression("let add = given (x, y) -> x + y in Ashes.IO.print(add(1, \"x\"))");
 
         diag.Errors.ShouldContain(x =>
             x.Contains("Type mismatch: Int vs Str.", StringComparison.Ordinal)

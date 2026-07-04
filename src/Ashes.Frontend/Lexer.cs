@@ -414,7 +414,9 @@ public sealed class Lexer
         return text switch
         {
             "let" => TokenKind.Let,
-            "rec" => TokenKind.Rec,
+            // Dual-spelling window: the old abbreviated spellings remain accepted while the
+            // formatter emits only the full-word forms; the cutover turns them into ASH021.
+            "recursive" or "rec" => TokenKind.Recursive,
             "in" => TokenKind.In,
             "and" => TokenKind.And,
             "if" => TokenKind.If,
@@ -423,12 +425,12 @@ public sealed class Lexer
             "match" => TokenKind.Match,
             "with" => TokenKind.With,
             "when" => TokenKind.When,
-            "fun" => TokenKind.Fun,
+            "given" or "fun" => TokenKind.Given,
             "true" => TokenKind.True,
             "false" => TokenKind.False,
             "type" => TokenKind.Type,
             "await" => TokenKind.Await,
-            "extern" => TokenKind.Extern,
+            "external" or "extern" => TokenKind.External,
             "effect" => TokenKind.Effect,
             "uses" => TokenKind.Uses,
             "perform" => TokenKind.Perform,

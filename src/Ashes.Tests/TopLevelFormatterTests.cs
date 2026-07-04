@@ -5,8 +5,8 @@ namespace Ashes.Tests;
 
 /// <summary>
 /// Exact-output and idempotence tests for formatting a <see cref="Program"/> made of flat top-level
-/// declarations (<c>let</c> / <c>let rec ... and ...</c> / <c>type</c>) plus an optional trailing
-/// expression. One blank line separates adjacent items and the trailing expression; a rec group is a
+/// declarations (<c>let</c> / <c>let recursive ... and ...</c> / <c>type</c>) plus an optional trailing
+/// expression. One blank line separates adjacent items and the trailing expression; a recursive group is a
 /// single block; nested <c>let ... in</c> pyramids are preserved (never flattened).
 /// </summary>
 public sealed class TopLevelFormatterTests
@@ -62,21 +62,21 @@ public sealed class TopLevelFormatterTests
     [Test]
     public void Let_declaration_and_a_following_extern_are_separated_by_one_blank_line()
     {
-        // `extern` is a top-level declaration like any other: a preceding `let` is separated from it
+        // `external` is a top-level declaration like any other: a preceding `let` is separated from it
         // by exactly one blank line (the grouping exception below applies only between two externs).
-        var formatted = Format("let f = 1\nextern strlen(Str) -> Int\nf\n");
+        var formatted = Format("let f = 1\nexternal strlen(Str) -> Int\nf\n");
 
-        formatted.ShouldBe("let f = 1\n\nextern strlen(Str) -> Int\n\nf\n");
+        formatted.ShouldBe("let f = 1\n\nexternal strlen(Str) -> Int\n\nf\n");
     }
 
     [Test]
     public void Consecutive_extern_declarations_stay_grouped_as_a_block()
     {
-        // FFI declaration blocks keep adjacent `extern` lines together with no blank line between
+        // FFI declaration blocks keep adjacent `external` lines together with no blank line between
         // them, separated from the trailing expression by one blank line (matches FormatterTests).
-        var formatted = Format("extern type Handle\nextern makeHandle(Int) -> Handle\n0\n");
+        var formatted = Format("external type Handle\nexternal makeHandle(Int) -> Handle\n0\n");
 
-        formatted.ShouldBe("extern type Handle\nextern makeHandle(Int) -> Handle\n\n0\n");
+        formatted.ShouldBe("external type Handle\nexternal makeHandle(Int) -> Handle\n\n0\n");
     }
 
     [Test]
@@ -98,33 +98,33 @@ public sealed class TopLevelFormatterTests
     [Test]
     public void Single_recursive_let_declaration_renders_without_in()
     {
-        var formatted = Format("let rec loop = 1\n");
+        var formatted = Format("let recursive loop = 1\n");
 
-        formatted.ShouldBe("let rec loop = 1\n");
+        formatted.ShouldBe("let recursive loop = 1\n");
     }
 
     [Test]
     public void Rec_group_formats_as_a_single_block_with_each_and_at_let_indentation()
     {
-        var formatted = Format("let rec a = 1\nand b = 2\n");
+        var formatted = Format("let recursive a = 1\nand b = 2\n");
 
-        formatted.ShouldBe("let rec a = 1\nand b = 2\n");
+        formatted.ShouldBe("let recursive a = 1\nand b = 2\n");
     }
 
     [Test]
     public void Rec_group_with_three_members_formats_as_a_single_block()
     {
-        var formatted = Format("let rec a = 1\nand b = 2\nand c = 3\n");
+        var formatted = Format("let recursive a = 1\nand b = 2\nand c = 3\n");
 
-        formatted.ShouldBe("let rec a = 1\nand b = 2\nand c = 3\n");
+        formatted.ShouldBe("let recursive a = 1\nand b = 2\nand c = 3\n");
     }
 
     [Test]
     public void Rec_group_with_multiline_values_keeps_each_and_on_its_own_line()
     {
-        var formatted = Format("let rec even = fun (n) -> n\nand odd = fun (n) -> n\n");
+        var formatted = Format("let recursive even = given (n) -> n\nand odd = given (n) -> n\n");
 
-        formatted.ShouldBe("let rec even = \n    fun (n) -> n\nand odd = \n    fun (n) -> n\n");
+        formatted.ShouldBe("let recursive even = \n    given (n) -> n\nand odd = \n    given (n) -> n\n");
     }
 
     [Test]
@@ -147,7 +147,7 @@ public sealed class TopLevelFormatterTests
     public void Top_level_let_declaration_with_parameter_sugar_round_trips()
     {
         // `let f x y = body` must survive formatting as parameter sugar, not be re-expanded into
-        // `let f = fun (x) -> fun (y) -> body`.
+        // `let f = given (x) -> given (y) -> body`.
         var formatted = Format("let add x y = x + y\n");
 
         formatted.ShouldBe("let add x y = x + y\n");
@@ -156,17 +156,17 @@ public sealed class TopLevelFormatterTests
     [Test]
     public void Top_level_let_rec_declaration_with_parameter_sugar_round_trips()
     {
-        var formatted = Format("let rec loop n = loop n\n");
+        var formatted = Format("let recursive loop n = loop n\n");
 
-        formatted.ShouldBe("let rec loop n = loop n\n");
+        formatted.ShouldBe("let recursive loop n = loop n\n");
     }
 
     [Test]
     public void Rec_group_preserves_parameter_sugar_per_binding()
     {
-        var formatted = Format("let rec even n = odd n\nand odd n = even n\n");
+        var formatted = Format("let recursive even n = odd n\nand odd n = even n\n");
 
-        formatted.ShouldBe("let rec even n = odd n\nand odd n = even n\n");
+        formatted.ShouldBe("let recursive even n = odd n\nand odd n = even n\n");
     }
 
     [Test]
@@ -182,17 +182,17 @@ public sealed class TopLevelFormatterTests
     [Arguments("let a = 1\nlet z = a in z\n")]
     [Arguments("type Color =\n    | Red\n    | Green\nRed\n")]
     [Arguments("type A =\n    | X\ntype B =\n    | Y\nX\n")]
-    [Arguments("let f = 1\nextern strlen(Str) -> Int\nf\n")]
-    [Arguments("extern type Handle\nextern makeHandle(Int) -> Handle\n0\n")]
+    [Arguments("let f = 1\nexternal strlen(Str) -> Int\nf\n")]
+    [Arguments("external type Handle\nexternal makeHandle(Int) -> Handle\n0\n")]
     [Arguments("type Color =\n    | Red\n    | Green\nlet c = Red\nlet r = c in r\n")]
-    [Arguments("let rec a = 1\nand b = 2\n")]
-    [Arguments("let rec a = 1\nand b = 2\nand c = 3\n")]
-    [Arguments("let rec even = fun (n) -> n\nand odd = fun (n) -> n\n")]
+    [Arguments("let recursive a = 1\nand b = 2\n")]
+    [Arguments("let recursive a = 1\nand b = 2\nand c = 3\n")]
+    [Arguments("let recursive even = given (n) -> n\nand odd = given (n) -> n\n")]
     [Arguments("let x = let y = 1 in y in x\n")]
     [Arguments("let b = (let y = 2 in y)\n")]
     [Arguments("let add x y = x + y\n")]
-    [Arguments("let rec loop n = loop n\n")]
-    [Arguments("let rec even n = odd n\nand odd n = even n\n")]
+    [Arguments("let recursive loop n = loop n\n")]
+    [Arguments("let recursive even n = odd n\nand odd n = even n\n")]
     [Arguments("1 + 2\n")]
     public void Formatting_is_idempotent(string source)
     {

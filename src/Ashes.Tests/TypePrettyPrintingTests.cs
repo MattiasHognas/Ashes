@@ -10,7 +10,7 @@ public sealed class TypePrettyPrintingTests
     [Test]
     public void Type_mismatch_pretty_prints_function_type_variables_with_stable_names()
     {
-        var (_, diag) = LowerProgram("if true then fun (x) -> x else 1");
+        var (_, diag) = LowerProgram("if true then given (x) -> x else 1");
 
         diag.Errors.ShouldContain(x => x.Contains("Type mismatch: a -> a vs Int.", StringComparison.Ordinal));
         diag.Errors.ShouldNotContain(x => x.Contains("t0", StringComparison.Ordinal) || x.Contains("t1", StringComparison.Ordinal));
@@ -19,7 +19,7 @@ public sealed class TypePrettyPrintingTests
     [Test]
     public void Binary_operator_diagnostic_uses_consistent_type_variable_names_across_both_sides()
     {
-        var (_, diag) = LowerProgram("(fun (x) -> x) + (fun (y) -> y)");
+        var (_, diag) = LowerProgram("(given (x) -> x) + (given (y) -> y)");
 
         diag.Errors.ShouldContain(x => x.Contains("'+' requires Int+Int, Float+Float, or Str+Str, got a -> a and b -> b.", StringComparison.Ordinal));
     }
@@ -27,7 +27,7 @@ public sealed class TypePrettyPrintingTests
     [Test]
     public void Type_mismatch_parenthesizes_function_type_inside_list_type_argument()
     {
-        var (_, diag) = LowerProgram("if true then [fun (x) -> x] else 1");
+        var (_, diag) = LowerProgram("if true then [given (x) -> x] else 1");
 
         diag.Errors.ShouldContain(x => x.Contains("Type mismatch: List<(a -> a)> vs Int.", StringComparison.Ordinal));
     }

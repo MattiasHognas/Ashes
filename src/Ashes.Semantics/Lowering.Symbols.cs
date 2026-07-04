@@ -266,7 +266,7 @@ public sealed partial class Lowering
         {
             if (!_externOpaqueTypes.Add(opaqueType.Name))
             {
-                ReportDiagnostic(GetSpan(opaqueType), $"Duplicate extern type '{opaqueType.Name}'.");
+                ReportDiagnostic(GetSpan(opaqueType), $"Duplicate external type '{opaqueType.Name}'.");
             }
         }
 
@@ -315,7 +315,7 @@ public sealed partial class Lowering
 
         if (parsedType is not ParsedType.Named named)
         {
-            ReportDiagnostic(GetSpan(externDecl), "Unsupported extern type syntax.");
+            ReportDiagnostic(GetSpan(externDecl), "Unsupported external type syntax.");
             return null;
         }
 
@@ -338,13 +338,13 @@ public sealed partial class Lowering
 
     private ResolvedExternType? ReportUnsupportedExternType(ExternDecl externDecl, string name)
     {
-        ReportDiagnostic(GetSpan(externDecl), $"Type '{name}' is not supported in extern declarations.");
+        ReportDiagnostic(GetSpan(externDecl), $"Type '{name}' is not supported in external declarations.");
         return null;
     }
 
     private ResolvedExternType? ReportVoidParameterExternType(ExternDecl externDecl)
     {
-        ReportDiagnostic(GetSpan(externDecl), "Type 'void' is only supported as an extern return type.");
+        ReportDiagnostic(GetSpan(externDecl), "Type 'void' is only supported as an external return type.");
         return null;
     }
 

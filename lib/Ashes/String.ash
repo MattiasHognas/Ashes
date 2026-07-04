@@ -1,9 +1,9 @@
-let rec length text = 
+let recursive length text = 
     match Ashes.Text.uncons(text) with
         | None -> 0
         | Some((_head, tail)) -> 1 + length(tail)
 
-let rec drop text count = 
+let recursive drop text count = 
     if count <= 0
     then text
     else 
@@ -11,7 +11,7 @@ let rec drop text count =
             | None -> ""
             | Some((_head, tail)) -> drop(tail)(count - 1)
 
-let rec take text count = 
+let recursive take text count = 
     if count <= 0
     then ""
     else 
@@ -27,7 +27,7 @@ let substring text start count =
         then ""
         else take(drop(text)(start))(count)
 
-let rec startsWith text prefix = 
+let recursive startsWith text prefix = 
     match Ashes.Text.uncons(prefix) with
         | None -> true
         | Some((prefixHead, prefixTail)) -> 
@@ -42,7 +42,7 @@ let indexOf text needle =
     if needle == ""
     then 0
     else 
-        let rec go remaining offset = 
+        let recursive go remaining offset = 
             if startsWith(remaining)(needle)
             then offset
             else 
@@ -59,7 +59,7 @@ let split text separator =
     else 
         let separatorLength = length(separator)
         in 
-            let rec go remaining = 
+            let recursive go remaining = 
                 let foundAt = indexOf(remaining)(separator)
                 in 
                     if foundAt <= -1
@@ -153,7 +153,7 @@ let isWhiteSpace text =
         | "\r" -> true
         | _ -> false
 
-let rec trimStart text = 
+let recursive trimStart text = 
     match Ashes.Text.uncons(text) with
         | None -> ""
         | Some((head, tail)) -> 
@@ -161,7 +161,7 @@ let rec trimStart text =
             then trimStart(tail)
             else text
 
-let rec lastAndInit text = 
+let recursive lastAndInit text = 
     match Ashes.Text.uncons(text) with
         | None -> None
         | Some((head, tail)) -> 
@@ -172,7 +172,7 @@ let rec lastAndInit text =
                         | None -> None
                         | Some((init, last)) -> Some((head + init, last))
 
-let rec trimEnd text = 
+let recursive trimEnd text = 
     match lastAndInit(text) with
         | None -> ""
         | Some((init, last)) -> 
@@ -185,12 +185,12 @@ let trim text = trimEnd(trimStart(text))
 let compare left right = Ashes.Bytes.compare(Ashes.Bytes.fromText(left))(Ashes.Bytes.fromText(right))
 
 let join separator parts = 
-    (let rec rev acc xs = 
+    (let recursive rev acc xs = 
         match xs with
             | [] -> acc
             | head :: tail -> rev(head :: acc)(tail)
     in 
-        let rec interleaveGo acc ps = 
+        let recursive interleaveGo acc ps = 
             match ps with
                 | [] -> rev([])(acc)
                 | first :: rest -> 
@@ -198,7 +198,7 @@ let join separator parts =
                         | [] -> interleaveGo(first :: [])(rest)
                         | _ -> interleaveGo(first :: separator :: acc)(rest)
         in 
-            let rec pairwiseGo acc ps = 
+            let recursive pairwiseGo acc ps = 
                 match ps with
                     | [] -> rev([])(acc)
                     | first :: rest -> 
@@ -208,7 +208,7 @@ let join separator parts =
                                 let merged = first + second
                                 in pairwiseGo(merged :: acc)(more)
             in 
-                let rec reduce ps = 
+                let recursive reduce ps = 
                     match ps with
                         | [] -> ""
                         | only :: rest -> 

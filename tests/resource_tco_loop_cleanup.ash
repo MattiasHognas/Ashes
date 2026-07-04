@@ -7,7 +7,7 @@
 // the loop runs in bounded fds.
 import Ashes.File
 import Ashes.IO
-let rec loop n acc = 
+let recursive loop n acc = 
     if n <= 0
     then acc
     else 

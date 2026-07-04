@@ -29,12 +29,12 @@
 //
 // Self-contained: uses only core language features.
 
-let rec plLength xs = 
+let recursive plLength xs = 
     match xs with
         | [] -> 0
         | _h :: t -> 1 + plLength(t)
 
-let rec plTake xs n = 
+let recursive plTake xs n = 
     if n <= 0
     then []
     else 
@@ -42,7 +42,7 @@ let rec plTake xs n =
             | [] -> []
             | h :: t -> h :: plTake(t)(n - 1)
 
-let rec plDrop xs n = 
+let recursive plDrop xs n = 
     if n <= 0
     then xs
     else 
@@ -50,23 +50,23 @@ let rec plDrop xs n =
             | [] -> []
             | _h :: t -> plDrop(t)(n - 1)
 
-let rec plAppend xs ys = 
+let recursive plAppend xs ys = 
     match xs with
         | [] -> ys
         | h :: t -> h :: plAppend(t)(ys)
 
-let rec plSeqMap f xs = 
+let recursive plSeqMap f xs = 
     match xs with
         | [] -> []
         | h :: t -> f(h) :: plSeqMap(f)(t)
 
-let rec plSeqReduce combine identity f xs = 
+let recursive plSeqReduce combine identity f xs = 
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
         | h :: t -> combine(f(h))(plSeqReduce(combine)(identity)(f)(t))
 
-let rec mapGrained grain f xs = 
+let recursive mapGrained grain f xs = 
     match xs with
         | [] -> []
         | h :: [] -> f(h) :: []
@@ -76,10 +76,10 @@ let rec mapGrained grain f xs =
             else 
                 let half = plLength(xs) / 2
                 in 
-                    match Ashes.Parallel.both(fun (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(fun (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
+                    match Ashes.Parallel.both(given (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(given (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> plAppend(leftRes)(rightRes)
 
-let rec reduceGrained grain combine identity f xs = 
+let recursive reduceGrained grain combine identity f xs = 
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
@@ -89,7 +89,7 @@ let rec reduceGrained grain combine identity f xs =
             else 
                 let half = plLength(xs) / 2
                 in 
-                    match Ashes.Parallel.both(fun (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(fun (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
+                    match Ashes.Parallel.both(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> combine(leftRes)(rightRes)
 
 let map f xs = mapGrained(1)(f)(xs)

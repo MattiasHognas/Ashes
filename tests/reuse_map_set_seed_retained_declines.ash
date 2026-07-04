@@ -25,7 +25,7 @@ let valOf d k m =
         | None -> d
         | Some(v) -> v
 
-let rec bump n acc = 
+let recursive bump n acc = 
     if n <= 0
     then acc
     else bump(n - 1)(Ashes.Map.set(cmp)(0)(999)(acc))

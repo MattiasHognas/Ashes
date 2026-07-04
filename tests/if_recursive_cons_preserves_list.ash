@@ -1,5 +1,5 @@
 // expect: 1234
-let rec copy xs = 
+let recursive copy xs = 
     match xs with
         | [] -> []
         | head :: tail -> 
@@ -7,7 +7,7 @@ let rec copy xs =
             then head :: copy(tail)
             else copy(tail)
 in 
-    let rec digits acc xs = 
+    let recursive digits acc xs = 
         match xs with
             | [] -> acc
             | head :: tail -> digits(acc * 10 + head)(tail)

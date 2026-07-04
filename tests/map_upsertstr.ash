@@ -4,13 +4,13 @@ import Ashes.Map
 import Ashes.Text
 import Ashes.String
 let m1 = 
-    Ashes.Map.upsertStr("a")(1)(fun (old) -> old + 100)(Ashes.Map.empty)
+    Ashes.Map.upsertStr("a")(1)(given (old) -> old + 100)(Ashes.Map.empty)
 
 let m2 = 
-    Ashes.Map.upsertStr("b")(5)(fun (old) -> old + 100)(m1)
+    Ashes.Map.upsertStr("b")(5)(given (old) -> old + 100)(m1)
 
 let m3 = 
-    Ashes.Map.upsertStr("a")(9)(fun (old) -> old + 2)(m2)
+    Ashes.Map.upsertStr("a")(9)(given (old) -> old + 2)(m2)
 
 let a = 
     match Ashes.Map.getStr("a")(m3) with

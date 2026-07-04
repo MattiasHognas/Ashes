@@ -1,8 +1,8 @@
 // expect: 6
 let f = 
-    fun (a) -> 
-        fun (b) -> 
-            fun (c) -> a + b + c
+    given (a) -> 
+        given (b) -> 
+            given (c) -> a + b + c
 in 
     let g = f(1)(2)
     in 

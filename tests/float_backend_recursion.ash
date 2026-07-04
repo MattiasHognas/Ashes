@@ -1,5 +1,5 @@
 // expect: 1
-let rec accumulate n = 
+let recursive accumulate n = 
     if n == 0
     then 0.0
     else accumulate(n - 1)

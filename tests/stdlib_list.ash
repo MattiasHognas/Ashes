@@ -4,14 +4,14 @@ import Ashes.IO
 let nums = [1, 2, 3]
 in 
     let mapped = 
-        Ashes.List.map(fun (x) -> x + 1)(nums)
+        Ashes.List.map(given (x) -> x + 1)(nums)
     in 
         let filtered = 
-            Ashes.List.filter(fun (x) -> x >= 2)(nums)
+            Ashes.List.filter(given (x) -> x >= 2)(nums)
         in 
             let folded = 
-                Ashes.List.foldLeft(fun (acc) -> 
-                    fun (x) -> acc + x)(0)(nums)
+                Ashes.List.foldLeft(given (acc) -> 
+                    given (x) -> acc + x)(0)(nums)
             in 
                 let reversed = Ashes.List.reverse(nums)
                 in 

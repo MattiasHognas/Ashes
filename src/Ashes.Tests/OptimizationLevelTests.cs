@@ -74,7 +74,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        const string source = "let rec fib = fun (n) -> match n with | 0 -> 0 | 1 -> 1 | _ -> fib(n - 1) + fib(n - 2) in Ashes.IO.print(fib(10))";
+        const string source = "let recursive fib = given (n) -> match n with | 0 -> 0 | 1 -> 1 | _ -> fib(n - 1) + fib(n - 2) in Ashes.IO.print(fib(10))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("55");
     }
@@ -90,7 +90,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        const string source = "let mk = fun (x) -> fun (y) -> x + y in let add20 = mk(20) in Ashes.IO.print(add20(22))";
+        const string source = "let mk = given (x) -> given (y) -> x + y in let add20 = mk(20) in Ashes.IO.print(add20(22))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("42");
     }
@@ -106,7 +106,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        const string source = "let rec loop = fun (acc) -> fun (n) -> match n with | 0 -> acc | _ -> loop(acc + n)(n - 1) in Ashes.IO.print(loop(0)(100))";
+        const string source = "let recursive loop = given (acc) -> given (n) -> match n with | 0 -> acc | _ -> loop(acc + n)(n - 1) in Ashes.IO.print(loop(0)(100))";
         var result = await CompileAndRunAsync(source, level);
         result.Stdout.ShouldBe("5050");
     }

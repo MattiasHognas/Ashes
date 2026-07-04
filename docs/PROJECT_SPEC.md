@@ -176,7 +176,7 @@ Import cycles are not allowed.
 Project modules are single-value modules.
 
 - A module exports the final value produced by its body.
-- When a module body has the shape `let name = expr in name` or `let rec name = expr in name`,
+- When a module body has the shape `let name = expr in name` or `let recursive name = expr in name`,
   `import Module` also brings `name` into local scope for the importing module.
 - Qualified access `Module.name` resolves to that exported name.
 - For multi-segment imports such as `import Foo.Bar`, short qualification `Bar.name`
