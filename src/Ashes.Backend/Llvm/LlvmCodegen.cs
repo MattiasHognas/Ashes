@@ -143,7 +143,6 @@ internal static partial class LlvmCodegen
     private const string TcpResolveFailedMessage = "Ashes.Net.Tcp.connect() could not resolve host";
     private const string TcpListenFailedMessage = "Ashes.Net.Tcp.Server.listen() failed";
     private const string TcpAcceptFailedMessage = "Ashes.Net.Tcp.Server.accept() failed";
-    private const string TcpServerUnsupportedMessage = "Ashes.Net.Tcp.Server is not supported on this target yet";
     private const string HttpHttpsNotSupportedMessage = "https not supported";
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
@@ -648,6 +647,10 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
             windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
             LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            LlvmValueHandle windowsListenImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_listen");
+            LlvmApi.SetLinkage(windowsListenImport, LlvmLinkage.External);
+            LlvmValueHandle windowsAcceptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_accept");
+            LlvmApi.SetLinkage(windowsAcceptImport, LlvmLinkage.External);
             windowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
             LlvmApi.SetLinkage(windowsLoadLibraryImport, LlvmLinkage.External);
             windowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");

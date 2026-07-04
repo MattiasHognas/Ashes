@@ -249,6 +249,37 @@ internal static partial class LlvmCodegen
             name);
     }
 
+    private static LlvmValueHandle EmitWindowsListen(LlvmCodegenState state, LlvmValueHandle socket, int backlog, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle listenType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+        LlvmValueHandle listenPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_listen"),
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            listenType,
+            listenPtr,
+            [socket, LlvmApi.ConstInt(state.I32, unchecked((uint)backlog), 0)],
+            name);
+    }
+
+    // accept(SOCKET, sockaddr* = NULL, int* = NULL) -> SOCKET (INVALID_SOCKET on error).
+    private static LlvmValueHandle EmitWindowsAccept(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle acceptType = LlvmApi.FunctionType(state.I64, [state.I64, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle acceptPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_accept"),
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            acceptType,
+            acceptPtr,
+            [socket, LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr)],
+            name);
+    }
+
     private static LlvmValueHandle EmitWindowsSetSockOpt(LlvmCodegenState state, LlvmValueHandle socket, int level, int optionName, LlvmValueHandle optionValuePtr, int optionLength, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
