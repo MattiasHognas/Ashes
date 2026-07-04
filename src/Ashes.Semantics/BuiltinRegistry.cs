@@ -28,6 +28,7 @@ public static class BuiltinRegistry
         FileClose,
         InternalDeepCopy,
         ParallelBoth,
+        ParallelWithWorkers,
         TextUncons,
         TextParseInt,
         TextParseFloat,
@@ -222,10 +223,12 @@ public static class BuiltinRegistry
                 "Ashes.Semantics.StdLib.Ashes.Parallel.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    // Hybrid module: `both` is a compiler intrinsic (lowered at each call site so it
-                    // can deep-copy a worker's result at the concrete result type); `map`/`reduce`/
-                    // helpers come from the embedded source.
-                    ["both"] = new("both", BuiltinValueKind.ParallelBoth, IsCallable: true, Arity: 2)
+                    // Hybrid module: `both` and `withWorkers` are compiler intrinsics (lowered at
+                    // each call site — `both` to deep-copy a worker's result at the concrete result
+                    // type, `withWorkers` to save/set/restore the runtime worker override around a
+                    // thunk); `map`/`reduce`/helpers come from the embedded source.
+                    ["both"] = new("both", BuiltinValueKind.ParallelBoth, IsCallable: true, Arity: 2),
+                    ["withWorkers"] = new("withWorkers", BuiltinValueKind.ParallelWithWorkers, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Maybe"] = new(
                 "Ashes.Maybe",

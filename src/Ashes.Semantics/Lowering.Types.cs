@@ -81,6 +81,7 @@ public sealed partial class Lowering
         FileClose,
         InternalDeepCopy,
         ParallelBoth,
+        ParallelWithWorkers,
         FileWriteText,
         FileExists,
         TextUncons,

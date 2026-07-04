@@ -95,3 +95,18 @@ let recursive reduceGrained grain combine identity f xs =
 let map f xs = mapGrained(1)(f)(xs)
 
 let reduce combine identity f xs = reduceGrained(1)(combine)(identity)(f)(xs)
+
+let bothWithWorkers count left right = 
+    Ashes.Parallel.withWorkers(count)(given (_u) -> Ashes.Parallel.both(left)(right))
+
+let mapWithWorkers count f xs = 
+    Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(1)(f)(xs))
+
+let mapGrainedWithWorkers count grain f xs = 
+    Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(grain)(f)(xs))
+
+let reduceWithWorkers count combine identity f xs = 
+    Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(1)(combine)(identity)(f)(xs))
+
+let reduceGrainedWithWorkers count grain combine identity f xs = 
+    Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(xs))

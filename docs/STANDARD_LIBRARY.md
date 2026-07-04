@@ -314,6 +314,24 @@ or partially applied.
   are exactly `mapGrained(1)` / `reduceGrained(1)`. The result is always identical to the sequential
   equivalent, whatever the grain (grains `< 1` behave as `1`).
 
+#### Scoped worker overrides
+
+`--parallel-workers` sets the executable's **compiled maximum** (its hard ceiling, or the detected
+core count when unset). A program can request **fewer** workers for a specific computation with a
+dynamically-scoped override; the effective count is `min(override, compiledMax)`, so a request
+above the ceiling still clamps and one below it reduces the local limit. The override is restored
+when the scope returns.
+
+- `withWorkers(count)(action)` returning `A` — run the pure thunk `action : Unit -> A` with the
+  worker cap scoped to `count` (clamped to the compiled maximum). `count` must be positive (a
+  non-positive count panics). Nested `withWorkers` scopes apply the inner value inside and restore
+  the outer on return. The result is identical to running `action` without the override — only the
+  parallelism used to compute it changes.
+- `bothWithWorkers(count)(left)(right)`, `mapWithWorkers(count)(f)(list)`,
+  `mapGrainedWithWorkers(count)(grain)(f)(list)`, `reduceWithWorkers(count)(combine)(identity)(f)(list)`,
+  `reduceGrainedWithWorkers(count)(grain)(combine)(identity)(f)(list)` — convenience wrappers, each
+  equal to `withWorkers(count)` around the corresponding operation.
+
 ### `Ashes.Internal`
 
 Compiler-foundation primitives (not intended for everyday use).
