@@ -429,10 +429,13 @@ public sealed class Lexer
             "type" => TokenKind.Type,
             "await" => TokenKind.Await,
             "external" => TokenKind.External,
-            "effect" => TokenKind.Effect,
-            "uses" => TokenKind.Uses,
+            "capability" => TokenKind.Capability,
+            "needs" => TokenKind.Needs,
+            "provide" => TokenKind.Provide,
             "perform" => TokenKind.Perform,
             "handle" => TokenKind.Handle,
+            "effect" => TokenKind.RenamedEffect,
+            "uses" => TokenKind.RenamedUses,
             _ => TokenKind.Ident
         };
     }

@@ -147,17 +147,17 @@ in
         | Error(_) -> 0)
 ```
 
-### Effects & Handlers
+### Capabilities & Handlers
 
 Business code declares the operations it needs; the caller decides what they
 mean by installing a handler — dependency injection with no framework, checked
-at compile time (an unhandled effect is a compile error, not a runtime crash):
+at compile time (an unsatisfied capability is a compile error, not a runtime crash):
 
 ```ash
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
-effect Log =
+capability Log =
     | log : Str -> Unit
 
 let stamped msg = 
@@ -176,8 +176,8 @@ Ashes.IO.print(result)
 ```
 
 Swap the handler and the same `stamped` runs against a real clock in
-production or a frozen one in tests. Effect rows are inferred and appear in
-types as `uses {Clock, Log}`; see
+production or a frozen one in tests. Capability rows are inferred and appear in
+types as `needs {Clock, Log}`; see
 [LANGUAGE_SPEC.md](docs/LANGUAGE_SPEC.md) section 20.
 
 ### Polymorphism
@@ -470,8 +470,8 @@ sequentially evaluated, so these effects happen in a well-defined order, and the
 purity contract is specifically about values: no function mutates an existing
 binding or value in place. Networking and TLS additionally return `Task(E, A)`
 and are consumed via `await`. A general algebraic-effects system (handlers for
-`Clock`, `Random`, `FileSystem`, and the like) has landed, with tail-resumptive
-and one-shot resumptive handlers.
+`Clock`, `Random`, `FileSystem`, and the like — Ashes calls them **capabilities**) has
+landed, with tail-resumptive and one-shot resumptive handlers.
 *Details: [`Ashes.IO`](docs/STANDARD_LIBRARY.md#ashesio) and the built-in
 modules in the standard library; the
 [effects system](docs/LANGUAGE_SPEC.md#20-algebraic-effects-and-handlers).*

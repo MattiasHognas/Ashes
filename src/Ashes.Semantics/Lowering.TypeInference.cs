@@ -31,7 +31,7 @@ public sealed partial class Lowering
 
                 break;
             case TypeRef.TRow row:
-                foreach (var effect in row.Effects)
+                foreach (var effect in row.Capabilities)
                 {
                     FtvType(effect, result);
                 }
@@ -42,7 +42,7 @@ public sealed partial class Lowering
                 }
 
                 break;
-            case TypeRef.TEffect effect:
+            case TypeRef.TCapability effect:
                 foreach (var arg in effect.Args)
                 {
                     FtvType(arg, result);
@@ -202,9 +202,9 @@ public sealed partial class Lowering
                 Row = f.Row is null ? null : ApplyInstSubst(f.Row, subst)
             },
             TypeRef.TRow row => new TypeRef.TRow(
-                row.Effects.Select(e => (TypeRef.TEffect)ApplyInstSubst(e, subst)).ToList(),
+                row.Capabilities.Select(e => (TypeRef.TCapability)ApplyInstSubst(e, subst)).ToList(),
                 row.Tail is null ? null : ApplyInstSubst(row.Tail, subst)),
-            TypeRef.TEffect effect => new TypeRef.TEffect(effect.Symbol, effect.Args.Select(a => ApplyInstSubst(a, subst)).ToList()),
+            TypeRef.TCapability effect => new TypeRef.TCapability(effect.Symbol, effect.Args.Select(a => ApplyInstSubst(a, subst)).ToList()),
             TypeRef.TPtr p => new TypeRef.TPtr(ApplyInstSubst(p.Pointee, subst)),
             TypeRef.TList l => new TypeRef.TList(ApplyInstSubst(l.Element, subst)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(e => ApplyInstSubst(e, subst)).ToList()),
@@ -349,8 +349,8 @@ public sealed partial class Lowering
         {
             TypeRef.TVar v => v.Id == id,
             TypeRef.TFun f => Occurs(id, f.Arg) || Occurs(id, f.Ret) || (f.Row is not null && Occurs(id, f.Row)),
-            TypeRef.TRow row => row.Effects.Any(e => Occurs(id, e)) || (row.Tail is not null && Occurs(id, row.Tail)),
-            TypeRef.TEffect effect => effect.Args.Any(arg => Occurs(id, arg)),
+            TypeRef.TRow row => row.Capabilities.Any(e => Occurs(id, e)) || (row.Tail is not null && Occurs(id, row.Tail)),
+            TypeRef.TCapability effect => effect.Args.Any(arg => Occurs(id, arg)),
             TypeRef.TPtr p => Occurs(id, p.Pointee),
             TypeRef.TList l => Occurs(id, l.Element),
             TypeRef.TTuple tuple => tuple.Elements.Any(e => Occurs(id, e)),
@@ -393,7 +393,7 @@ public sealed partial class Lowering
                 precArrow
             ),
             TypeRef.TRow row => (PrettyRow(row, typeVarNames), precAtom),
-            TypeRef.TEffect effect => (PrettyEffect(effect), precAtom),
+            TypeRef.TCapability effect => (PrettyEffect(effect), precAtom),
             TypeRef.TPtr p => ($"*{Pretty(p.Pointee, typeVarNames, parentPrecedence: precAtom)}", precAtom),
             TypeRef.TNamedType n => n.TypeArgs.Count == 0
                 ? (n.Symbol.Name, precAtom)

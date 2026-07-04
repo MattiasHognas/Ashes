@@ -1,6 +1,6 @@
 // expect-compile-error: aborting arms need unwinding
 
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
 let r = 

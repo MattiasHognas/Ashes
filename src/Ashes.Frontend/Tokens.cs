@@ -62,10 +62,15 @@ public enum TokenKind
     Await,
     LetBang,
     External,
-    Effect,
-    Uses,
+    Capability,
+    Needs,
+    Provide,
     Perform,
     Handle,
+
+    // Legacy spellings retained only to emit a rename diagnostic (renamed to Capability / Needs).
+    RenamedEffect,
+    RenamedUses,
 }
 
 public readonly record struct Token(

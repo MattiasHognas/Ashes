@@ -1574,7 +1574,7 @@ public static class ProjectSupport
                         break;
                     }
 
-                case TopLevelItem.Effect effectItem:
+                case TopLevelItem.Capability effectItem:
                     {
                         // Effect declarations hoist exactly like type declarations: they are
                         // program-wide (operations resolve as qualified Effect.op from any module)

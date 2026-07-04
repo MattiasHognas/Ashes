@@ -1,6 +1,6 @@
 // expect: 101
 
-effect Ask =
+capability Ask =
     | ask : Unit -> Int
 
 let inner = 

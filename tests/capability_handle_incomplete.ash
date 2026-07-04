@@ -1,6 +1,6 @@
 // expect-compile-error: must handle operation 'set'
 
-effect State(a) =
+capability State(a) =
     | get : Unit -> a
     | set : a -> Unit
 

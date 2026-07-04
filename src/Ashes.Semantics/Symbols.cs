@@ -27,19 +27,19 @@ public sealed record TypeSymbol(
 /// an unsigned operation whose type is inferred by unifying its uses (<see cref="InferredType"/> is
 /// the shared inference variable in that case).
 /// </summary>
-public sealed record EffectOperationSymbol(string Name, TypeRef? DeclaredSignature, TypeRef? InferredType);
+public sealed record CapabilityOperationSymbol(string Name, TypeRef? DeclaredSignature, TypeRef? InferredType);
 
 /// <summary>A declared effect: a named set of operations, optionally parameterized.</summary>
-public sealed record EffectSymbol(
+public sealed record CapabilitySymbol(
     string Name,
     IReadOnlyList<TypeParameterSymbol> TypeParameters,
-    IReadOnlyDictionary<string, EffectOperationSymbol> Operations,
-    EffectDecl DeclaringSyntax
+    IReadOnlyDictionary<string, CapabilityOperationSymbol> Operations,
+    CapabilityDecl DeclaringSyntax
 )
 {
     // Rows compare and dedupe effects by name; the record's structural equality over the
     // operations dictionary is neither needed nor meaningful.
-    public bool Equals(EffectSymbol? other)
+    public bool Equals(CapabilitySymbol? other)
     {
         return other is not null && string.Equals(Name, other.Name, StringComparison.Ordinal);
     }

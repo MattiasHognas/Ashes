@@ -1,5 +1,7 @@
 # Unified Capabilities: `capability` / `provide` / `needs` / `handle`
 
+**Status:** Phase 1 (the rename) is shipped — `effect`→`capability`, `uses`→`needs`, old spellings give the `ASH025` rename diagnostic, `handle`/`perform`/`resume` unchanged; the dynamic surface is specified in LANGUAGE_SPEC.md §20. Phases 2–4 (static `provide`, type-directed resolution, ambiguity/import rules) remain.
+
 ## Goal
 
 Unify Ashes’ current algebraic effects model with a future type-directed constraint model under one language concept: **capabilities**.
@@ -339,7 +341,7 @@ Capability 'Clock' is satisfied both by a provider and by a handler. Choose one.
 
 ## Implementation Phases
 
-### Phase 1 — Rename effects to capabilities
+### Phase 1 — Rename effects to capabilities — DONE
 
 - Add `capability` keyword.
 - Rename effect declarations to capability declarations.

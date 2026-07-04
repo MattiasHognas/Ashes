@@ -2215,52 +2215,60 @@ full code table.
 
 ---
 
-# 20. Algebraic Effects and Handlers
+# 20. Capabilities and Handlers
 
-Algebraic effects let a function *declare* the operations it needs — `now`, `log`, `lookup` —
+A **capability** lets a function *declare* the operations it needs — `now`, `log`, `lookup` —
 without deciding what they mean. The caller chooses the meaning by installing a **handler**. The
 same code runs against a real handler in production and an injected handler in tests, with no
-parameter threading and no mocking framework. Effects are not limited to IO: a handler can
+parameter threading and no mocking framework. Capabilities are not limited to IO: a handler can
 interpret an operation as console IO, but equally as a frozen clock, a captured log buffer, a
 fixed price table, a deterministic RNG, or a retry policy. The headline use is **deterministic
 dependency injection**: capabilities like `Clock`, `Random`, `Env`, or `FileSystem` are real in
 production and fixed in tests, with no `Clock`/`Logger` parameter polluting every signature.
 
-Implementation status: effect declarations, `uses` rows, effect typing, the unhandled-effect
-diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot resumptive** arms are
-implemented, as are first-class operation values (for operations with explicit signatures) and
-effects declared in imported project modules. Aborting arms (a path that never resumes) and
-multi-shot `resume` are rejected with a clear diagnostic — see section 20.7 for why. Effects
+A capability requirement is satisfied by a **handler** (`handle ... with`) — a scoped, dynamic
+implementation. A second, **static** satisfaction form — `provide Capability(args) = ...`, which
+supplies type-directed evidence for concrete instances such as `Ord(Str)` — is planned; see
+[future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md). This section specifies the
+dynamic (`handle`) surface, which is fully implemented.
+
+Implementation status: capability declarations, `needs` rows, capability typing, the
+unsatisfied-capability diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot
+resumptive** arms are implemented, as are first-class operation values (for operations with
+explicit signatures) and capabilities declared in imported project modules. The former `effect` /
+`uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
+(`ASH025`). Aborting arms (a path that never resumes) and multi-shot `resume` are rejected with a
+clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
 defined; handler evidence is currently per-process, not per-task or per-thread (see
 [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)). How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
 documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## 20.1 Effect Declarations
+## 20.1 Capability Declarations
 
-An effect is a named set of operations, declared at the top level like a `type`:
+A capability is a named set of operations, declared at the top level like a `type`:
 
 ```
-effect Clock =
+capability Clock =
     | now : Unit -> Int          // explicit operation signature
 
-effect Log =
+capability Log =
     | log                        // implicit: signature inferred from uses + handler arms
 
-effect State(a) =                // effect type parameter, for polymorphic operations
+capability State(a) =                // capability type parameter, for polymorphic operations
     | get : Unit -> a
     | set : a -> Unit
 ```
 
-- `effect` is a keyword and a top-level declaration form; effects cannot be declared inside
+- `capability` is a keyword and a top-level declaration form; capabilities cannot be declared inside
   expressions.
-- Effect names share the qualified-name namespace with modules: operations are always referenced
-  qualified as `Effect.op`.
+- Capability names share the qualified-name namespace with modules: operations are always referenced
+  qualified as `Capability.op`.
 - Operation signatures are optional. A bare `| lookup` is valid within a compilation unit; the
   operation's type is inferred by unifying every perform-site and every handler arm, then
-  generalized like a `let`. Explicit signatures are required when the effect is exported from a
-  module, or when an operation is intentionally polymorphic (usually via an effect type parameter
+  generalized like a `let`. Explicit signatures are required when the capability is exported from a
+  module, or when an operation is intentionally polymorphic (usually via a capability type parameter
   as in `State(a)`).
 - Operation signatures are function types; `Unit -> T` declares a Unit-taking operation.
 
@@ -2272,48 +2280,48 @@ let t = Clock.now(Unit)          // implicit form — identical program
 ```
 
 `perform` is an **optional** keyword: `perform Clock.now(x)` and `Clock.now(x)` are the same
-program. The keyword is a greppability marker; the effect row in the type is the source of truth.
-The formatter preserves whichever form was written. `perform` must be applied to an effect
-operation call (`perform 42` is an error), and operations are always qualified by their effect
-(`Clock.now`), so no ambiguity arises when two effects share an operation name.
+program. The keyword is a greppability marker; the capability row in the type is the source of truth.
+The formatter preserves whichever form was written. `perform` must be applied to a capability
+operation call (`perform 42` is an error), and operations are always qualified by their capability
+(`Clock.now`), so no ambiguity arises when two capabilities share an operation name.
 
-## 20.3 Effect Rows in Type Annotations
+## 20.3 Capability Rows (`needs`) in Type Annotations
 
-A function type may carry a `uses` clause listing the effects the function performs:
+A function type may carry a `needs` clause listing the capabilities the function performs:
 
 ```
 let taxFor  : Int -> Int                          = ...  // pure: no row
-let priceOf : Str -> Int uses {Prices}            = ...  // performs exactly one effect
-let run     : Str -> Int uses {Prices, Clock | e} = ...  // open row: passes other effects through
-let apply   : (Unit -> a uses e) -> a uses e      = ...  // bare row variable
+let priceOf : Str -> Int needs {Prices}            = ...  // performs exactly one capability
+let run     : Str -> Int needs {Prices, Clock | e} = ...  // open row: passes other capabilities through
+let apply   : (Unit -> a needs e) -> a needs e      = ...  // bare row variable
 ```
 
-- A function type with no `uses` clause is pure.
-- A written `uses {A, B}` row is **closed**: the function performs at most `A` and `B`.
-- A trailing row variable (`uses {A, B | e}`) makes the row **open**: at least `A` and `B`, plus
-  whatever `e` instantiates to. `uses e` is an open row with no required effects.
+- A function type with no `needs` clause is pure.
+- A written `needs {A, B}` row is **closed**: the function performs at most `A` and `B`.
+- A trailing row variable (`needs {A, B | e}`) makes the row **open**: at least `A` and `B`, plus
+  whatever `e` instantiates to. `needs e` is an open row with no required capabilities.
 - Type inference always produces the open form; a written closed row is a deliberate restriction.
-- A parameterized effect is written applied: `uses {State(Int)}`. A row contains at most one
-  instance of a given effect; mentioning the same effect twice unifies their type arguments.
-- `uses` attaches to the **innermost** arrow whose result it follows:
-  `A -> B -> C uses {E}` reads as `A -> (B -> C uses {E})` — the first application is pure, the
+- A parameterized capability is written applied: `needs {State(Int)}`. A row contains at most one
+  instance of a given capability; mentioning the same capability twice unifies their type arguments.
+- `needs` attaches to the **innermost** arrow whose result it follows:
+  `A -> B -> C needs {E}` reads as `A -> (B -> C needs {E})` — the first application is pure, the
   second performs `E`. Parenthesize to scope it differently:
-  `(A -> B uses {E}) -> C` puts the row on the parameter's type.
+  `(A -> B needs {E}) -> C` puts the row on the parameter's type.
 
-## 20.4 Effect Typing
+## 20.4 Capability Typing
 
-Effect rows are part of the Hindley-Milner type system as a second kind of row, with
+Capability rows are part of the Hindley-Milner type system as a second kind of row, with
 row-polymorphic unification:
 
 - **Operations** are typed like functions; their type is inferred by unifying all perform-sites
   and handler arms, then generalized with let-polymorphism.
 - **A function's row** is the union of the rows of the operations it performs and the rows of the
-  functions it calls, minus any effects it handles internally. Rows are inferred open and
+  functions it calls, minus any capabilities it handles internally. Rows are inferred open and
   generalized at `let`, so a pure function like `given (x) -> x` receives a row-polymorphic type
   usable in any context.
-- **Calling** a function whose row includes effect `E` inside a function whose written (closed)
+- **Calling** a function whose row includes capability `E` inside a function whose written (closed)
   row does not include `E` is a compile-time error (`ASH018`).
-- **Unhandled effects:** if the program's residual effect row at the top level is non-empty after
+- **Unhandled capabilities:** if the program's residual capability row at the top level is non-empty after
   default built-in handlers are applied, that is a compile-time error (`ASH017`), not a runtime
   failure.
 - Annotation boundaries mirror the rest of Ashes: infer locally, annotate at module exports and
@@ -2333,7 +2341,7 @@ A `handle body with | arms` expression installs an interpretation over the dynam
 `resume`; calling `resume(v)` returns `v` to the perform-site and continues the computation. The
 optional `return` arm transforms the computation's final value; when absent, the final value is
 returned unchanged. A handler discharges exactly the operations it lists and is transparent to
-any other effects, so its inferred type is row-polymorphic. `resume` is an ordinary identifier
+any other capabilities, so its inferred type is row-polymorphic. `resume` is an ordinary identifier
 bound by each operation arm, not a keyword.
 
 Continuation power is restricted by the memory model (no GC):
@@ -2355,13 +2363,13 @@ Continuation power is restricted by the memory model (no GC):
 The same business code runs under any handler; only the interpretation changes:
 
 ```
-effect Prices =
+capability Prices =
     | lookup : Str -> Int
 
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
-let priceOf : Str -> Int uses {Prices} = given (item) -> perform Prices.lookup(item)
+let priceOf : Str -> Int needs {Prices} = given (item) -> perform Prices.lookup(item)
 
 let order = given (item) -> (priceOf(item), Clock.now(Unit))
 
@@ -2375,10 +2383,10 @@ runTest(given (_) -> order("widget"))
 ```
 
 The optional-`perform` and optional-annotation decisions are backed by a paired conformance
-test — a fully-explicit program (every `perform`, signature, and `uses` row written out) and
+test — a fully-explicit program (every `perform`, signature, and `needs` row written out) and
 its fully-implicit twin must produce the same inferred types and the same output
-(`tests/effect_conformance_explicit.ash` / `effect_conformance_implicit.ash`); a complete
-production-shaped demo with a logging handler is `examples/effects_production.ash`.
+(`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
+production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
 ## 20.7 Design Notes
 
@@ -2387,19 +2395,19 @@ the nearest enclosing handler interprets an operation. The two other ML/FP injec
 deliberately not used because the language lacks their prerequisites: typeclass/monad-transformer
 injection (Haskell `mtl`, tagless-final; Scala ZIO environments) needs typeclasses, and functor
 injection (SML/OCaml functors) needs module functors — Ashes has neither. Relative to OCaml 5,
-Ashes adds what OCaml deliberately omitted: effects are tracked in the type system, so an
-unhandled effect is a *compile-time* error, not a runtime crash. Relative to Koka, Ashes
+Ashes adds what OCaml deliberately omitted: capabilities are tracked in the type system, so an
+unhandled capability is a *compile-time* error, not a runtime crash. Relative to Koka, Ashes
 restricts continuations to one-shot/tail-resumptive: multi-shot `resume` would require copying a
 captured slice of stack and heap — GC-style reachability — which collides with the no-GC memory
 model and affine ownership (double-resume is double-use/double-drop of owned values).
-Consequently effect-based generators, backtracking, and nondeterminism are out of scope —
+Consequently capability-based generators, backtracking, and nondeterminism are out of scope —
 documented limitation, not a TODO.
 
 ## 20.8 Diagnostics
 
-`ASH017` (unhandled effect), `ASH018` (effect not permitted by a closed row), `ASH019` (unknown
-effect or operation), and `ASH020` (invalid handler / not-yet-supported handler form) cover this
-surface; see [DIAGNOSTICS.md](DIAGNOSTICS.md).
+`ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row), `ASH019`
+(unknown capability or operation), `ASH020` (invalid handler), and `ASH025` (the old `effect`/`uses`
+spellings) cover this surface; see [DIAGNOSTICS.md](DIAGNOSTICS.md).
 
 ---
 

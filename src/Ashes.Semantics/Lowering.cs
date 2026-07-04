@@ -433,7 +433,7 @@ public sealed partial class Lowering
         // value bindings does not affect visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternalDeclarations(program.ExternalDecls);
-        RegisterEffectDeclarations(program.Items);
+        RegisterCapabilityDeclarations(program.Items);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
@@ -1420,7 +1420,7 @@ public sealed partial class Lowering
         )
         {
             // Per-effect evidence slots plus the pending-post register and the live-posts counter.
-            EffectHandlerGlobals = EffectGlobalCount == 0 ? 0 : EffectGlobalCount + 2,
+            CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
         };
     }
 
@@ -1519,7 +1519,7 @@ public sealed partial class Lowering
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
             Expr.Perform perform => LowerPerform(perform),
             Expr.Handle handle => LowerHandle(handle),
-            EffectPostExpr effectPost => LowerEffectPost(effectPost),
+            CapabilityPostExpr effectPost => LowerEffectPost(effectPost),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -1731,17 +1731,17 @@ public sealed partial class Lowering
         // LowerCall; a first-class operation value eta-expands to a lambda performing the
         // operation, so the perform happens where the value is eventually applied. The expansion
         // needs the operation's arity, so an unsigned operation cannot be used as a value.
-        if (_effectSymbols.TryGetValue(qv.Module, out var bareEffectSym))
+        if (_capabilitySymbols.TryGetValue(qv.Module, out var bareEffectSym))
         {
             if (!bareEffectSym.Operations.TryGetValue(qv.Name, out var bareOperation))
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownEffectCode);
+                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
             if (bareOperation.DeclaredSignature is null)
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownEffectCode);
+                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
@@ -4175,9 +4175,9 @@ public sealed partial class Lowering
         }
 
         // Effect operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
-        if (rootExpr is Expr.QualifiedVar effectQv && _effectSymbols.TryGetValue(effectQv.Module, out var effectSym))
+        if (rootExpr is Expr.QualifiedVar effectQv && _capabilitySymbols.TryGetValue(effectQv.Module, out var effectSym))
         {
-            return LowerEffectOperationCall(effectSym, effectQv, collectedArgs);
+            return LowerCapabilityOperationCall(effectSym, effectQv, collectedArgs);
         }
 
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result
@@ -4755,7 +4755,7 @@ public sealed partial class Lowering
                 // leaves holding the original pointer.
                 int callGuardResultSlot = -1;
                 string? callCopySkipLabel = null;
-                if (EffectGlobalCount > 0)
+                if (CapabilityGlobalCount > 0)
                 {
                     callGuardResultSlot = NewLocal();
                     Emit(new IrInst.StoreLocal(callGuardResultSlot, currentTemp));
@@ -5424,7 +5424,7 @@ public sealed partial class Lowering
                 case Expr.Perform perform:
                     Visit(perform.Operation, bnd);
                     return;
-                case EffectPostExpr effectPost:
+                case CapabilityPostExpr effectPost:
                     Visit(effectPost.Value, bnd);
                     Visit(effectPost.PostLambda, bnd);
                     return;

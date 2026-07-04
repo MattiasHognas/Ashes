@@ -1,6 +1,6 @@
 // expect: 42
 
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
 let x = 

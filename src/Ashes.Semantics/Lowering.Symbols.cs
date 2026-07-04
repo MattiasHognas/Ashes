@@ -23,7 +23,7 @@ public sealed partial class Lowering
             TypeExpr.Applied a => ResolveTypeName(a.Name, a.Args.Select(ResolveTypeExpr).ToList()),
             TypeExpr.Arrow arr => new TypeRef.TFun(ResolveTypeExpr(arr.From), ResolveTypeExpr(arr.To))
             {
-                Row = arr.Uses is null ? null : ResolveUsesRow(arr.Uses)
+                Row = arr.Needs is null ? null : ResolveNeedsRow(arr.Needs)
             },
             TypeExpr.TupleType t when t.Elements.Count == 0 => _resolvedTypes["Unit"],
             TypeExpr.TupleType t => new TypeRef.TTuple(t.Elements.Select(ResolveTypeExpr).ToList()),

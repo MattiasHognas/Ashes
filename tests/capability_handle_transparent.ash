@@ -1,9 +1,9 @@
 // expect: 42
 
-effect A =
+capability A =
     | getA : Unit -> Int
 
-effect B =
+capability B =
     | getB : Unit -> Int
 
 let work = 

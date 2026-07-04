@@ -1,6 +1,6 @@
 // expect: done:ba
 
-effect Trace =
+capability Trace =
     | note : Str -> Unit
 
 let work = 

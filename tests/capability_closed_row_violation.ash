@@ -1,15 +1,15 @@
 // expect-compile-error: not permitted by the closed row
 
-effect Prices =
+capability Prices =
     | lookup : Str -> Int
 
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
-let priceOf : Str -> Int uses {Prices} = 
+let priceOf : Str -> Int needs {Prices} = 
     given (item) -> Prices.lookup(item)
 
-let bad : Str -> Int uses {Prices} = 
+let bad : Str -> Int needs {Prices} = 
     given (item) -> priceOf(item) + Clock.now(Unit)
 
 Ashes.IO.print("unreachable")

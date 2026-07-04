@@ -1,12 +1,12 @@
 // expect: widget total=220 stamp=1000
 
-effect Prices =
+capability Prices =
     | lookup : Str -> Int
 
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
-effect Log =
+capability Log =
     | log : Str -> Unit
 
 type Receipt =
@@ -19,7 +19,7 @@ type Receipt =
 let taxFor : Int -> Int = 
     given (cents) -> cents / 10
 
-let priceOf : Str -> Int uses {Prices} = 
+let priceOf : Str -> Int needs {Prices} = 
     given (item) -> perform Prices.lookup(item)
 
 let processOrder = 

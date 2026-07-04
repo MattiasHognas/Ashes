@@ -139,9 +139,9 @@ public static class Formatter
         }
     }
 
-    private static void WriteEffectDecl(StringBuilder sb, EffectDecl decl, FormattingOptions options)
+    private static void WriteCapabilityDecl(StringBuilder sb, CapabilityDecl decl, FormattingOptions options)
     {
-        sb.Append("effect ");
+        sb.Append("capability ");
         sb.Append(decl.Name);
         if (decl.TypeParameters.Count > 0)
         {
@@ -176,8 +176,8 @@ public static class Formatter
             case TopLevelItem.External e:
                 WriteExternalDecl(sb, e.Decl);
                 return;
-            case TopLevelItem.Effect eff:
-                WriteEffectDecl(sb, eff.Decl, options);
+            case TopLevelItem.Capability eff:
+                WriteCapabilityDecl(sb, eff.Decl, options);
                 return;
             case TopLevelItem.LetDecl let:
                 WriteLetDecl(sb, let, preferPipelines, options);
@@ -327,7 +327,7 @@ public static class Formatter
                 // When this arrow carries a row and its result is itself an arrow, the result must
                 // be parenthesized or the row would re-attach to the inner arrow on re-parse
                 // (`uses` binds to the innermost arrow whose result it follows).
-                if (arr.Uses is not null && arr.To is TypeExpr.Arrow)
+                if (arr.Needs is not null && arr.To is TypeExpr.Arrow)
                 {
                     sb.Append('(');
                     WriteTypeExpr(sb, arr.To);
@@ -338,9 +338,9 @@ public static class Formatter
                     WriteTypeExpr(sb, arr.To);
                 }
 
-                if (arr.Uses is { } uses)
+                if (arr.Needs is { } needs)
                 {
-                    WriteUsesRow(sb, uses);
+                    WriteNeedsRow(sb, needs);
                 }
 
                 return;
@@ -356,10 +356,10 @@ public static class Formatter
         }
     }
 
-    private static void WriteUsesRow(StringBuilder sb, UsesRowSyntax row)
+    private static void WriteNeedsRow(StringBuilder sb, NeedsRowSyntax row)
     {
-        sb.Append(" uses ");
-        if (row.Effects.Count == 0 && row.TailVar is not null)
+        sb.Append(" needs ");
+        if (row.Capabilities.Count == 0 && row.TailVar is not null)
         {
             // Bare row variable: `uses e`.
             sb.Append(row.TailVar);
@@ -367,25 +367,25 @@ public static class Formatter
         }
 
         sb.Append('{');
-        for (int i = 0; i < row.Effects.Count; i++)
+        for (int i = 0; i < row.Capabilities.Count; i++)
         {
             if (i > 0)
             {
                 sb.Append(", ");
             }
 
-            sb.Append(row.Effects[i].Name);
-            if (row.Effects[i].Args.Count > 0)
+            sb.Append(row.Capabilities[i].Name);
+            if (row.Capabilities[i].Args.Count > 0)
             {
                 sb.Append('(');
-                for (int j = 0; j < row.Effects[i].Args.Count; j++)
+                for (int j = 0; j < row.Capabilities[i].Args.Count; j++)
                 {
                     if (j > 0)
                     {
                         sb.Append(", ");
                     }
 
-                    WriteTypeExpr(sb, row.Effects[i].Args[j]);
+                    WriteTypeExpr(sb, row.Capabilities[i].Args[j]);
                 }
 
                 sb.Append(')');
@@ -890,9 +890,9 @@ public static class Formatter
         {
             WriteIndent(sb, indent + options.IndentSize, options);
             sb.Append("| ");
-            if (arm.EffectName is not null)
+            if (arm.CapabilityName is not null)
             {
-                sb.Append(arm.EffectName);
+                sb.Append(arm.CapabilityName);
                 sb.Append('.');
             }
 

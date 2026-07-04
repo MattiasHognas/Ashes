@@ -458,19 +458,79 @@ recursion depth is bounded by these sizes:
 
 ---
 
-## Algebraic Effects Lowering
+### In-place reuse (Perceus-style, no runtime RC)
 
-The effects surface and typing rules are specified in
+On top of the arena, immutable recursive-ADT accumulators are, where provably
+safe, **rebuilt in place** instead of reallocated — a Perceus-style reuse with
+no reference counting:
+
+- A matched-and-rebuilt cell is overwritten through an `AllocReusing` token
+  rather than freshly allocated, so an accumulator threaded through a TCO loop
+  stays constant-memory instead of allocating one new spine per iteration.
+- Fresh leaf fields (Str/Bytes/tuple keys and values) produced during reuse are
+  materialised into a **persistent to-space/blob** that the per-iteration arena
+  reset does *not* reclaim, so an in-place-updated value is not stranded by the
+  watermark reset.
+- A one-time defensive deep copy at loop entry makes the accumulator uniquely
+  owned before reuse begins. A whole-program **move/linearity analysis**
+  (`Lowering.MoveAnalysis.cs`) elides that entry copy when it can prove the
+  accumulator is already uniquely owned at every call site — conservatively, so
+  an incomplete proof can only leak, never corrupt.
+
+### Runtime layouts
+
+- Strings are `[header:i64][bytes...]`. The header word is not a plain length:
+   bits `[0..62]` hold the byte length and **bit 63 is a "view" flag** that
+   distinguishes an owned arena string from a read-only literal/borrowed view.
+   That flag is what lets string literals be emitted as **read-only globals**
+   (same in-memory layout, marked as a view) instead of being copied into the
+   arena — an owned string clears the bit, a view sets it.
+- Heap closures are 24-byte records:
+   `[function-pointer:i64][env-pointer:i64][env-size:i64]`.
+- ADT values use `[tag:i64][field0:i64][field1:i64]...`.
+- Some temporary values also have stack-allocated forms during codegen
+   (notably closures and certain ADTs), so not every runtime value necessarily
+   originates from the arena.
+
+This model is still arena-based and non-GC, but it is no longer a single
+never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
+and whole OS chunks can be returned once they fall out of scope.
+
+### Stacks
+
+The arena serves heap values; call frames use the ordinary machine stack, and
+the compiler does not install guard handlers — exhausting a stack faults the
+process (SIGSEGV on Linux, stack-overflow exception on Windows). Tail-recursive
+loops (including eligible `let recursive ... and ...` groups, which lowering merges
+into a single dispatch loop) run in constant stack space; only non-tail
+recursion depth is bounded by these sizes:
+
+- **Main thread, Linux (x64/arm64).** The ELF images do not override the
+  platform stack, so the main thread gets the OS default (`RLIMIT_STACK`,
+  commonly 8 MiB).
+- **Main thread, win-x64.** The PE optional header reserves 8 MiB
+  (`SizeOfStackReserve`, 4 KiB initially committed). The reserve can be
+  overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
+  environment variable read by the PE linker.
+- **Parallel workers.** `Ashes.Parallel` workers get 1 MiB by default —
+  `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
+  the `--parallel-stack-size` CLI flag.
+
+---
+
+## Capabilities Lowering
+
+The capability surface and typing rules are specified in
 [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) section 20; this section documents how they compile.
 
-### Effect typing: the ambient row
+### Capability typing: the ambient row
 
-Typing threads an **ambient effect row** through lowering. Each lambda's arrow carries a row
-variable that becomes the body's ambient row; operation calls insert their effect into it. At an
+Typing threads an **ambient capability row** through lowering. Each lambda's arrow carries a row
+variable that becomes the body's ambient row; operation calls insert their capability into it. At an
 application, an *open* (inferred) callee row unifies with the caller's ambient row, while a
 written *closed* row only subsumes into it — calling a `uses {Prices}` function from a
-`{Prices, Clock}` context is fine. A `handle` lowers its body under `{handled effects | t}` with
-`t` unified into the enclosing row, which is what makes handlers transparent to effects they do
+`{Prices, Clock}` context is fine. A `handle` lowers its body under `{handled capabilities | t}` with
+`t` unified into the enclosing row, which is what makes handlers transparent to capabilities they do
 not list. Rows generalize with let-polymorphism; the ambient row's variables count as part of the
 environment (the row analog of the value restriction). Unsigned operations infer monomorphically
 within the compilation unit by unifying all perform-sites and handler arms.
@@ -478,23 +538,23 @@ within the compilation unit by unifying all perform-sites and handler arms.
 ### Handler evidence: dynamically-scoped globals
 
 Handler evidence is dynamically scoped, with no per-call threading. The backend materializes one
-module global per declared effect (`__ashes_effect_handler_<i>`, index = declaration order)
-holding a pointer to the innermost installed handler frame for that effect, 0 when none. A
-`handle` expression stack-allocates one frame per handled effect:
+module global per declared capability (`__ashes_capability_handler_<i>`, index = declaration order)
+holding a pointer to the innermost installed handler frame for that capability, 0 when none. A
+`handle` expression stack-allocates one frame per handled capability:
 
 ```
-[0 .. numEffects-1]              snapshot of every effect global, taken before any of this
+[0 .. numCapabilities-1]              snapshot of every capability global, taken before any of this
                                  handle's frames install
-[numEffects]                     pointer to the handle's shared posts-list head slot
-[numEffects + 1 + opDeclIndex]   one arm closure per operation (declaration order)
+[numCapabilities]                     pointer to the handle's shared posts-list head slot
+[numCapabilities + 1 + opDeclIndex]   one arm closure per operation (declaration order)
 ```
 
-and installs it by writing the frame pointer into the effect's global; on body exit it restores
-the global from the frame's own snapshot slot. A perform site loads the effect's global (O(1) —
-no search), swaps **all** effect globals to the frame's snapshot, calls the arm closure with the
+and installs it by writing the frame pointer into the capability's global; on body exit it restores
+the global from the frame's own snapshot slot. A perform site loads the capability's global (O(1) —
+no search), swaps **all** capability globals to the frame's snapshot, calls the arm closure with the
 operation's arguments through the ordinary closure ABI, and swaps back. The snapshot swap is what
 gives correct deep-handler semantics: an arm runs under the evidence in scope at its handler's
-installation (with the handler itself removed), so an arm performing its own effect reaches the
+installation (with the handler itself removed), so an arm performing its own capability reaches the
 next outer handler, and handlers installed between the handler and the perform site are invisible
 to the arm. Typing makes a missing handler unreachable; the emitted guard panics with a clear
 message rather than dereferencing null if that invariant is ever broken.
@@ -524,8 +584,8 @@ extent it was pushed in, every arena reclaim (per-call watermarks, scope exits, 
 resets, failed-match-arm cleanups) is guarded by a **live-posts counter** (a second reserved
 global): while it is non-zero the reclaim is skipped. Data a post references always predates its
 push, so windows with no push during them stay safe to reclaim; the counter is decremented as
-each post is folded. Programs that declare no effects compile byte-for-byte as before — the
-guards are only emitted when effects exist.
+each post is folded. Programs that declare no capabilities compile byte-for-byte as before — the
+guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
 [IR_REFERENCE.md](IR_REFERENCE.md)); frames, posts cells, and the fold loop use the ordinary

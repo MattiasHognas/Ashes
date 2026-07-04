@@ -1,4 +1,4 @@
-effect Clock =
+capability Clock =
     | now : Unit -> Int
 
 let frozen = 

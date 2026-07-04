@@ -1,6 +1,6 @@
 // expect: 505
 
-effect Count =
+capability Count =
     | tick : Unit -> Int
 
 let recursive spin = 
