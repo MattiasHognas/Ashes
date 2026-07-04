@@ -1574,12 +1574,27 @@ public static class ProjectSupport
                         break;
                     }
 
-                case TopLevelItem.Capability effectItem:
+                case TopLevelItem.Capability capabilityItem:
                     {
-                        // Effect declarations hoist exactly like type declarations: they are
-                        // program-wide (operations resolve as qualified Effect.op from any module)
+                        // Capability declarations hoist exactly like type declarations: they are
+                        // program-wide (operations resolve as qualified Capability.op from any module)
                         // and carry no value binding.
-                        var span = AstSpans.GetOrDefault(effectItem.Decl);
+                        var span = AstSpans.GetOrDefault(capabilityItem.Decl);
+                        if (span.End <= span.Start || span.End > source.Length)
+                        {
+                            return false;
+                        }
+
+                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
+                        hoistedSpans.Add((span.Start, span.End));
+                        cursor = span.End;
+                        break;
+                    }
+
+                case TopLevelItem.Provide provideItem:
+                    {
+                        // Providers are program-wide static evidence, hoisted like capabilities.
+                        var span = AstSpans.GetOrDefault(provideItem.Decl);
                         if (span.End <= span.Start || span.End > source.Length)
                         {
                             return false;

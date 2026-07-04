@@ -22,7 +22,7 @@ Current codes:
 | `ASH015` | `and` used without a preceding `let recursive`                      |
 | `ASH016` | Conflicting unqualified import selectors for the same name    |
 | `ASH017` | Unsatisfied capability (residual top-level capability row is non-empty) |
-| `ASH018` | Capability not permitted by a closed `needs` row              |
+| `ASH018` | Capability not permitted by a closed `needs` row, or a provider used at a non-monomorphizable generic instance |
 | `ASH019` | Unknown capability or capability operation                    |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
 | `ASH025` | Renamed capability keyword (`effect`→`capability`, `uses`→`needs`) |

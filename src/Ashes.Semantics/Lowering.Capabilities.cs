@@ -185,6 +185,97 @@ public sealed partial class Lowering
 
     private static bool IsAbstractType(TypeRef type) => type is TypeRef.TVar or TypeRef.TTypeParam;
 
+    /// <summary>Whether any provider is registered for the capability of the given name (any instance).</summary>
+    private bool HasAnyProvider(string capabilityName)
+    {
+        return _providers.Keys.Any(k => k == capabilityName || k.StartsWith($"{capabilityName}(", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Whether an expression syntactically calls an operation of a *parameterized* capability that has
+    /// a provider — the signal that inlining the enclosing function at a concrete call site would let
+    /// that operation resolve statically (capability monomorphization).
+    /// </summary>
+    private bool BodyPerformsProvidedParameterizedCapability(Expr expr)
+    {
+        var found = false;
+
+        void Visit(object? node)
+        {
+            if (found || node is null or string)
+            {
+                return;
+            }
+
+            if (node is Expr.QualifiedVar qv
+                && _capabilitySymbols.TryGetValue(qv.Module, out var cap)
+                && cap.TypeParameters.Count > 0
+                && cap.Operations.ContainsKey(qv.Name)
+                && HasAnyProvider(qv.Module))
+            {
+                found = true;
+                return;
+            }
+
+            // Walk records (Expr/Pattern/MatchCase) and their collections reflectively so every Expr
+            // shape is covered by default, mirroring CountBinders.
+            if (node is System.Runtime.CompilerServices.ITuple tuple)
+            {
+                for (int i = 0; i < tuple.Length && !found; i++)
+                {
+                    Visit(tuple[i]);
+                }
+
+                return;
+            }
+
+            if (node is System.Collections.IEnumerable seq)
+            {
+                foreach (var item in seq)
+                {
+                    Visit(item);
+                    if (found)
+                    {
+                        return;
+                    }
+                }
+
+                return;
+            }
+
+            if (node is not (Expr or Pattern or MatchCase or HandlerArm))
+            {
+                return;
+            }
+
+            foreach (var prop in node.GetType().GetProperties())
+            {
+                if (found)
+                {
+                    return;
+                }
+
+                if (prop.GetIndexParameters().Length > 0)
+                {
+                    continue;
+                }
+
+                var t = prop.PropertyType;
+                if (typeof(Expr).IsAssignableFrom(t)
+                    || typeof(Pattern).IsAssignableFrom(t)
+                    || typeof(MatchCase).IsAssignableFrom(t)
+                    || typeof(HandlerArm).IsAssignableFrom(t)
+                    || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+                {
+                    Visit(prop.GetValue(node));
+                }
+            }
+        }
+
+        Visit(expr);
+        return found;
+    }
+
     /// <summary>Number of declared capabilities: the backend materializes one handler-evidence global per capability.</summary>
     private int CapabilityGlobalCount => _capabilitySymbols.Count;
 
@@ -553,6 +644,17 @@ public sealed partial class Lowering
             var span = _firstPerformSites.TryGetValue(capability.Symbol.Name, out var performSite)
                 ? performSite
                 : default;
+
+            // A provider exists but the requirement survived to the top level: the operation is used
+            // at a generic instance the compiler could not monomorphize — inside a *recursive* or a
+            // *higher-order* generic function (a capability op in a closure passed to another
+            // function). Point at that, rather than the plain "no handler or provider".
+            if (HasAnyProvider(capability.Symbol.Name))
+            {
+                ReportDiagnostic(span, $"Capability '{capability.Symbol.Name}' is provided for concrete instances, but this use is inside a generic function that could not be monomorphized (a recursive or higher-order generic). Call it at a concrete type directly, or install a handler.", CapabilityNotPermittedCode);
+                continue;
+            }
+
             ReportDiagnostic(span, $"Unsatisfied capability '{capability.Symbol.Name}': no handler or provider satisfies it.", UnhandledCapabilityCode);
         }
     }
@@ -652,14 +754,11 @@ public sealed partial class Lowering
             return (staticResult, currentType);
         }
 
-        // A provider exists for this capability but the instance here is abstract (a type variable):
-        // static resolution needs a concrete type at the call site. Resolving it through a
-        // polymorphic function would require monomorphization, which is not yet implemented.
-        if (!handled && provider is null && effectArgs.Any(a => IsAbstractType(Prune(a)))
-            && _providers.Keys.Any(k => k == effectSym.Name || k.StartsWith($"{effectSym.Name}(", StringComparison.Ordinal)))
-        {
-            ReportDiagnostic(span, $"Capability '{effectSym.Name}' is provided only for concrete instances; resolving it at a generic (abstract) instance is not yet supported — the type must be concrete at the operation call site.", CapabilityNotPermittedCode);
-        }
+        // An abstract instance (a type variable) can't resolve to a provider here. When this call is
+        // inside a capability-generic function, the enclosing function is inlined at each concrete
+        // call site (capability monomorphization), and this eager lowering is the dead dynamic
+        // fallback — it stays correct (a handler still satisfies it) and the inlined copies resolve
+        // statically. So fall through to the dynamic path rather than erroring.
 
         // Dynamic satisfaction: record the requirement in the ambient row so a handler discharges
         // it (or the top-level unsatisfied check reports it), and emit the evidence-based perform.

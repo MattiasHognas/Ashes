@@ -1,6 +1,6 @@
 # Unified Capabilities: `capability` / `provide` / `needs` / `handle`
 
-**Status:** Phases 1–2 and the concrete part of Phase 3 are shipped (the rename, plus static `provide` for concrete instances with ambiguity/duplicate checks) — `effect`→`capability`, `uses`→`needs`, old spellings give the `ASH025` rename diagnostic, `handle`/`perform`/`resume` unchanged; the dynamic surface is specified in LANGUAGE_SPEC.md §20. Phases 2–4 (static `provide`, type-directed resolution, ambiguity/import rules) remain.
+**Status:** Phases 1–2 and most of Phase 3 are shipped — the rename, static `provide` for concrete instances, and generic monomorphization (a non-recursive generic function is inlined per concrete call site so `display(42)`/`display(true)` resolve to different providers). Remaining: *recursive* and *higher-order* generic uses (a capability operation inside a closure passed to another function), which need dictionary passing (dynamic dispatch on an erased type is impossible without RTTI) — `effect`→`capability`, `uses`→`needs`, old spellings give the `ASH025` rename diagnostic, `handle`/`perform`/`resume` unchanged; the dynamic surface is specified in LANGUAGE_SPEC.md §20. Phases 2–4 (static `provide`, type-directed resolution, ambiguity/import rules) remain.
 
 ## Goal
 
@@ -358,7 +358,7 @@ Capability 'Clock' is satisfied both by a provider and by a handler. Choose one.
 - Detect duplicate providers for the same concrete capability instance.
 - Add provider lookup during requirement resolution.
 
-### Phase 3 — Type-directed capability propagation — PARTIAL (concrete instances done; generic monomorphization remaining)
+### Phase 3 — Type-directed capability propagation — LARGELY DONE (concrete + monomorphized direct/multi-instance generics; recursive & higher-order generics need dictionary passing)
 
 - Extend inference so `needs { Ord(a) }` propagates like current effect rows.
 - Resolve concrete capability instances after type inference.

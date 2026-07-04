@@ -223,6 +223,12 @@ public sealed partial class Lowering
     // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecursiveGroup) is excluded.
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
+    // Non-recursive let-bound functions that perform a parameterized capability operation whose
+    // instance depends on their inputs, and for which a provider exists. Inlining them at a concrete
+    // call site monomorphizes the body so the operation resolves to the provider (a `needs {Ord(a)}`
+    // function called at `Ord(Int)` gets a copy where `Ord.compare` resolves statically).
+    private readonly HashSet<string> _capabilityGenericInline = new(StringComparer.Ordinal);
+
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
     //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
     //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
@@ -552,6 +558,16 @@ public sealed partial class Lowering
                     _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
                     _inlinableDefiningValues[let.Name] = let.Value;
                 }
+
+                // Capability-generic: inline at concrete call sites so a parameterized capability
+                // operation resolves to its provider. Registered independently of the reuse-inline
+                // filter above (which requires an allocation).
+                if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
+                {
+                    _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(let.Name, let.Value);
+                    _capabilityGenericInline.Add(let.Name);
+                }
             }
 
             // Single-parameter recursive functions (let rec f = given p -> body, body not a lambda)
@@ -672,6 +688,15 @@ public sealed partial class Lowering
                 {
                     _inlinableFunctions[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
                     _inlinableDefiningValues[name] = lam;
+                }
+
+                // Capability monomorphization (see RegisterInlinableFunctions): inline at concrete
+                // call sites so a parameterized capability operation resolves to its provider.
+                if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
+                {
+                    _inlinableFunctions.TryAdd(name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(name, lam);
+                    _capabilityGenericInline.Add(name);
                 }
             }
             else if (lam.Body is not Expr.Lambda)
@@ -4234,6 +4259,21 @@ public sealed partial class Lowering
             && dbgFn.Name.Contains("Map", StringComparison.Ordinal))
         {
             Console.Error.WriteLine($"[reuse] call {dbgFn.Name}: inSpec={_inSpecialization} tokens={_reuseTokens.Count} shadowed={_shadowedInlinables.ContainsKey(dbgFn.Name)} inProgress={_inliningInProgress.Contains(dbgFn.Name)} params={dbgInl.Params.Count} args={collectedArgs.Count}");
+        }
+
+        // Capability monomorphization: a saturated call to a capability-generic function is inlined so
+        // the body lowers with the call's concrete argument types, letting a parameterized capability
+        // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
+        // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
+        if (rootExpr is Expr.Var capGenVar
+            && _capabilityGenericInline.Contains(capGenVar.Name)
+            && !_shadowedInlinables.ContainsKey(capGenVar.Name)
+            && !_inliningInProgress.Contains(capGenVar.Name)
+            && Lookup(capGenVar.Name) is not (Binding.Local or Binding.Env or Binding.EnvScheme)
+            && _inlinableFunctions.TryGetValue(capGenVar.Name, out var capGenInlinable)
+            && capGenInlinable.Params.Count == collectedArgs.Count)
+        {
+            return InlineCall(capGenVar.Name, capGenInlinable.Params, capGenInlinable.Body, collectedArgs);
         }
 
         // The callee may be a plain Var (module code, where the stitcher already rewrote member

@@ -2384,11 +2384,24 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   dynamically. If **both** a provider and an enclosing handler could satisfy the same call, that is
   an ambiguity error (`ASH027`) — there is no hidden precedence.
 - **Duplicates.** Two providers for the same concrete instance are an error (`ASH026`).
-- **Concrete instances only.** A provider resolves a call whose instance is concrete at the call
-  site — `provide Clock` (unparameterized) or `Ord(Str)` used on `Str` values. Resolving a
-  requirement at a *generic* instance (an `Ord(a)` call inside a polymorphic function, where `a` is
-  still a type variable) would require monomorphization or dictionary passing and is **not yet
-  implemented** — such a call reports a clear diagnostic. This is the remaining phase of
+- **Generic resolution (monomorphization).** A provider resolves a call whose instance is concrete
+  at the call site — `provide Clock`, or `Ord(Str)` on `Str` values. It also resolves a call inside
+  a **generic function** that is *specialized* per concrete use: a non-recursive `let`-bound
+  function whose body performs `Cap.op` is **inlined at each concrete call site**, so the operation
+  resolves against the caller's type. The same generic function used at two types is monomorphized
+  to both:
+
+  ```
+  let display = given (x) -> Show.show(x)
+  display(42)      // resolves to provide Show(Int)
+  display(true)    // resolves to provide Show(Bool)  — same function, two instances
+  ```
+
+  Two shapes are **not** monomorphized and require a handler (or a concrete-at-the-call-site
+  rewrite): a **recursive** generic function (it can't be inlined), and a **higher-order** one — a
+  `Cap.op` inside a closure passed to another function (e.g. the comparator handed to `foldLeft`),
+  where the closure's element type is pinned only after it is lowered. Both report a clear
+  diagnostic. Fully general resolution there needs dictionary passing; see
   [future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md).
 
 ## 20.7 Worked Example
