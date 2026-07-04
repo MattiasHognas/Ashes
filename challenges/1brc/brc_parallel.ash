@@ -154,21 +154,6 @@ let mergeStation acc key value =
 
 let merge a b = Ashes.Map.foldLeft(mergeStation)(a)(b)
 
-let recursive buildChunks bytes len lo n acc = 
-    if n <= 1
-    then (bytes, lo, len) :: acc
-    else 
-        let target = lo + (len - lo) / n
-        in 
-            let nl = Ashes.Bytes.indexOf(bytes)(10)(target)
-            in 
-                if nl < 0
-                then (bytes, lo, len) :: acc
-                else 
-                    if nl + 1 >= len
-                    then (bytes, lo, len) :: acc
-                    else buildChunks(bytes)(len)(nl + 1)(n - 1)((bytes, lo, nl + 1) :: acc)
-
 let formatEntry pair = 
     match pair with
         | (key, value) -> 
@@ -184,14 +169,12 @@ let run path =
     match Ashes.File.mmap(path) with
         | Error(_e) -> "{}"
         | Ok(bytes) -> 
-            let len = Ashes.Bytes.length(bytes)
+            let chunks = Ashes.Parallel.splitChunks(bytes)(10)(32)
             in 
-                let chunks = buildChunks(bytes)(len)(0)(32)([])
+                let final = Ashes.Parallel.reduce(merge)(Ashes.Map.empty)(foldChunk)(chunks)
                 in 
-                    let final = Ashes.Parallel.reduce(merge)(Ashes.Map.empty)(foldChunk)(chunks)
-                    in 
-                        let entries = formatAll(Ashes.Map.toList(final))([])
-                        in "{" + Ashes.String.join(", ")(entries) + "}"
+                    let entries = formatAll(Ashes.Map.toList(final))([])
+                    in "{" + Ashes.String.join(", ")(entries) + "}"
 in 
     match Ashes.IO.args with
         | path :: _ -> Ashes.IO.writeLine(run(path))
