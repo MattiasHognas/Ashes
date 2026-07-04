@@ -171,16 +171,48 @@ public interface ISearchIndex                // list + search (§7)
 }
 ```
 
-**Filesystem MVP layout** under a `--data` directory:
+### 5.1 Reference persistence
+
+Two kinds of state with different needs:
+
+- **Source blobs** are large, immutable, content-addressed byte streams — they belong on a **filesystem**
+  (MVP) or **object storage** (scale), never in a database. `IBlobStore`.
+- **Metadata, accounts, and tokens** are small, relational, transactional records — they belong in a
+  **database**. `IMetadataStore` / `IAccountStore`.
+
+Recommended stack — modern, and self-hostable without standing up a separate service:
+
+- **EF Core** as the ORM, defaulting to **SQLite** — a single embedded `registry.db` file, ACID
+  transactions, and schema migrations, with **no external database process**. This is the minimal
+  self-hostable default, and a better MVP than hand-rolled JSON files (real transactions and queries).
+- **PostgreSQL** (Npgsql provider) for the public/scale instance — the *same* EF model and migrations,
+  swapped by provider/connection string.
+
+The `Ashes.*` storage interfaces stay the primary seam (filesystem vs DB, and the Imposter mock point in
+tests); EF's provider model gives the SQLite↔Postgres swap *under* the DB implementation for free.
+
+**Reference layout** under a `--data` directory:
 
 ```
 data/
-  blobs/<hash[0:2]>/<hash>            # compressed source, content-addressed
-  packages/<namespace>/meta.json     # Package
-  packages/<namespace>/<version>.json# Version
-  accounts/...                        # accounts + hashed token secrets
-  index/...                           # search index (§7)
+  blobs/<hash[0:2]>/<hash>   # compressed source, content-addressed (IBlobStore)
+  registry.db                # SQLite: packages, versions, owners, accounts, tokens, search (EF Core)
 ```
+
+Dapper is a lighter alternative (hand-written SQL, less machinery) and fine for this small schema, but EF
+Core's migrations and one-model multi-provider path fit the SQLite→Postgres story better; Postgres-only
+options (e.g. Marten) would forfeit the single-file self-host story. The EF implementation gets
+integration tests against a temporary SQLite database (§8); handler/pipeline tests mock the interfaces.
+
+### 5.2 Search persistence
+
+`ISearchIndex` (list + search, §7) persists alongside the metadata:
+
+- **MVP:** **SQLite FTS5** inside the same `registry.db` — full-text search over
+  namespace/description/keywords with no extra service, updated on publish.
+- **Scale:** **PostgreSQL full-text** (`tsvector` + GIN) on the Postgres deployment, or a dedicated engine
+  (Meilisearch / OpenSearch / Typesense) behind the same `ISearchIndex` if search becomes a product
+  surface — no API or client change.
 
 ---
 
@@ -209,11 +241,10 @@ are authoritative, not client-trusted.
 
 Both browse (`/packages`) and `/search` back onto `ISearchIndex`:
 
-- **MVP:** an in-process index built from package metadata (namespace, description, keywords, latest
-  version, download count), rebuilt on startup and updated on publish. Ranking is a simple weighted match
-  (exact namespace > prefix > description/keyword), tie-broken by downloads. Filesystem-persisted so a
-  restart doesn't lose it.
-- **Later:** swap `ISearchIndex` for a real search backend at scale — no API or client change.
+- **MVP:** SQLite FTS5 persisted in `registry.db` (§5.2), updated on publish. Ranking is a simple weighted
+  match (exact namespace > prefix > description/keyword), tie-broken by downloads.
+- **Later:** swap `ISearchIndex` for Postgres full-text or a dedicated engine at scale (§5.2) — no API or
+  client change.
 
 This is what powers the client's discovery command (§9).
 
@@ -234,8 +265,10 @@ Three layers:
 - **Endpoint tests.** A minimal-API `WebApplicationFactory` in-memory host with the stores mocked, so
   routing, auth, content negotiation, status codes, and the error envelope are covered without disk —
   including resolve, download, list, and search happy/edge paths and the `Authorization` header handling.
-- **Storage integration tests.** The **real filesystem store** against a temp `--data` dir: blob
-  content-addressing/dedup, atomic version write ordering, and index persistence across restart.
+- **Storage integration tests.** The **real store** against a temp `--data` dir: the EF Core/SQLite
+  metadata store (transactional version writes that reject a duplicate `(namespace, version)`, FTS5 search
+  and persistence across restart, migrations apply cleanly) plus the filesystem blob store (content-
+  addressing and dedup).
 
 Example (illustrative):
 
@@ -278,8 +311,8 @@ for (PACKAGE_MANAGER §7.4), including private ones.
 
 ```
 registry/
-  src/AshesRegistry/          # the minimal-API app (endpoints, pipeline, storage, validators)
-  src/AshesRegistry.Storage.FileSystem/   # filesystem IBlobStore/IMetadataStore/... impls
+  src/AshesRegistry/          # the minimal-API app (endpoints, pipeline, validators)
+  src/AshesRegistry.Storage/  # EF Core store (SQLite default, Postgres provider) + filesystem/object blob store; migrations
   tests/AshesRegistry.Tests/  # TUnit + Shouldly + Imposter
   AshesRegistry.slnx
 ```
