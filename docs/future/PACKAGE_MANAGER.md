@@ -206,16 +206,57 @@ records the source content hash**. This directly addresses the immutability foot
 systems (early Go, npm) hit: a force-pushed or deleted tag is *detected* by hash mismatch rather than
 silently changing the build.
 
-### 7.2 Uniqueness and publishing
+### 7.2 Uniqueness and namespace ownership
 
 - The registry's uniqueness key is the **namespace** (§2.1), so no two registry packages can claim the
   same public module prefix. `ashes add <name>` resolves the name to its owning namespace.
-- `ashes publish` uploads a manifest entry (name, namespace, version, source URL, computed content
-  hash, and the capability metadata from §8) to the index. Source stays in the author's repository.
-- Authentication and ownership for publishing are the last surface to build; the index format is
-  designed so a package's metadata is self-describing and verifiable without trusting the transport.
+- The index **binds a namespace to a source repository** on first claim: the first accepted entry for
+  `Json` records `namespace Json -> github.com/alice/json`. Every later version of `Json` must come
+  from that same bound repo.
+- **Ownership is proved by control of the source repo, not by an Ashes account.** Publishing a new
+  version requires a tag in the bound repo whose `ashes.json` still declares that namespace. Because
+  only the repo's owner can push tags there, only the owner can produce a valid publish. This delegates
+  authentication to the source host's existing permission model — Ashes runs no account or token
+  service of its own.
 
-### 7.3 Proxy / mirror as a later drop-in
+### 7.3 The index repository and publish governance
+
+The index is a **single dedicated git repository** (for example `ashes-lang/index`) holding only
+metadata — no package source. It is *not* open to direct pushes: the repo uses branch protection so the
+only way a change lands is a **pull request that passes automated validation and is then merged by a
+bot Action**. "Anyone may open a PR" is therefore not "anyone may write" — a PR is a proposal, and the
+merge is gated. Nothing here is a server we host: GitHub hosts the repo, the validation and merge run as
+GitHub Actions on GitHub's runners, and a CDN fronts the repo for client reads.
+
+`ashes publish` (run by the author, after they tag and push their own source repo as usual):
+
+1. reads the local `ashes.json` (name, namespace, source URL, dependencies),
+2. resolves the tag, computes the source-tree content hash, runs the namespace lint (§2) and the
+   capability extraction (§8),
+3. opens a PR against the index repo that **appends one version entry**
+   (`{ version, source URL, rev, hash, deps, capabilities }`) for the namespace.
+
+The validation Action then independently enforces, and merges only if all hold:
+
+- **Append-only.** The PR may only add a new version line; any diff that edits or deletes an existing
+  line fails. A published version is immutable.
+- **Namespace–source binding.** A new namespace claim records its source repo; a version for an
+  existing namespace must name the same bound repo (§7.2).
+- **Ownership proof.** The Action fetches the tag from the bound source repo and confirms its
+  `ashes.json` declares the namespace, so only the repo owner can produce a passing PR.
+- **Hash agreement.** The Action recomputes the source-tree hash and requires it to match the PR's,
+  so the recorded hash is verified independently of the author.
+
+This makes the index "open to contribute, closed to overwrite": a malicious PR naming a namespace bound
+to someone else's repo, or naming a tag it cannot create in the bound repo, fails validation and never
+merges. It is the model crates.io used for its git index and that Homebrew uses for community taps.
+
+At large scale a PR-per-publish git index becomes slow and the repo large; the escape hatch is to
+**generate a static sparse index from the git repo in CI** — still static files, still no live service.
+A hosted publish endpoint only becomes worthwhile if the project later chooses not to depend on the
+source host's permission model, and it buys convenience, not correctness.
+
+### 7.4 Proxy / mirror as a later drop-in
 
 The index format is designed so a caching **proxy or mirror** can be introduced later without any
 client change — serving immutable copies for availability, offline/air-gapped builds, and independence
@@ -338,6 +379,8 @@ Non-goals for Phase 1: no lock file, no cache, no remote fetch, no transitive gr
 
 - Static CDN-hosted index; namespace uniqueness; source pulled from registered URLs with hash-pinned
   reproducibility (§7).
+- The index as a dedicated git repo with PR-only, CI-validated, append-only publishing and ownership
+  bound to the source repo (§7.2–7.3) — no hosted service.
 - `ashes publish`, `ashes update`, `ashes outdated`, `ashes vendor --offline` flows.
 - The `ashes capabilities` audit graduates to a first-class command, and the capability snapshot is
   written into the lock, as built-in capabilities mature.
@@ -352,7 +395,9 @@ Non-goals for Phase 1: no lock file, no cache, no remote fetch, no transitive gr
 2. **Resolution:** Cargo model — SemVer constraints, highest-compatible on first add, pinned in a lock
    file, one version per package, conflicts are errors.
 3. **Registry:** a static index that maps names to registered source URLs, with mandatory content-hash
-   pinning for reproducibility and room for a later caching mirror.
+   pinning for reproducibility and room for a later caching mirror. The index is a dedicated git repo
+   with PR-only, CI-validated, append-only publishing; ownership is bound to the source repo and
+   delegated to the source host's permissions — no hosted service.
 4. **`ashes install`:** retired; `build`/`run`/`test` auto-restore and `ashes restore` is explicit.
 </content>
 </invoke>
