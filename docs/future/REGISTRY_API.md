@@ -214,6 +214,15 @@ integration tests against a temporary SQLite database (§8); handler/pipeline te
   (Meilisearch / OpenSearch / Typesense) behind the same `ISearchIndex` if search becomes a product
   surface — no API or client change.
 
+**Matching model — lexical, not semantic.** Search is name-first: **exact > prefix > token** on the
+namespace, with **prefix wildcard** (`json*`) supported natively by FTS5 (leading wildcards like `*son`
+are not — they defeat the index). Description and keywords are a full-text *fallback* so intent queries
+(`parser`, `http client`) still resolve, but name weighting dominates. **Embeddings / vector search are
+deliberately out of scope**: they are overkill for a small source registry, non-deterministic to rank and
+test, and would forfeit the single-file self-host story (an ML model or external embedding service plus a
+vector index). The `ISearchIndex` seam keeps a semantic backend available as a far-future, at-scale swap
+if discovery ever becomes a product surface — with no API or client change.
+
 ---
 
 ## 6. Compiler reuse for validation
