@@ -384,6 +384,20 @@ race on the shared heap-cursor globals:
   self-initialises `TPIDR_EL0` only when the loader left it zero, so a `dlopen`d
   rustls keeps the loader's thread pointer.
 
+The number of workers a fork may spawn is capped. The **compiled maximum** is a
+fixed `--parallel-workers` constant or, when unset, the once-detected core count
+(cached in `__ashes_parallel_cap`). `Ashes.Parallel.withWorkers(count)(action)`
+adds a dynamically-scoped **override**: it saves the previous value of the
+`__ashes_parallel_override` global, stores `count`, runs the thunk, and restores
+the old value on return (a compiler intrinsic, not a runtime function). The fork
+gate and the queued-reduce cap both take `min(override, compiledMax)` when the
+override is set (`EmitEffectiveWorkerCap`), so a scoped request only ever lowers
+the effective count, never raises it past the ceiling. The override is a single
+process-wide global read on the thread that set it; a `withWorkers` nested
+*inside* a forked worker thunk therefore shares it process-wide rather than
+per-thread, which structured join ordering keeps well-defined for the common
+(main-thread) use.
+
 ### In-place reuse (Perceus-style, no runtime RC)
 
 On top of the arena, immutable recursive-ADT accumulators are, where provably

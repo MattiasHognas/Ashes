@@ -295,6 +295,67 @@ public sealed partial class Lowering
                 new TypeRef.TFun(leftFn, new TypeRef.TFun(rightFn, resultTuple))));
     }
 
+    // withWorkers : Int -> (Unit -> a) -> a. A dynamically-scoped runtime override of the worker
+    // cap: the enclosing scope's value is saved, the requested count installed, the thunk run, and
+    // the previous value restored on normal return. The effective fork cap is min(override,
+    // compiledMax), computed in the backend, so a count above the compiled ceiling still clamps.
+    private Binding.Intrinsic CreateParallelWithWorkersBinding()
+    {
+        var a = (TypeRef.TVar)NewTypeVar();
+        var unit = _resolvedTypes["Unit"];
+        var actionFn = new TypeRef.TFun(unit, a);
+        return new Binding.Intrinsic(
+            IntrinsicKind.ParallelWithWorkers,
+            new TypeScheme(
+                [new TypeVar(a.Id, "a")],
+                new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(actionFn, a))));
+    }
+
+    private (int, TypeRef) LowerParallelWithWorkers(Expr countArg, Expr actionArg)
+    {
+        var savedTailPos = _tcoCtx?.InTailPosition ?? false;
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+        using (PushDiagnosticSpan(countArg))
+        {
+            var (countTemp, countType) = LowerExpr(countArg);
+            Unify(countType, new TypeRef.TInt());
+
+            var (actionTemp, actionType) = LowerExpr(actionArg);
+            var resultType = Prune(actionType) is TypeRef.TFun actionFn ? Prune(actionFn.Ret) : NewTypeVar();
+            Unify(actionType, new TypeRef.TFun(_resolvedTypes["Unit"], resultType));
+
+            // Runtime validation: a non-positive count is a programming error, matching how other
+            // stdlib misuse (e.g. panic paths) is surfaced.
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int isPositiveTemp = NewTemp();
+            Emit(new IrInst.CmpIntGt(isPositiveTemp, countTemp, zeroTemp));
+            string okLabel = $"withworkers_ok_{_nextLambdaId++}";
+            Emit(new IrInst.JumpIfFalse(isPositiveTemp, okLabel + "_bad"));
+            Emit(new IrInst.Jump(okLabel));
+            Emit(new IrInst.Label(okLabel + "_bad"));
+            int panicTemp = NewTemp();
+            Emit(new IrInst.LoadConstStr(panicTemp, InternString("Ashes.Parallel.withWorkers: worker count must be positive.")));
+            Emit(new IrInst.PanicStr(panicTemp));
+            Emit(new IrInst.Label(okLabel));
+
+            // Save the enclosing override, install this scope's count, run the thunk, restore.
+            int savedOverrideTemp = NewTemp();
+            Emit(new IrInst.LoadParallelWorkerOverride(savedOverrideTemp));
+            Emit(new IrInst.StoreParallelWorkerOverride(countTemp));
+
+            var (unitTemp, _) = LowerUnitValue();
+            int resultTemp = NewTemp();
+            Emit(new IrInst.CallClosure(resultTemp, actionTemp, unitTemp));
+
+            Emit(new IrInst.StoreParallelWorkerOverride(savedOverrideTemp));
+
+            if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+            return (resultTemp, resultType);
+        }
+    }
+
     private (int, TypeRef) LowerParallelBoth(Expr leftThunk, Expr rightThunk)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -836,6 +897,7 @@ public sealed partial class Lowering
     private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
     {
         IntrinsicKind.ParallelBoth => 2,
+        IntrinsicKind.ParallelWithWorkers => 2,
         IntrinsicKind.FileWriteText => 2,
         IntrinsicKind.FileWriteBytes => 2,
         IntrinsicKind.BytesGet => 2,

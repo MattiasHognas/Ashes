@@ -50,6 +50,10 @@ internal static partial class LlvmCodegen
     private const string ParallelCapGlobalName = "__ashes_parallel_cap";
     private const string ParallelCapFnName = "__ashes_parallel_cap_get";
 
+    // Dynamically-scoped worker override set by Ashes.Parallel.withWorkers; 0 = unset (use the
+    // compiled max). The effective fork cap is min(override, compiledMax) when set.
+    internal const string ParallelWorkerOverrideName = "__ashes_parallel_override";
+
     // ── Work-conserving parallel reduce (queued Ashes.Parallel.reduce) ──────────────────────
     //
     // One OS-allocated, zero-initialized region holds the whole queue: a fixed header, the
@@ -103,8 +107,37 @@ internal static partial class LlvmCodegen
         LlvmApi.SetLinkage(counter, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(counter, LlvmApi.ConstInt(i64, 0, 0));
 
+        // The withWorkers override (0 = unset). Read on the same thread that set it (the one
+        // running the scoped action, which then reaches the fork gate / queued-reduce cap).
+        LlvmValueHandle overrideGlobal = LlvmApi.AddGlobal(target.Module, i64, ParallelWorkerOverrideName);
+        LlvmApi.SetLinkage(overrideGlobal, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(overrideGlobal, LlvmApi.ConstInt(i64, 0, 0));
+
         EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
         EmitParallelWorkerCapFn(target, flavor, nounwindAttr);
+    }
+
+    /// <summary>
+    /// Emits the effective worker cap: the compiled maximum (a fixed <c>--parallel-workers</c>
+    /// constant, else the detected core count) narrowed by the dynamically-scoped withWorkers
+    /// override — <c>min(override, compiledMax)</c> when the override is set (non-zero), otherwise
+    /// the compiled maximum unchanged.
+    /// </summary>
+    private static LlvmValueHandle EmitEffectiveWorkerCap(LlvmCodegenState state, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle i64 = state.I64;
+        LlvmValueHandle compiledMax = state.Target.ParallelWorkerCap is { } fixedCap
+            ? LlvmApi.ConstInt(i64, (ulong)fixedCap, 0)
+            : LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(i64, []),
+                LlvmApi.GetNamedFunction(state.Target.Module, ParallelCapFnName), [], prefix + "_compiled_max");
+
+        LlvmValueHandle overrideVal = LlvmApi.BuildLoad2(builder, i64,
+            LlvmApi.GetNamedGlobal(state.Target.Module, ParallelWorkerOverrideName), prefix + "_override");
+        LlvmValueHandle isSet = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, overrideVal, LlvmApi.ConstInt(i64, 0, 0), prefix + "_ovr_set");
+        LlvmValueHandle belowMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, overrideVal, compiledMax, prefix + "_ovr_below");
+        LlvmValueHandle useOverride = LlvmApi.BuildAnd(builder, isSet, belowMax, prefix + "_use_ovr");
+        return LlvmApi.BuildSelect(builder, useOverride, overrideVal, compiledMax, prefix + "_eff_cap");
     }
 
     /// <summary>
@@ -344,12 +377,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle counterAddr = LlvmApi.BuildPtrToInt(builder,
             LlvmApi.GetNamedGlobal(state.Target.Module, ParallelActiveCounterName), state.I64, "par_counter_addr");
         LlvmValueHandle prevActive = EmitAtomicFetchAdd(state, counterAddr, 1, "par_claim");
-        // Cap: a fixed --parallel-workers value compares against a constant; otherwise the cap
-        // is the machine's detected core count (cached in a global by __ashes_parallel_cap_get).
-        LlvmValueHandle capValue = state.Target.ParallelWorkerCap is { } fixedCap
-            ? LlvmApi.ConstInt(state.I64, (ulong)fixedCap, 0)
-            : LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(state.I64, []),
-                LlvmApi.GetNamedFunction(state.Target.Module, ParallelCapFnName), [], "par_cap");
+        // Cap: a fixed --parallel-workers value or the machine's detected core count, narrowed by
+        // any active withWorkers override (min(override, compiledMax)).
+        LlvmValueHandle capValue = EmitEffectiveWorkerCap(state, "par_cap");
         LlvmValueHandle canSpawn = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt,
             prevActive, capValue, "par_can_spawn");
 
@@ -1107,10 +1137,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalItems = LlvmApi.BuildLoad2(builder, i64, totalSlot, "parq_s");
 
         // ── Allocate and initialize the region ──────────────────────────────────────────────
-        LlvmValueHandle capValue = target.ParallelWorkerCap is { } fixedCap
-            ? LlvmApi.ConstInt(i64, (ulong)fixedCap, 0)
-            : LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(i64, []),
-                LlvmApi.GetNamedFunction(target.Module, ParallelCapFnName), [], "parq_cap");
+        // Compiled max narrowed by any active withWorkers override, then by the element count.
+        LlvmValueHandle capValue = EmitEffectiveWorkerCap(state, "parq_cap");
         LlvmValueHandle capBelowN = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, capValue, count, "parq_cap_below_n");
         LlvmValueHandle maxWorkers = LlvmApi.BuildSelect(builder, capBelowN, capValue, count, "parq_max_workers");
         // size = header + n element words + S item words + S flag words + one record per worker slot.

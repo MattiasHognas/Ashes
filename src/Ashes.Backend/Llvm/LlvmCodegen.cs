@@ -759,7 +759,10 @@ internal static partial class LlvmCodegen
         }
 
         bool usesParallelQueue = ProgramUsesInstruction<IrInst.ParallelQueueStart>(program);
-        if (ProgramUsesInstruction<IrInst.ParallelFork>(program) || usesParallelQueue)
+        // withWorkers around no actual fork still needs the runtime globals (the override slot);
+        // its Load/Store override instructions gate the runtime in too.
+        bool usesWorkerOverride = ProgramUsesInstruction<IrInst.LoadParallelWorkerOverride>(program);
+        if (ProgramUsesInstruction<IrInst.ParallelFork>(program) || usesParallelQueue || usesWorkerOverride)
         {
             if (flavor == LlvmCodegenFlavor.WindowsX64)
             {
@@ -1407,6 +1410,12 @@ internal static partial class LlvmCodegen
                 EmitParallelJoin(state, LoadTemp(state, parallelJoin.DescTemp))),
             IrInst.ParallelCleanup parallelCleanup =>
                 EmitParallelCleanup(state, LoadTemp(state, parallelCleanup.DescTemp)),
+            // withWorkers save/set/restore of the dynamically-scoped worker override global.
+            IrInst.LoadParallelWorkerOverride loadOverride => StoreTemp(state, loadOverride.Target,
+                LlvmApi.BuildLoad2(builder, state.I64,
+                    LlvmApi.GetNamedGlobal(state.Target.Module, ParallelWorkerOverrideName), $"load_worker_override_{loadOverride.Target}")),
+            IrInst.StoreParallelWorkerOverride storeOverride =>
+                StoreParallelWorkerOverrideGlobal(state, LoadTemp(state, storeOverride.Source)),
             // Work-conserving parallel reduce (queued Ashes.Parallel.reduce).
             IrInst.ParallelQueueStart parallelQueueStart => StoreTemp(state, parallelQueueStart.DescTarget,
                 EmitParallelQueueStart(state, LoadTemp(state, parallelQueueStart.FClosureTemp),
@@ -1549,6 +1558,13 @@ internal static partial class LlvmCodegen
     private static bool StoreEffectHandlerGlobal(LlvmCodegenState state, int effectIndex, LlvmValueHandle value)
     {
         LlvmApi.BuildStore(state.Target.Builder, value, GetEffectHandlerGlobal(state, effectIndex));
+        return false;
+    }
+
+    private static bool StoreParallelWorkerOverrideGlobal(LlvmCodegenState state, LlvmValueHandle value)
+    {
+        LlvmApi.BuildStore(state.Target.Builder, value,
+            LlvmApi.GetNamedGlobal(state.Target.Module, ParallelWorkerOverrideName));
         return false;
     }
 

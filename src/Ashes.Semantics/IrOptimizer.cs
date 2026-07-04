@@ -488,6 +488,7 @@ public static class IrOptimizer
             IrInst.ParallelFork pf => pf with { RightClosureTemp = R(pf.RightClosureTemp) },
             IrInst.ParallelJoin pj => pj with { DescTemp = R(pj.DescTemp) },
             IrInst.ParallelCleanup pc => pc with { DescTemp = R(pc.DescTemp) },
+            IrInst.StoreParallelWorkerOverride so => so with { Source = R(so.Source) },
             IrInst.ParallelQueueStart qs => qs with { FClosureTemp = R(qs.FClosureTemp), CombineClosureTemp = R(qs.CombineClosureTemp), ListTemp = R(qs.ListTemp) },
             IrInst.ParallelQueueAwait qa => qa with { DescTemp = R(qa.DescTemp) },
             IrInst.ParallelQueueCleanup qc => qc with { DescTemp = R(qc.DescTemp) },
@@ -1402,6 +1403,7 @@ public static class IrOptimizer
             case IrInst.ParallelFork pf: usedTemps.Add(pf.RightClosureTemp); break;
             case IrInst.ParallelJoin pj: usedTemps.Add(pj.DescTemp); break;
             case IrInst.ParallelCleanup pc: usedTemps.Add(pc.DescTemp); break;
+            case IrInst.StoreParallelWorkerOverride so: usedTemps.Add(so.Source); break;
             case IrInst.ParallelQueueStart qs: usedTemps.Add(qs.FClosureTemp); usedTemps.Add(qs.CombineClosureTemp); usedTemps.Add(qs.ListTemp); break;
             case IrInst.ParallelQueueAwait qa: usedTemps.Add(qa.DescTemp); break;
             case IrInst.ParallelQueueCleanup qc: usedTemps.Add(qc.DescTemp); break;
