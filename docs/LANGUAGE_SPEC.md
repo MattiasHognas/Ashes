@@ -2226,11 +2226,12 @@ fixed price table, a deterministic RNG, or a retry policy. The headline use is *
 dependency injection**: capabilities like `Clock`, `Random`, `Env`, or `FileSystem` are real in
 production and fixed in tests, with no `Clock`/`Logger` parameter polluting every signature.
 
-A capability requirement is satisfied by a **handler** (`handle ... with`) — a scoped, dynamic
-implementation. A second, **static** satisfaction form — `provide Capability(args) = ...`, which
-supplies type-directed evidence for concrete instances such as `Ord(Str)` — is planned; see
-[future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md). This section specifies the
-dynamic (`handle`) surface, which is fully implemented.
+A capability requirement is satisfied in one of two ways: by a **handler** (`handle ... with`) — a
+scoped, dynamic implementation — or by a static **provider** (`provide Capability(args) = ...`, §20.6)
+that supplies a fixed implementation for a concrete instance, resolved at compile time. Providers
+resolve **concrete** instances (`Clock`, `Ord(Str)`); resolving a requirement at a *generic*
+instance still needs monomorphization and is the remaining phase (see
+[future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md)).
 
 Implementation status: capability declarations, `needs` rows, capability typing, the
 unsatisfied-capability diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot
@@ -2358,7 +2359,39 @@ Continuation power is restricted by the memory model (no GC):
 - **Aborting** arms (a path that never calls `resume`) need unwinding and are rejected.
 - **Multi-shot** (`resume` called more than once) is out of scope and rejected.
 
-## 20.6 Worked Example
+## 20.6 Static Providers (`provide`)
+
+A `handle` satisfies a capability *dynamically* — for the extent of a scope. A **provider**
+satisfies it *statically*: `provide` supplies a fixed implementation for a **concrete** capability
+instance, resolved at compile time with no handler evidence.
+
+```
+capability Clock =
+    | now : Unit -> Int
+
+provide Clock =
+    | now = given (_) -> Ashes.Time.unixSeconds(Unit)
+
+let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no handler needed
+```
+
+- A provider is a top-level declaration `provide Cap[(TypeArgs)] = | op = impl | op2 = impl`. It
+  must supply **every** operation of the capability, exactly once; each `impl` is an ordinary
+  expression whose type must match the operation's signature at the provided instance.
+- **Resolution.** At a capability operation call the concrete instance is known after inference. If
+  a matching provider exists and the capability is *not* handled by an enclosing `handle`, the call
+  is a direct call to the provider's implementation. If it *is* handled, the handler wins
+  dynamically. If **both** a provider and an enclosing handler could satisfy the same call, that is
+  an ambiguity error (`ASH027`) — there is no hidden precedence.
+- **Duplicates.** Two providers for the same concrete instance are an error (`ASH026`).
+- **Concrete instances only.** A provider resolves a call whose instance is concrete at the call
+  site — `provide Clock` (unparameterized) or `Ord(Str)` used on `Str` values. Resolving a
+  requirement at a *generic* instance (an `Ord(a)` call inside a polymorphic function, where `a` is
+  still a type variable) would require monomorphization or dictionary passing and is **not yet
+  implemented** — such a call reports a clear diagnostic. This is the remaining phase of
+  [future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md).
+
+## 20.7 Worked Example
 
 The same business code runs under any handler; only the interpretation changes:
 
@@ -2388,7 +2421,7 @@ its fully-implicit twin must produce the same inferred types and the same output
 (`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
 production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
-## 20.7 Design Notes
+## 20.8 Design Notes
 
 Ashes uses **lexical handler injection** (the OCaml 5 / Koka / Eff / Frank / Unison family):
 the nearest enclosing handler interprets an operation. The two other ML/FP injection routes are
@@ -2403,11 +2436,13 @@ model and affine ownership (double-resume is double-use/double-drop of owned val
 Consequently capability-based generators, backtracking, and nondeterminism are out of scope —
 documented limitation, not a TODO.
 
-## 20.8 Diagnostics
+## 20.9 Diagnostics
 
-`ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row), `ASH019`
-(unknown capability or operation), `ASH020` (invalid handler), and `ASH025` (the old `effect`/`uses`
-spellings) cover this surface; see [DIAGNOSTICS.md](DIAGNOSTICS.md).
+`ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row, and the
+generic-provider limitation), `ASH019` (unknown capability or operation), `ASH020` (invalid
+handler), `ASH025` (the old `effect`/`uses` spellings), `ASH026` (duplicate/incomplete provider),
+and `ASH027` (a capability satisfied by both a provider and a handler) cover this surface; see
+[DIAGNOSTICS.md](DIAGNOSTICS.md).
 
 ---
 

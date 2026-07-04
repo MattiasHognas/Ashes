@@ -1,4 +1,4 @@
-// expect-compile-error: Unhandled capability 'Clock'
+// expect-compile-error: Unsatisfied capability 'Clock'
 
 capability Clock =
     | now : Unit -> Int

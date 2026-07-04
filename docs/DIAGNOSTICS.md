@@ -26,6 +26,8 @@ Current codes:
 | `ASH019` | Unknown capability or capability operation                    |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
 | `ASH025` | Renamed capability keyword (`effect`→`capability`, `uses`→`needs`) |
+| `ASH026` | Duplicate or incomplete static provider (`provide`)            |
+| `ASH027` | Capability satisfied by both a provider and an enclosing handler |
 | `ASH021` | Disallowed form in an inline `module` block                   |
 | `ASH022` | Inline module path collides with a file module of the same path |
 | `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
@@ -106,6 +108,17 @@ for the remaining roadmap.
 - `ASH025` — **Renamed capability keyword.** The former spellings `effect` and `uses` were
   renamed to `capability` and `needs`; using an old spelling reports this with the replacement.
   Messages: `'effect' has been renamed to 'capability'.`, `'uses' has been renamed to 'needs'.`
+
+- `ASH026` — **Duplicate or incomplete provider.** Two `provide` declarations target the same
+  concrete capability instance, a provider supplies an operation more than once, or a provider is
+  missing one of the capability's operations (a provider must supply all operations exactly once).
+  Messages include: `Duplicate provider for 'Ord(Str)'.`, `Provider for 'Ord(Str)' is missing
+  operation 'compare'.`
+
+- `ASH027` — **Ambiguous capability satisfaction.** At a capability operation call, both a static
+  `provide` for the concrete instance and an enclosing `handle` could satisfy it. There is no
+  hidden precedence — choose one.
+  Message: `Capability 'Clock' is satisfied both by a provider and by an enclosing handler. Choose one.`
 
 ## Inline module diagnostics
 

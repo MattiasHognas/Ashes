@@ -122,11 +122,20 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
     public bool IsRecord { get; init; }
 }
 
-/// <summary>One operation of an <c>effect</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
+/// <summary>One operation of a <c>capability</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
 public sealed record CapabilityOperation(string Name, TypeExpr? Signature);
 
-/// <summary>An <c>effect</c> declaration: <c>effect Clock = | now : Unit -> Int</c>.</summary>
+/// <summary>A <c>capability</c> declaration: <c>capability Clock = | now : Unit -> Int</c>.</summary>
 public sealed record CapabilityDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<CapabilityOperation> Operations);
+
+/// <summary>One operation implementation in a <c>provide</c>: <c>| compare = Ashes.String.compare</c>.</summary>
+public sealed record ProvideBinding(string OperationName, Expr Implementation);
+
+/// <summary>
+/// A static provider: <c>provide Ord(Str) = | compare = ...</c>. Supplies type-directed evidence for a
+/// concrete capability instance (<see cref="CapabilityName"/> applied to <see cref="TypeArgs"/>).
+/// </summary>
+public sealed record ProvideDecl(string CapabilityName, IReadOnlyList<TypeExpr> TypeArgs, IReadOnlyList<ProvideBinding> Bindings);
 
 /// <summary>A single effect reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
 public sealed record CapabilityRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
@@ -188,6 +197,9 @@ public abstract record TopLevelItem
 
     /// <summary>A top-level <c>effect</c> declaration.</summary>
     public sealed record Capability(CapabilityDecl Decl) : TopLevelItem;
+
+    /// <summary>A top-level <c>provide</c> declaration (static capability satisfaction).</summary>
+    public sealed record Provide(ProvideDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
     public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem

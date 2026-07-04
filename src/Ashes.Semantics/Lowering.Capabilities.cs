@@ -86,6 +86,105 @@ public sealed partial class Lowering
         }
     }
 
+    // ---------------- Static providers (`provide`) ----------------
+
+    private const string DuplicateProviderCode = "ASH026";
+    private const string AmbiguousSatisfactionCode = "ASH027";
+
+    /// <summary>A registered static provider: its capability, the concrete instance's type arguments, and each operation's implementation expression.</summary>
+    private sealed record ProviderInfo(CapabilitySymbol Capability, IReadOnlyList<TypeRef> TypeArgs, IReadOnlyDictionary<string, Expr> Operations, TextSpan Span);
+
+    // Providers keyed by concrete-instance key ("Clock", "Ord(Str)", ...).
+    private readonly Dictionary<string, ProviderInfo> _providers = new(StringComparer.Ordinal);
+
+    // Capabilities lexically handled by an enclosing `handle` at the current lowering point. A
+    // capability operation resolves dynamically (handler evidence) when handled here, statically
+    // (a matching provider) otherwise; both applicable is an ambiguity error (ASH027).
+    private readonly HashSet<string> _lexicallyHandledCapabilities = new(StringComparer.Ordinal);
+
+    private void RegisterProviderDeclarations(IReadOnlyList<TopLevelItem> items)
+    {
+        foreach (var item in items.OfType<TopLevelItem.Provide>())
+        {
+            var decl = item.Decl;
+            var span = AstSpans.GetOrDefault(decl);
+            span = span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
+
+            if (!_capabilitySymbols.TryGetValue(decl.CapabilityName, out var capability))
+            {
+                ReportDiagnostic(span, $"'provide' refers to unknown capability '{decl.CapabilityName}'.", UnknownCapabilityCode);
+                continue;
+            }
+
+            if (decl.TypeArgs.Count != capability.TypeParameters.Count)
+            {
+                ReportDiagnostic(span, $"Capability '{decl.CapabilityName}' expects {capability.TypeParameters.Count} type argument(s) but the provider supplies {decl.TypeArgs.Count}.", UnknownCapabilityCode);
+                continue;
+            }
+
+            var typeArgs = decl.TypeArgs.Select(ResolveTypeExpr).ToList();
+            var key = BuildProviderKey(decl.CapabilityName, typeArgs);
+
+            // Operation-name validation: no duplicates, no unknown ops, all operations provided.
+            var ops = new Dictionary<string, Expr>(StringComparer.Ordinal);
+            foreach (var binding in decl.Bindings)
+            {
+                if (!capability.Operations.ContainsKey(binding.OperationName))
+                {
+                    ReportDiagnostic(span, $"Capability '{decl.CapabilityName}' has no operation '{binding.OperationName}'.", UnknownCapabilityCode);
+                    continue;
+                }
+
+                if (!ops.TryAdd(binding.OperationName, binding.Implementation))
+                {
+                    ReportDiagnostic(span, $"Provider for '{key}' supplies operation '{binding.OperationName}' more than once.", DuplicateProviderCode);
+                }
+            }
+
+            foreach (var opName in capability.Operations.Keys)
+            {
+                if (!ops.ContainsKey(opName))
+                {
+                    ReportDiagnostic(span, $"Provider for '{key}' is missing operation '{opName}'.", DuplicateProviderCode);
+                }
+            }
+
+            if (_providers.ContainsKey(key))
+            {
+                ReportDiagnostic(span, $"Duplicate provider for '{key}'.", DuplicateProviderCode);
+                continue;
+            }
+
+            _providers[key] = new ProviderInfo(capability, typeArgs, ops, span);
+        }
+    }
+
+    /// <summary>The instance key for a capability applied to (pruned) type arguments, e.g. "Clock" or "Ord(Str)".</summary>
+    private string BuildProviderKey(string capabilityName, IReadOnlyList<TypeRef> typeArgs)
+    {
+        return typeArgs.Count == 0
+            ? capabilityName
+            : $"{capabilityName}({string.Join(", ", typeArgs.Select(t => Pretty(Prune(t))))})";
+    }
+
+    /// <summary>
+    /// The provider matching a capability instance, or null when the instance is abstract (a type
+    /// argument is still a variable — a generic requirement, resolvable only by monomorphization,
+    /// which is deferred) or no provider is registered.
+    /// </summary>
+    private ProviderInfo? ResolveProvider(CapabilitySymbol capability, IReadOnlyList<TypeRef> typeArgs)
+    {
+        var pruned = typeArgs.Select(Prune).ToList();
+        if (pruned.Any(IsAbstractType))
+        {
+            return null;
+        }
+
+        return _providers.TryGetValue(BuildProviderKey(capability.Name, pruned), out var provider) ? provider : null;
+    }
+
+    private static bool IsAbstractType(TypeRef type) => type is TypeRef.TVar or TypeRef.TTypeParam;
+
     /// <summary>Number of declared capabilities: the backend materializes one handler-evidence global per capability.</summary>
     private int CapabilityGlobalCount => _capabilitySymbols.Count;
 
@@ -454,7 +553,7 @@ public sealed partial class Lowering
             var span = _firstPerformSites.TryGetValue(capability.Symbol.Name, out var performSite)
                 ? performSite
                 : default;
-            ReportDiagnostic(span, $"Unhandled capability '{capability.Symbol.Name}': no enclosing handler discharges it.", UnhandledCapabilityCode);
+            ReportDiagnostic(span, $"Unsatisfied capability '{capability.Symbol.Name}': no handler or provider satisfies it.", UnhandledCapabilityCode);
         }
     }
 
@@ -499,13 +598,6 @@ public sealed partial class Lowering
             ? InstantiateEffectSignature(operation.DeclaredSignature, effectSym.TypeParameters, effectArgs)
             : operation.InferredType!;
 
-        var effectInstance = new TypeRef.TCapability(effectSym, effectArgs);
-        RecordPerformSite(effectInstance, span);
-        using (PushDiagnosticSpan(span))
-        {
-            RequireEffectsInAmbient([effectInstance]);
-        }
-
         RecordHoverType(span, $"{effectSym.Name}.{qv.Name}", opType);
 
         // Type the application like an ordinary curried call chain, collecting argument temps.
@@ -541,8 +633,78 @@ public sealed partial class Lowering
             currentType = Prune(funType.Ret);
         }
 
+        // Decide how the requirement is satisfied now that the instance's type arguments are pinned:
+        //  - lexically handled by an enclosing `handle`  -> dynamic evidence path (row-tracked)
+        //  - a matching static provider, not handled     -> direct call to the provider's impl
+        //  - both                                         -> ambiguity error (ASH027)
+        //  - neither / abstract instance                 -> dynamic path; residual row -> ASH017
+        bool handled = _lexicallyHandledCapabilities.Contains(effectSym.Name);
+        var provider = ResolveProvider(effectSym, effectArgs);
+
+        if (handled && provider is not null)
+        {
+            ReportDiagnostic(span, $"Capability '{effectSym.Name}' is satisfied both by a provider and by an enclosing handler. Choose one.", AmbiguousSatisfactionCode);
+        }
+
+        if (provider is not null && !handled)
+        {
+            int staticResult = EmitStaticProviderCall(provider, qv.Name, argTemps, span);
+            return (staticResult, currentType);
+        }
+
+        // A provider exists for this capability but the instance here is abstract (a type variable):
+        // static resolution needs a concrete type at the call site. Resolving it through a
+        // polymorphic function would require monomorphization, which is not yet implemented.
+        if (!handled && provider is null && effectArgs.Any(a => IsAbstractType(Prune(a)))
+            && _providers.Keys.Any(k => k == effectSym.Name || k.StartsWith($"{effectSym.Name}(", StringComparison.Ordinal)))
+        {
+            ReportDiagnostic(span, $"Capability '{effectSym.Name}' is provided only for concrete instances; resolving it at a generic (abstract) instance is not yet supported — the type must be concrete at the operation call site.", CapabilityNotPermittedCode);
+        }
+
+        // Dynamic satisfaction: record the requirement in the ambient row so a handler discharges
+        // it (or the top-level unsatisfied check reports it), and emit the evidence-based perform.
+        var effectInstance = new TypeRef.TCapability(effectSym, effectArgs);
+        RecordPerformSite(effectInstance, span);
+        using (PushDiagnosticSpan(span))
+        {
+            RequireEffectsInAmbient([effectInstance]);
+        }
+
         int resultTemp = EmitPerform(effectSym, qv.Name, argTemps);
         return (resultTemp, currentType);
+    }
+
+    /// <summary>
+    /// Emits a static provider resolution: lowers the provider's operation implementation (a normal
+    /// expression, e.g. <c>Ashes.String.compare</c> or a lambda), unifies it against the operation's
+    /// instantiated signature (so a wrong-typed implementation is a type error), and applies the
+    /// operation's arguments as an ordinary curried call. No handler evidence is involved.
+    /// </summary>
+    private int EmitStaticProviderCall(ProviderInfo provider, string opName, List<int> argTemps, TextSpan span)
+    {
+        var impl = provider.Operations[opName];
+        var (implTemp, implType) = LowerExpr(impl);
+
+        // Type-check: the implementation must have the operation's signature at this concrete instance.
+        var operation = provider.Capability.Operations[opName];
+        if (operation.DeclaredSignature is not null)
+        {
+            var expected = InstantiateEffectSignature(operation.DeclaredSignature, provider.Capability.TypeParameters, provider.TypeArgs);
+            using (PushDiagnosticContext($"in provider '{BuildProviderKey(provider.Capability.Name, provider.TypeArgs)}' operation '{opName}'"))
+            {
+                Unify(implType, expected);
+            }
+        }
+
+        int current = implTemp;
+        foreach (var argTemp in argTemps)
+        {
+            int callTarget = NewTemp();
+            Emit(new IrInst.CallClosure(callTarget, current, argTemp));
+            current = callTarget;
+        }
+
+        return current;
     }
 
     /// <summary>
@@ -841,7 +1003,15 @@ public sealed partial class Lowering
             outerTail);
         var savedAmbientRow = _ambientRow;
         _ambientRow = bodyRow;
+        // Operations of the handled capabilities resolve dynamically (this handler's evidence) while
+        // lowering the body — and a static provider for one of them is then an ambiguity error.
+        var newlyHandled = handledEffects.Where(e => _lexicallyHandledCapabilities.Add(e.Name)).ToList();
         var (bodyTemp, bodyType) = LowerExpr(handle.Body);
+        foreach (var handledCapability in newlyHandled)
+        {
+            _lexicallyHandledCapabilities.Remove(handledCapability.Name);
+        }
+
         _ambientRow = savedAmbientRow;
         UnifyRows(outerTail, AmbientRow);
 

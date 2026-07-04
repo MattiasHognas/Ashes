@@ -64,12 +64,10 @@ public sealed class Parser
 
         while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability or TokenKind.RenamedEffect or TokenKind.Provide)
         {
-            // `provide` is a reserved keyword for the planned static-satisfaction form; it does not
-            // parse yet. Surface a clear message rather than a cryptic expected-expression error.
             if (_current.Kind == TokenKind.Provide)
             {
-                _diag.Error(CurrentErrorSpan(), "'provide' declarations (static capability satisfaction) are not yet implemented.", DiagnosticCodes.ParseError);
-                return new Program(items, body);
+                items.Add(new TopLevelItem.Provide(ParseProvideDecl()));
+                continue;
             }
 
             if (_current.Kind == TokenKind.RenamedEffect)
@@ -446,6 +444,69 @@ public sealed class Parser
         }
 
         var decl = new CapabilityDecl(name, typeParameters, operations);
+        AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
+        return decl;
+    }
+
+    /// <summary>
+    /// Parses a static provider: <c>provide Name [(TypeArgs)] = | op = expr | op2 = expr</c>.
+    /// </summary>
+    private ProvideDecl ParseProvideDecl()
+    {
+        var start = _current.Position;
+        Consume(TokenKind.Provide);
+        var name = Consume(TokenKind.Ident).Text;
+        var typeArgs = new List<TypeExpr>();
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind != TokenKind.RParen)
+            {
+                typeArgs.Add(ParseTypeExpr());
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    typeArgs.Add(ParseTypeExpr());
+                }
+            }
+
+            Consume(TokenKind.RParen);
+        }
+
+        Consume(TokenKind.Equals);
+
+        var bindings = new List<ProvideBinding>();
+        var previousSuppression = _suppressLetWhitespaceArgument;
+        var previousDeclColumn = _topLevelDeclColumn;
+        // Apply the flat top-level boundary so the impl expression does not absorb a following
+        // top-level declaration (e.g. the next `let`) as a whitespace-application argument.
+        _suppressLetWhitespaceArgument = true;
+        _topLevelDeclColumn = GetColumn(start);
+        try
+        {
+            while (_current.Kind == TokenKind.Pipe)
+            {
+                Consume(TokenKind.Pipe);
+                var opName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Equals);
+                // Suppress `|` as a bitwise-or operator so the next `| op = ...` binding terminates the
+                // implementation expression (the same rule match-case bodies use).
+                var impl = ParseMatchCaseBody();
+                bindings.Add(new ProvideBinding(opName, impl));
+            }
+        }
+        finally
+        {
+            _suppressLetWhitespaceArgument = previousSuppression;
+            _topLevelDeclColumn = previousDeclColumn;
+        }
+
+        if (bindings.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Provider for '{name}' must supply at least one operation.");
+        }
+
+        var decl = new ProvideDecl(name, typeArgs, bindings);
         AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
         return decl;
     }

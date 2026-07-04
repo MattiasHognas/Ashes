@@ -434,6 +434,7 @@ public sealed partial class Lowering
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternalDeclarations(program.ExternalDecls);
         RegisterCapabilityDeclarations(program.Items);
+        RegisterProviderDeclarations(program.Items);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)

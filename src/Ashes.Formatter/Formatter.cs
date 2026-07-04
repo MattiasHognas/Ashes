@@ -166,6 +166,51 @@ public static class Formatter
         }
     }
 
+    private static void WriteProvideDecl(StringBuilder sb, ProvideDecl decl, bool preferPipelines, FormattingOptions options)
+    {
+        sb.Append("provide ");
+        sb.Append(decl.CapabilityName);
+        if (decl.TypeArgs.Count > 0)
+        {
+            sb.Append('(');
+            for (int i = 0; i < decl.TypeArgs.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(", ");
+                }
+
+                WriteTypeExpr(sb, decl.TypeArgs[i]);
+            }
+
+            sb.Append(')');
+        }
+
+        sb.Append(" =\n");
+        foreach (var binding in decl.Bindings)
+        {
+            WriteIndent(sb, options.IndentSize, options);
+            sb.Append("| ");
+            sb.Append(binding.OperationName);
+            sb.Append(" = ");
+            if (IsSingleLine(binding.Implementation, preferPipelines))
+            {
+                WriteExprInline(sb, binding.Implementation, options.IndentSize, 0, preferPipelines, options);
+                sb.Append('\n');
+            }
+            else
+            {
+                sb.Append('\n');
+                WriteIndent(sb, options.IndentSize * 2, options);
+                WriteExpr(sb, binding.Implementation, options.IndentSize * 2, 0, preferPipelines, options);
+                if (!EndsWithNewLine(sb, "\n"))
+                {
+                    sb.Append('\n');
+                }
+            }
+        }
+    }
+
     private static void WriteTopLevelItem(StringBuilder sb, TopLevelItem item, bool preferPipelines, FormattingOptions options)
     {
         switch (item)
@@ -178,6 +223,9 @@ public static class Formatter
                 return;
             case TopLevelItem.Capability eff:
                 WriteCapabilityDecl(sb, eff.Decl, options);
+                return;
+            case TopLevelItem.Provide prov:
+                WriteProvideDecl(sb, prov.Decl, preferPipelines, options);
                 return;
             case TopLevelItem.LetDecl let:
                 WriteLetDecl(sb, let, preferPipelines, options);
