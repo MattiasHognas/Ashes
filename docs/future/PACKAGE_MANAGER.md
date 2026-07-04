@@ -235,6 +235,25 @@ Because ownership and immutability are enforced by the server, the "open to cont
 overwrite" property holds without any external permission model: an account can publish only namespaces
 it owns, and no account can rewrite a published version.
 
+**Publish limits and quotas.** The server also enforces size and abuse limits at publish (they gate what
+gets in; they never affect an already-published, immutable version, so reproducibility is untouched).
+The set to enforce, with defaults as starting points for the registry-API spec:
+
+- **Max per-file size** — source is text, so a small cap (~1 MiB) is generous and blocks binary-blob
+  smuggling.
+- **Max total package size (uncompressed)** — the headline limit; ~10 MiB (crates.io's default, our
+  closest source-only analog), adjustable per package.
+- **Max file count** — ~10,000, to stop pathological many-tiny-files trees.
+- **Decompressed-size ceiling enforced during unpack** — the critical zip-bomb defense: cap the
+  *decompressed* content, not just the uploaded bytes, so a tiny upload cannot expand to gigabytes.
+- **Publish rate / storage quota** — per-account rate limits and an optional per-namespace quota.
+- **Content allowlist** — keep packages source-only: `.ash` sources plus a few metadata files
+  (`ashes.json`, `README`, `LICENSE`); reject or tightly cap anything else.
+
+These are **per-registry policy** behind the storage/policy layer (§12.1): the public instance ships the
+defaults, and a self-hosted or corporate registry may set its own (larger packages, internal-only
+namespaces, and so on).
+
 ### 7.3 Reproducibility and trust
 
 Trust is scoped to whichever registry a project configures. Published versions are immutable, the lock
