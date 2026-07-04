@@ -698,29 +698,63 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Detects the <c>Map.set</c> shape: a chain of outer parameter lambdas whose innermost body is
-    /// <c>let rec go = (given m -> _) in go</c> — returning a recursive single-parameter function.
-    /// Outputs the recursive parameter to specialize on and the total number of arguments the full
-    /// application takes (outer params + the recursive arg).
+    /// Detects the nested-recursive-return shape and the parameter to specialize on. Two forms:
+    /// <list type="bullet">
+    /// <item><b>Bare</b> (<c>Map.set</c>): a chain of outer parameter lambdas whose innermost body is
+    /// <c>let rec go = (given m -> _) in go</c> — the recursive worker returned bare. The caller
+    /// applies the accumulator to the returned worker, so <c>argCount = outerParams + 1</c>.</item>
+    /// <item><b>Eta-applied</b> (<c>HashMap.set</c>): the worker is instead returned as
+    /// <c>… in go(map)</c>, where <c>map</c> is the last outer parameter. This just forwards a fresh
+    /// outer accumulator straight into the worker, so the worker's own parameter is still the linear
+    /// reuse root, but the accumulator is already an outer argument, so <c>argCount = outerParams</c>.</item>
+    /// </list>
+    /// In both forms a chain of leading non-recursive <c>let</c> bindings before the <c>let rec</c>
+    /// (e.g. <c>let target = hashKey(newKey)</c>) is peeled: those lower once in the outer function
+    /// before the worker is created and do not affect the accumulator's linearity. Outputs the
+    /// worker's parameter to specialize on and the total number of arguments the full application takes.
     /// </summary>
     private static bool TryGetNestedRecursiveReturn(Expr.Lambda lam, out string linearParam, out int argCount)
     {
         linearParam = "";
         argCount = 0;
         Expr body = lam;
-        int outer = 0;
+        var outerParams = new List<string>();
         while (body is Expr.Lambda inner)
         {
-            outer++;
+            outerParams.Add(inner.ParamName);
             body = inner.Body;
         }
 
-        if (body is Expr.LetRecursive { Value: Expr.Lambda recursiveValue, Body: Expr.Var recursiveRef } letRecursive
-            && string.Equals(letRecursive.Name, recursiveRef.Name, StringComparison.Ordinal)
-            && recursiveValue.Body is not Expr.Lambda)
+        // Peel leading non-recursive lets (hoisted per-call setup like the composite hash key).
+        while (body is Expr.Let { Body: var letBody })
+        {
+            body = letBody;
+        }
+
+        if (body is not Expr.LetRecursive { Value: Expr.Lambda recursiveValue } letRecursive
+            || recursiveValue.Body is Expr.Lambda)
+        {
+            return false;
+        }
+
+        // Bare return `in go`: the caller supplies the accumulator as one extra argument.
+        if (letRecursive.Body is Expr.Var recursiveRef
+            && string.Equals(letRecursive.Name, recursiveRef.Name, StringComparison.Ordinal))
         {
             linearParam = recursiveValue.ParamName;
-            argCount = outer + 1;
+            argCount = outerParams.Count + 1;
+            return true;
+        }
+
+        // Eta return `in go(lastOuterParam)`: the accumulator is already the last outer argument,
+        // forwarded verbatim into the worker, whose own parameter stays the linear reuse root.
+        if (letRecursive.Body is Expr.Call { Func: Expr.Var etaFunc, Arg: Expr.Var etaArg }
+            && string.Equals(etaFunc.Name, letRecursive.Name, StringComparison.Ordinal)
+            && outerParams.Count > 0
+            && string.Equals(etaArg.Name, outerParams[^1], StringComparison.Ordinal))
+        {
+            linearParam = recursiveValue.ParamName;
+            argCount = outerParams.Count;
             return true;
         }
 
@@ -5947,6 +5981,42 @@ public sealed partial class Lowering
             return true;
         }
 
+        // A closure temp is CONSUMED AS A CALL TARGET (so it never escapes into a returned cell) when
+        // every reader either calls it directly (a CallClosure with it as the CALLEE, not an argument)
+        // or moves it through a single-store local slot / Borrow whose loads are themselves consumed as
+        // call targets. This admits a `let rec go = … in go(x)` helper inlined per node (e.g.
+        // HashMap's strCompare on the composite-key descent): go's closure is MakeClosure'd, stored to
+        // a slot, loaded, and immediately called — transient scratch under an arena bracket that
+        // produces a scalar, never captured into the rebuilt tree. Passing the closure as an ARGUMENT
+        // (CallClosure.ArgTemp) is still rejected, since it could then be captured or returned.
+        bool ClosureConsumedAsCallTarget(int temp, int depth)
+        {
+            if (!readers.TryGetValue(temp, out var rs))
+            {
+                return true;
+            }
+
+            foreach (var r in rs)
+            {
+                switch (r)
+                {
+                    case IrInst.CallClosure cc when cc.ClosureTemp == temp:
+                        continue;
+                    case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && ClosureConsumedAsCallTarget(b.Target, depth + 1):
+                        continue;
+                    case IrInst.StoreLocal sl when depth < 4
+                        && slotStores.GetValueOrDefault(sl.Slot) == 1
+                        && (!slotLoads.TryGetValue(sl.Slot, out var loads)
+                            || loads.All(lt => ClosureConsumedAsCallTarget(lt, depth + 1))):
+                        continue;
+                    default:
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
         foreach (var inst in f.Instructions)
         {
             switch (inst)
@@ -5958,16 +6028,14 @@ public sealed partial class Lowering
                     }
 
                     return false;
-                case IrInst.MakeClosure mk when readers.TryGetValue(mk.Target, out var rs)
-                    && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mk.Target):
+                case IrInst.MakeClosure mk when !ClosureConsumedAsCallTarget(mk.Target, 0):
                     if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
                     {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", rs.Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", readers.GetValueOrDefault(mk.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
                     }
 
                     return false;
-                case IrInst.MakeClosureStack mks when readers.TryGetValue(mks.Target, out var rs)
-                    && rs.Any(r => r is not IrInst.CallClosure cc || cc.ClosureTemp != mks.Target):
+                case IrInst.MakeClosureStack mks when !ClosureConsumedAsCallTarget(mks.Target, 0):
                     return false;
             }
         }
