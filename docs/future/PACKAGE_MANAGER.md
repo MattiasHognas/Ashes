@@ -181,88 +181,98 @@ can widen a bound or update.
 
 ## 7. The registry (a committed phase)
 
-The registry is **a thin, static index** — not a bespoke service. It maps
-`name -> { versions, namespace, per-version source URL, published content hash, capability metadata }`.
-The index is static files served over HTTPS, so the registry can be hosted on a CDN, GitHub Pages, or
-object storage with near-zero infrastructure; the content is immutable and cacheable, which fits the
-"boring and deterministic" ethos.
+The registry is **a self-contained, hostable server** — not a third-party index. Ashes defines a
+registry API, ships a reference server that implements it, and runs the canonical public instance on
+that server. Anyone — a company, a community, or a solo developer — can host their own by deploying the
+same server (or by implementing the API). The registry is authoritative for both metadata *and* source,
+so there is no dependency on any external host (no GitHub, no VCS-tag pulling) for a package's bytes.
 
-### 7.1 Index-only, with hash-pinned reproducibility
+The design is deliberately three separable things, so "host your own" is real:
 
-The actual source is pulled from each package's **registered source URL** (typically a GitHub/GitLab
-tag) rather than stored by the registry. This is the low-infrastructure start:
+1. **A registry API specification** — the read/publish/yank contract below. This is the interoperability
+   surface; a third-party registry only has to speak it.
+2. **A reference server** implementing the spec — what Ashes ships and what self-hosters deploy. It is
+   written in **C#/.NET** (matching the compiler codebase and CI) and targets a **minimal, self-hostable
+   first cut**: a single deployable with filesystem-backed storage and API-token auth, with object
+   storage / a database as a later scale option.
+3. **The canonical public instance**, operated by the Ashes org on the reference server.
 
-```
-ashes add json
-  -> query index for `json`
-  -> versions + for 1.2.3: source URL (github.com/x/json @ v1.2.3) + published hash + namespace
-  -> fetch tarball from the source URL
-  -> verify against the published hash
-  -> cache by hash; lock records { version, url, hash }
-```
+### 7.1 What the registry stores and serves (read API)
 
-The registry stores almost no bytes, yet the build is fully reproducible because **the lock always
-records the source content hash**. This directly addresses the immutability footgun that index-only
-systems (early Go, npm) hit: a force-pushed or deleted tag is *detected* by hash mismatch rather than
-silently changing the build.
+The read API is unauthenticated, cacheable, and CDN-frontable:
 
-### 7.2 Uniqueness and namespace ownership
+- **Resolve:** `GET /api/v1/packages/<namespace>` returns the version list and per-version metadata
+  (content hash, dependencies, capability metadata from §8).
+- **Download:** `GET /api/v1/packages/<namespace>/<version>/source` returns the content-addressed source
+  tarball.
 
-- The registry's uniqueness key is the **namespace** (§2.1), so no two registry packages can claim the
-  same public module prefix. `ashes add <name>` resolves the name to its owning namespace.
-- The index **binds a namespace to a source repository** on first claim: the first accepted entry for
-  `Json` records `namespace Json -> github.com/alice/json`. Every later version of `Json` must come
-  from that same bound repo.
-- **Ownership is proved by control of the source repo, not by an Ashes account.** Publishing a new
-  version requires a tag in the bound repo whose `ashes.json` still declares that namespace. Because
-  only the repo's owner can push tags there, only the owner can produce a valid publish. This delegates
-  authentication to the source host's existing permission model — Ashes runs no account or token
-  service of its own.
+The registry stores each published version's source immutably (content-addressed), so a version's bytes
+never change or disappear once published. A client resolves against a registry, downloads the source,
+verifies it against the hash, and caches it (§5). The lock records `source: "registry+<base-url>"` plus
+the version and hash, so a build is reproducible and pinned to a specific registry.
 
-### 7.3 The index repository and publish governance
+### 7.2 Namespace ownership and publishing (publish API)
 
-The index is a **single dedicated git repository** (for example `ashes-lang/index`) holding only
-metadata — no package source. It is *not* open to direct pushes: the repo uses branch protection so the
-only way a change lands is a **pull request that passes automated validation and is then merged by a
-bot Action**. "Anyone may open a PR" is therefore not "anyone may write" — a PR is a proposal, and the
-merge is gated. Nothing here is a server we host: GitHub hosts the repo, the validation and merge run as
-GitHub Actions on GitHub's runners, and a CDN fronts the repo for client reads.
+Publishing is authenticated and governed by the registry itself — the accounts/token machinery lives in
+the server, which is the price of independence from any external host:
 
-`ashes publish` (run by the author, after they tag and push their own source repo as usual):
+- **Accounts and tokens.** `ashes login` obtains and stores an API token (in `~/.ashes/credentials`);
+  publishing is authorized by that token. The minimal server keeps this small (token-based accounts, no
+  web UI required to start).
+- **Namespace ownership.** The registry's uniqueness key is the **namespace** (§2.1). The first publish
+  of a namespace **claims it for the publishing account**; owners may add co-owners; only owners may
+  publish new versions of that namespace.
+- **`ashes publish`** uploads the version's source tarball plus its manifest metadata to the registry.
+  The **server** then validates and stores it — validation is server-side, not client-trusted:
+  - **Append-only / immutable.** A version may be added but never overwritten or silently changed.
+  - **Namespace lint (§2).** Every exported module must live under the package's namespace.
+  - **Hash computation.** The server computes and records the content hash the client will verify.
+  - **Capability extraction (§8).** The server records the public API's capability rows.
+- **`ashes yank`** marks a published version unusable for *new* resolutions without deleting it, so
+  existing locks that pin it still resolve — reproducibility is never broken by a yank.
 
-1. reads the local `ashes.json` (name, namespace, source URL, dependencies),
-2. resolves the tag, computes the source-tree content hash, runs the namespace lint (§2) and the
-   capability extraction (§8),
-3. opens a PR against the index repo that **appends one version entry**
-   (`{ version, source URL, rev, hash, deps, capabilities }`) for the namespace.
+Because ownership and immutability are enforced by the server, the "open to contribute, closed to
+overwrite" property holds without any external permission model: an account can publish only namespaces
+it owns, and no account can rewrite a published version.
 
-The validation Action then independently enforces, and merges only if all hold:
+### 7.3 Reproducibility and trust
 
-- **Append-only.** The PR may only add a new version line; any diff that edits or deletes an existing
-  line fails. A published version is immutable.
-- **Namespace–source binding.** A new namespace claim records its source repo; a version for an
-  existing namespace must name the same bound repo (§7.2).
-- **Ownership proof.** The Action fetches the tag from the bound source repo and confirms its
-  `ashes.json` declares the namespace, so only the repo owner can produce a passing PR.
-- **Hash agreement.** The Action recomputes the source-tree hash and requires it to match the PR's,
-  so the recorded hash is verified independently of the author.
+Trust is scoped to whichever registry a project configures. Published versions are immutable, the lock
+pins a content hash, and the client verifies every download against it — so even a compromised transport
+or a buggy mirror cannot alter a build silently. A self-hosted registry is trusted by exactly the people
+who point their config at it; the public instance is trusted by those who use the default.
 
-This makes the index "open to contribute, closed to overwrite": a malicious PR naming a namespace bound
-to someone else's repo, or naming a tag it cannot create in the bound repo, fails validation and never
-merges. It is the model crates.io used for its git index and that Homebrew uses for community taps.
+### 7.4 Multiple and custom registries
 
-At large scale a PR-per-publish git index becomes slow and the repo large; the escape hatch is to
-**generate a static sparse index from the git repo in CI** — still static files, still no live service.
-A hosted publish endpoint only becomes worthwhile if the project later chooses not to depend on the
-source host's permission model, and it buys convenience, not correctness.
+Registry pluralism is first-class, mirroring Cargo `[registries]`, Go's `GOPROXY`, and npm scoped
+registries:
 
-### 7.4 Proxy / mirror as a later drop-in
+- A **`registries`** map (global in `~/.ashes/config` and/or per-project in `ashes.json`) binds names to
+  base URLs, with an overridable **`default`** pointing at the public instance:
+  ```json
+  "registries": { "default": "https://pkg.ashes-lang.org", "acme": "https://pkg.acme.internal" }
+  ```
+- A dependency selects a registry, defaulting to `default`:
+  ```json
+  "dependencies": { "widgets": { "version": "^1.2", "registry": "acme" } }
+  ```
+- The lock's `source: "registry+<base-url>"` field already records which registry each package came
+  from, so private and public dependencies coexist and stay reproducible.
+- **Namespace uniqueness is per registry.** Two registries may each carry a `Json`; a project that pulls
+  both must resolve the cross-registry collision (the same class as a git/path override), which is why
+  naming a non-default registry on a dependency is an explicit statement of intent.
 
-The index format is designed so a caching **proxy or mirror** can be introduced later without any
-client change — serving immutable copies for availability, offline/air-gapped builds, and independence
-from GitHub uptime and rate limits. The client already verifies hashes, so a mirror is purely an
-availability optimization, never a trust anchor. This mirrors Go's evolution (index + VCS, then a
-caching proxy and checksum database) but bakes the hash pinning in from day one.
+This is the direct answer to host independence: a project can point at the public instance, a mirror of
+it, a corporate registry, or one you build yourself, without any change to the client.
+
+### 7.5 Mirroring and scale
+
+- **Mirroring.** A registry can run as a **pull-through cache** of another (fetch-on-miss, then serve
+  locally), giving availability and offline/air-gapped resilience. Because the client verifies hashes, a
+  mirror is an availability optimization, never a trust anchor.
+- **Scale.** The minimal server uses filesystem storage; the same server swaps in object storage and a
+  database for larger instances, and a CDN fronts the read API. None of this changes the client or the
+  API — it is deployment configuration of the reference server.
 
 ---
 
@@ -305,7 +315,8 @@ ashes build | run | test   # auto-restore if the lock is stale or missing (unles
 ```
 
 Later additions: `ashes tree`, `ashes why <pkg>`, `ashes outdated`, `ashes update [<pkg>]`,
-`ashes vendor`, `ashes clean`, `ashes capabilities`, `ashes publish`.
+`ashes vendor`, `ashes clean`, `ashes capabilities`, and the registry-facing
+`ashes login` / `ashes publish` / `ashes yank` (§7.2).
 
 The common path requires **zero explicit package commands**: edit `ashes.json` (or run `ashes add`),
 then `ashes run` — restore happens implicitly when the lock is stale or a cached root is missing.
@@ -341,13 +352,31 @@ The integration is small and localized, centered where the resolver already live
 | Area | File | Change |
 |------|------|--------|
 | Project model | `src/Ashes.Semantics/ProjectSupport.cs` | Add dependency data and a resolved `Root`/`Namespace`/`Hash` list to `AshesProject`; `LoadProject` parses dependencies. Resolved dependency roots are appended to the effective search roots **before** `BuildCompilationPlan` runs. `ResolveImport` is unchanged. |
-| Resolver/cache/registry client | `src/Ashes.Cli/` (new) | A CLI-side `PackageResolver` (SemVer + lock), a content-addressed cache, and the registry/index client. Pure .NET: HTTP, hashing, and zip handling are all in the base library. Not in the compiler phases. |
-| CLI commands | `src/Ashes.Cli/Program.cs` | `RunAdd`/`RunRemove` write the new manifest shape; new `RunRestore`; `build`/`run`/`test` gain an auto-restore + lock-verify pre-step; retire `install`. |
+| Resolver/cache/registry client | `src/Ashes.Cli/` (new) | A CLI-side `PackageResolver` (SemVer + lock), a content-addressed cache, and the registry HTTP client (resolve/download/login/publish). Pure .NET: HTTP, hashing, and zip handling are all in the base library. Not in the compiler phases. |
+| CLI commands | `src/Ashes.Cli/Program.cs` | `RunAdd`/`RunRemove` write the new manifest shape; new `RunRestore`; `build`/`run`/`test` gain an auto-restore + lock-verify pre-step; new `login`/`publish`/`yank`; retire `install`. |
 | Shared consumers | `src/Ashes.Lsp/DocumentService.cs`, `src/Ashes.TestRunner/Runner.cs` | Consume the same resolved-roots view so all front ends agree. |
 | Ripple | tests, runner | The new `AshesProject` field touches its manual constructors and `project with { ... }` call sites. |
 
 The principle throughout: the CLI resolves and materializes a deterministic set of roots; the compiler,
 LSP, and test runner share that single resolved project view.
+
+### 12.1 The registry server is a separate application
+
+Only the registry **client** lives in the compiler tree (`src/Ashes.Cli/`). The registry **server**
+(§7) is a **standalone application, not part of the compiler's `src/` dependency DAG** — it has nothing
+to do with lexing, inference, or codegen and must not be entangled with them. It lives in its own
+top-level directory (e.g. `registry/`), following the same pattern as the existing standalone
+`orchestration/` .NET 10 app.
+
+Shape of the reference server:
+
+- A **.NET 10 minimal-API** service exposing the read/publish/yank endpoints of §7.
+- A **pluggable persistent-storage abstraction** — a single storage interface (packages, versions,
+  ownership, tokens) with a **filesystem-backed implementation** for the minimal self-hostable cut, and
+  room to swap in an object-store/database implementation for scale without touching the API or the
+  client.
+- Its own build/test lifecycle, independent of the compiler solution; the only contract it shares with
+  the rest of Ashes is the registry API the CLI client speaks.
 
 ---
 
@@ -377,14 +406,17 @@ Non-goals for Phase 1: no lock file, no cache, no remote fetch, no transitive gr
 
 ### Phase 3 — the registry
 
-- Static CDN-hosted index; namespace uniqueness; source pulled from registered URLs with hash-pinned
-  reproducibility (§7).
-- The index as a dedicated git repo with PR-only, CI-validated, append-only publishing and ownership
-  bound to the source repo (§7.2–7.3) — no hosted service.
-- `ashes publish`, `ashes update`, `ashes outdated`, `ashes vendor --offline` flows.
+- Define the registry API and build the reference **registry server** — a standalone .NET 10 minimal-API
+  app with pluggable filesystem storage (§7, §12.1), living outside the compiler `src/` tree.
+- Registry-authoritative source storage, immutable versions, per-namespace ownership, and API-token auth
+  (§7.1–7.2).
+- Client integration: `ashes login` / `publish` / `yank`, the `registries` config and per-dependency
+  `registry` selection (§7.4), plus `update` / `outdated` / `vendor --offline` flows.
+- Stand up the canonical public instance; document self-hosting.
 - The `ashes capabilities` audit graduates to a first-class command, and the capability snapshot is
   written into the lock, as built-in capabilities mature.
-- The index format leaves room for a caching proxy/mirror as a later, client-transparent addition.
+- Mirroring (pull-through cache) and object-store/database storage are later, client-transparent
+  additions to the same server (§7.5).
 
 ---
 
@@ -394,10 +426,12 @@ Non-goals for Phase 1: no lock file, no cache, no remote fetch, no transitive gr
    violations are errors, and the registry reserves on namespace.
 2. **Resolution:** Cargo model — SemVer constraints, highest-compatible on first add, pinned in a lock
    file, one version per package, conflicts are errors.
-3. **Registry:** a static index that maps names to registered source URLs, with mandatory content-hash
-   pinning for reproducibility and room for a later caching mirror. The index is a dedicated git repo
-   with PR-only, CI-validated, append-only publishing; ownership is bound to the source repo and
-   delegated to the source host's permissions — no hosted service.
+3. **Registry:** a self-contained, hostable registry server that is authoritative for source and
+   metadata, with immutable versions, per-namespace account ownership, API-token auth, and hash-pinned
+   downloads. The reference server is a standalone .NET 10 minimal-API app with pluggable storage
+   (filesystem first), living outside the compiler `src/` tree; the Ashes org runs the canonical public
+   instance and anyone can self-host. Multiple/custom registries are first-class (`registries` config +
+   per-dependency `registry`).
 4. **`ashes install`:** retired; `build`/`run`/`test` auto-restore and `ashes restore` is explicit.
 </content>
 </invoke>
