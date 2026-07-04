@@ -161,6 +161,31 @@ public sealed class OptimizationLevelTests
         bytes[1].ShouldBe((byte)'Z');
     }
 
+    // ── Debug info at every optimization level (CO-21) ──────────────────
+
+    [Test]
+    [Arguments(BackendOptimizationLevel.O0)]
+    [Arguments(BackendOptimizationLevel.O1)]
+    [Arguments(BackendOptimizationLevel.O2)]
+    [Arguments(BackendOptimizationLevel.O3)]
+    public async Task Debug_info_combines_with_every_optimization_level(BackendOptimizationLevel level)
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
+        // CO-21: --debug combines with any -O level so a profiled debug build matches the optimized
+        // binary's inlining. This program's helper/recursive calls drive the O2/O3 inliner, which
+        // stitches every inlined instruction's !dbg location into an inlined-at chain; the backend
+        // re-verifies the module after optimization when debug info is emitted, so a call left without
+        // a location (or any inliner-mangled debug metadata) throws at compile time. Compiling and
+        // running correctly at each level proves the optimized debug build is verifier-clean.
+        const string source = """
+            let recursive fib = given (n) -> if n < 2 then n else fib(n - 1) + fib(n - 2)
+            in Ashes.IO.print(Ashes.Text.fromInt(fib(20)))
+            """;
+        var result = await CompileAndRunAsync(source, level, emitDebugInfo: true);
+        result.Stdout.ShouldBe("6765");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static IrProgram LowerExpression(string source)
@@ -174,10 +199,10 @@ public sealed class OptimizationLevelTests
         return ir;
     }
 
-    private static async Task<ExecutionResult> CompileAndRunAsync(string source, BackendOptimizationLevel level)
+    private static async Task<ExecutionResult> CompileAndRunAsync(string source, BackendOptimizationLevel level, bool emitDebugInfo = false)
     {
         var ir = LowerExpression(source);
-        var options = new BackendCompileOptions(level);
+        var options = new BackendCompileOptions(level, EmitDebugInfo: emitDebugInfo);
         var elfBytes = new LinuxX64LlvmBackend().Compile(ir, options);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-opt-tests", Guid.NewGuid().ToString("N"));

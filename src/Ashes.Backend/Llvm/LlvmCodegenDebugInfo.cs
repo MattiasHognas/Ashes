@@ -281,29 +281,22 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        if (instruction.Location is { } loc)
+        var scope = dbg.GetSubprogram(functionLabel);
+        if (instruction.Location is { } loc && scope is not null)
         {
-            var scope = dbg.GetSubprogram(functionLabel);
-            if (scope is not null)
-            {
-                dbg.SetDebugLocation(builder, loc, scope.Value);
-            }
+            dbg.SetDebugLocation(builder, loc, scope.Value);
         }
-        else if (instruction is IrInst.CallKnown)
+        else if (scope is not null)
         {
-            // LLVM's verifier requires every direct call to a function carrying debug info to
-            // carry a !dbg location itself. A devirtualized CallKnown may have no source
-            // location (the CallClosure it replaced was synthetic), so give it an artificial
-            // line-0 location in the enclosing function's scope instead of clearing.
-            var scope = dbg.GetSubprogram(functionLabel);
-            if (scope is not null)
-            {
-                dbg.SetDebugLocation(builder, new SourceLocation("", 0, 0), scope.Value);
-            }
-            else
-            {
-                dbg.ClearDebugLocation(builder);
-            }
+            // LLVM's verifier and inliner require every call to a function that carries debug info to
+            // carry a !dbg location itself; at -O2/-O3 the inliner also stitches each inlined
+            // instruction's location into an inlined-at chain rooted at the call site, so a call with
+            // no location produces invalid debug info. Many synthetic instructions (a devirtualized
+            // CallKnown, arena/runtime helper calls, deep-copy emission) have no source location, so
+            // give every unlocated instruction an artificial line-0 location in the enclosing scope
+            // rather than clearing — line 0 is the DWARF convention for compiler-generated code and
+            // keeps optimized debug builds (CO-21) verifier- and inliner-clean.
+            dbg.SetDebugLocation(builder, new SourceLocation("", 0, 0), scope.Value);
         }
         else
         {

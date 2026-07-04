@@ -35,7 +35,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
-    table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Caps optimization at -O1.");
+    table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Defaults to -O0; an explicit -O1/-O2/-O3 is honored.");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
     AnsiConsole.Write(table);
@@ -579,18 +579,11 @@ async Task<int> RunCompileAsync(string[] a)
         throw new CliUsageException("Unknown argument.");
     }
 
-    // When --debug is set without explicit optimization, default to -O0;
-    // when explicit optimization is set, cap at -O1.
-    if (debugMode)
+    if (debugMode && !explicitOpt)
     {
-        if (!explicitOpt)
-        {
-            optimizationLevel = BackendOptimizationLevel.O0;
-        }
-        else if (optimizationLevel > BackendOptimizationLevel.O1)
-        {
-            optimizationLevel = BackendOptimizationLevel.O1;
-        }
+        // --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
+        // profiled debug build matches the optimized binary's inlining (CO-21).
+        optimizationLevel = BackendOptimizationLevel.O0;
     }
 
     var project = ResolveProject(projectPath, inputFile, expr);
@@ -705,16 +698,11 @@ async Task<int> RunRunAsync(string[] a)
         throw new CliUsageException("Unknown argument.");
     }
 
-    if (debugMode)
+    if (debugMode && !explicitOpt)
     {
-        if (!explicitOpt)
-        {
-            optimizationLevel = BackendOptimizationLevel.O0;
-        }
-        else if (optimizationLevel > BackendOptimizationLevel.O1)
-        {
-            optimizationLevel = BackendOptimizationLevel.O1;
-        }
+        // --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
+        // profiled debug build matches the optimized binary's inlining (CO-21).
+        optimizationLevel = BackendOptimizationLevel.O0;
     }
 
     var project = ResolveProject(projectPath, inputFile, expr);
