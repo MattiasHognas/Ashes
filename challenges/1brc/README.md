@@ -9,7 +9,7 @@ Format them manually with `dotnet run --project src/Ashes.Cli -- fmt <file> -w`.
 
 A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, originally written to
 **find the language's flaws**. Every flaw it surfaced has since been fixed in the compiler
-(see [`FLAWS.md`](FLAWS.md)), and it now **runs the full 1e9-row challenge**. Three variants:
+(see [`FLAWS.md`](FLAWS.md)), and it now **runs the full 1e9-row challenge**. Four variants:
 
 - **`brc.ash`** — sequential, streaming (`Ashes.File.readLine`), **constant-memory** (~50 MB at any
   size). Correct and unbounded, single-core.
@@ -20,7 +20,14 @@ A faithful [1BRC](https://github.com/gunnarmorling/1brc) implementation, origina
 
 - **`brc_trie.ash`** — like the parallel variant but folds into `Ashes.HashTrie` (16-ary hash trie,
   ~4-5 dependent node loads per row instead of the AVL's ~17) and re-sorts by name at the end.
-  The fastest variant.
+
+- **`brc_fast.ash`** — the fastest variant (**sub-10 s at 1e9**, ~8.2 s vs ~11.5 s for `brc_trie.ash`,
+  byte-identical). Same shape as `brc_trie.ash`, but the per-worker table is a bespoke 16-ary hash
+  trie whose leaf holds the min/max/sum/count aggregate **inline** (no value-tuple pointer) and
+  updates it with no `onHit` closure, and whose hot path trusts the 64-bit FNV hash (no key
+  byte-compare on hit — the "custom table with inline aggregates" that fast 1BRC entries use). The
+  file header documents the two effects and how to restore the byte-compare for adversarial-input
+  safety (~10.4 s).
 
 Output is the canonical `{Station=min/mean/max, ...}` form, sorted by station name; correct for UTF-8
 station names (multibyte names sort by byte order).
