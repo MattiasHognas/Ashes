@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Load/latency benchmark for the Ashes TCP echo server.
+# Load/latency benchmark for the Ashes TCP echo server, with an optional .NET baseline to compare to.
 #
 # Client and server are both Ashes (dogfooding): echo.ash is the server, load.ash is a client that
 # does `count` sequential connect/send/recv/close round-trips. This script compiles both, starts the
@@ -8,9 +8,10 @@
 #   - throughput (req/s) across the whole batch
 #   - mean round-trip latency = batch_elapsed / round-trips-per-worker (workers run in parallel)
 #
-# serve() handles connections sequentially today, so throughput falls and mean latency climbs as
-# concurrency rises — that is the baseline the multi-reactor milestone will be A/B'd against. A loaded
-# box adds variance; interleave runs when comparing builds.
+# If `dotnet` is available it then runs the SAME load against a single-file .NET echo server
+# (dotnet-echo.cs) so the Ashes numbers have a reference point. Both listen on port 18080 and are run
+# one at a time. Note: serve() is sequential today while the .NET baseline is concurrent, so the gap
+# is the headroom the multi-reactor milestone targets. A loaded box adds variance; interleave A/B runs.
 #
 # Usage: bench.sh [REQUESTS] [CONCURRENCY...]   e.g.  bench.sh 20000 1 8 64
 set -euo pipefail
@@ -21,48 +22,58 @@ CONC=("${@:-1 8 64}")
 [ "${#CONC[@]}" -eq 1 ] && read -r -a CONC <<< "${CONC[0]}"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+HERE="$ROOT/challenges/server"
 CLI="dotnet run --project $ROOT/src/Ashes.Cli -c Release --"
 TMP="$(mktemp -d)"
-trap 'kill "${SRV:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+SRV=""
+trap 'kill "$SRV" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 echo "compiling echo.ash + load.ash ..."
-$CLI compile "$ROOT/challenges/server/echo.ash" -o "$TMP/echo"  >/dev/null
-$CLI compile "$ROOT/challenges/server/load.ash" -o "$TMP/load"  >/dev/null
+$CLI compile "$HERE/echo.ash" -o "$TMP/echo" >/dev/null
+$CLI compile "$HERE/load.ash" -o "$TMP/load" >/dev/null
 chmod +x "$TMP/echo" "$TMP/load"
 
-"$TMP/echo" >/dev/null 2>&1 &
-SRV=$!
-
-# Wait for the listener, and warm up.
-for _ in $(seq 1 50); do
-    if "$TMP/load" 1 2>/dev/null | grep -q ok; then break; fi
-    sleep 0.1
-done
-"$TMP/load" 200 >/dev/null 2>&1 || true
-
-printf "target 127.0.0.1:18080  requests/stage=%s\n\n" "$REQUESTS"
-for c in "${CONC[@]}"; do
-    per=$(( REQUESTS / c ))
-    [ "$per" -lt 1 ] && per=1
-    start=$(date +%s.%N)
-    pids=()
-    for _ in $(seq 1 "$c"); do
-        "$TMP/load" "$per" >/dev/null 2>&1 &
-        pids+=($!)
+wait_ready() {  # retry the load client until the listener answers
+    for _ in $(seq 1 100); do
+        if "$TMP/load" 1 2>/dev/null | grep -q ok; then return 0; fi
+        sleep 0.1
     done
-    ok=1
-    for p in "${pids[@]}"; do wait "$p" || ok=0; done
-    end=$(date +%s.%N)
-    total=$(( per * c ))
-    awk -v s="$start" -v e="$end" -v total="$total" -v per="$per" -v c="$c" -v ok="$ok" 'BEGIN {
-        el = e - s;
-        label = (c == 1) ? "latency (concurrency 1)" : sprintf("load (concurrency %d)", c);
-        printf "[%s]\n", label;
-        printf "  requests: %d  workers: %d  elapsed: %.3fs%s\n", total, c, el, (ok ? "" : "  (a worker reported errors)");
-        if (el > 0) {
-            printf "  throughput: %.0f req/s\n", total / el;
-            printf "  mean round-trip: %.3f ms\n", el * 1000 / per;
-        }
-        print "";
-    }'
-done
+    return 1
+}
+
+run_sweep() {  # $1 = label; assumes a server is listening on 18080
+    local label="$1"
+    "$TMP/load" 200 >/dev/null 2>&1 || true   # warm up
+    for c in "${CONC[@]}"; do
+        local per=$(( REQUESTS / c )); [ "$per" -lt 1 ] && per=1
+        local start end pids=()
+        start=$(date +%s.%N)
+        for _ in $(seq 1 "$c"); do "$TMP/load" "$per" >/dev/null 2>&1 & pids+=($!); done
+        for p in "${pids[@]}"; do wait "$p" || true; done
+        end=$(date +%s.%N)
+        awk -v s="$start" -v e="$end" -v total="$(( per * c ))" -v per="$per" -v c="$c" -v lbl="$label" 'BEGIN {
+            el = e - s;
+            stage = (c == 1) ? "concurrency 1" : sprintf("concurrency %d", c);
+            printf "  %-8s %-14s throughput %8.0f req/s   mean rtt %6.3f ms\n", lbl, stage, (el>0?total/el:0), (el>0?el*1000/per:0);
+        }'
+    done
+}
+
+printf "\ntarget 127.0.0.1:18080  requests/stage=%s  concurrency=[%s]\n\n" "$REQUESTS" "${CONC[*]}"
+
+echo "== ashes (serve, sequential) =="
+"$TMP/echo" >/dev/null 2>&1 & SRV=$!
+wait_ready || { echo "ashes server did not come up"; exit 1; }
+run_sweep "ashes"
+kill "$SRV" 2>/dev/null || true; SRV=""
+sleep 0.3
+
+if command -v dotnet >/dev/null 2>&1; then
+    echo
+    echo "== dotnet (concurrent baseline) =="
+    dotnet run "$HERE/dotnet-echo.cs" 18080 >/dev/null 2>&1 & SRV=$!
+    wait_ready || { echo "dotnet server did not come up"; exit 1; }
+    run_sweep "dotnet"
+    kill "$SRV" 2>/dev/null || true; SRV=""
+fi
+echo
