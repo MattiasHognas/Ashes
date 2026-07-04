@@ -199,12 +199,15 @@ The design is deliberately three separable things, so "host your own" is real:
 
 ### 7.1 What the registry stores and serves (read API)
 
-The read API is unauthenticated, cacheable, and CDN-frontable:
+The read API is unauthenticated, cacheable, and CDN-frontable (full sketch in
+[REGISTRY_API.md](REGISTRY_API.md)):
 
 - **Resolve:** `GET /api/v1/packages/<namespace>` returns the version list and per-version metadata
   (content hash, dependencies, capability metadata from §8).
 - **Download:** `GET /api/v1/packages/<namespace>/<version>/source` returns the content-addressed source
   tarball.
+- **List / search:** `GET /api/v1/packages` (browse) and `GET /api/v1/search?q=` (ranked) power the
+  client's discovery flow — `ashes search <query>` (§9).
 
 The registry stores each published version's source immutably (content-addressed), so a version's bytes
 never change or disappear once published. A client resolves against a registry, downloads the source,
@@ -334,7 +337,9 @@ ashes build | run | test   # auto-restore if the lock is stale or missing (unles
 ```
 
 Later additions: `ashes tree`, `ashes why <pkg>`, `ashes outdated`, `ashes update [<pkg>]`,
-`ashes vendor`, `ashes clean`, `ashes capabilities`, and the registry-facing
+`ashes vendor`, `ashes clean`, `ashes capabilities`, the discovery commands
+`ashes search <query>` / `ashes info <pkg>` (backed by the registry list/search API,
+[REGISTRY_API.md](REGISTRY_API.md) §9), and the registry-facing
 `ashes login` / `ashes publish` / `ashes yank` (§7.2).
 
 The common path requires **zero explicit package commands**: edit `ashes.json` (or run `ashes add`),
@@ -468,21 +473,24 @@ Goal: reproducible, transitive, cached resolution; git dependencies; workspaces.
 
 Goal: a self-hostable registry server (§7, §12.1) and the client integration that uses it.
 
-1. **Spec + diagnostics.** Author a new registry-API doc (read/publish/yank endpoints, auth, storage
-   contract); update `COMPILER_CLI_SPEC.md` (`login`, `publish`, `yank`, the `registries` config, per-
-   dependency `registry`); allocate codes for auth failure, namespace-owned-by-another-account,
-   immutable-version-overwrite, and yanked-version. *Acceptance: docs merged, codes reserved.*
-2. **Server scaffolding.** New top-level `registry/` .NET 10 minimal-API app; the storage interface plus a
-   filesystem implementation; the read endpoints (resolve, download). *Acceptance: a locally-run server
-   resolves and serves a hand-seeded package.*
+1. **Spec + diagnostics.** [REGISTRY_API.md](REGISTRY_API.md) sketches the API/server; finalize it
+   (read/list/search/publish/yank endpoints, auth, storage contract) and update `COMPILER_CLI_SPEC.md`
+   (`login`, `publish`, `yank`, `search`, `info`, the `registries` config, per-dependency `registry`);
+   allocate codes for auth failure, namespace-owned-by-another-account, immutable-version-overwrite, and
+   yanked-version. *Acceptance: docs merged, codes reserved.*
+2. **Server scaffolding.** New top-level `registry/` .NET 10 minimal-API app; the storage interfaces plus a
+   filesystem implementation; the read endpoints (resolve, download, list, search). Tests in TUnit +
+   Shouldly + Imposter (REGISTRY_API §8). *Acceptance: a locally-run server resolves, serves, and searches
+   a hand-seeded package.*
 3. **Server publish + auth.** Accounts and API tokens; namespace ownership with first-claim and co-owners;
-   publish validation (append-only, namespace lint, hash computation, capability extraction); `yank`.
-   *Acceptance: an authorized publish stores an immutable version; an unauthorized or overwriting publish
-   is rejected.*
+   the publish pipeline (limits, append-only, namespace lint, hash computation, capability extraction);
+   `yank`. *Acceptance: an authorized publish stores an immutable version; an unauthorized or overwriting
+   publish is rejected.*
 4. **Client integration.** Registry HTTP client; the `registries` config and per-dependency `registry`
    selection; the lock's `registry+<url>` source; download-and-verify against the cache. *Acceptance: a
    project resolves and builds a package from a running registry.*
-5. **Client verbs.** `ashes login`, `ashes publish`, `ashes yank`. *Acceptance: a full publish → resolve →
+5. **Client verbs.** `ashes login`, `ashes publish`, `ashes yank`, and the discovery commands
+   `ashes search` / `ashes info` (REGISTRY_API §9). *Acceptance: a full search → add → publish → resolve →
    build loop against a local server.*
 6. **Capabilities.** `ashes capabilities` as a first-class command; write the capability snapshot into the
    lock. *Acceptance: the command reports each dependency's introduced capability row.*
