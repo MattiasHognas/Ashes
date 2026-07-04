@@ -49,8 +49,21 @@ A server is not a new runtime. It is the composition of three subsystems Ashes a
 
 A server is therefore: **N worker threads (structured parallelism), each running an independent copy
 of the cooperative poll loop over its own share of the connections, each connection scoped to its own
-arena within the worker.** The program itself is unchanged — a long-running task awaited as the final
-expression:
+arena within the worker.**
+
+```mermaid
+flowchart TD
+    prog["Async.run(async await serve ...)"] --> pool{{"structured-parallelism worker pool"}}
+    pool --> w0["worker 0: poll loop"]
+    pool --> w1["worker 1: poll loop"]
+    pool --> wn["worker N: poll loop"]
+    w0 --> c0a(["connection arena"])
+    w0 --> c0b(["connection arena"])
+    w1 --> c1a(["connection arena"])
+    wn --> cna(["connection arena"])
+```
+
+The program itself is unchanged — a long-running task awaited as the final expression:
 
 ```ash
 match Ashes.Async.run(async
@@ -249,21 +262,21 @@ Roughly, and to be refined against the codebase:
 
 A normal program:
 
-```
-input -> processing -> output
+```mermaid
+flowchart LR
+    input --> processing --> output
 ```
 
 A server:
 
-```
-start listener
-      |
-      v
-accept work  --->  process work  --->  produce response
-      ^                                        |
-      |________________________________________|
-                                               |
-                                          (or) shutdown -> value of the program
+```mermaid
+flowchart TD
+    start(["start listener"]) --> accept["accept work"]
+    accept --> process["process work"]
+    process --> respond["produce response"]
+    respond --> accept
+    accept -. "or" .-> shutdown(["shutdown"])
+    shutdown --> value[["value of the program"]]
 ```
 
 Only shutdown produces the value of the overall program.
