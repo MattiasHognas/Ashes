@@ -2229,15 +2229,15 @@ production and fixed in tests, with no `Clock`/`Logger` parameter polluting ever
 A capability requirement is satisfied in one of two ways: by a **handler** (`handle ... with`) — a
 scoped, dynamic implementation — or by a static **provider** (`provide Capability(args) = ...`, §20.6)
 that supplies a fixed implementation for a concrete instance, resolved at compile time. Providers
-resolve **concrete** instances (`Clock`, `Ord(Str)`); resolving a requirement at a *generic*
-instance still needs monomorphization and is the remaining phase (see
-[future/UNIFIED_CAPABILITIES.md](future/UNIFIED_CAPABILITIES.md)).
+resolve concrete instances (`Clock`, `Ord(Str)`) directly, and generic requirements (`needs {Ord(a)}`)
+by monomorphization or dictionary passing (§20.6); providers are program-global across modules.
 
-Implementation status: capability declarations, `needs` rows, capability typing, the
-unsatisfied-capability diagnostic, and `handle`/`perform` with **tail-resumptive and one-shot
-resumptive** arms are implemented, as are first-class operation values (for operations with
-explicit signatures) and capabilities declared in imported project modules. The former `effect` /
-`uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
+Implementation status: the full surface is implemented — capability declarations, `needs` rows,
+capability typing, the unsatisfied-capability diagnostic, `handle`/`perform` with
+**tail-resumptive and one-shot resumptive** arms, first-class operation values (for operations with
+explicit signatures), static `provide` with concrete and generic (monomorphized / dictionary-passed)
+resolution, and capabilities and providers declared in imported project modules. The former
+`effect` / `uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
 (`ASH025`). Aborting arms (a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
@@ -2430,6 +2430,11 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   another; the provider is resolved (or the dictionary threaded) at the call site. Because providers
   are global, a duplicate `provide` for the same concrete instance is a program-wide error (`ASH026`),
   which is what keeps resolution coherent — the same instance always resolves the same way.
+
+  One case is not yet supported across modules: a dictionary-passing function that itself calls an
+  *imported* dictionary-passing function through a qualified reference (`Other.f`) at a still-generic
+  type — the caller's dictionary is not threaded across the module boundary. Define such a wrapper in
+  the module that provides the function, or call it at a concrete type.
 
 ## 20.7 Worked Example
 
