@@ -268,6 +268,101 @@ public sealed class LinuxArm64BackendCoverageTests
         result.Stdout.ShouldBe("empty\n");
     }
 
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_run_a_tcp_echo_server_via_serve()
+    {
+        // Server-side coverage: an Ashes program that is the LISTENER (Ashes.Net.Tcp.Server.serve),
+        // run under qemu-aarch64, while the C# test acts as the CLIENT connecting in. Exercises the
+        // arm64 socket()/bind/listen/accept4 syscalls, the cooperative accept-park on WaitSocketRead,
+        // and the serve accept loop. qemu-user forwards the guest socket syscalls to the host, so the
+        // emulated server binds a real loopback port the host client can reach.
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxArm64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_arm64_srv_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            var psi = CreateLinuxArm64ProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            proc = await TestProcessHelper.StartProcessAsync(psi);
+
+            // Drive three sequential connections; serve handles one at a time.
+            foreach (var payload in new[] { "arm64-one", "arm64-two", "arm64-three" })
+            {
+                var reply = await ConnectSendReceiveWithRetryAsync(port, payload);
+                reply.ShouldBe("echo: " + payload);
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static int GetFreeLoopbackPort()
+    {
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                var outBytes = Encoding.UTF8.GetBytes(payload);
+                await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var buffer = new byte[4096];
+                int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                return Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                // Server not up yet (or between sequential connections) — retry until the accept timeout.
+                await Task.Delay(50);
+            }
+        }
+    }
+
     private static byte[] CompileForLinuxArm64(string source)
     {
         var ir = LowerExpression(source);
