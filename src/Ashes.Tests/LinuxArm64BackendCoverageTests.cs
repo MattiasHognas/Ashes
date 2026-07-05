@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -266,6 +268,104 @@ public sealed class LinuxArm64BackendCoverageTests
             host: "localhost");
 
         result.Stdout.ShouldBe("empty\n");
+    }
+
+    [Test]
+    public async Task Linux_arm64_backend_llvm_should_serve_tls_echo_via_serve_tls()
+    {
+        // Server-side TLS under qemu-aarch64: the Ashes program terminates TLS
+        // (Ashes.Net.Tls.Server.serveTls, self-signed cert), the C# test is an SslStream client.
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tls
+            import Ashes.Net.Tls.Server
+            import Ashes.Async
+            let onClient tls =
+                async(match await Ashes.Net.Tls.receive(tls)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tls.close(tls))
+            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxArm64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_arm64_tls_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            WriteSelfSignedServerPems(tmpDir);
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            var psi = CreateLinuxArm64ProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = tmpDir;
+            proc = await TestProcessHelper.StartProcessAsync(psi);
+
+            foreach (var payload in new[] { "arm-tls-one", "arm-tls-two" })
+            {
+                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload);
+                reply.ShouldBe("echo: " + payload);
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static void WriteSelfSignedServerPems(string directory)
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName("localhost");
+        san.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(san.Build());
+        using var certificate = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        File.WriteAllText(Path.Combine(directory, "cert.pem"), certificate.ExportCertificatePem());
+        File.WriteAllText(Path.Combine(directory, "key.pem"), key.ExportPkcs8PrivateKeyPem());
+    }
+
+    private static async Task<string> TlsConnectSendReceiveWithRetryAsync(int port, string payload)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+                await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout);
+                var outBytes = Encoding.UTF8.GetBytes(payload);
+                await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var buffer = new byte[4096];
+                int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                return Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(100);
+            }
+        }
     }
 
     [Test]

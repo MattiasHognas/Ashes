@@ -310,6 +310,10 @@ transport is that HTTPS falls out without a second handler model.
   single-threaded case). Ownership of resources referenced by a spawned task moves into the task.
 - `Ashes.Http.Server`: minimal HTTP/1.1 — request-line parse (`method` / `path`), response
   constructors (`text`, status reasons, `Content-Length`), synchronous handler, `Connection: close`.
+- Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
+  config built once from PEM contents and cached; server half of the handshake, reusing the
+  scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
+  combinator. Same hermetic rustls runtime and three targets as the TLS client.
 - Cross-target parity for all of the above (linux-x64 native, linux-arm64 via qemu, win-x64 via
   wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`).
 
@@ -327,11 +331,6 @@ transport is that HTTPS falls out without a second handler model.
 - `Ashes.Http.Server` extensions: request headers and body, keep-alive, streaming/large bodies,
   `json` response constructor, async handlers (the handler is synchronous today).
 - Graceful shutdown wiring (see open questions).
-- Server-side TLS: expose the rustls-ffi server-config / acceptor surface (the client path uses only
-  the client-config and verifier symbols), certificate-chain-and-private-key loading, and the
-  server half of the handshake. Wire the accepted `TlsSocket` into the same accept path; the
-  scheduler's existing `WaitTlsWantRead` / `WaitTlsWantWrite` handling is reused as-is. `serveTls`
-  (HTTP over TLS) and a TLS `tcp.serve` counterpart sit on top of this.
 
 ---
 

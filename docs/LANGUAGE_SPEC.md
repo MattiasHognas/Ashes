@@ -1843,7 +1843,8 @@ sockets). These are called **resource types**.
 Currently classified resource types:
 
 - `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
-- `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect`
+- `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect` or a server-side
+  `Ashes.Net.Tls.Server.handshake`
 
 ## 16.1 Automatic Cleanup
 
@@ -1867,6 +1868,22 @@ Resources may be closed explicitly using the appropriate API:
 
 When a resource is closed explicitly, the automatic cleanup for that
 resource is skipped (no double close).
+
+## 16.2.1 Move on Transfer
+
+Ownership of a resource **moves** out of a scope when the resource is handed off to something that
+takes responsibility for it — so the original scope no longer cleans it up. Ownership moves when a
+resource binding is:
+
+- stored into an aggregate (constructor field, tuple element, list cell),
+- passed as an argument to a function or handler call, or
+- passed to `Ashes.Async.spawn`.
+
+Because Ashes has no borrowing, passing a resource to a function transfers it: the callee now owns
+the resource (and is responsible for closing it), and the caller must not use or close it afterward.
+This is what lets a combinator hand an accepted socket to an opaque handler that closes it, without
+the combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Server.serve` and
+`Ashes.Net.Tls.Server.serveTls`).
 
 ## 16.3 Compile-Time Safety
 
