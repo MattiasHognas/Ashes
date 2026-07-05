@@ -939,10 +939,10 @@ public sealed class WindowsBackendCoverageTests
             import Ashes.Http.Server
             import Ashes.Async
             let route req =
-                match Ashes.Http.Server.path(req) with
+                async(match Ashes.Http.Server.path(req) with
                     | "/health" -> Ashes.Http.Server.text(200)("ok")
                     | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-                    | _p -> Ashes.Http.Server.text(404)("not found")
+                    | _p -> Ashes.Http.Server.text(404)("not found"))
             in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)

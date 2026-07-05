@@ -310,6 +310,10 @@ transport is that HTTPS falls out without a second handler model.
   single-threaded case). Ownership of resources referenced by a spawned task moves into the task.
 - `Ashes.Http.Server`: minimal HTTP/1.1 — request-line parse (`method` / `path`), response
   constructors (`text`, status reasons, `Content-Length`), synchronous handler, `Connection: close`.
+- `Ashes.Http.Server` extensions: request headers (`header(req)(name)`, case-insensitive) and body
+  (`body(req)`), `json` and custom-header (`respond`, `withHeader`) responses, and **async handlers**
+  (`handler : HttpRequest -> Task(E, HttpResponse)`, so a handler can `await`; a handler `Error`
+  becomes a `500`).
 - Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
@@ -328,8 +332,8 @@ transport is that HTTPS falls out without a second handler model.
   incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
   baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
   Windows detached poll array is capped at 256 fds per round.
-- `Ashes.Http.Server` extensions: request headers and body, keep-alive, streaming/large bodies,
-  `json` response constructor, async handlers (the handler is synchronous today).
+- `Ashes.Http.Server` extensions still open: keep-alive (one request per connection today) and
+  chunked/streaming large bodies (the request must fit a single read).
 - Graceful shutdown wiring (see open questions).
 
 ---

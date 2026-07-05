@@ -959,10 +959,15 @@ public sealed class LinuxBackendCoverageTests
             import Ashes.Http.Server
             import Ashes.Async
             let route req =
-                match Ashes.Http.Server.path(req) with
+                async(match Ashes.Http.Server.path(req) with
                     | "/health" -> Ashes.Http.Server.text(200)("ok")
-                    | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-                    | _p -> Ashes.Http.Server.text(404)("not found")
+                    | "/echo" -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req))
+                    | "/ua" ->
+                        match Ashes.Http.Server.header(req)("user-agent") with
+                            | Some(ua) -> Ashes.Http.Server.text(200)(ua)
+                            | None -> Ashes.Http.Server.text(200)("no-ua")
+                    | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
+                    | _p -> Ashes.Http.Server.text(404)("not found"))
             in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
@@ -988,13 +993,24 @@ public sealed class LinuxBackendCoverageTests
             health.ShouldContain("Content-Length: 2");
             health.ShouldEndWith("ok");
 
-            var root = await HttpGetRawWithRetryAsync(port, "/");
-            root.ShouldContain("HTTP/1.1 200 OK");
-            root.ShouldEndWith("hello from ashes");
-
             var missing = await HttpGetRawWithRetryAsync(port, "/nope");
             missing.ShouldContain("HTTP/1.1 404 Not Found");
             missing.ShouldEndWith("not found");
+
+            // Request body is available to the handler.
+            var echoed = await HttpRequestRawWithRetryAsync(port,
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9\r\nConnection: close\r\n\r\nhi-there!");
+            echoed.ShouldEndWith("body=hi-there!");
+
+            // Request headers are read case-insensitively (handler asks "user-agent"; client sends "User-Agent").
+            var ua = await HttpRequestRawWithRetryAsync(port,
+                "GET /ua HTTP/1.1\r\nHost: localhost\r\nUser-Agent: probe/2.0\r\nConnection: close\r\n\r\n");
+            ua.ShouldEndWith("probe/2.0");
+
+            // json() sets an application/json Content-Type.
+            var data = await HttpGetRawWithRetryAsync(port, "/data");
+            data.ShouldContain("Content-Type: application/json");
+            data.ShouldEndWith("{\"ok\":true}");
         }
         finally
         {
@@ -1007,9 +1023,11 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private static async Task<string> HttpGetRawWithRetryAsync(int port, string path)
+    private static Task<string> HttpGetRawWithRetryAsync(int port, string path)
+        => HttpRequestRawWithRetryAsync(port, $"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+    private static async Task<string> HttpRequestRawWithRetryAsync(int port, string request)
     {
-        var request = $"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
         var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
         while (true)
         {

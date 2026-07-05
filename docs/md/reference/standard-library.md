@@ -251,28 +251,41 @@ in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls(8443)("cert.pem")("key.pe
 A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
 runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 
-- `HttpRequest` — a parsed request; access it with `method(req)` / `path(req)`.
-- `HttpResponse` — a response; build one with `text(status)(body)`.
-- `method(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`).
-- `path(req)` — `HttpRequest -> Str`, the request path (e.g. `"/health"`).
-- `text(status)(body)` — `Int -> Str -> HttpResponse`, a response with the given status code and body.
-- `serve(port)(handler)` — `Int -> (HttpRequest -> HttpResponse) -> Task(Str, Unit)`. Binds the port
-  and, per connection, reads one request, parses the request line, runs `handler`, writes the
-  response, and closes (`Connection: close`). Consumed with `Ashes.Async.run`.
+- `HttpRequest` — a parsed request (method, path, headers, body).
+- `HttpResponse` — a response (status, headers, body).
+- `method(req)` / `path(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`) and path.
+- `body(req)` — `HttpRequest -> Str`, the request body (whatever followed the blank line in the
+  single read; see the size note below).
+- `header(req)(name)` — `HttpRequest -> Str -> Maybe(Str)`, the value of a request header, matched
+  **case-insensitively** by name, or `None`.
+- `rawHeaders(req)` — `HttpRequest -> Str`, the raw `Name: value`-per-line header block, for callers
+  that want to scan it directly.
+- `text(status)(body)` — a response with `Content-Type: text/plain; charset=utf-8`.
+- `json(status)(body)` — a response with `Content-Type: application/json`.
+- `respond(status)(headerBlock)(body)` — a response with an explicit header block (`"Name: value\r\n"`
+  per line, or `""` for none).
+- `withHeader(name)(value)(response)` — add a response header. `Content-Length` and `Connection` are
+  always set by the server and must not be added here.
+- `serve(port)(handler)` — `Int -> (HttpRequest -> Task(E, HttpResponse)) -> Task(Str, Unit)`. Binds
+  the port and, per connection, reads one request, parses request line + headers + body, runs the
+  handler (which may `await` async work), writes the response, and closes (`Connection: close`). A
+  handler that completes with `Error` yields a plain `500` so one bad request never stops the loop.
+  Consumed with `Ashes.Async.run`; serves connections concurrently like the plaintext TCP server.
 
-This is intentionally small: the request line + a single `receive` per connection, and a synchronous
-handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
-[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)).
+Intentionally small: **one `receive` per connection**, so the request (headers + body) must fit a
+single read; no keep-alive, and no chunked/streaming bodies. See
+[SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
 
 ```ash
 import Ashes.IO
 import Ashes.Http.Server
 import Ashes.Async
 let route req =
-    match Ashes.Http.Server.path(req) with
+    async(match Ashes.Http.Server.path(req) with
         | "/health" -> Ashes.Http.Server.text(200)("ok")
-        | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-        | _p -> Ashes.Http.Server.text(404)("not found")
+        | "/echo" -> Ashes.Http.Server.text(200)(Ashes.Http.Server.body(req))
+        | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
+        | _p -> Ashes.Http.Server.text(404)("not found"))
 in match Ashes.Async.run(Ashes.Http.Server.serve(8080)(route)) with
     | Ok(_u) -> Ashes.IO.print("stopped")
     | Error(e) -> Ashes.IO.print(e)
