@@ -155,6 +155,14 @@ stand-in for the disabled `.github/workflows/release.yml`. It:
 7. **if `VSCE_PAT` is set**, publishes the just-built `.vsix` to the VS Code
    Marketplace (publisher `mattiashognas`) as the final step.
 
+**Resume:** re-running `just release-github X.Y.Z` for a version whose release is
+already complete (tag on the remote + GitHub Release) does not fail — it detects
+the existing release and **resumes the Marketplace publish alone**, using the
+local `artifacts/release/*.vsix` if present or downloading the exact asset from
+the Release. `VSCE_PAT` is required in this mode (that is the only step left).
+Partial states (a local-only tag, a remote tag without a Release) still fail
+loudly and need manual cleanup.
+
 The version-bump commit lives on the `release/X.Y.Z` branch only; `main` picks it
 up when that branch is merged back (e.g. a PR). The branch, commit, and tag are
 created locally and only pushed after a successful build, so a failed build never
@@ -165,10 +173,9 @@ build env (`just images && just provision`).
 ### Publishing to the VS Code Marketplace
 
 Marketplace publish is the last step and is **off unless `VSCE_PAT` is set**, so a
-publish failure can never strand the already-live tag/release (the run prints a
-retry command). It uploads the exact `.vsix` attached to the GitHub Release — no
-rebuild. The extension manifest's `publisher` (`mattiashognas`) must match your
-Marketplace publisher.
+publish failure can never strand the already-live tag/release. It uploads the
+exact `.vsix` attached to the GitHub Release — no rebuild. The extension
+manifest's `publisher` (`mattiashognas`) must match your Marketplace publisher.
 
 Get a token from <https://dev.azure.com> → User settings → **Personal access
 tokens** → New token, scope **Marketplace ▸ Manage** (the org can be any; the
@@ -178,11 +185,12 @@ token is org-agnostic for Marketplace). Then:
 VSCE_PAT=xxxxxxxx just release-github 1.2.3
 ```
 
-To publish an already-released `.vsix` after the fact:
+To publish an already-released `.vsix` after the fact (e.g. the release ran
+without a token, or the publish failed), just re-run the release command — it
+resumes the Marketplace step alone:
 
 ```sh
-VSCE_PAT=xxxxxxxx pnpm dlx @vscode/vsce@3.9.2 publish \
-  --packagePath artifacts/release/ashes-language-1.2.3.vsix --no-dependencies
+VSCE_PAT=xxxxxxxx just release-github 1.2.3
 ```
 
 ## Layout
