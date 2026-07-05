@@ -709,6 +709,8 @@ internal static partial class LlvmCodegen
         {
             windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
             LlvmApi.SetLinkage(windowsSleepImport, LlvmLinkage.External);
+            LlvmValueHandle windowsGetTickCount64Import = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetTickCount64");
+            LlvmApi.SetLinkage(windowsGetTickCount64Import, LlvmLinkage.External);
         }
 
         if (usesWindowsProcess)

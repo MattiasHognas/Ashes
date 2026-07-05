@@ -79,11 +79,20 @@ lifecycle match wraps `Async.run`, not a bare top-level `await`. `serve` returns
 
 ---
 
-## Concurrency model (decided: multi-threaded)
+## Concurrency model (decided: multi-threaded; single-threaded cooperative DELIVERED)
 
-The server is multi-threaded from the first version. A single-threaded event loop would multiplex
-I/O-bound connections well but would serialize on any CPU-bound handler and use one core; a server is
-exactly the workload where that ceiling bites.
+**Delivered (2026-07-05):** single-threaded cooperative concurrency via `Ashes.Async.spawn`.
+`serve` spawns each handler as a detached task with a private arena (freed on completion, so memory
+is constant under sustained load); detached tasks advance whenever the driver blocks, and their
+socket/timer waits join the driver's poll set (epoll on Linux, WSAPoll on Windows — all three
+targets in lockstep). Measured on the echo benchmark: connections genuinely overlap (four 300 ms
+handlers complete in ~300 ms wall), 64-way tail latency roughly halves versus the sequential serve,
+throughput lands within ~10-15% of a concurrent .NET echo server — on one core.
+
+The multi-threaded multi-reactor below remains the target for CPU-bound handlers and multi-core
+scaling; a single-threaded loop still serializes CPU-bound work. Note from a first spike:
+`Parallel.both` cannot host reactors (it is fork-join; a never-returning reactor deadlocks the
+join), so the multi-reactor needs a dedicated long-lived-worker primitive.
 
 - **Worker-per-core, independent reactors.** Each worker thread runs its own poll loop and handles
   its own connections. There is no shared connection state and no cross-thread scheduler — this is

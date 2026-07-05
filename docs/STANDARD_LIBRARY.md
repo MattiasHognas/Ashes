@@ -168,12 +168,15 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
 - `accept(listener)` returning `Task(Str, Socket)` — accept one connection, returning the client
   socket. Suspends (parks on the listener) until a connection is ready, so it is used inside `async`.
 - `serve(port)(handler)` returning `Task(Str, Unit)` — the server lifecycle. Binds the port, then
-  loops accepting connections and running `handler` on each. `handler : Socket -> Task(E, A)` owns its
-  connection (the socket auto-drops when the handler task completes). A bind/listener failure ends the
-  server with `Error`; a handler's own failure is isolated to its connection and never stops the loop.
-  Consumed with `await` inside `Ashes.Async.run(async ...)`.
+  loops accepting connections, spawning `handler` on each (`Ashes.Async.spawn`), so connections are
+  served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
+  owns its connection and runs detached — it must close the socket itself, its result is dropped, and
+  its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
+  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`.
 
-`serve` handles connections sequentially (one at a time) for now; concurrent serving is planned (see
+`serve` handles connections concurrently on a single thread (cooperative scheduling via
+`Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
+stays bounded under sustained load). Multi-core serving remains future work (see
 [docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
 `Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
 Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).

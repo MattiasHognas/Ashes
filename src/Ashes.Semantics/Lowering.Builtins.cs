@@ -2169,6 +2169,18 @@ public sealed partial class Lowering
         var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
         Unify(taskType, expectedTaskType);
 
+        // Ownership of every resource the spawned task references moves into the detached task:
+        // the task outlives the spawner's scope, so that scope must not drop (close) them — the
+        // handler owns its connection and closes it itself. Mirrors the aggregate/closure move rules.
+        foreach (var freeName in FreeVars(taskArg, []))
+        {
+            if (LookupOwnedValue(freeName) is { IsDropped: false } moved
+                && (moved.IsResource || moved.IsResourceBearing))
+            {
+                moved.IsDropped = true;
+            }
+        }
+
         int unitTemp = NewTemp();
         Emit(new IrInst.SpawnTask(unitTemp, taskTemp));
         return (unitTemp, _resolvedTypes["Unit"]);

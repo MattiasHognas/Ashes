@@ -132,6 +132,7 @@ internal static partial class LlvmImageLinker
         int listenHintOffset = WriteHintName(rdataStream, 0, "listen");
         int acceptHintOffset = WriteHintName(rdataStream, 0, "accept");
         int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
+        int getTickCount64HintOffset = WriteHintName(rdataStream, 0, "GetTickCount64");
         int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
         int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
         int createIoCompletionPortHintOffset = WriteHintName(rdataStream, 0, "CreateIoCompletionPort");
@@ -158,7 +159,7 @@ internal static partial class LlvmImageLinker
         }
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset, getSystemInfoHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset, getSystemInfoHintOffset, getTickCount64HintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
         int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset, listenHintOffset, acceptHintOffset];
         int[] crypt32Hints = [certOpenSystemStoreHintOffset, certEnumCertificatesInStoreHintOffset, certCloseStoreHintOffset];
@@ -269,6 +270,7 @@ internal static partial class LlvmImageLinker
         ulong getExitCodeProcessIatVa = kernel32IatVa + 21 * 8;
         ulong createThreadIatVa = kernel32IatVa + 22 * 8;
         ulong getSystemInfoIatVa = kernel32IatVa + 23 * 8;
+        ulong getTickCount64IatVa = kernel32IatVa + 24 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -316,6 +318,7 @@ internal static partial class LlvmImageLinker
             ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
             ["__imp_LocalFree"] = localFreeIatVa,
             ["__imp_Sleep"] = sleepIatVa,
+            ["__imp_GetTickCount64"] = getTickCount64IatVa,
             ["__imp_VirtualAlloc"] = virtualAllocIatVa,
             ["__imp_VirtualFree"] = virtualFreeIatVa,
             ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,

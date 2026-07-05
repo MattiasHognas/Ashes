@@ -922,6 +922,82 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_serve_connections_concurrently()
+    {
+        // serve() spawns each handler (Ashes.Async.spawn), so a slow handler must not serialize
+        // other connections: four simultaneous clients against a handler that sleeps 300 ms before
+        // echoing should all complete in roughly one sleep, not four.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Async.sleep(300) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_t) ->
+                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                                    | Error(e3) -> Error(e3)
+                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_conc_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // Wait for the listener, then fire four clients at once.
+            _ = await ConnectSendReceiveWithRetryAsync(port, "warmup");
+
+            var sw = Stopwatch.StartNew();
+            var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(
+                i => ConnectSendReceiveWithRetryAsync(port, $"conc-{i}")));
+            sw.Stop();
+
+            for (int i = 0; i < replies.Length; i++)
+            {
+                replies[i].ShouldBe($"echo: conc-{i}");
+            }
+
+            // Four sequential 300 ms handlers would take >= 1200 ms; concurrent ones finish in
+            // roughly one sleep. Allow generous headroom for a loaded CI box.
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(900),
+                "connections should be served concurrently, not serialized");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_a_tcp_echo_server_via_serve()
     {
         // Server-side coverage on native linux-x64: the Ashes program is the LISTENER

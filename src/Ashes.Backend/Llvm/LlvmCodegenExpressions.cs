@@ -2150,6 +2150,8 @@ internal static partial class LlvmCodegen
                 LlvmApi.ConstInt(state.I64, 0, 0), waitTimeout, prefix + "_timeout_eff");
         }
 
+        LlvmValueHandle waitStartMs = detached ? EmitMonotonicNowMs(state, prefix + "_wait_start") : default;
+
         if (IsLinuxFlavor(state.Flavor))
         {
             LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
@@ -2232,12 +2234,10 @@ internal static partial class LlvmCodegen
 
         if (detached)
         {
-            // Approximate the cooperative sleep bookkeeping: when the wait was bounded by a
-            // detached timer, charge that bound against every detached sleeper.
-            LlvmValueHandle boundedWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, waitTimeout,
-                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_bounded_wait");
-            LlvmValueHandle elapsed = LlvmApi.BuildSelect(builder, boundedWait, waitTimeout,
-                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_detached_elapsed");
+            // Charge detached sleepers with the ACTUAL time the wait took — an early fd wake
+            // (e.g. a new connection) must not consume the whole timer bound.
+            LlvmValueHandle waitEndMs = EmitMonotonicNowMs(state, prefix + "_wait_end");
+            LlvmValueHandle elapsed = LlvmApi.BuildSub(builder, waitEndMs, waitStartMs, prefix + "_detached_elapsed");
             _ = EmitNetworkingRuntimeCall(state, "ashes_detached_advance_timers", [elapsed], prefix + "_detached_advance");
         }
 
