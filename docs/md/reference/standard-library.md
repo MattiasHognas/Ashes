@@ -209,6 +209,43 @@ hermetic `rustls` runtime embedded per TLS-using executable. No
 external OpenSSL installation is required. Hostname verification and
 system-trust validation are mandatory for successful TLS connections.
 
+### `Ashes.Net.Tls.Server`
+
+Server-side TLS termination, layered on `Ashes.Net.Tcp.Server`.
+
+- `handshake(socket)(certPem)(keyPem)` returning `Task(Str, TlsSocket)` — runs the server half of a
+  TLS handshake over an accepted TCP socket. `certPem` / `keyPem` are the certificate-chain and
+  private-key PEM **contents** (not paths). The rustls server config is built once from these and
+  cached for the process; the accepted socket is consumed into the returned `TlsSocket`, on which the
+  ordinary `Ashes.Net.Tls.send` / `receive` / `close` operate.
+- `serveTls(port)(certPath)(keyPath)(handler)` returning `Task(Str, Unit)` — the TLS server
+  lifecycle. Reads the certificate and key PEM files up front (a read failure ends the server with a
+  readable `Error`), then serves like `Ashes.Net.Tcp.Server.serve` — concurrently, one spawned
+  handler per connection — running the handshake in front of each handler. `handler : TlsSocket ->
+  Task(E, A)` owns its connection and must close it (the socket auto-drops otherwise). Consumed with
+  `Ashes.Async.run`.
+
+The handshake reuses the scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking, so a TLS server
+serves concurrently on a single thread exactly as the plaintext server does. Same three targets and
+hermetic `rustls` runtime as the TLS client.
+
+```ash
+import Ashes.IO
+import Ashes.Net.Tls
+import Ashes.Net.Tls.Server
+import Ashes.Async
+let onClient tls =
+    async(match await Ashes.Net.Tls.receive(tls)(4096) with
+        | Error(e) -> Error(e)
+        | Ok(msg) ->
+            match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
+                | Error(e2) -> Error(e2)
+                | Ok(_n) -> await Ashes.Net.Tls.close(tls))
+in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls(8443)("cert.pem")("key.pem")(onClient)) with
+    | Ok(_u) -> Ashes.IO.print("stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
 ### `Ashes.Http.Server`
 
 A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
