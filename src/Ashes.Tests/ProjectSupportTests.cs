@@ -642,6 +642,22 @@ public sealed class ProjectSupportTests
         }
     }
 
+    [Test]
+    public void Declarations_only_file_with_stitched_import_compiles()
+    {
+        // A module-style file (imports + declarations, no trailing expression) compiled directly —
+        // e.g. `ashes compile lib/Ashes/Http.Server.ash` — must parse. The stitcher paren-wraps the
+        // entry as a flat block, which requires a trailing expression; a declarations-only entry
+        // previously produced "ASH003 Expected expression but found RParen" at the closing paren.
+        var source = "import Ashes.Net.Tcp.Server\nlet x = 42\n";
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+
+        var diag = new Diagnostics();
+        _ = new Parser(layout.Source, diag).ParseProgram();
+        diag.StructuredErrors.ShouldBeEmpty("declarations-only entries must stitch into a parseable layout");
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}");
