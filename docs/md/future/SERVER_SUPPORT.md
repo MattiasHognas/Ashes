@@ -223,7 +223,7 @@ to when `serve` is specified against the shipped capabilities surface.
 
 The first implementation introduces no new language syntax. Server support is a library:
 
-```
+```ash
 http.serve(8080)(handle)
 tcp.serve(9000)(handle)
 ```

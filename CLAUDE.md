@@ -9,21 +9,22 @@ C#/.NET 10. It compiles `.ash` source to **standalone native executables** (ELF 
 Windows) via LLVM, with zero runtime dependencies — no GC, no runtime. Targets: `linux-x64`,
 `linux-arm64`, `win-x64`.
 
-`docs/` is the source of truth. Read the relevant doc **before** changing behavior:
+`docs/md/` is the source of truth (also published as the documentation site; the VitePress app
+lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
 
-- [docs/LANGUAGE_SPEC.md](docs/LANGUAGE_SPEC.md) — syntax/semantics, **authoritative**
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — pipeline, backend, memory model, linking
-- [docs/IR_REFERENCE.md](docs/IR_REFERENCE.md) — IR instruction set
-- [docs/COMPILER_CLI_SPEC.md](docs/COMPILER_CLI_SPEC.md) — all CLI commands and flags
-- [docs/FORMATTER_SPEC.md](docs/FORMATTER_SPEC.md) — canonical formatting rules
-- [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) — error codes and messages
-- [docs/TESTING.md](docs/TESTING.md) — test directives and conventions
-- [docs/STANDARD_LIBRARY.md](docs/STANDARD_LIBRARY.md) — module-by-module API
-- [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) — multi-file project / `ashes.json` format
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building, testing, developing locally
-- [docs/DEBUGGING.md](docs/DEBUGGING.md) — debug extension setup and usage
-- [docs/LOCAL_CI.md](docs/LOCAL_CI.md) — containerized local CI/CD (`just` + Podman), release flow
-- [docs/future/FUTURE_FEATURES.md](docs/future/FUTURE_FEATURES.md) — planned work (incl. memory/ownership roadmap)
+- [docs/md/reference/language.md](docs/md/reference/language.md) — syntax/semantics, **authoritative**
+- [docs/md/internals/architecture.md](docs/md/internals/architecture.md) — pipeline, backend, memory model, linking
+- [docs/md/internals/ir.md](docs/md/internals/ir.md) — IR instruction set
+- [docs/md/reference/cli.md](docs/md/reference/cli.md) — all CLI commands and flags
+- [docs/md/reference/formatter.md](docs/md/reference/formatter.md) — canonical formatting rules
+- [docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md) — error codes and messages
+- [docs/md/guide/testing.md](docs/md/guide/testing.md) — test directives and conventions
+- [docs/md/reference/standard-library.md](docs/md/reference/standard-library.md) — module-by-module API
+- [docs/md/guide/projects.md](docs/md/guide/projects.md) — multi-file project / `ashes.json` format
+- [docs/md/guide/development.md](docs/md/guide/development.md) — building, testing, developing locally
+- [docs/md/guide/debugging.md](docs/md/guide/debugging.md) — debug extension setup and usage
+- [docs/md/guide/local-ci.md](docs/md/guide/local-ci.md) — containerized local CI/CD (`just` + Podman), release flow
+- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work (incl. memory/ownership roadmap)
 
 If implementation conflicts with the spec, **update the spec first**.
 
@@ -152,15 +153,15 @@ the name in unqualified, with built-in `Ashes.*` modules resolving via the same 
 exports are its top-level `let`/`type` declarations only — `external` and the trailing expression are
 never exported, and there is no implicit re-export. The bare-expression and nested `let ... in`
 pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this surface (see
-[docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)).
+[docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md)).
 
 **Memory model:** no GC and no reference counting — memory is managed by deterministic destruction,
 with ownership + borrowing planned (`Lowering.Ownership.cs` is the in-progress home for this; see
-[docs/future/FUTURE_FEATURES.md](docs/future/FUTURE_FEATURES.md)). Don't reach for GC/RC-style designs.
+[docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md)). Don't reach for GC/RC-style designs.
 
 The standard library is written in Ashes under `lib/Ashes/` (e.g. `List.ash`, `IO.ash`); `dist/`
 holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as ordinary programs with a leading `//` directive block
-(see [docs/TESTING.md](docs/TESTING.md) for the full surface): `// expect:` (exact stdout, default exit 0),
+(see [docs/md/guide/testing.md](docs/md/guide/testing.md) for the full surface): `// expect:` (exact stdout, default exit 0),
 `// expect-compile-error:` (substring match, exit 1), `// exit: N`, `// stdin:`, `// file:`/
 `// file-bytes:`, and `// tcp-server`/`// tcp-expect`/`// tcp-send` loopback fixtures. Gotcha:
 `// expect: empty` expects the literal text `empty`, not empty output (matching trims trailing

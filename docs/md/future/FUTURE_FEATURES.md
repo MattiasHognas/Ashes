@@ -1,9 +1,9 @@
 # Future Features
 
 Planned features and future work for the Ashes language and ecosystem. **Shipped** features are
-documented in the normative docs under [`docs/`](../) — syntax/semantics in
-[LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md), library APIs in [STANDARD_LIBRARY.md](../STANDARD_LIBRARY.md),
-and runtime/backend behavior in [ARCHITECTURE.md](../ARCHITECTURE.md) — not here.
+documented in the normative docs under [`docs/md/`](../index.md) — syntax/semantics in
+[LANGUAGE_SPEC.md](../reference/language.md), library APIs in [STANDARD_LIBRARY.md](../reference/standard-library.md),
+and runtime/backend behavior in [ARCHITECTURE.md](../internals/architecture.md) — not here.
 
 | Feature | Status | Description |
 |---------|--------|-------------|

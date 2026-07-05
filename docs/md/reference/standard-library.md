@@ -177,7 +177,7 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
 `serve` handles connections concurrently on a single thread (cooperative scheduling via
 `Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
 stays bounded under sustained load). Multi-core serving remains future work (see
-[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
+[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
 `Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
 Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
 
@@ -225,7 +225,7 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 
 This is intentionally small: the request line + a single `receive` per connection, and a synchronous
 handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
-[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)).
+[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)).
 
 ```ash
 import Ashes.IO
@@ -265,7 +265,7 @@ All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
 transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
 linked into the program only when a transcendental is used, so hermetic-only
 programs carry no math payload and there is never a runtime dependency. See the
-*Math runtime model* in [ARCHITECTURE.md](ARCHITECTURE.md) for the mechanism.
+*Math runtime model* in [ARCHITECTURE.md](../internals/architecture.md) for the mechanism.
 
 Integer:
 

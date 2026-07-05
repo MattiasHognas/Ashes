@@ -6,7 +6,7 @@ namespace Ashes.Tests;
 /// <summary>
 /// Direct unit tests for <see cref="StateMachineTransform"/>. The transform is not yet reachable
 /// from user programs (the async runtime is still synchronous/blocking — see CO-7 in
-/// docs/future/COMPILER_OPTIMIZATION.md), so these tests exercise it directly on hand-built IR to
+/// docs/md/future/COMPILER_OPTIMIZATION.md), so these tests exercise it directly on hand-built IR to
 /// verify the structured-parallelism (`both`) liveness extension and the fork/join/cleanup
 /// within-one-segment invariant. Without the liveness cases a `both` result/closure live across an
 /// `await` split would be dropped from the coroutine save/restore set and miscompile on resume.

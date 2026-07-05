@@ -4,7 +4,7 @@
 #
 # Invoked by the justfile, e.g. `ci/jobs.sh build` or `ci/jobs.sh release_github 1.2.3`.
 # Mirrors the steps in .github/workflows/{pull-request,push-to-main,release}.yaml
-# so local runs match GitHub CI. See docs/LOCAL_CI.md.
+# so local runs match GitHub CI. See docs/md/guide/local-ci.md.
 set -euo pipefail
 
 JOBS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -215,7 +215,7 @@ matrix() {
   # qemu-user-static binfmt_misc handler — which must be registered with the F
   # (fix-binary) flag so emulation crosses into the container and survives the
   # compiler's nested exec of its output. `scripts/init-local-ci.sh` sets this up;
-  # see docs/LOCAL_CI.md. If the handler is missing, the arm64 leg fails with
+  # see docs/md/guide/local-ci.md. If the handler is missing, the arm64 leg fails with
   # "Exec format error".
   local logdir
   logdir="$(mktemp -d)"

@@ -40,7 +40,7 @@ and mirroring are later, client-transparent additions (PACKAGE_MANAGER §7.5).
 
 ## 2. Data model
 
-```
+```text
 Account   { id, name, createdAt }
 Token     { id, accountId, hashedSecret, createdAt, lastUsedAt }      // the secret is shown once
 Package   { namespace, description, keywords[], ownerAccountIds[], createdAt, updatedAt }
@@ -197,7 +197,7 @@ tests); EF's provider model gives the SQLite↔Postgres swap *under* the DB impl
 
 **Reference layout** under a `--data` directory:
 
-```
+```text
 data/
   blobs/<hash[0:2]>/<hash>   # compressed source, content-addressed (IBlobStore)
   registry.db                # SQLite: packages, versions, owners, accounts, tokens, search (EF Core)
@@ -322,7 +322,7 @@ for (PACKAGE_MANAGER §7.4), including private ones.
 
 ## 10. Project layout
 
-```
+```text
 registry/
   src/AshesRegistry/          # the minimal-API app (endpoints, pipeline, validators)
   src/AshesRegistry.Storage/  # EF Core store (SQLite default, Postgres provider) + filesystem/object blob store; migrations

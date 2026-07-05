@@ -305,7 +305,7 @@ compiler already computes these when it stitches the world. The package manager 
 **statically and precisely** — not by heuristic source scanning as npm-era tools do — exactly which
 capabilities each dependency's public API introduces:
 
-```
+```text
 $ ashes capabilities
 my-app
 |- json     pure
@@ -328,7 +328,7 @@ mechanism — inferred `needs` rows on exported functions — is real today.
 
 ## 9. Command surface
 
-```
+```sh
 ashes init            # scaffold ashes.json + src/<Namespace>/... (namespaced with --lib)
 ashes add <pkg>       # add + resolve + lock + cache (instant if cached); --path / --git / --dev
 ashes remove <pkg>
@@ -514,5 +514,3 @@ Deferred, client-transparent additions to the same server: mirroring (pull-throu
    instance and anyone can self-host. Multiple/custom registries are first-class (`registries` config +
    per-dependency `registry`).
 4. **`ashes install`:** retired; `build`/`run`/`test` auto-restore and `ashes restore` is explicit.
-</content>
-</invoke>

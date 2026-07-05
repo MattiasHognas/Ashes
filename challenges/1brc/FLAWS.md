@@ -34,7 +34,7 @@ Each section below records the original finding and what changed to fix it. **Al
 fixed** (brc is correct and constant-memory on all three targets). The compiler-side improvements this
 exercise drove — data-parallel `map`/`reduce`, the move/linearity analysis, arm64/win-x64
 networking+parallelism coexistence, and more — have all **landed**; see the *Completed Work* record in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
+[docs/md/future/COMPILER_OPTIMIZATION.md](../../docs/md/future/COMPILER_OPTIMIZATION.md).
 
 ## Performance pass (2026-06-30) — benchmark + remaining work
 
@@ -170,7 +170,7 @@ orthogonal and both real:
     marking a function's accumulator parameter "owned" iff at every call site the argument is a
     per-path-linear, last-used value rooted (through unique hops / reuse results) at a fresh
     construction. That is the ownership/borrowing milestone (`Lowering.Ownership.cs`,
-    `docs/future/FUTURE_FEATURES.md`); this reuse+arena code is corruption-prone, and an unsound skip
+    `docs/md/future/FUTURE_FEATURES.md`); this reuse+arena code is corruption-prone, and an unsound skip
     silently miscompiles (in-place mutation of a live alias), so it is intentionally **not** hacked in.
     Note: brc no longer needs it (its file fold is a single loop after (A)); it remains the right fix
     for the general pattern and for letting `streamLoop`-style code be constant without `readLine`.
@@ -222,7 +222,7 @@ Halved the 10k-row runtime (was ~45 % of it).
 in-place-reuse work are complete; brc folds the whole file in a single `Ashes.File.readLine` loop
 with in-place `Map.set` reuse and is constant-memory. The general in-place-reuse follow-up (the
 nested-re-entry deep-copy) is tracked as `CO-2` in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md) (since landed — see
+[docs/md/future/COMPILER_OPTIMIZATION.md](../../docs/md/future/COMPILER_OPTIMIZATION.md) (since landed — see
 the 2026-07-02 pass below).
 
 ## Performance pass (2026-07-02) — constant-memory to 100M rows
@@ -261,12 +261,12 @@ specialization is wired only to `Map.set`, so `HashMap.set` allocates a fresh tr
 re-hashes the whole key twice. So the program is already near the frontier of what the current
 compiler/stdlib allow; the gap was compiler/stdlib/runtime work, not the `.ash`. The concrete,
 actionable pieces became `CO-10`…`CO-14` and have all **landed** (see the *Completed Work* record in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md)): a `u8`→`Int`
+[docs/md/future/COMPILER_OPTIMIZATION.md](../../docs/md/future/COMPILER_OPTIMIZATION.md)): a `u8`→`Int`
 widening for byte-level integer parsing (`CO-11`), SIMD `memchr` scan (`CO-13`), zero-copy `mmap` input
 (`CO-12`), a data-parallel chunked fold + loop-invariant reset-safety making it constant-memory
 (`CO-14` / `CO-10`) — together the parallel `brc` now runs the full 1e9-row challenge in ~2m36s. A
 smaller reuse-*eligibility* generalization (`HashMap.set`) remains — tracked as `CO-15` in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md).
+[docs/md/future/COMPILER_OPTIMIZATION.md](../../docs/md/future/COMPILER_OPTIMIZATION.md).
 
 ## Performance pass (2026-07-02) — data-parallel `brc` reaches the full 1e9-row challenge
 
@@ -383,7 +383,7 @@ re-incurs #1 (one giant allocation at full scale) as the price of not crashing.
 
 **1BRC needs:** to process a billion rows in O(1) live memory.
 
-**Ashes is:** non-GC. Memory is a chunked bump arena (`docs/ARCHITECTURE.md:241`+);
+**Ashes is:** non-GC. Memory is a chunked bump arena (`docs/md/internals/architecture.md:241`+);
 `Drop` is a no-op for ordinary heap values. Memory is reclaimed only at scope exits
 and at TCO back-edges, via an arena watermark reset.
 
@@ -430,7 +430,7 @@ accumulators, often sharded across threads.
 container is `Ashes.Map` (`lib/Ashes/Map.ash`), a persistent AVL tree whose `set`
 (`Map.ash:79`) copies every node on the root-to-leaf path — O(log K) fresh `Node`s
 (≥48 bytes each) per update. `Ashes.Array` (`lib/Ashes/Array.ash`) is *also* a
-persistent tree, not a flat buffer (`docs/STANDARD_LIBRARY.md:138`).
+persistent tree, not a flat buffer (`docs/md/reference/standard-library.md:138`).
 
 **Impact:** with K ≈ 4,415 stations, ~12 node allocations × 1e9 rows ≈ **~12 billion
 `Node` allocations**, every read being read-modify-write (a `get` *and* a `set`).
@@ -451,7 +451,7 @@ is gone) and multibyte names sort correctly and never merge. Tests:
 
 **1BRC needs:** to group by station name and print sorted by name. `Ashes.Map`
 requires a caller-supplied total order `compare : K -> K -> Int`
-(`docs/STANDARD_LIBRARY.md:162`).
+(`docs/md/reference/standard-library.md:162`).
 
 **Ashes has:** string **equality only**. `==`/`!=` lower to `CmpStrEq`/`CmpStrNe`
 (`src/Ashes.Semantics/Lowering.cs:1553`); the relational operators `<`/`>`/`<=`/`>=`
@@ -482,7 +482,7 @@ tasks (`Task`/`await`), not data-parallel CPU work.
 **Fix:** `Ashes.Parallel.both` is now a genuinely parallel fork/join of two pure thunks
 on all three targets (per-thread bump arenas + worker threads + deep-copy-on-join,
 deterministic and memory-bounded) — see the structured-parallelism entry in
-[docs/future/COMPILER_OPTIMIZATION.md](../../docs/future/COMPILER_OPTIMIZATION.md), and full
+[docs/md/future/COMPILER_OPTIMIZATION.md](../../docs/md/future/COMPILER_OPTIMIZATION.md), and full
 data-parallel `map`/`reduce` (`CO-1`) landed. brc is now sharded across cores: `brc_parallel.ash`
 splits the file into per-core chunks and folds each on a worker (`CO-14`), constant-memory per worker
 (`CO-10`) — running the full 1e9-row challenge in ~2m36s.

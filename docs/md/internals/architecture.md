@@ -294,7 +294,7 @@ an `IrProgram`, which the backend consumes.
 
 ### IrProgram structure
 
-```
+```text
 IrProgram
 ├── EntryFunction : IrFunction       — the top-level expression
 ├── Functions     : List<IrFunction> — lifted lambdas / named functions
@@ -332,7 +332,7 @@ Ashes programs run without a garbage collector. Heap allocation uses a
 **chunked arena allocator** with a bump-pointer cursor and a 4 MB chunk
 size.
 
-```
+```text
 ┌──────────────────────── chunk 0 (4 MB) ─────────────────────────┐
 │ [prev=0] [alloc] [alloc] [alloc] ... [free]                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -521,7 +521,7 @@ recursion depth is bounded by these sizes:
 ## Capabilities Lowering
 
 The capability surface and typing rules are specified in
-[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) section 20; this section documents how they compile.
+[LANGUAGE_SPEC.md](../reference/language.md) section 20; this section documents how they compile.
 
 ### Capability typing: the ambient row
 
@@ -542,7 +542,7 @@ module global per declared capability (`__ashes_capability_handler_<i>`, index =
 holding a pointer to the innermost installed handler frame for that capability, 0 when none. A
 `handle` expression stack-allocates one frame per handled capability:
 
-```
+```text
 [0 .. numCapabilities-1]              snapshot of every capability global, taken before any of this
                                  handle's frames install
 [numCapabilities]                     pointer to the handle's shared posts-list head slot
@@ -588,7 +588,7 @@ each post is folded. Programs that declare no capabilities compile byte-for-byte
 guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
-[IR_REFERENCE.md](IR_REFERENCE.md)); frames, posts cells, and the fold loop use the ordinary
+[IR_REFERENCE.md](ir.md)); frames, posts cells, and the fold loop use the ordinary
 `AllocStack` / `Alloc` / `StoreMemOffset` / `LoadMemOffset` / `CallClosure` / label machinery.
 
 Current limitations: the evidence globals are per-process, so installing or using handlers
