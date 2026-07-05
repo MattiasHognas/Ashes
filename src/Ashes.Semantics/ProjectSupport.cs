@@ -110,7 +110,8 @@ public static class ProjectSupport
         string ExpressionBodySource,
         IReadOnlyList<ModuleBindingGroup> TopLevelBindings,
         string? LegacyExportName,
-        bool IsFlat);
+        bool IsFlat,
+        bool HasTrailingExpression = true);
 
     public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\.([a-z_][A-Za-z0-9_]*))?(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
@@ -953,6 +954,17 @@ public static class ProjectSupport
         var hasPrefixBeforeBody = prefix.Length > entryShape.TypeDeclarationsSource.Length;
         if (hasPrefixBeforeBody)
         {
+            // A declarations-only entry (e.g. a module file compiled directly) has no trailing
+            // expression, but the parenthesized flat entry block below must end in one — otherwise
+            // the parser reports ASH003 at the closing paren. Synthesize an inert trailing value;
+            // a program's trailing value is discarded, so this is unobservable.
+            if (!entryShape.HasTrailingExpression || string.IsNullOrWhiteSpace(entryExpression))
+            {
+                entryExpression = string.IsNullOrWhiteSpace(entryExpression)
+                    ? "0"
+                    : entryExpression + "\n0";
+            }
+
             // Module bindings precede the entry body, so the body must be parenthesized: a flat
             // entry block (declarations + trailing expression) is only recognized inside parens
             // (ParseParenthesizedBody), and after a legacy binding chain's trailing `in` a bare
@@ -1693,7 +1705,8 @@ public static class ProjectSupport
             ExpressionBodySource: string.Empty,
             TopLevelBindings: groups,
             LegacyExportName: null,
-            IsFlat: true);
+            IsFlat: true,
+            HasTrailingExpression: program.Body is not null);
         return true;
     }
 
