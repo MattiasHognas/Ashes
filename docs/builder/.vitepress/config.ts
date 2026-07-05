@@ -7,6 +7,12 @@ import ashesGrammar from "../../../vscode-extension/syntaxes/ashes.tmLanguage.js
 
 const require = createRequire(import.meta.url);
 
+// Deployment base path. GitHub Pages project sites live under /<repo>/, so the
+// deploy workflow sets DOCS_BASE=/Ashes/; local dev and custom-domain builds
+// default to /. Head asset hrefs are not base-prefixed automatically, so the
+// favicon link below must use it explicitly.
+const base = process.env.DOCS_BASE ?? "/";
+
 /**
  * A sidebar entry for a page plus a collapsed submenu of its section headings.
  * Sections are the shallowest heading level the page uses after its title
@@ -50,6 +56,7 @@ function page(text: string, link: string): DefaultTheme.SidebarItem {
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
+  base,
   srcDir: "../md",
   outDir: "../site",
   cleanUrls: true,
@@ -57,7 +64,9 @@ export default defineConfig({
   title: "Ashes",
   description:
     "A pure functional ML-family language compiled to standalone native executables",
-  head: [["link", { rel: "icon", type: "image/png", href: "/logo.png" }]],
+  head: [
+    ["link", { rel: "icon", type: "image/png", href: `${base}logo.png` }],
+  ],
   // Default to the dark (Catppuccin Mocha) look; the toggle stays available.
   appearance: "dark",
 
@@ -159,7 +168,6 @@ export default defineConfig({
           page("Server Support", "/future/SERVER_SUPPORT"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
           page("Compiler Optimization", "/future/COMPILER_OPTIMIZATION"),
-          page("Documentation Site", "/future/DOCS_SITE"),
         ],
       },
     ],

@@ -62,6 +62,7 @@ image (Debian, so `apt` works) and writes the libs into the bind-mounted
 | `just deps-check`        | NuGet + pnpm vulnerability/outdated check (local Dependabot)                                     | —                     |
 | `just sast`              | Semgrep static analysis: C#, TS, secrets (local CodeQL)                                          | —                     |
 | `just ext`               | extension lint/format/compile + xvfb integration tests                                           | extension steps       |
+| `just docs`              | documentation site build (`docs/builder` → `docs/site`); fails on dead links                     | `docs.yml` build      |
 | `just publish-cli`       | self-contained CLI for all 3 RIDs into `artifacts/ashes/<rid>`                                   | Publish CLI           |
 | `just matrix`            | run examples + tests + fmt-verify on x64 / arm64(qemu) / win(wine)                               | `test-matrix`         |
 | `just matrix-one <arch>` | run the matrix for a single arch (`linux-x64`/`linux-arm64`/`win-x64`), publishing just that RID | one `test-matrix` leg |
@@ -217,7 +218,8 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
   known-vulnerable NuGet packages (`dotnet list package --vulnerable
 --include-transitive`) and pnpm advisories of any severity (`pnpm audit
 --audit-level low`), so both ecosystems fail the build alike — the NuGet
-  gate has no severity floor and the pnpm gate matches it. Outdated
+  gate has no severity floor and the pnpm gate matches it. Both pnpm
+  projects are covered: `vscode-extension/` and `docs/builder/`. Outdated
   listings (`dotnet list package --outdated`,
   `pnpm outdated`) are printed for information only — they don't fail the build.
   Dependabot is still useful on GitHub for _opening_ update PRs; this only
@@ -234,6 +236,12 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - Windows binaries are smoke-tested under **Wine**; true native Windows runs
   remain on GitHub if ever needed.
 - The GitHub workflows are left intact, so you can run both during the transition.
+- **Documentation site deployment** is the one GitHub-hosted piece:
+  `.github/workflows/docs.yml` builds `docs/builder` with `DOCS_BASE=/Ashes/` and
+  publishes to **GitHub Pages** on pushes to `main` that touch `docs/**` or the
+  Ashes TextMate grammar. Pages must be enabled once in the repo settings
+  (Settings → Pages → Source: *GitHub Actions*). `just docs` is the local build
+  gate for the same site (without the base path or deployment).
 
 ## Troubleshooting
 
