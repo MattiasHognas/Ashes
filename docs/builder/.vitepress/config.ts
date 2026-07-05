@@ -1,8 +1,52 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { defineConfig } from "vitepress";
+import { fileURLToPath } from "node:url";
+import { slugify } from "@mdit-vue/shared";
+import { defineConfig, type DefaultTheme } from "vitepress";
 import ashesGrammar from "../../../vscode-extension/syntaxes/ashes.tmLanguage.json";
 
 const require = createRequire(import.meta.url);
+
+/**
+ * A sidebar entry for a page plus a collapsed submenu of its section headings.
+ * Sections are the shallowest heading level the page uses after its title
+ * (H2 normally; H1 chapters for the language spec), and anchors are produced
+ * with VitePress's own slugifier so they always match the rendered ids.
+ */
+function page(text: string, link: string): DefaultTheme.SidebarItem {
+  const file = fileURLToPath(new URL(`../../md${link}.md`, import.meta.url));
+  const lines = readFileSync(file, "utf8").split("\n");
+  const headings: { level: number; text: string }[] = [];
+  let inFence = false;
+  let seenTitle = false;
+  for (const line of lines) {
+    if (line.trimStart().startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^(#{1,2})\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    if (!seenTitle && m[1].length === 1) {
+      seenTitle = true;
+      continue;
+    }
+    headings.push({ level: m[1].length, text: m[2] });
+  }
+  const top = Math.min(...headings.map((x) => x.level), 2);
+  const items = headings
+    .filter((x) => x.level === top)
+    .map((x) => {
+      const clean = x.text
+        .replace(/`([^`]*)`/g, "$1")
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/\*\*?([^*]*)\*\*?/g, "$1");
+      return { text: clean, link: `${link}#${slugify(clean)}` };
+    });
+  return items.length > 1
+    ? { text, link, collapsed: true, items }
+    : { text, link };
+}
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -80,45 +124,42 @@ export default defineConfig({
       {
         text: "Guide",
         items: [
-          { text: "Getting Started", link: "/guide/getting-started" },
-          { text: "Projects", link: "/guide/projects" },
-          { text: "Testing", link: "/guide/testing" },
-          { text: "Debugging", link: "/guide/debugging" },
-          { text: "Development", link: "/guide/development" },
-          { text: "Local CI/CD", link: "/guide/local-ci" },
+          page("Getting Started", "/guide/getting-started"),
+          page("Projects", "/guide/projects"),
+          page("Testing", "/guide/testing"),
+          page("Debugging", "/guide/debugging"),
+          page("Development", "/guide/development"),
+          page("Local CI/CD", "/guide/local-ci"),
         ],
       },
       {
         text: "Reference",
         items: [
-          { text: "Language Specification", link: "/reference/language" },
-          { text: "Standard Library", link: "/reference/standard-library" },
-          { text: "Compiler CLI", link: "/reference/cli" },
-          { text: "Formatter", link: "/reference/formatter" },
-          { text: "Diagnostics", link: "/reference/diagnostics" },
+          page("Language Specification", "/reference/language"),
+          page("Standard Library", "/reference/standard-library"),
+          page("Compiler CLI", "/reference/cli"),
+          page("Formatter", "/reference/formatter"),
+          page("Diagnostics", "/reference/diagnostics"),
         ],
       },
       {
         text: "Internals",
         items: [
-          { text: "Compiler Architecture", link: "/internals/architecture" },
-          { text: "IR Reference", link: "/internals/ir" },
+          page("Compiler Architecture", "/internals/architecture"),
+          page("IR Reference", "/internals/ir"),
         ],
       },
       {
         text: "Future Designs",
         collapsed: true,
         items: [
-          { text: "Future Features", link: "/future/FUTURE_FEATURES" },
-          { text: "Package Manager", link: "/future/PACKAGE_MANAGER" },
-          { text: "Registry API", link: "/future/REGISTRY_API" },
-          { text: "Server Support", link: "/future/SERVER_SUPPORT" },
-          { text: "Self-Hosting", link: "/future/SELF_HOSTING" },
-          {
-            text: "Compiler Optimization",
-            link: "/future/COMPILER_OPTIMIZATION",
-          },
-          { text: "Documentation Site", link: "/future/DOCS_SITE" },
+          page("Future Features", "/future/FUTURE_FEATURES"),
+          page("Package Manager", "/future/PACKAGE_MANAGER"),
+          page("Registry API", "/future/REGISTRY_API"),
+          page("Server Support", "/future/SERVER_SUPPORT"),
+          page("Self-Hosting", "/future/SELF_HOSTING"),
+          page("Compiler Optimization", "/future/COMPILER_OPTIMIZATION"),
+          page("Documentation Site", "/future/DOCS_SITE"),
         ],
       },
     ],
