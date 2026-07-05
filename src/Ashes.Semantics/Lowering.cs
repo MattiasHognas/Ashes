@@ -1910,6 +1910,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsCloseBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsServerHandshakeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncTaskBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
@@ -4583,6 +4584,7 @@ public sealed partial class Lowering
                 IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+                IntrinsicKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                 IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
                 IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                 IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
@@ -4696,6 +4698,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                     BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
@@ -4821,6 +4824,14 @@ public sealed partial class Lowering
             {
                 SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
+
+            // A resource passed to an opaque function moves into the callee: with no borrowing, the
+            // caller cannot use it afterwards, and the callee is now responsible for its cleanup. So
+            // the caller's scope must not also drop it (that double-closes / double-frees). This is
+            // the function-application analogue of the aggregate/spawn move rules — it is what lets a
+            // combinator like Ashes.Net.Tls.Server.serveTls hand an accepted TlsSocket to a handler
+            // that closes it, without the combinator's own scope closing it a second time.
+            MarkResourceArgMoved(collectedArgs[i]);
 
             int target = NewTemp();
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));

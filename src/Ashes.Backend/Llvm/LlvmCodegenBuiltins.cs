@@ -1519,7 +1519,8 @@ internal static partial class LlvmCodegen
                 CreateInternalI64Global("__ashes_tls_ctx"),
                 CreateInternalI64Global("__ashes_tls_libssl_handle"),
                 rustlsReadCallback,
-                rustlsWriteCallback)
+                rustlsWriteCallback,
+                CreateInternalI64Global("__ashes_tls_server_config"))
             : default;
         LlvmValueHandle linkedTlsPayloadStartGlobal = default;
         LlvmValueHandle linkedTlsPayloadEndGlobal = default;
@@ -1546,6 +1547,7 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_step_tcp_accept_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_connect_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_handshake_task", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_step_tls_server_handshake_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_send_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_receive_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_close_task", LlvmApi.FunctionType(i64, [i64]));
@@ -1646,6 +1648,13 @@ internal static partial class LlvmCodegen
             (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
                 ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS handshake runtime is not implemented yet", "step_tls_handshake_todo"));
+
+        EmitRuntimeFunction(
+            "ashes_step_tls_server_handshake_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+                ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals, serverSide: true)
+                : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes server TLS handshake runtime is not implemented yet", "step_tls_server_handshake_todo"));
 
         EmitRuntimeFunction(
             "ashes_step_tls_send_task",
@@ -2105,6 +2114,105 @@ internal static partial class LlvmCodegen
             [
                 LlvmApi.BuildIntToPtr(builder, configHandle, state.I8Ptr, name + "_config_ptr"),
                 serverNameCstr,
+                LlvmApi.BuildBitCast(builder, outConnectionSlot, opaquePtr, name + "_out_connection")
+            ],
+            name);
+    }
+
+    // rustls_certified_key_build(cert_chain_pem, len, private_key_pem, len, out) -> rustls_result
+    private static LlvmValueHandle EmitRustlsCertifiedKeyBuild(
+        LlvmCodegenState state,
+        LlvmValueHandle libsslHandle,
+        LlvmValueHandle certPtr,
+        LlvmValueHandle certLen,
+        LlvmValueHandle keyPtr,
+        LlvmValueHandle keyLen,
+        LlvmValueHandle outKeySlot,
+        string name)
+    {
+        LlvmTypeHandle opaquePtr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I64, state.I8Ptr, state.I64, opaquePtr]);
+        LlvmValueHandle functionAddress = EmitTlsResolveSymbol(state, libsslHandle, "rustls_certified_key_build", name + "_resolve");
+        return EmitCallFunctionAddress(state,
+            functionAddress,
+            functionType,
+            [certPtr, certLen, keyPtr, keyLen, LlvmApi.BuildBitCast(state.Target.Builder, outKeySlot, opaquePtr, name + "_out_key")],
+            name);
+    }
+
+
+    // rustls_server_config_builder_new() -> *builder (safe defaults: default provider + versions)
+    private static LlvmValueHandle EmitRustlsServerConfigBuilderNew(LlvmCodegenState state, LlvmValueHandle libsslHandle, string name)
+    {
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, []);
+        LlvmValueHandle functionAddress = EmitTlsResolveSymbol(state, libsslHandle, "rustls_server_config_builder_new", name + "_resolve");
+        LlvmValueHandle builderPtr = EmitCallFunctionAddress(state, functionAddress, functionType, [], name);
+        return LlvmApi.BuildPtrToInt(state.Target.Builder, builderPtr, state.I64, name + "_handle");
+    }
+
+    // rustls_server_config_builder_set_certified_keys(builder, keys**, count) -> rustls_result
+    private static LlvmValueHandle EmitRustlsServerConfigBuilderSetCertifiedKeys(
+        LlvmCodegenState state,
+        LlvmValueHandle libsslHandle,
+        LlvmValueHandle builderHandle,
+        LlvmValueHandle keysArraySlot,
+        LlvmValueHandle count,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle opaquePtr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, opaquePtr, state.I64]);
+        LlvmValueHandle functionAddress = EmitTlsResolveSymbol(state, libsslHandle, "rustls_server_config_builder_set_certified_keys", name + "_resolve");
+        return EmitCallFunctionAddress(state,
+            functionAddress,
+            functionType,
+            [
+                LlvmApi.BuildIntToPtr(builder, builderHandle, state.I8Ptr, name + "_builder_ptr"),
+                LlvmApi.BuildBitCast(builder, keysArraySlot, opaquePtr, name + "_keys_ptr"),
+                count
+            ],
+            name);
+    }
+
+    // rustls_server_config_builder_build(builder, out_config**) -> rustls_result
+    private static LlvmValueHandle EmitRustlsServerConfigBuilderBuild(
+        LlvmCodegenState state,
+        LlvmValueHandle libsslHandle,
+        LlvmValueHandle builderHandle,
+        LlvmValueHandle outConfigSlot,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle opaquePtr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, opaquePtr]);
+        LlvmValueHandle functionAddress = EmitTlsResolveSymbol(state, libsslHandle, "rustls_server_config_builder_build", name + "_resolve");
+        return EmitCallFunctionAddress(state,
+            functionAddress,
+            functionType,
+            [
+                LlvmApi.BuildIntToPtr(builder, builderHandle, state.I8Ptr, name + "_builder_ptr"),
+                LlvmApi.BuildBitCast(builder, outConfigSlot, opaquePtr, name + "_out_config")
+            ],
+            name);
+    }
+
+    // rustls_server_connection_new(config, out_connection**) -> rustls_result
+    private static LlvmValueHandle EmitRustlsServerConnectionNew(
+        LlvmCodegenState state,
+        LlvmValueHandle libsslHandle,
+        LlvmValueHandle configHandle,
+        LlvmValueHandle outConnectionSlot,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle opaquePtr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, opaquePtr]);
+        LlvmValueHandle functionAddress = EmitTlsResolveSymbol(state, libsslHandle, "rustls_server_connection_new", name + "_resolve");
+        return EmitCallFunctionAddress(state,
+            functionAddress,
+            functionType,
+            [
+                LlvmApi.BuildIntToPtr(builder, configHandle, state.I8Ptr, name + "_config_ptr"),
                 LlvmApi.BuildBitCast(builder, outConnectionSlot, opaquePtr, name + "_out_connection")
             ],
             name);
@@ -2993,7 +3101,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle ContextGlobal,
         LlvmValueHandle LibsslHandleGlobal,
         LlvmValueHandle RustlsReadCallback,
-        LlvmValueHandle RustlsWriteCallback);
+        LlvmValueHandle RustlsWriteCallback,
+        LlvmValueHandle ServerConfigGlobal);
 
     private static LlvmValueHandle EmitLeafTaskCompletedStatus(LlvmCodegenState state)
         => LlvmApi.ConstInt(state.I64, 1, 0);
@@ -3713,12 +3822,24 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_connect_status");
     }
 
-    private static LlvmValueHandle EmitStepTlsHandshakeTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals)
+    /// <summary>
+    /// Steps a TLS handshake leaf task. <paramref name="serverSide"/> selects which side's session
+    /// is created on first entry: the client side builds a connection from the client context and
+    /// the server name in IoArg1; the server side builds (and caches, process-wide) a server config
+    /// from the certificate-chain PEM in IoArg1 and the private-key PEM in WaitData1, then creates a
+    /// server connection. Everything after session creation — the write/read/process handshake loop,
+    /// the WaitTlsWantRead/Write parking, and completion — is identical for both sides.
+    /// </summary>
+    private static LlvmValueHandle EmitStepTlsHandshakeTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, bool serverSide = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_handshake_status_slot");
         LlvmValueHandle errorCodeSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tls_handshake_error_code_slot");
         LlvmValueHandle errorStageSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tls_handshake_error_stage_slot");
+        LlvmValueHandle createStatusSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tls_handshake_create_status_slot");
+        LlvmValueHandle connectionHandleSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_handshake_connection_handle_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), createStatusSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), connectionHandleSlot);
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorStageSlot);
@@ -3761,34 +3882,120 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasSession, writeCheckBlock, createBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createBlock);
-        LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_handshake_socket");
-        LlvmValueHandle host = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_host");
-        LlvmValueHandle ctxHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ContextGlobal, "step_tls_handshake_ctx_handle");
-        LlvmValueHandle connectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_connection_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), connectionSlot);
-        LlvmValueHandle createStatus = EmitRustlsClientConnectionNew(
-            state,
-            libsslHandle,
-            ctxHandle,
-            EmitStringToCString(state, host, "step_tls_handshake_host_cstr"),
-            connectionSlot,
-            "step_tls_handshake_connection_new");
-        LlvmValueHandle connectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, connectionSlot, "step_tls_handshake_connection_ptr"), state.I64, "step_tls_handshake_connection_handle");
-        LlvmValueHandle createOk = LlvmApi.BuildAnd(builder,
-            EmitRustlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_connection"),
-            "step_tls_handshake_create_connection_ok");
-        LlvmApi.BuildCondBr(builder, createOk, storeSessionBlock, createSocketFailBlock);
+        if (!serverSide)
+        {
+            LlvmValueHandle host = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_host");
+            LlvmValueHandle ctxHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ContextGlobal, "step_tls_handshake_ctx_handle");
+            LlvmValueHandle connectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_connection_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), connectionSlot);
+            LlvmValueHandle createStatus = EmitRustlsClientConnectionNew(
+                state,
+                libsslHandle,
+                ctxHandle,
+                EmitStringToCString(state, host, "step_tls_handshake_host_cstr"),
+                connectionSlot,
+                "step_tls_handshake_connection_new");
+            LlvmApi.BuildStore(builder, createStatus, createStatusSlot);
+            LlvmValueHandle connectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, connectionSlot, "step_tls_handshake_connection_ptr"), state.I64, "step_tls_handshake_connection_handle");
+            LlvmApi.BuildStore(builder, connectionHandle, connectionHandleSlot);
+            LlvmValueHandle createOk = LlvmApi.BuildAnd(builder,
+                EmitRustlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_connection"),
+                "step_tls_handshake_create_connection_ok");
+            LlvmApi.BuildCondBr(builder, createOk, storeSessionBlock, createSocketFailBlock);
+        }
+        else
+        {
+            // Server session: get-or-build the process-wide server config from the PEM inputs
+            // (cert chain in IoArg1, private key in WaitData1), then create a server connection.
+            LlvmBasicBlockHandle buildConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_build_config");
+            LlvmBasicBlockHandle setKeysBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_set_keys");
+            LlvmBasicBlockHandle buildBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_builder_build");
+            LlvmBasicBlockHandle cacheConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_cache_config");
+            LlvmBasicBlockHandle connNewBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_server_conn_new");
+
+            LlvmValueHandle cachedConfig = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_cached_config");
+            LlvmValueHandle haveConfig = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, cachedConfig, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_config");
+            LlvmApi.BuildCondBr(builder, haveConfig, connNewBlock, buildConfigBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, buildConfigBlock);
+            LlvmValueHandle certStr = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_cert_pem");
+            LlvmValueHandle keyStr = LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tls_handshake_key_pem");
+            LlvmValueHandle certifiedKeySlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_certified_key_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), certifiedKeySlot);
+            LlvmValueHandle keyBuildStatus = EmitRustlsCertifiedKeyBuild(
+                state,
+                libsslHandle,
+                GetStringBytesPointer(state, certStr, "step_tls_handshake_cert_bytes"),
+                LoadStringLength(state, certStr, "step_tls_handshake_cert_len"),
+                GetStringBytesPointer(state, keyStr, "step_tls_handshake_key_bytes"),
+                LoadStringLength(state, keyStr, "step_tls_handshake_key_len"),
+                certifiedKeySlot,
+                "step_tls_handshake_certified_key_build");
+            LlvmApi.BuildStore(builder, keyBuildStatus, createStatusSlot);
+            LlvmApi.BuildCondBr(builder,
+                EmitRustlsResultIsOk(state, keyBuildStatus, "step_tls_handshake_key_build_ok"),
+                setKeysBlock, createSocketFailBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, setKeysBlock);
+            LlvmValueHandle builderHandle = EmitRustlsServerConfigBuilderNew(state, libsslHandle, "step_tls_handshake_config_builder_new");
+            LlvmValueHandle setKeysStatus = EmitRustlsServerConfigBuilderSetCertifiedKeys(
+                state,
+                libsslHandle,
+                builderHandle,
+                certifiedKeySlot,
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                "step_tls_handshake_set_certified_keys");
+            LlvmApi.BuildStore(builder, setKeysStatus, createStatusSlot);
+            LlvmApi.BuildCondBr(builder,
+                EmitRustlsResultIsOk(state, setKeysStatus, "step_tls_handshake_set_keys_ok"),
+                buildBlock, createSocketFailBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, buildBlock);
+            LlvmValueHandle configSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_config_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), configSlot);
+            LlvmValueHandle buildStatus = EmitRustlsServerConfigBuilderBuild(state, libsslHandle, builderHandle, configSlot, "step_tls_handshake_config_build");
+            LlvmApi.BuildStore(builder, buildStatus, createStatusSlot);
+            LlvmApi.BuildCondBr(builder,
+                EmitRustlsResultIsOk(state, buildStatus, "step_tls_handshake_config_build_ok"),
+                cacheConfigBlock, createSocketFailBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, cacheConfigBlock);
+            // The certified key is intentionally NOT freed: it is built once per process and the
+            // server config (also cached for the process lifetime) borrows it, so freeing it here
+            // dangles the config and crashes the second connection. Leaking one key is negligible.
+            LlvmApi.BuildStore(builder,
+                LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, configSlot, "step_tls_handshake_config_ptr"), state.I64, "step_tls_handshake_config_handle"),
+                globals.ServerConfigGlobal);
+            LlvmApi.BuildBr(builder, connNewBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, connNewBlock);
+            LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_config_for_conn");
+            LlvmValueHandle serverConnectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_server_connection_slot");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), serverConnectionSlot);
+            LlvmValueHandle connNewStatus = EmitRustlsServerConnectionNew(state, libsslHandle, configHandle, serverConnectionSlot, "step_tls_handshake_server_connection_new");
+            LlvmApi.BuildStore(builder, connNewStatus, createStatusSlot);
+            LlvmValueHandle serverConnectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, serverConnectionSlot, "step_tls_handshake_server_connection_ptr"), state.I64, "step_tls_handshake_server_connection_handle");
+            LlvmApi.BuildStore(builder, serverConnectionHandle, connectionHandleSlot);
+            LlvmValueHandle serverCreateOk = LlvmApi.BuildAnd(builder,
+                EmitRustlsResultIsOk(state, connNewStatus, "step_tls_handshake_server_create_ok"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, serverConnectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_server_have_connection"),
+                "step_tls_handshake_server_create_connection_ok");
+            LlvmApi.BuildCondBr(builder, serverCreateOk, storeSessionBlock, createSocketFailBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, storeSessionBlock);
-        LlvmValueHandle session = EmitCreateTlsSession(state, socket, connectionHandle, "step_tls_handshake_session");
+        LlvmValueHandle storeSocket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_handshake_store_socket");
+        LlvmValueHandle storeConnection = LlvmApi.BuildLoad2(builder, state.I64, connectionHandleSlot, "step_tls_handshake_store_connection");
+        LlvmValueHandle session = EmitCreateTlsSession(state, storeSocket, storeConnection, "step_tls_handshake_session");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, session, "step_tls_handshake_store_session");
         LlvmApi.BuildBr(builder, writeCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createSocketFailBlock);
-        LlvmApi.BuildStore(builder, createStatus, errorCodeSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I32, createStatusSlot, "step_tls_handshake_create_status_value"), errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), errorStageSlot);
-        _ = EmitTcpClose(state, socket);
+        LlvmValueHandle failSocket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_handshake_fail_socket");
+        _ = EmitTcpClose(state, failSocket);
         LlvmApi.BuildBr(builder, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, writeCheckBlock);

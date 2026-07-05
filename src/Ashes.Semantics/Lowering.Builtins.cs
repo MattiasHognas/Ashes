@@ -900,6 +900,7 @@ public sealed partial class Lowering
 
     private static int GetIntrinsicArity(IntrinsicKind kind) => kind switch
     {
+        IntrinsicKind.NetTlsServerHandshake => 3,
         IntrinsicKind.ParallelBoth => 2,
         IntrinsicKind.ParallelWithWorkers => 2,
         IntrinsicKind.FileWriteText => 2,
@@ -2019,6 +2020,46 @@ public sealed partial class Lowering
             IntrinsicKind.NetTlsConnect,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["TlsSocket"]))))
         );
+    }
+
+    // Ashes.Net.Tls.Server.handshake : Socket -> Str -> Str -> Task(Str, TlsSocket)
+    // (accepted TCP socket, certificate-chain PEM contents, private-key PEM contents)
+    private Binding.Intrinsic CreateNetTlsServerHandshakeBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTlsServerHandshake,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(_resolvedTypes["TlsSocket"])))))
+        );
+    }
+
+    private (int, TypeRef) LowerNetTlsServerHandshake(Expr socketArg, Expr certArg, Expr keyArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        Unify(prunedSocketType, _resolvedTypes["Socket"]);
+
+        // The accepted socket is consumed into the TLS session (which owns the fd from here on),
+        // so the caller's scope must not also close it.
+        MarkResourceArgMoved(socketArg);
+
+        using var certSpan = PushDiagnosticSpan(certArg);
+        var (certTemp, certType) = LowerExpr(certArg);
+        Unify(Prune(certType), new TypeRef.TStr());
+
+        using var keySpan = PushDiagnosticSpan(keyArg);
+        var (keyTemp, keyType) = LowerExpr(keyArg);
+        Unify(Prune(keyType), new TypeRef.TStr());
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTlsServerHandshakeTask(taskTemp, socketTemp, certTemp, keyTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["TlsSocket"]));
     }
 
     private Binding.Intrinsic CreateNetTlsSendBinding()
