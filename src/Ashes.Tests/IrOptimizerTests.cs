@@ -861,6 +861,20 @@ public sealed class IrOptimizerTests
         return ir;
     }
 
+    [Test]
+    public void Borrow_elision_rewrites_text_byte_length_operand()
+    {
+        // TextByteLength was missing from the optimizer's temp-rewrite and used-temp scans, so
+        // ElideTrivialBorrows saw the feeding Borrow as unused, elided it, and left TextTemp
+        // pointing at the deleted borrow's never-written temp (a null deref at runtime).
+        var ir = LowerAndOptimize("""let s = "nope" in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Text.byteLength(s)))""");
+        var byteLength = ir.EntryFunction.Instructions.OfType<IrInst.TextByteLength>().ShouldHaveSingleItem();
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { } load && load.Target == byteLength.TextTemp
+                || i is IrInst.Borrow { } borrow && borrow.Target == byteLength.TextTemp)
+            .ShouldBeTrue("TextByteLength must read a temp that is actually defined (LoadLocal or a kept Borrow).");
+    }
+
     private static IrProgram LowerAndOptimize(string source)
     {
         return IrOptimizer.Optimize(Lower(source));

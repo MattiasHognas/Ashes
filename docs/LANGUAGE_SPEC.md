@@ -88,6 +88,7 @@ Canonical built-ins available today include:
 - `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
 - `Ashes.Async.all(tasks)` returning `Task(E, List(A))`
 - `Ashes.Async.race(tasks)` returning `Task(E, A)`
+- `Ashes.Async.spawn(task)` returning `Unit`
 
 Shipped standard-library modules under the reserved `Ashes` namespace also include:
 
@@ -2143,6 +2144,15 @@ Desugars to:
 | `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
 | `Ashes.Async.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
 | `Ashes.Async.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
+| `Ashes.Async.spawn(task)` | `Task(E, A) -> Unit` |
+
+`Ashes.Async.spawn(task)` detaches a task for fire-and-forget execution: the task advances
+cooperatively whenever any `Ashes.Async.run` drive is blocked waiting (on a socket or timer), and
+its result is dropped when it completes. Ownership of any resources the task references (for
+example an accepted socket) moves into the detached task — the spawning scope no longer closes
+them, so the task must release its own resources. Detached tasks still in flight when the driving
+`run` completes (and the program exits) are abandoned. This is the concurrency primitive behind
+`Ashes.Net.Tcp.Server.serve`'s concurrent connection handling.
 
 ### 19.6.1 Ashes.Async.sleep
 

@@ -42,6 +42,8 @@ public static class BuiltinRegistry
         NetTcpSend,
         NetTcpReceive,
         NetTcpClose,
+        NetTcpListen,
+        NetTcpAccept,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,
@@ -51,6 +53,7 @@ public static class BuiltinRegistry
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
+        AsyncSpawn,
         AsyncRace,
         BytesEmpty,
         BytesSingleton,
@@ -328,6 +331,18 @@ public static class BuiltinRegistry
                     ["receive"] = new("receive", BuiltinValueKind.NetTcpReceive, IsCallable: true, Arity: 2),
                     ["close"] = new("close", BuiltinValueKind.NetTcpClose, IsCallable: true, Arity: 1)
                 }),
+            ["Ashes.Net.Tcp.Server"] = new(
+                "Ashes.Net.Tcp.Server",
+                "Ashes.Semantics.StdLib.Ashes.Net.Tcp.Server.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
+                    ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Http.Server"] = new(
+                "Ashes.Http.Server",
+                "Ashes.Semantics.StdLib.Ashes.Http.Server.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Net.Tls"] = new(
                 "Ashes.Net.Tls",
                 null,
@@ -348,6 +363,7 @@ public static class BuiltinRegistry
                     ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
                     ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
                     ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
+                    ["spawn"] = new("spawn", BuiltinValueKind.AsyncSpawn, IsCallable: true, Arity: 1),
                     ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Process"] = new(

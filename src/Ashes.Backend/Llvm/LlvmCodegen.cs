@@ -24,6 +24,10 @@ internal static partial class LlvmCodegen
     private const long SyscallLseek = 8;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
+    private const long SyscallBind = 49;
+    private const long SyscallListen = 50;
+    private const long SyscallSetsockopt = 54;
+    private const long SyscallAccept4 = 288;
     private const long SyscallFcntl = 72;
     private const long SyscallEpollCtl = 233;
     private const long SyscallEpollWait = 232;
@@ -87,6 +91,10 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallExit = 93;
     private const long Arm64SyscallSocket = 198;
     private const long Arm64SyscallConnect = 203;
+    private const long Arm64SyscallBind = 200;
+    private const long Arm64SyscallListen = 201;
+    private const long Arm64SyscallSetsockopt = 208;
+    private const long Arm64SyscallAccept4 = 242;
     private const long Arm64SyscallFcntl = 25;
     private const long Arm64SyscallEpollCreate1 = 20;
     private const long Arm64SyscallEpollCtl = 21;
@@ -111,6 +119,11 @@ internal static partial class LlvmCodegen
     private const ushort WindowsPollReadNormal = 0x0100;
     private const ushort WindowsPollWriteNormal = 0x0010;
     private const int WindowsPollFdSize = 16;
+
+    // Max WSAPoll entries in the detached-task wait (slot 0 = the driving task; the rest are
+    // detached socket waits). Overflow tasks are not polled that round — they are stepped again
+    // on the next wait — so this caps poll width, not concurrency.
+    private const int DetachedPollFdCapacity = 256;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
     private const int LinuxRtldNow = 2;
@@ -133,6 +146,8 @@ internal static partial class LlvmCodegen
     private const string TcpInvalidUtf8Message = "Ashes.Net.Tcp.receive() encountered invalid UTF-8";
     private const string TcpInvalidMaxBytesMessage = "Ashes.Net.Tcp.receive() maxBytes must be positive";
     private const string TcpResolveFailedMessage = "Ashes.Net.Tcp.connect() could not resolve host";
+    private const string TcpListenFailedMessage = "Ashes.Net.Tcp.Server.listen() failed";
+    private const string TcpAcceptFailedMessage = "Ashes.Net.Tcp.Server.accept() failed";
     private const string HttpHttpsNotSupportedMessage = "https not supported";
     private const string HttpMalformedUrlMessage = "malformed URL";
     private const string HttpMalformedResponseMessage = "malformed HTTP response";
@@ -425,10 +440,14 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
             || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
             || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpListen>(program)
+            || ProgramUsesInstruction<IrInst.NetTcpAccept>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpListenTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateTcpAcceptTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
@@ -437,6 +456,7 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
             || ProgramUsesInstruction<IrInst.RunTask>(program)
+            || ProgramUsesInstruction<IrInst.SpawnTask>(program)
             || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
@@ -633,6 +653,10 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
             windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
             LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            LlvmValueHandle windowsListenImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_listen");
+            LlvmApi.SetLinkage(windowsListenImport, LlvmLinkage.External);
+            LlvmValueHandle windowsAcceptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_accept");
+            LlvmApi.SetLinkage(windowsAcceptImport, LlvmLinkage.External);
             windowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
             LlvmApi.SetLinkage(windowsLoadLibraryImport, LlvmLinkage.External);
             windowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");
@@ -685,6 +709,8 @@ internal static partial class LlvmCodegen
         {
             windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
             LlvmApi.SetLinkage(windowsSleepImport, LlvmLinkage.External);
+            LlvmValueHandle windowsGetTickCount64Import = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetTickCount64");
+            LlvmApi.SetLinkage(windowsGetTickCount64Import, LlvmLinkage.External);
         }
 
         if (usesWindowsProcess)
@@ -1383,6 +1409,8 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpSend tcpSend => StoreTemp(state, tcpSend.Target, EmitTcpSendAbiCall(state, LoadTemp(state, tcpSend.SocketTemp), LoadTemp(state, tcpSend.TextTemp))),
             IrInst.NetTcpReceive tcpReceive => StoreTemp(state, tcpReceive.Target, EmitTcpReceiveAbiCall(state, LoadTemp(state, tcpReceive.SocketTemp), LoadTemp(state, tcpReceive.MaxBytesTemp))),
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
+            IrInst.NetTcpListen tcpListen => StoreTemp(state, tcpListen.Target, EmitTcpListenAbiCall(state, LoadTemp(state, tcpListen.PortTemp))),
+            IrInst.NetTcpAccept tcpAccept => StoreTemp(state, tcpAccept.Target, EmitTcpAcceptAbiCall(state, LoadTemp(state, tcpAccept.SocketTemp))),
             IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state)),
             IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(state, LoadTemp(state, bytesSingleton.ByteTemp))),
             IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
@@ -1427,6 +1455,9 @@ internal static partial class LlvmCodegen
             // RunTask: drive task to completion via event loop.
             IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
                 EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
+            // SpawnTask: detach a task (fire-and-forget); it advances while drivers wait.
+            IrInst.SpawnTask spawnTask => StoreTemp(state, spawnTask.Target,
+                EmitSpawnTask(state, LoadTemp(state, spawnTask.TaskTemp))),
             // Structured parallelism (Ashes.Parallel.both).
             IrInst.ParallelFork parallelFork => StoreTemp(state, parallelFork.DescTarget,
                 EmitParallelFork(state, LoadTemp(state, parallelFork.RightClosureTemp))),
@@ -1459,6 +1490,10 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpReceive, LoadTemp(state, tcpReceiveTask.SocketTemp), LoadTemp(state, tcpReceiveTask.MaxBytesTemp), "tcp_receive_task")),
             IrInst.CreateTcpCloseTask tcpCloseTask => StoreTemp(state, tcpCloseTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpClose, LoadTemp(state, tcpCloseTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_task")),
+            IrInst.CreateTcpListenTask tcpListenTask => StoreTemp(state, tcpListenTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpListen, LoadTemp(state, tcpListenTask.PortTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_listen_task")),
+            IrInst.CreateTcpAcceptTask tcpAcceptTask => StoreTemp(state, tcpAcceptTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpAccept, LoadTemp(state, tcpAcceptTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_accept_task")),
             IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateHttpGet, LoadTemp(state, httpGetTask.UrlTemp), LlvmApi.ConstInt(state.I64, 0, 0), "http_get_task")),
             IrInst.CreateHttpPostTask httpPostTask => StoreTemp(state, httpPostTask.Target,
@@ -2026,6 +2061,10 @@ internal static partial class LlvmCodegen
             SyscallLseek => Arm64SyscallLseek,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,
+            SyscallBind => Arm64SyscallBind,
+            SyscallListen => Arm64SyscallListen,
+            SyscallSetsockopt => Arm64SyscallSetsockopt,
+            SyscallAccept4 => Arm64SyscallAccept4,
             SyscallFcntl => Arm64SyscallFcntl,
             SyscallEpollCtl => Arm64SyscallEpollCtl,
             SyscallEpollWait => Arm64SyscallEpollPwait,

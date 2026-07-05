@@ -208,6 +208,8 @@ public abstract record IrInst
     public sealed record NetTcpSend(int Target, int SocketTemp, int TextTemp) : IrInst;
     public sealed record NetTcpReceive(int Target, int SocketTemp, int MaxBytesTemp) : IrInst;
     public sealed record NetTcpClose(int Target, int SocketTemp) : IrInst;
+    public sealed record NetTcpListen(int Target, int PortTemp) : IrInst;
+    public sealed record NetTcpAccept(int Target, int SocketTemp) : IrInst;
 
     // Ashes.Bytes operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
     public sealed record BytesEmpty(int Target) : IrInst;
@@ -441,6 +443,15 @@ public abstract record IrInst
     public sealed record RunTask(int Target, int TaskTemp) : IrInst;
 
     /// <summary>
+    /// Detaches a task for fire-and-forget cooperative execution (Ashes.Async.spawn).
+    /// The task frame is copied into a fresh private arena chunk and appended to the runtime's
+    /// detached-task list; the scheduler steps detached tasks (with their private arena installed)
+    /// whenever a driver blocks waiting for a pending leaf, and frees the private arena when the
+    /// task completes. The result value is dropped. Target receives Unit.
+    /// </summary>
+    public sealed record SpawnTask(int Target, int TaskTemp) : IrInst;
+
+    /// <summary>
     /// Structured parallelism (Ashes.Parallel.both). Spawns a worker thread to evaluate the
     /// <c>RightClosureTemp</c> thunk (applied to Unit) in its own per-thread arena, or — when
     /// the worker budget is exhausted — evaluates it inline. <c>DescTarget</c> receives a
@@ -551,6 +562,18 @@ public abstract record IrInst
     /// The task is completed by the runtime/task runner rather than a coroutine body.
     /// </summary>
     public sealed record CreateTcpCloseTask(int Target, int SocketTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP listen (bind + listen on a local port).
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpListenTask(int Target, int PortTemp) : IrInst;
+
+    /// <summary>
+    /// Creates a leaf networking task for TCP accept (accept one connection from a listener).
+    /// The task is completed by the runtime/task runner rather than a coroutine body.
+    /// </summary>
+    public sealed record CreateTcpAcceptTask(int Target, int SocketTemp) : IrInst;
 
     /// <summary>
     /// Creates a leaf networking task for HTTP GET.
@@ -683,7 +706,10 @@ public static class TaskStructLayout
     public const int WaitHandle = 72;      // pending wait handle / socket (i64)
     public const int WaitData0 = 80;       // pending wait scratch slot 0 (i64)
     public const int WaitData1 = 88;       // pending wait scratch slot 1 (i64)
-    public const int HeaderSize = 96;      // total header size in bytes
+    public const int FrameSizeBytes = 96;  // total task struct size incl. captures + live slots (i64)
+    public const int ArenaCursor = 104;    // detached task's private arena cursor; 0 unless spawned (i64)
+    public const int ArenaEnd = 112;       // detached task's private arena end; 0 unless spawned (i64)
+    public const int HeaderSize = 120;     // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 
@@ -699,6 +725,10 @@ public static class TaskStructLayout
     public const long StateTcpReceive = -12;
     /// <summary>State index value indicating a leaf TCP close task.</summary>
     public const long StateTcpClose = -13;
+    /// <summary>State index value indicating a leaf TCP listen task.</summary>
+    public const long StateTcpListen = -16;
+    /// <summary>State index value indicating a leaf TCP accept task.</summary>
+    public const long StateTcpAccept = -17;
     /// <summary>State index value indicating a leaf HTTP GET task.</summary>
     public const long StateHttpGet = -14;
     /// <summary>State index value indicating a leaf HTTP POST task.</summary>

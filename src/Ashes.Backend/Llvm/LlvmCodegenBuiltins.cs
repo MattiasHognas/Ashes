@@ -1542,6 +1542,8 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_step_tcp_send_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tcp_receive_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tcp_close_task", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_step_tcp_listen_task", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_step_tcp_accept_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_connect_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_handshake_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_tls_send_task", LlvmApi.FunctionType(i64, [i64]));
@@ -1549,6 +1551,17 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_step_tls_close_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_task_until_wait_or_done", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_wait_pending_task_list", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_run_detached", LlvmApi.FunctionType(i64, []));
+        DeclareRuntimeFunction("ashes_detached_wait_meta", LlvmApi.FunctionType(i64, []));
+        DeclareRuntimeFunction("ashes_detached_advance_timers", LlvmApi.FunctionType(i64, [i64]));
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            DeclareRuntimeFunction("ashes_detached_fill_pollfds", LlvmApi.FunctionType(i64, [i64, i64]));
+        }
+        else
+        {
+            DeclareRuntimeFunction("ashes_detached_register_epoll", LlvmApi.FunctionType(i64, [i64]));
+        }
         DeclareRuntimeFunction("ashes_step_http_get_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_http_post_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_cancel_task", LlvmApi.FunctionType(i64, [i64]));
@@ -1613,6 +1626,16 @@ internal static partial class LlvmCodegen
             (state, fn) => EmitStepTcpCloseTask(state, LlvmApi.GetParam(fn, 0)));
 
         EmitRuntimeFunction(
+            "ashes_step_tcp_listen_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpListenTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_step_tcp_accept_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepTcpAcceptTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
             "ashes_step_tls_connect_task",
             LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitStepTlsConnectTask(state, LlvmApi.GetParam(fn, 0)));
@@ -1654,6 +1677,36 @@ internal static partial class LlvmCodegen
             "ashes_wait_pending_task_list",
             LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitWaitForPendingTaskList(state, LlvmApi.GetParam(fn, 0), "runtime_wait_tasks"));
+
+        EmitRuntimeFunction(
+            "ashes_run_detached",
+            LlvmApi.FunctionType(i64, []),
+            (state, fn) => EmitRunDetachedBody(state));
+
+        EmitRuntimeFunction(
+            "ashes_detached_wait_meta",
+            LlvmApi.FunctionType(i64, []),
+            (state, fn) => EmitDetachedWaitMetaBody(state));
+
+        EmitRuntimeFunction(
+            "ashes_detached_advance_timers",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitDetachedAdvanceTimersBody(state, LlvmApi.GetParam(fn, 0)));
+
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            EmitRuntimeFunction(
+                "ashes_detached_fill_pollfds",
+                LlvmApi.FunctionType(i64, [i64, i64]),
+                (state, fn) => EmitDetachedFillPollFdsBody(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
+        }
+        else
+        {
+            EmitRuntimeFunction(
+                "ashes_detached_register_epoll",
+                LlvmApi.FunctionType(i64, [i64]),
+                (state, fn) => EmitDetachedRegisterEpollBody(state, LlvmApi.GetParam(fn, 0)));
+        }
 
         EmitRuntimeFunction(
             "ashes_step_http_get_task",
@@ -1878,6 +1931,26 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitTcpCloseAbiCall(LlvmCodegenState state, LlvmValueHandle socket)
         => EmitNetworkingRuntimeCall(state, "ashes_tcp_close", [socket], "tcp_close_abi");
+
+    private static LlvmValueHandle EmitTcpListenAbiCall(LlvmCodegenState state, LlvmValueHandle port)
+        => EmitRunTask(
+            state,
+            EmitCreateLeafNetworkingTask(
+                state,
+                TaskStructLayout.StateTcpListen,
+                port,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "tcp_listen_abi_task"));
+
+    private static LlvmValueHandle EmitTcpAcceptAbiCall(LlvmCodegenState state, LlvmValueHandle socket)
+        => EmitRunTask(
+            state,
+            EmitCreateLeafNetworkingTask(
+                state,
+                TaskStructLayout.StateTcpAccept,
+                socket,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "tcp_accept_abi_task"));
 
     private static LlvmValueHandle EmitTlsCloseAbiCall(LlvmCodegenState state, LlvmValueHandle session)
         => EmitRunTask(
@@ -3395,6 +3468,223 @@ internal static partial class LlvmCodegen
             taskPtr,
             EmitTcpClose(state, LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_close_socket")),
             "step_tcp_close_complete");
+    }
+
+    /// <summary>
+    /// Leaf step for Ashes.Net.Tcp.Server.listen(port): open a TCP socket, set SO_REUSEADDR, bind
+    /// INADDR_ANY:port, listen, mark non-blocking, and complete with Ok(socket). All operations are
+    /// synchronous (bind/listen do not block), so this never parks. Linux (x64/arm64) uses raw
+    /// syscalls; Windows uses WSAStartup + winsock socket/bind/listen.
+    /// </summary>
+    private static LlvmValueHandle EmitStepTcpListenTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        bool linux = IsLinuxFlavor(state.Flavor);
+        LlvmValueHandle port = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_listen_port");
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_listen_status_slot");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+
+        LlvmBasicBlockHandle afterSocketBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_after_socket");
+        LlvmBasicBlockHandle afterBindBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_after_bind");
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_success");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_fail");
+        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_finish");
+
+        LlvmValueHandle socketFd;
+        if (linux)
+        {
+            socketFd = EmitLinuxSyscall(
+                state,
+                SyscallSocket,
+                LlvmApi.ConstInt(state.I64, 2, 0),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "step_tcp_listen_socket_call");
+        }
+        else
+        {
+            LlvmTypeHandle wsadataType = LlvmApi.ArrayType2(state.I8, 512);
+            LlvmValueHandle wsadata = LlvmApi.BuildAlloca(builder, wsadataType, "step_tcp_listen_wsadata");
+            EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_wsadata_ptr"), "step_tcp_listen_wsastartup");
+            socketFd = EmitWindowsSocket(state, 2, 1, 6, "step_tcp_listen_socket_call");
+        }
+        LlvmValueHandle socketSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_listen_socket_slot");
+        LlvmApi.BuildStore(builder, socketFd, socketSlot);
+        LlvmApi.BuildCondBr(builder,
+            linux
+                ? LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, socketFd, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_socket_ok")
+                : LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, socketFd, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), "step_tcp_listen_socket_ok"),
+            afterSocketBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterSocketBlock);
+        if (linux)
+        {
+            // SO_REUSEADDR (level SOL_SOCKET=1, optname=2, optval=1) — best effort, Linux only.
+            LlvmValueHandle optvalSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tcp_listen_optval");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), optvalSlot);
+            _ = EmitLinuxSyscall6(
+                state,
+                SyscallSetsockopt,
+                socketFd,
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 2, 0),
+                LlvmApi.BuildPtrToInt(builder, optvalSlot, state.I64, "step_tcp_listen_optval_ptr"),
+                LlvmApi.ConstInt(state.I64, 4, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "step_tcp_listen_setsockopt");
+        }
+        // sockaddr_in { family=AF_INET(2), port=htons(port), addr=INADDR_ANY(0) }
+        LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, "step_tcp_listen_sockaddr");
+        LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_sockaddr_bytes");
+        LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+        LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, state.I64Ptr, "step_tcp_listen_sockaddr_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 8, 0)], "step_tcp_listen_sockaddr_tail"),
+            state.I64Ptr,
+            "step_tcp_listen_sockaddr_tail_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(i16, 2, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, i16Ptr, "step_tcp_listen_family_ptr"));
+        LlvmValueHandle listenPortPtr = LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 2, 0)], "step_tcp_listen_port_ptr_byte");
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildTrunc(builder, EmitByteSwap16(state, port, "step_tcp_listen_port_network"), i16, "step_tcp_listen_port_i16"),
+            LlvmApi.BuildBitCast(builder, listenPortPtr, i16Ptr, "step_tcp_listen_port_ptr"));
+        LlvmValueHandle bindOk;
+        if (linux)
+        {
+            LlvmValueHandle bindResult = EmitLinuxSyscall(
+                state,
+                SyscallBind,
+                socketFd,
+                LlvmApi.BuildPtrToInt(builder, sockaddrBytes, state.I64, "step_tcp_listen_sockaddr_ptr"),
+                LlvmApi.ConstInt(state.I64, 16, 0),
+                "step_tcp_listen_bind_call");
+            bindOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, bindResult, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_bind_ok");
+        }
+        else
+        {
+            LlvmValueHandle bindResult = EmitWindowsBind(state, socketFd, sockaddrBytes, 16, "step_tcp_listen_bind_call");
+            bindOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bindResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_listen_bind_ok");
+        }
+        LlvmApi.BuildCondBr(builder, bindOk, afterBindBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterBindBlock);
+        LlvmValueHandle listenOk;
+        if (linux)
+        {
+            LlvmValueHandle listenResult = EmitLinuxSyscall(
+                state,
+                SyscallListen,
+                socketFd,
+                LlvmApi.ConstInt(state.I64, 128, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "step_tcp_listen_listen_call");
+            listenOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, listenResult, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_listen_ok");
+        }
+        else
+        {
+            LlvmValueHandle listenResult = EmitWindowsListen(state, socketFd, 128, "step_tcp_listen_listen_call");
+            listenOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, listenResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_listen_listen_ok");
+        }
+        LlvmApi.BuildCondBr(builder, listenOk, successBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
+        EmitSetSocketNonBlocking(state, socketFd, "step_tcp_listen_nonblocking");
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "step_tcp_listen_socket_ok_value")), "step_tcp_listen_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpListenFailedMessage)), "step_tcp_listen_fail_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_listen_status");
+    }
+
+    /// <summary>
+    /// Leaf step for Ashes.Net.Tcp.Server.accept(listener): accept one connection (accept4 with
+    /// SOCK_NONBLOCK). On success completes with Ok(client socket); when no connection is ready
+    /// (EWOULDBLOCK) parks on WaitSocketRead of the listener; otherwise completes with an error.
+    /// Linux uses accept4(SOCK_NONBLOCK); Windows uses winsock accept + WSAPoll readiness.
+    /// </summary>
+    private static LlvmValueHandle EmitStepTcpAcceptTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        bool linux = IsLinuxFlavor(state.Flavor);
+        LlvmValueHandle listener = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_accept_listener");
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_accept_status_slot");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_success");
+        LlvmBasicBlockHandle pendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_pending_check");
+        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_pending");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_fail");
+        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_finish");
+
+        LlvmValueHandle clientFd;
+        LlvmValueHandle acceptOk;
+        if (linux)
+        {
+            // accept4(listener, NULL, NULL, SOCK_NONBLOCK) — client inherits non-blocking.
+            clientFd = EmitLinuxSyscall4(
+                state,
+                SyscallAccept4,
+                listener,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 2048, 0),
+                "step_tcp_accept_call");
+            acceptOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, clientFd, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_ok");
+        }
+        else
+        {
+            clientFd = EmitWindowsAccept(state, listener, "step_tcp_accept_call");
+            acceptOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, clientFd, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), "step_tcp_accept_ok");
+        }
+        LlvmApi.BuildCondBr(builder, acceptOk, successBlock, pendingCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
+        if (!linux)
+        {
+            // Windows accepted sockets do not reliably inherit non-blocking mode; set it explicitly.
+            EmitSetSocketNonBlocking(state, clientFd, "step_tcp_accept_client_nonblocking");
+        }
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, clientFd), "step_tcp_accept_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingCheckBlock);
+        LlvmValueHandle wouldBlock;
+        if (linux)
+        {
+            wouldBlock = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, clientFd, LlvmApi.ConstInt(state.I64, unchecked((ulong)LinuxErrWouldBlock), 1), "step_tcp_accept_would_block");
+        }
+        else
+        {
+            LlvmValueHandle wsaError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_accept_error"), state.I64, "step_tcp_accept_error_i64");
+            wouldBlock = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, wsaError, LlvmApi.ConstInt(state.I64, WindowsWsaErrorWouldBlock, 0), "step_tcp_accept_would_block");
+        }
+        LlvmApi.BuildCondBr(builder, wouldBlock, pendingBlock, failBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
+        LlvmApi.BuildStore(builder,
+            EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketRead, listener, "step_tcp_accept_pending_store"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpAcceptFailedMessage)), "step_tcp_accept_fail_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_accept_status");
     }
 
     private static LlvmValueHandle EmitStepTlsConnectTask(LlvmCodegenState state, LlvmValueHandle taskPtr)

@@ -25,6 +25,10 @@
       LogicalName="Ashes.Semantics.StdLib.Ashes.HashMap.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\HashTrie.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.HashTrie.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Net.Tcp.Server.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Tcp.Server.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Http.Server.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Http.Server.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Parallel.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Parallel.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Maybe.ash"

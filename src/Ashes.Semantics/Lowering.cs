@@ -57,6 +57,10 @@ public sealed partial class Lowering
     // StateMachineTransform), not a blocking driver (IrInst.RunTask). Outside any coroutine body an
     // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
     private bool _inCoroutineBody;
+
+    // The `async` intrinsic binding, created once at root-scope setup and re-seeded into every lambda
+    // scope so a function body can itself build a task with `async(E)`.
+    private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
 
     // Source location tracking for debug info
@@ -414,7 +418,10 @@ public sealed partial class Lowering
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        rootScope["async"] = CreateAsyncTaskBinding();
+        // Create the `async` binding once (it allocates a generalized type var) and reuse the same
+        // instance in every lambda scope, so re-seeding it does not consume a fresh type var per lambda.
+        _asyncBinding = CreateAsyncTaskBinding();
+        rootScope["async"] = _asyncBinding;
         if (_hasAshesIO)
         {
             AddStdIOBindings(rootScope);
@@ -1897,6 +1904,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpListenBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpAcceptBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsConnectBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsSendBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsReceiveBinding().S.Body),
@@ -1905,6 +1914,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncTaskBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSleepBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSpawnBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerQualifiedBuiltinFunctionReference(name, CreateBytesEmptyBinding().S.Body),
@@ -3320,6 +3330,14 @@ public sealed partial class Lowering
 
         _lambdaDepth++;
 
+        // A lambda body is its own function and is NOT run through StateMachineTransform, so an `await`
+        // inside it must lower to a blocking RunTask, not a coroutine-split AwaitTask. Only the body of
+        // an `async(E)` (lowered via EmitCoroutineBody) is a suspending coroutine. Without this reset,
+        // `_inCoroutineBody` leaks from an enclosing async into nested lambdas, emitting AwaitTask into a
+        // never-split function — which corrupts heap results across the un-split await (segfault).
+        var savedInCoroutineBody = _inCoroutineBody;
+        _inCoroutineBody = false;
+
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
         // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
@@ -3351,6 +3369,14 @@ public sealed partial class Lowering
 
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        // Re-seed the always-available root-scope intrinsic `async` (like AddStdIOBindings below) so a
+        // function body may itself build a task with `async(E)` — e.g. a `serve`/handler combinator.
+        // Without this, `async` (an unqualified root-scope binding) is invisible inside any lambda body.
+        // Reuse the cached instance so no fresh type var is consumed per lambda.
+        if (_asyncBinding is not null)
+        {
+            scope["async"] = _asyncBinding;
+        }
         if (_hasAshesIO)
         {
             AddStdIOBindings(scope);
@@ -3797,6 +3823,7 @@ public sealed partial class Lowering
         }
 
         _lambdaDepth--;
+        _inCoroutineBody = savedInCoroutineBody;
 
         _linearReuseNames.Clear();
         foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
@@ -4550,6 +4577,8 @@ public sealed partial class Lowering
                 IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                IntrinsicKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+                IntrinsicKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
                 IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
@@ -4559,6 +4588,7 @@ public sealed partial class Lowering
                 IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
                 IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                 IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                IntrinsicKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
                 IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
                 IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                 IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
@@ -4660,6 +4690,8 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
@@ -4668,6 +4700,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),

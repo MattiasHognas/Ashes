@@ -129,7 +129,10 @@ internal static partial class LlvmImageLinker
         int wsaSendHintOffset = WriteHintName(rdataStream, 0, "WSASend");
         int wsaRecvHintOffset = WriteHintName(rdataStream, 0, "WSARecv");
         int wsaPollHintOffset = WriteHintName(rdataStream, 0, "WSAPoll");
+        int listenHintOffset = WriteHintName(rdataStream, 0, "listen");
+        int acceptHintOffset = WriteHintName(rdataStream, 0, "accept");
         int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
+        int getTickCount64HintOffset = WriteHintName(rdataStream, 0, "GetTickCount64");
         int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
         int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
         int createIoCompletionPortHintOffset = WriteHintName(rdataStream, 0, "CreateIoCompletionPort");
@@ -156,9 +159,9 @@ internal static partial class LlvmImageLinker
         }
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset, getSystemInfoHintOffset];
+        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset, getSystemInfoHintOffset, getTickCount64HintOffset];
         int[] shell32Hints = [commandLineToArgvHintOffset];
-        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset];
+        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset, listenHintOffset, acceptHintOffset];
         int[] crypt32Hints = [certOpenSystemStoreHintOffset, certEnumCertificatesInStoreHintOffset, certCloseStoreHintOffset];
 
         // Write IAT (Import Address Table) — 8 bytes per entry + 8-byte null terminator per DLL
@@ -267,6 +270,7 @@ internal static partial class LlvmImageLinker
         ulong getExitCodeProcessIatVa = kernel32IatVa + 21 * 8;
         ulong createThreadIatVa = kernel32IatVa + 22 * 8;
         ulong getSystemInfoIatVa = kernel32IatVa + 23 * 8;
+        ulong getTickCount64IatVa = kernel32IatVa + 24 * 8;
         ulong commandLineToArgvIatVa = shell32IatVa;
         ulong wsaStartupIatVa = ws2IatVa;
         ulong socketIatVa = ws2IatVa + 1 * 8;
@@ -282,6 +286,8 @@ internal static partial class LlvmImageLinker
         ulong wsaSendIatVa = ws2IatVa + 11 * 8;
         ulong wsaRecvIatVa = ws2IatVa + 12 * 8;
         ulong wsaPollIatVa = ws2IatVa + 13 * 8;
+        ulong listenIatVa = ws2IatVa + 14 * 8;
+        ulong acceptIatVa = ws2IatVa + 15 * 8;
         ulong certOpenSystemStoreIatVa = crypt32IatVa;
         ulong certEnumCertificatesInStoreIatVa = crypt32IatVa + 1 * 8;
         ulong certCloseStoreIatVa = crypt32IatVa + 2 * 8;
@@ -312,6 +318,7 @@ internal static partial class LlvmImageLinker
             ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
             ["__imp_LocalFree"] = localFreeIatVa,
             ["__imp_Sleep"] = sleepIatVa,
+            ["__imp_GetTickCount64"] = getTickCount64IatVa,
             ["__imp_VirtualAlloc"] = virtualAllocIatVa,
             ["__imp_VirtualFree"] = virtualFreeIatVa,
             ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
@@ -333,6 +340,8 @@ internal static partial class LlvmImageLinker
             ["__imp_WSASend"] = wsaSendIatVa,
             ["__imp_WSARecv"] = wsaRecvIatVa,
             ["__imp_WSAPoll"] = wsaPollIatVa,
+            ["__imp_listen"] = listenIatVa,
+            ["__imp_accept"] = acceptIatVa,
             ["__imp_CertOpenSystemStoreA"] = certOpenSystemStoreIatVa,
             ["__imp_CertEnumCertificatesInStore"] = certEnumCertificatesInStoreIatVa,
             ["__imp_CertCloseStore"] = certCloseStoreIatVa,

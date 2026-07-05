@@ -874,6 +874,8 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpSend
             or BuiltinRegistry.BuiltinValueKind.NetTcpReceive
             or BuiltinRegistry.BuiltinValueKind.NetTcpClose
+            or BuiltinRegistry.BuiltinValueKind.NetTcpListen
+            or BuiltinRegistry.BuiltinValueKind.NetTcpAccept
             or BuiltinRegistry.BuiltinValueKind.NetTlsConnect
             or BuiltinRegistry.BuiltinValueKind.NetTlsSend
             or BuiltinRegistry.BuiltinValueKind.NetTlsReceive
@@ -888,6 +890,8 @@ public sealed partial class Lowering
             or IntrinsicKind.NetTcpSend
             or IntrinsicKind.NetTcpReceive
             or IntrinsicKind.NetTcpClose
+            or IntrinsicKind.NetTcpListen
+            or IntrinsicKind.NetTcpAccept
             or IntrinsicKind.NetTlsConnect
             or IntrinsicKind.NetTlsSend
             or IntrinsicKind.NetTlsReceive
@@ -992,6 +996,54 @@ public sealed partial class Lowering
 
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpConnectTask(taskTemp, hostTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTcpListen(Expr portArg)
+    {
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tcp.Server.listen() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpListenTask(taskTemp, portTemp));
+        return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
+    {
+        using var socketSpan = PushDiagnosticSpan(socketArg);
+        CheckUseAfterDrop(socketArg);
+        var (socketTemp, socketType) = LowerExpr(socketArg);
+        var prunedSocketType = Prune(socketType);
+        if (prunedSocketType is TypeRef.TNever)
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        if (!TryRequireSocketType(prunedSocketType, socketArg, "Ashes.Net.Tcp.Server.accept() expects Socket."))
+        {
+            return (socketTemp, prunedSocketType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateTcpAcceptTask(taskTemp, socketTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
     }
 
@@ -1945,6 +1997,22 @@ public sealed partial class Lowering
         );
     }
 
+    private Binding.Intrinsic CreateNetTcpListenBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTcpListen,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"])))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetTcpAcceptBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetTcpAccept,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Socket"])))
+        );
+    }
+
     private Binding.Intrinsic CreateNetTlsConnectBinding()
     {
         return new Binding.Intrinsic(
@@ -2060,6 +2128,62 @@ public sealed partial class Lowering
             IntrinsicKind.AsyncSleep,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), taskType))
         );
+    }
+
+    // Ashes.Async.spawn : Task(E, A) -> Unit
+    private Binding.Intrinsic CreateAsyncSpawnBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncSpawn,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, _resolvedTypes["Unit"]))
+        );
+    }
+
+    /// <summary>
+    /// Ashes.Async.spawn(task) — detach a task for fire-and-forget cooperative execution.
+    /// The task's frame is copied into a private arena and it advances whenever any driver
+    /// blocks waiting on a pending leaf; its result is dropped.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncSpawn(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+
+        var (taskTemp, taskType) = LowerExpr(taskArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedTaskType);
+
+        // Ownership of every resource the spawned task references moves into the detached task:
+        // the task outlives the spawner's scope, so that scope must not drop (close) them — the
+        // handler owns its connection and closes it itself. Mirrors the aggregate/closure move rules.
+        foreach (var freeName in FreeVars(taskArg, []))
+        {
+            if (LookupOwnedValue(freeName) is { IsDropped: false } moved
+                && (moved.IsResource || moved.IsResourceBearing))
+            {
+                moved.IsDropped = true;
+            }
+        }
+
+        int unitTemp = NewTemp();
+        Emit(new IrInst.SpawnTask(unitTemp, taskTemp));
+        return (unitTemp, _resolvedTypes["Unit"]);
     }
 
     // Ashes.Async.all : List(Task(E, A)) -> Task(E, List(A))

@@ -159,6 +159,43 @@ Current HTTP support is intentionally small:
 - `receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `close(socket)` returning `Task(Str, Unit)`
 
+### `Ashes.Net.Tcp.Server`
+
+TCP server support. `listen`/`accept` are the primitives; `serve` is the combinator built on them.
+
+- `listen(port)` returning `Task(Str, Socket)` — bind `INADDR_ANY:port`, `listen`, and return the
+  listening socket (non-blocking).
+- `accept(listener)` returning `Task(Str, Socket)` — accept one connection, returning the client
+  socket. Suspends (parks on the listener) until a connection is ready, so it is used inside `async`.
+- `serve(port)(handler)` returning `Task(Str, Unit)` — the server lifecycle. Binds the port, then
+  loops accepting connections, spawning `handler` on each (`Ashes.Async.spawn`), so connections are
+  served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
+  owns its connection and runs detached — it must close the socket itself, its result is dropped, and
+  its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
+  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`.
+
+`serve` handles connections concurrently on a single thread (cooperative scheduling via
+`Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
+stays bounded under sustained load). Multi-core serving remains future work (see
+[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
+`Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
+Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
+
+```ash
+import Ashes.Net.Tcp
+import Ashes.Net.Tcp.Server
+let onClient client =
+    async(match await Ashes.Net.Tcp.receive(client)(4096) with
+        | Error(e) -> Error(e)
+        | Ok(msg) ->
+            match await Ashes.Net.Tcp.send(client)(msg) with
+                | Error(e2) -> Error(e2)
+                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve(8080)(onClient)) with
+    | Ok(_u) -> Ashes.IO.print("server stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
 ### `Ashes.Net.Tls`
 
 - `connect(host)(port)` returning `Task(Str, TlsSocket)`
@@ -171,6 +208,38 @@ On Linux x64, Linux arm64, and Windows x64 that currently means the
 hermetic `rustls` runtime embedded per TLS-using executable. No
 external OpenSSL installation is required. Hostname verification and
 system-trust validation are mandatory for successful TLS connections.
+
+### `Ashes.Http.Server`
+
+A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
+runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
+
+- `HttpRequest` — a parsed request; access it with `method(req)` / `path(req)`.
+- `HttpResponse` — a response; build one with `text(status)(body)`.
+- `method(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`).
+- `path(req)` — `HttpRequest -> Str`, the request path (e.g. `"/health"`).
+- `text(status)(body)` — `Int -> Str -> HttpResponse`, a response with the given status code and body.
+- `serve(port)(handler)` — `Int -> (HttpRequest -> HttpResponse) -> Task(Str, Unit)`. Binds the port
+  and, per connection, reads one request, parses the request line, runs `handler`, writes the
+  response, and closes (`Connection: close`). Consumed with `Ashes.Async.run`.
+
+This is intentionally small: the request line + a single `receive` per connection, and a synchronous
+handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
+[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)).
+
+```ash
+import Ashes.IO
+import Ashes.Http.Server
+import Ashes.Async
+let route req =
+    match Ashes.Http.Server.path(req) with
+        | "/health" -> Ashes.Http.Server.text(200)("ok")
+        | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
+        | _p -> Ashes.Http.Server.text(404)("not found")
+in match Ashes.Async.run(Ashes.Http.Server.serve(8080)(route)) with
+    | Ok(_u) -> Ashes.IO.print("stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
 
 ## Shipped Helper Modules
 

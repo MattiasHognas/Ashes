@@ -249,6 +249,71 @@ internal static partial class LlvmCodegen
             name);
     }
 
+    /// <summary>
+    /// Current monotonic time in milliseconds: clock_gettime(CLOCK_MONOTONIC) on Linux,
+    /// GetTickCount64 on Windows. Used to charge detached sleepers with the ACTUAL time a
+    /// blocking wait took (an early fd wake must not consume the whole timer bound).
+    /// </summary>
+    private static LlvmValueHandle EmitMonotonicNowMs(LlvmCodegenState state, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // struct timespec { i64 tv_sec; i64 tv_nsec; }
+            LlvmTypeHandle timespecType = LlvmApi.ArrayType2(state.I64, 2);
+            LlvmValueHandle timespecStorage = LlvmApi.BuildAlloca(builder, timespecType, name + "_timespec");
+            LlvmValueHandle timespecPtr = LlvmApi.BuildPtrToInt(builder,
+                GetArrayElementPointer(state, timespecType, timespecStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_timespec_ptr"),
+                state.I64, name + "_timespec_addr");
+            // CLOCK_MONOTONIC = 1
+            EmitLinuxSyscall(state, SyscallClockGettime, LlvmApi.ConstInt(state.I64, 1, 0), timespecPtr, LlvmApi.ConstInt(state.I64, 0, 0), name + "_clock_gettime");
+            LlvmValueHandle sec = LoadMemory(state, timespecPtr, 0, name + "_sec");
+            LlvmValueHandle nsec = LoadMemory(state, timespecPtr, 8, name + "_nsec");
+            return LlvmApi.BuildAdd(builder,
+                LlvmApi.BuildMul(builder, sec, LlvmApi.ConstInt(state.I64, 1000, 0), name + "_sec_ms"),
+                LlvmApi.BuildSDiv(builder, nsec, LlvmApi.ConstInt(state.I64, 1000000, 0), name + "_nsec_ms"),
+                name);
+        }
+
+        LlvmTypeHandle tickType = LlvmApi.FunctionType(state.I64, []);
+        LlvmValueHandle tickPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_GetTickCount64"),
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder, tickType, tickPtr, [], name);
+    }
+
+    private static LlvmValueHandle EmitWindowsListen(LlvmCodegenState state, LlvmValueHandle socket, int backlog, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle listenType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+        LlvmValueHandle listenPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_listen"),
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            listenType,
+            listenPtr,
+            [socket, LlvmApi.ConstInt(state.I32, unchecked((uint)backlog), 0)],
+            name);
+    }
+
+    // accept(SOCKET, sockaddr* = NULL, int* = NULL) -> SOCKET (INVALID_SOCKET on error).
+    private static LlvmValueHandle EmitWindowsAccept(LlvmCodegenState state, LlvmValueHandle socket, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle acceptType = LlvmApi.FunctionType(state.I64, [state.I64, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle acceptPtr = LlvmApi.BuildLoad2(builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_accept"),
+            name + "_ptr");
+        return LlvmApi.BuildCall2(builder,
+            acceptType,
+            acceptPtr,
+            [socket, LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr)],
+            name);
+    }
+
     private static LlvmValueHandle EmitWindowsSetSockOpt(LlvmCodegenState state, LlvmValueHandle socket, int level, int optionName, LlvmValueHandle optionValuePtr, int optionLength, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

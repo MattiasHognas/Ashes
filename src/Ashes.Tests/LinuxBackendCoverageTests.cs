@@ -835,6 +835,295 @@ public sealed class LinuxBackendCoverageTests
         return ir;
     }
 
+    [Test]
+    public async Task Linux_backend_llvm_should_serve_http_over_the_tcp_server()
+    {
+        // HTTP layer coverage: Ashes.Http.Server.serve parses the request line, routes on the path,
+        // and writes an HTTP/1.1 response. The test drives it with raw HTTP GETs over loopback.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let route req =
+                match Ashes.Http.Server.path(req) with
+                    | "/health" -> Ashes.Http.Server.text(200)("ok")
+                    | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
+                    | _p -> Ashes.Http.Server.text(404)("not found")
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_http_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var health = await HttpGetRawWithRetryAsync(port, "/health");
+            health.ShouldContain("HTTP/1.1 200 OK");
+            health.ShouldContain("Content-Length: 2");
+            health.ShouldEndWith("ok");
+
+            var root = await HttpGetRawWithRetryAsync(port, "/");
+            root.ShouldContain("HTTP/1.1 200 OK");
+            root.ShouldEndWith("hello from ashes");
+
+            var missing = await HttpGetRawWithRetryAsync(port, "/nope");
+            missing.ShouldContain("HTTP/1.1 404 Not Found");
+            missing.ShouldEndWith("not found");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<string> HttpGetRawWithRetryAsync(int port, string path)
+    {
+        var request = $"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_serve_connections_concurrently()
+    {
+        // serve() spawns each handler (Ashes.Async.spawn), so a slow handler must not serialize
+        // other connections: four simultaneous clients against a handler that sleeps 300 ms before
+        // echoing should all complete in roughly one sleep, not four.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Async.sleep(300) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_t) ->
+                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                                    | Error(e3) -> Error(e3)
+                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_conc_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // Wait for the listener, then fire four clients at once.
+            _ = await ConnectSendReceiveWithRetryAsync(port, "warmup");
+
+            var sw = Stopwatch.StartNew();
+            var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(
+                i => ConnectSendReceiveWithRetryAsync(port, $"conc-{i}")));
+            sw.Stop();
+
+            for (int i = 0; i < replies.Length; i++)
+            {
+                replies[i].ShouldBe($"echo: conc-{i}");
+            }
+
+            // Four sequential 300 ms handlers would take >= 1200 ms; concurrent ones finish in
+            // roughly one sleep. Allow generous headroom for a loaded CI box.
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(900),
+                "connections should be served concurrently, not serialized");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_a_tcp_echo_server_via_serve()
+    {
+        // Server-side coverage on native linux-x64: the Ashes program is the LISTENER
+        // (Ashes.Net.Tcp.Server.serve), the C# test is the CLIENT connecting in. Exercises the
+        // socket/bind/listen/accept4 syscalls and the accept-park on WaitSocketRead.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_srv_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            foreach (var payload in new[] { "linux-one", "linux-two", "linux-three" })
+            {
+                var reply = await ConnectSendReceiveWithRetryAsync(port, payload);
+                reply.ShouldBe("echo: " + payload);
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static IrProgram LowerProgramWithImports(string source)
+    {
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
+
+        var diagnostics = new Diagnostics();
+        var program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var ir = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static int GetFreeLoopbackPort()
+    {
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                var outBytes = Encoding.UTF8.GetBytes(payload);
+                await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var buffer = new byte[4096];
+                int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                return Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    private static void TryKillProcess(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        try
+        {
+            process.WaitForExit();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         var diagnostics = new Diagnostics();
