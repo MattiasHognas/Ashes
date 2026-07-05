@@ -1551,6 +1551,17 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_step_tls_close_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_task_until_wait_or_done", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_wait_pending_task_list", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_run_detached", LlvmApi.FunctionType(i64, []));
+        DeclareRuntimeFunction("ashes_detached_wait_meta", LlvmApi.FunctionType(i64, []));
+        DeclareRuntimeFunction("ashes_detached_advance_timers", LlvmApi.FunctionType(i64, [i64]));
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            DeclareRuntimeFunction("ashes_detached_fill_pollfds", LlvmApi.FunctionType(i64, [i64, i64]));
+        }
+        else
+        {
+            DeclareRuntimeFunction("ashes_detached_register_epoll", LlvmApi.FunctionType(i64, [i64]));
+        }
         DeclareRuntimeFunction("ashes_step_http_get_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_http_post_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_cancel_task", LlvmApi.FunctionType(i64, [i64]));
@@ -1666,6 +1677,36 @@ internal static partial class LlvmCodegen
             "ashes_wait_pending_task_list",
             LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitWaitForPendingTaskList(state, LlvmApi.GetParam(fn, 0), "runtime_wait_tasks"));
+
+        EmitRuntimeFunction(
+            "ashes_run_detached",
+            LlvmApi.FunctionType(i64, []),
+            (state, fn) => EmitRunDetachedBody(state));
+
+        EmitRuntimeFunction(
+            "ashes_detached_wait_meta",
+            LlvmApi.FunctionType(i64, []),
+            (state, fn) => EmitDetachedWaitMetaBody(state));
+
+        EmitRuntimeFunction(
+            "ashes_detached_advance_timers",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitDetachedAdvanceTimersBody(state, LlvmApi.GetParam(fn, 0)));
+
+        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            EmitRuntimeFunction(
+                "ashes_detached_fill_pollfds",
+                LlvmApi.FunctionType(i64, [i64, i64]),
+                (state, fn) => EmitDetachedFillPollFdsBody(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
+        }
+        else
+        {
+            EmitRuntimeFunction(
+                "ashes_detached_register_epoll",
+                LlvmApi.FunctionType(i64, [i64]),
+                (state, fn) => EmitDetachedRegisterEpollBody(state, LlvmApi.GetParam(fn, 0)));
+        }
 
         EmitRuntimeFunction(
             "ashes_step_http_get_task",

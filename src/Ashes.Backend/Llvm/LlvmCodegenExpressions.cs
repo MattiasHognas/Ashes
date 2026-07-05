@@ -381,6 +381,12 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_data0_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
             LlvmApi.ConstInt(state.I64, 0, 0), "task_wait_data1_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes,
+            LlvmApi.ConstInt(state.I64, (ulong)stateStructSize, 0), "task_frame_size");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaCursor,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_arena_cursor_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), "task_arena_end_zero");
         if (captureCount > 0)
         {
             LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "task_env_ptr");
@@ -436,6 +442,12 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_data0_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_wait_data1_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.HeaderSize, 0), "ctask_frame_size");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaCursor,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_arena_cursor_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_arena_end_zero");
 
         return taskPtr;
     }
@@ -471,6 +483,12 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_data0");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_data1");
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.HeaderSize, 0), prefix + "_frame_size");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaCursor,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_arena_cursor");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_arena_end");
 
         return taskPtr;
     }
@@ -1493,6 +1511,12 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_data0_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData1,
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_wait_data1_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.HeaderSize, 0), "sleep_frame_size");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaCursor,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_arena_cursor");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_arena_end");
 
         return taskPtr;
     }
@@ -1595,9 +1619,441 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
 
+    // ── Detached tasks (Ashes.Async.spawn) ─────────────────────────
+    //
+    // A spawned task is fire-and-forget: its frame is copied into a private arena chunk (so it
+    // survives the spawner's arena resets), it is chained into a global detached list via the
+    // NextTask header field, and it advances whenever any driver blocks in
+    // EmitWaitForPendingLeafTask. Each detached step runs with the task's private arena installed
+    // in the thread's cursor/end slots, so its allocations never interleave with the spawner's;
+    // on completion the whole private chunk chain is freed and the result is dropped.
+
+    private static LlvmValueHandle DetachedTasksHeadGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_detached_head", state.I64);
+
+    private static LlvmValueHandle DetachedStepGuardGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_detached_stepping", state.I64);
+
+    private static bool DetachedRuntimeAvailable(LlvmCodegenState state) =>
+        LlvmApi.GetNamedFunction(state.Target.Module, "ashes_run_detached").Ptr != 0;
+
+    private static LlvmValueHandle EmitSpawnTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        // Private arena chunk for the task; header slot 0 = no previous chunk.
+        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_chunk");
+        EmitHeapChunkInitCheck(state, chunkBase);
+        StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_chunk_prev");
+
+        // Copy the task frame (header + captures + live slots) into the chunk.
+        LlvmValueHandle frameSize = LoadMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes, "spawn_frame_size");
+        LlvmValueHandle copyPtr = LlvmApi.BuildAdd(builder, chunkBase, LlvmApi.ConstInt(state.I64, 8, 0), "spawn_copy_ptr");
+        LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, copyPtr, state.I8Ptr, "spawn_dest_ptr");
+        LlvmValueHandle srcPtr = LlvmApi.BuildIntToPtr(builder, taskPtr, state.I8Ptr, "spawn_src_ptr");
+        LlvmApi.BuildMemCpy(builder, destPtr, 1, srcPtr, 1, frameSize);
+
+        // The copy's private arena starts right after the frame.
+        LlvmValueHandle alignedSize = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildAdd(builder, frameSize, LlvmApi.ConstInt(state.I64, 7, 0), "spawn_size_plus7"),
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)~7L), 1), "spawn_size_aligned");
+        StoreMemory(state, copyPtr, TaskStructLayout.ArenaCursor,
+            LlvmApi.BuildAdd(builder, copyPtr, alignedSize, "spawn_arena_cursor"), "spawn_arena_cursor_store");
+        StoreMemory(state, copyPtr, TaskStructLayout.ArenaEnd,
+            LlvmApi.BuildAdd(builder, chunkBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_arena_end"), "spawn_arena_end_store");
+
+        // Push onto the detached list.
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+        LlvmValueHandle head = LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "spawn_head");
+        StoreMemory(state, copyPtr, TaskStructLayout.NextTask, head, "spawn_next_store");
+        LlvmApi.BuildStore(builder, copyPtr, headGlobal);
+
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_run_detached()</c>: steps every detached task once (until it parks or
+    /// completes), with the task's private arena installed while it runs. Completed tasks are
+    /// unlinked and their private chunk chains freed. Re-entrancy (a detached step reaching a
+    /// nested driver wait) is guarded by a flag. Returns the (possibly empty) list head.
+    /// </summary>
+    private static LlvmValueHandle EmitRunDetachedBody(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+        LlvmValueHandle guardGlobal = DetachedStepGuardGlobal(state);
+
+        LlvmBasicBlockHandle startBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_start");
+        LlvmBasicBlockHandle guardedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_guarded");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_body");
+        LlvmBasicBlockHandle reapBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_reap");
+        LlvmBasicBlockHandle unlinkHeadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_unlink_head");
+        LlvmBasicBlockHandle unlinkMidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_unlink_mid");
+        LlvmBasicBlockHandle freeCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_check");
+        LlvmBasicBlockHandle freeBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_body");
+        LlvmBasicBlockHandle freeDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_done");
+        LlvmBasicBlockHandle keepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_keep");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_done");
+
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "rd_cur_slot");
+        LlvmValueHandle prevSlot = LlvmApi.BuildAlloca(builder, state.I64, "rd_prev_slot");
+        LlvmValueHandle nextSlot = LlvmApi.BuildAlloca(builder, state.I64, "rd_next_slot");
+        LlvmValueHandle freeBaseSlot = LlvmApi.BuildAlloca(builder, state.I64, "rd_free_base_slot");
+
+        LlvmValueHandle guard = LlvmApi.BuildLoad2(builder, state.I64, guardGlobal, "rd_guard");
+        LlvmValueHandle reentered = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, guard, LlvmApi.ConstInt(state.I64, 0, 0), "rd_reentered");
+        LlvmApi.BuildCondBr(builder, reentered, doneBlock, startBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, startBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), guardGlobal);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "rd_head"), curSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), prevSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "rd_cur");
+        LlvmValueHandle curDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "rd_cur_done");
+        LlvmApi.BuildCondBr(builder, curDone, guardedBlock, bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, guardedBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), guardGlobal);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle curBody = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "rd_cur_body");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curBody, TaskStructLayout.NextTask, "rd_next"), nextSlot);
+        // Install the task's private arena while it runs; capture growth afterwards.
+        LlvmValueHandle savedCursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "rd_saved_cursor");
+        LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "rd_saved_end");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curBody, TaskStructLayout.ArenaCursor, "rd_task_cursor"), state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, curBody, TaskStructLayout.ArenaEnd, "rd_task_end"), state.HeapEndSlot);
+        LlvmValueHandle status = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [curBody], "rd_step");
+        StoreMemory(state, curBody, TaskStructLayout.ArenaCursor,
+            LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "rd_grown_cursor"), "rd_task_cursor_back");
+        StoreMemory(state, curBody, TaskStructLayout.ArenaEnd,
+            LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "rd_grown_end"), "rd_task_end_back");
+        LlvmApi.BuildStore(builder, savedCursor, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, savedEnd, state.HeapEndSlot);
+        LlvmValueHandle completed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, status, LlvmApi.ConstInt(state.I64, 0, 0), "rd_completed");
+        LlvmApi.BuildCondBr(builder, completed, reapBlock, keepBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reapBlock);
+        // Capture the arena end BEFORE freeing (the task lives inside its first chunk).
+        LlvmValueHandle reapCur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "rd_reap_cur");
+        LlvmValueHandle reapEnd = LoadMemory(state, reapCur, TaskStructLayout.ArenaEnd, "rd_reap_end");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, reapEnd,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "rd_last_chunk_base"), freeBaseSlot);
+        LlvmValueHandle reapPrev = LlvmApi.BuildLoad2(builder, state.I64, prevSlot, "rd_reap_prev");
+        LlvmValueHandle prevIsHead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, reapPrev, LlvmApi.ConstInt(state.I64, 0, 0), "rd_prev_is_head");
+        LlvmApi.BuildCondBr(builder, prevIsHead, unlinkHeadBlock, unlinkMidBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, unlinkHeadBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, nextSlot, "rd_next_for_head"), headGlobal);
+        LlvmApi.BuildBr(builder, freeCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, unlinkMidBlock);
+        StoreMemory(state, reapPrev, TaskStructLayout.NextTask,
+            LlvmApi.BuildLoad2(builder, state.I64, nextSlot, "rd_next_for_mid"), "rd_unlink_mid_store");
+        LlvmApi.BuildBr(builder, freeCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freeCheckBlock);
+        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, freeBaseSlot, "rd_free_base");
+        LlvmValueHandle freeDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), "rd_free_done_check");
+        LlvmApi.BuildCondBr(builder, freeDone, freeDoneBlock, freeBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freeBodyBlock);
+        LlvmValueHandle freeBaseBody = LlvmApi.BuildLoad2(builder, state.I64, freeBaseSlot, "rd_free_base_body");
+        LlvmApi.BuildStore(builder, LoadMemory(state, freeBaseBody, 0, "rd_prev_chunk"), freeBaseSlot);
+        EmitFreeOsMemory(state, freeBaseBody, HeapChunkBytes, "rd_free_chunk");
+        LlvmApi.BuildBr(builder, freeCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freeDoneBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, nextSlot, "rd_advance_after_reap"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, keepBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, curSlot, "rd_keep_cur"), prevSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, nextSlot, "rd_advance_after_keep"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "rd_result_head");
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_detached_wait_meta()</c>: scans the detached list and packs
+    /// (hasRunnable &lt;&lt; 32) | (minTimerMs + 1) — low 32 bits 0 when no timer-parked task.
+    /// A runnable task (not completed, WaitKind == WaitNone) means blocking waits must not block.
+    /// </summary>
+    private static LlvmValueHandle EmitDetachedWaitMetaBody(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_body");
+        LlvmBasicBlockHandle timerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_timer");
+        LlvmBasicBlockHandle timerMinBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_timer_min");
+        LlvmBasicBlockHandle advanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_advance");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_done");
+
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "dm_cur_slot");
+        LlvmValueHandle runnableSlot = LlvmApi.BuildAlloca(builder, state.I64, "dm_runnable_slot");
+        LlvmValueHandle minTimerSlot = LlvmApi.BuildAlloca(builder, state.I64, "dm_min_timer_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "dm_head"), curSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), runnableSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), minTimerSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dm_cur");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "dm_done_check");
+        LlvmApi.BuildCondBr(builder, done, doneBlock, bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle stateIdx = LoadMemory(state, cur, TaskStructLayout.StateIndex, "dm_state");
+        LlvmValueHandle waitKind = LoadMemory(state, cur, TaskStructLayout.WaitKind, "dm_wait_kind");
+        LlvmValueHandle notCompleted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), "dm_not_completed");
+        LlvmValueHandle waitNone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitNone, 0), "dm_wait_none");
+        LlvmValueHandle runnable = LlvmApi.BuildAnd(builder, notCompleted, waitNone, "dm_runnable");
+        LlvmValueHandle priorRunnable = LlvmApi.BuildLoad2(builder, state.I64, runnableSlot, "dm_prior_runnable");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildOr(builder, priorRunnable,
+            LlvmApi.BuildZExt(builder, runnable, state.I64, "dm_runnable_i64"), "dm_runnable_or"), runnableSlot);
+        LlvmValueHandle isTimer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0), "dm_is_timer");
+        LlvmApi.BuildCondBr(builder, isTimer, timerBlock, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, timerBlock);
+        // Remaining ms live in the sleeping leaf: the task itself, or its awaited sub-task.
+        LlvmValueHandle awaited = LoadMemory(state, cur, TaskStructLayout.AwaitedTask, "dm_awaited");
+        LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "dm_has_awaited");
+        LlvmValueHandle sleeper = LlvmApi.BuildSelect(builder, hasAwaited, awaited, cur, "dm_sleeper");
+        LlvmValueHandle remaining = LoadMemory(state, sleeper, TaskStructLayout.SleepDurationMs, "dm_remaining");
+        LlvmValueHandle minTimer = LlvmApi.BuildLoad2(builder, state.I64, minTimerSlot, "dm_min_timer");
+        LlvmValueHandle noMinYet = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minTimer, LlvmApi.ConstInt(state.I64, 0, 0), "dm_no_min_yet");
+        LlvmValueHandle remainingPlus1 = LlvmApi.BuildAdd(builder, remaining, LlvmApi.ConstInt(state.I64, 1, 0), "dm_remaining_plus1");
+        LlvmValueHandle lower = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, remainingPlus1, minTimer, "dm_lower");
+        LlvmValueHandle shouldUpdate = LlvmApi.BuildOr(builder, noMinYet, lower, "dm_should_update");
+        LlvmApi.BuildCondBr(builder, shouldUpdate, timerMinBlock, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, timerMinBlock);
+        LlvmApi.BuildStore(builder, remainingPlus1, minTimerSlot);
+        LlvmApi.BuildBr(builder, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
+        LlvmValueHandle curAdvance = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dm_cur_advance");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curAdvance, TaskStructLayout.NextTask, "dm_next"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmValueHandle runnableFinal = LlvmApi.BuildLoad2(builder, state.I64, runnableSlot, "dm_runnable_final");
+        LlvmValueHandle minTimerFinal = LlvmApi.BuildLoad2(builder, state.I64, minTimerSlot, "dm_min_timer_final");
+        // Clamp minTimer+1 into 32 bits so the pack below cannot collide with the runnable bit.
+        LlvmValueHandle clamped = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, minTimerFinal, LlvmApi.ConstInt(state.I64, 0x7FFFFFFF, 0), "dm_clamp_check"),
+            LlvmApi.ConstInt(state.I64, 0x7FFFFFFF, 0), minTimerFinal, "dm_clamped");
+        return LlvmApi.BuildOr(builder,
+            LlvmApi.BuildShl(builder, runnableFinal, LlvmApi.ConstInt(state.I64, 32, 0), "dm_runnable_shifted"),
+            clamped, "dm_packed");
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_detached_advance_timers(ms)</c>: subtracts <paramref name="state"/>'s first
+    /// argument from every detached timer-parked leaf's remaining sleep (clamped at 0), mirroring the
+    /// cooperative sleep bookkeeping of the task-list scheduler.
+    /// </summary>
+    private static LlvmValueHandle EmitDetachedAdvanceTimersBody(LlvmCodegenState state, LlvmValueHandle elapsedMs)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dat_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dat_body");
+        LlvmBasicBlockHandle timerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dat_timer");
+        LlvmBasicBlockHandle advanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dat_advance");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dat_done");
+
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "dat_cur_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "dat_head"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dat_cur");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "dat_done_check");
+        LlvmApi.BuildCondBr(builder, done, doneBlock, bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle waitKind = LoadMemory(state, cur, TaskStructLayout.WaitKind, "dat_wait_kind");
+        LlvmValueHandle isTimer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind,
+            LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0), "dat_is_timer");
+        LlvmApi.BuildCondBr(builder, isTimer, timerBlock, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, timerBlock);
+        LlvmValueHandle awaited = LoadMemory(state, cur, TaskStructLayout.AwaitedTask, "dat_awaited");
+        LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "dat_has_awaited");
+        LlvmValueHandle sleeper = LlvmApi.BuildSelect(builder, hasAwaited, awaited, cur, "dat_sleeper");
+        LlvmValueHandle remaining = LoadMemory(state, sleeper, TaskStructLayout.SleepDurationMs, "dat_remaining");
+        LlvmValueHandle reduced = LlvmApi.BuildSub(builder, remaining, elapsedMs, "dat_reduced");
+        LlvmValueHandle negative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, reduced, LlvmApi.ConstInt(state.I64, 0, 0), "dat_negative");
+        LlvmValueHandle clamped = LlvmApi.BuildSelect(builder, negative, LlvmApi.ConstInt(state.I64, 0, 0), reduced, "dat_clamped");
+        StoreMemory(state, sleeper, TaskStructLayout.SleepDurationMs, clamped, "dat_remaining_store");
+        LlvmApi.BuildBr(builder, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
+        LlvmValueHandle curAdvance = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dat_cur_advance");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curAdvance, TaskStructLayout.NextTask, "dat_next"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_detached_register_epoll(epollFd)</c> (Linux flavors): registers every
+    /// socket-parked detached task's wait handle in the given epoll set.
+    /// </summary>
+    private static LlvmValueHandle EmitDetachedRegisterEpollBody(LlvmCodegenState state, LlvmValueHandle epollFd)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_body");
+        LlvmBasicBlockHandle registerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_register");
+        LlvmBasicBlockHandle advanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_advance");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_done");
+
+        LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle eventStorage = LlvmApi.BuildAlloca(builder, epollEventType, "dr_event_storage");
+        LlvmValueHandle eventPtr = GetArrayElementPointer(state, epollEventType, eventStorage, LlvmApi.ConstInt(state.I64, 0, 0), "dr_event_ptr");
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "dr_cur_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "dr_head"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dr_cur");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "dr_done_check");
+        LlvmApi.BuildCondBr(builder, done, doneBlock, bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle waitKind = LoadMemory(state, cur, TaskStructLayout.WaitKind, "dr_wait_kind");
+        LlvmValueHandle isRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), "dr_is_read");
+        LlvmValueHandle isTlsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantRead, 0), "dr_is_tls_read");
+        LlvmValueHandle isWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), "dr_is_write");
+        LlvmValueHandle isTlsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantWrite, 0), "dr_is_tls_write");
+        LlvmValueHandle readish = LlvmApi.BuildOr(builder, isRead, isTlsRead, "dr_readish");
+        LlvmValueHandle writeish = LlvmApi.BuildOr(builder, isWrite, isTlsWrite, "dr_writeish");
+        LlvmValueHandle should = LlvmApi.BuildOr(builder, readish, writeish, "dr_should");
+        LlvmApi.BuildCondBr(builder, should, registerBlock, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, registerBlock);
+        LlvmValueHandle handle = LoadMemory(state, cur, TaskStructLayout.WaitHandle, "dr_handle");
+        LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder, readish,
+            LlvmApi.ConstInt(state.I32, 0x001, 0), LlvmApi.ConstInt(state.I32, 0x004, 0), "dr_event_mask");
+        LlvmApi.BuildStore(builder, eventMask, LlvmApi.BuildBitCast(builder, eventPtr, state.I32Ptr, "dr_event_mask_ptr"));
+        LlvmApi.BuildStore(builder, handle, LlvmApi.BuildBitCast(builder,
+            LlvmApi.BuildGEP2(builder, state.I8, eventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], "dr_event_data_byte"),
+            state.I64Ptr, "dr_event_data_ptr"));
+        EmitLinuxSyscall4(state, SyscallEpollCtl,
+            epollFd,
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            handle,
+            LlvmApi.BuildPtrToInt(builder, eventPtr, state.I64, "dr_event_arg"),
+            "dr_epoll_ctl");
+        LlvmApi.BuildBr(builder, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
+        LlvmValueHandle curAdvance = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "dr_cur_advance");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curAdvance, TaskStructLayout.NextTask, "dr_next"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_detached_fill_pollfds(arrayPtr, capacity)</c> (Windows flavor): fills
+    /// WSAPoll pollfd entries for every socket-parked detached task, up to capacity. Returns the
+    /// number of entries written; overflow tasks simply are not polled this round (they are stepped
+    /// again on the next wait).
+    /// </summary>
+    private static LlvmValueHandle EmitDetachedFillPollFdsBody(LlvmCodegenState state, LlvmValueHandle arrayPtr, LlvmValueHandle capacity)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
+
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "df_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "df_body");
+        LlvmBasicBlockHandle fillBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "df_fill");
+        LlvmBasicBlockHandle advanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "df_advance");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "df_done");
+
+        LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "df_cur_slot");
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "df_count_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "df_head"), curSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "df_cur");
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "df_count");
+        LlvmValueHandle listDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I64, 0, 0), "df_list_done");
+        LlvmValueHandle atCapacity = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, count, capacity, "df_at_capacity");
+        LlvmValueHandle stop = LlvmApi.BuildOr(builder, listDone, atCapacity, "df_stop");
+        LlvmApi.BuildCondBr(builder, stop, doneBlock, bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle waitKind = LoadMemory(state, cur, TaskStructLayout.WaitKind, "df_wait_kind");
+        LlvmValueHandle isRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), "df_is_read");
+        LlvmValueHandle isTlsRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantRead, 0), "df_is_tls_read");
+        LlvmValueHandle isWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketWrite, 0), "df_is_write");
+        LlvmValueHandle isTlsWrite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantWrite, 0), "df_is_tls_write");
+        LlvmValueHandle readish = LlvmApi.BuildOr(builder, isRead, isTlsRead, "df_readish");
+        LlvmValueHandle writeish = LlvmApi.BuildOr(builder, isWrite, isTlsWrite, "df_writeish");
+        LlvmValueHandle should = LlvmApi.BuildOr(builder, readish, writeish, "df_should");
+        LlvmApi.BuildCondBr(builder, should, fillBlock, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, fillBlock);
+        LlvmValueHandle handle = LoadMemory(state, cur, TaskStructLayout.WaitHandle, "df_handle");
+        LlvmValueHandle fillCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "df_fill_count");
+        LlvmValueHandle slotAddress = LlvmApi.BuildAdd(builder, arrayPtr,
+            LlvmApi.BuildMul(builder, fillCount, LlvmApi.ConstInt(state.I64, WindowsPollFdSize, 0), "df_slot_offset"),
+            "df_slot_address");
+        LlvmValueHandle eventMask = EmitWindowsPollEventMask(state, readish, "df_poll_event_mask");
+        EmitWindowsInitializePollFd(state, slotAddress, handle, eventMask, "df_pollfd");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, fillCount, LlvmApi.ConstInt(state.I64, 1, 0), "df_count_next"), countSlot);
+        LlvmApi.BuildBr(builder, advanceBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
+        LlvmValueHandle curAdvance = LlvmApi.BuildLoad2(builder, state.I64, curSlot, "df_cur_advance");
+        LlvmApi.BuildStore(builder, LoadMemory(state, curAdvance, TaskStructLayout.NextTask, "df_next"), curSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, countSlot, "df_final_count");
+    }
+
     private static void EmitWaitForPendingLeafTask(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+
+        // Advance detached (spawned) tasks before blocking, and gather what the combined wait
+        // must respect: a runnable detached task forbids blocking; a timer-parked one bounds it.
+        bool detached = DetachedRuntimeAvailable(state);
+        LlvmValueHandle detachedHead = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle detachedRunnable = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle detachedMinTimerPlus1 = LlvmApi.ConstInt(state.I64, 0, 0);
+        if (detached)
+        {
+            detachedHead = EmitNetworkingRuntimeCall(state, "ashes_run_detached", [], prefix + "_run_detached");
+            LlvmValueHandle meta = EmitNetworkingRuntimeCall(state, "ashes_detached_wait_meta", [], prefix + "_detached_meta");
+            detachedRunnable = LlvmApi.BuildLShr(builder, meta, LlvmApi.ConstInt(state.I64, 32, 0), prefix + "_detached_runnable");
+            detachedMinTimerPlus1 = LlvmApi.BuildAnd(builder, meta, LlvmApi.ConstInt(state.I64, 0xFFFFFFFF, 0), prefix + "_detached_min_timer");
+        }
+
         LlvmValueHandle waitKind = LoadMemory(state, taskPtr, TaskStructLayout.WaitKind, prefix + "_wait_kind");
         LlvmValueHandle waitHandle = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, prefix + "_wait_handle");
         LlvmValueHandle isReadWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
@@ -1638,11 +2094,62 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, timerBlock);
         LlvmValueHandle leafRemaining = LoadMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, prefix + "_timer_remaining");
-        EmitNanosleep(state, leafRemaining);
-        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_zero");
-        LlvmApi.BuildBr(builder, continueBlock);
+        if (!detached)
+        {
+            EmitNanosleep(state, leafRemaining);
+            StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_zero");
+            LlvmApi.BuildBr(builder, continueBlock);
+        }
+        else
+        {
+            // With detached tasks in flight the sleep is chunked (10 ms ticks, or 0 when a detached
+            // task is runnable) so spawned work keeps advancing; the driver loops back through this
+            // wait, which re-steps the detached list, until the remaining time reaches zero.
+            LlvmBasicBlockHandle timerFullBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_timer_full");
+            LlvmBasicBlockHandle timerChunkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_timer_chunk");
+            LlvmValueHandle noDetached = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, detachedHead,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_no_detached");
+            LlvmApi.BuildCondBr(builder, noDetached, timerFullBlock, timerChunkBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, timerFullBlock);
+            EmitNanosleep(state, leafRemaining);
+            StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_zero");
+            LlvmApi.BuildBr(builder, continueBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, timerChunkBlock);
+            LlvmValueHandle tenMs = LlvmApi.ConstInt(state.I64, 10, 0);
+            LlvmValueHandle overTen = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, leafRemaining, tenMs, prefix + "_timer_over_ten");
+            LlvmValueHandle chunk = LlvmApi.BuildSelect(builder, overTen, tenMs, leafRemaining, prefix + "_timer_chunk_ms");
+            LlvmValueHandle runnableNow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, detachedRunnable,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_timer_runnable");
+            chunk = LlvmApi.BuildSelect(builder, runnableNow, LlvmApi.ConstInt(state.I64, 0, 0), chunk, prefix + "_timer_chunk_eff");
+            EmitNanosleep(state, chunk);
+            StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs,
+                LlvmApi.BuildSub(builder, leafRemaining, chunk, prefix + "_timer_new_remaining"), prefix + "_timer_chunk_store");
+            // The slept chunk elapses for detached sleepers too — advance their remaining time so
+            // a spawned sleep completes while the driving task sleeps.
+            _ = EmitNetworkingRuntimeCall(state, "ashes_detached_advance_timers", [chunk], prefix + "_timer_chunk_advance");
+            LlvmApi.BuildBr(builder, continueBlock);
+        }
 
         LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        // Combined wait bound: a runnable detached task means poll without blocking; a timer-parked
+        // one caps the block at its remaining ms; otherwise block indefinitely on the fds.
+        LlvmValueHandle waitTimeout = LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1);
+        if (detached)
+        {
+            LlvmValueHandle noTimer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, detachedMinTimerPlus1,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_no_detached_timer");
+            LlvmValueHandle timerBound = LlvmApi.BuildSub(builder, detachedMinTimerPlus1,
+                LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_detached_timer_bound");
+            waitTimeout = LlvmApi.BuildSelect(builder, noTimer,
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), timerBound, prefix + "_timeout_timer");
+            LlvmValueHandle runnableNow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, detachedRunnable,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wait_runnable");
+            waitTimeout = LlvmApi.BuildSelect(builder, runnableNow,
+                LlvmApi.ConstInt(state.I64, 0, 0), waitTimeout, prefix + "_timeout_eff");
+        }
+
         if (IsLinuxFlavor(state.Flavor))
         {
             LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
@@ -1666,13 +2173,17 @@ internal static partial class LlvmCodegen
                 waitHandle,
                 LlvmApi.BuildPtrToInt(builder, epollEventPtr, state.I64, prefix + "_epoll_event_arg"),
                 prefix + "_epoll_ctl");
+            if (detached)
+            {
+                _ = EmitNetworkingRuntimeCall(state, "ashes_detached_register_epoll", [epollFd], prefix + "_detached_register");
+            }
             if (IsLinuxArm64Flavor(state.Flavor))
             {
                 EmitLinuxSyscall6(state, SyscallEpollWait,
                     epollFd,
                     LlvmApi.BuildPtrToInt(builder, epollEventOutPtr, state.I64, prefix + "_epoll_wait_events"),
                     LlvmApi.ConstInt(state.I64, 1, 0),
-                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    waitTimeout,
                     LlvmApi.ConstInt(state.I64, 0, 0),
                     LlvmApi.ConstInt(state.I64, 0, 0),
                     prefix + "_epoll_wait");
@@ -1683,12 +2194,12 @@ internal static partial class LlvmCodegen
                     epollFd,
                     LlvmApi.BuildPtrToInt(builder, epollEventOutPtr, state.I64, prefix + "_epoll_wait_events"),
                     LlvmApi.ConstInt(state.I64, 1, 0),
-                    LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1),
+                    waitTimeout,
                     prefix + "_epoll_wait");
             }
             EmitLinuxSyscall(state, SyscallClose, epollFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_close");
         }
-        else
+        else if (!detached)
         {
             LlvmTypeHandle pollFdType = LlvmApi.ArrayType2(state.I8, WindowsPollFdSize);
             LlvmValueHandle pollFdStorage = LlvmApi.BuildAlloca(builder, pollFdType, prefix + "_pollfd_storage");
@@ -1697,6 +2208,37 @@ internal static partial class LlvmCodegen
             LlvmValueHandle eventMask = EmitWindowsPollEventMask(state, readishWait, prefix + "_poll_event_mask");
             EmitWindowsInitializePollFd(state, pollFdAddress, waitHandle, eventMask, prefix + "_pollfd");
             _ = EmitWindowsWsaPoll(state, pollFdPtr, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), prefix + "_wsapoll_wait");
+        }
+        else
+        {
+            // Detached-aware Windows wait: the main task's pollfd goes in slot 0 of a shared
+            // scratch array, detached socket waits fill the remaining slots, and one WSAPoll
+            // covers them all.
+            LlvmTypeHandle pollArrayType = LlvmApi.ArrayType2(state.I8, (ulong)(WindowsPollFdSize * DetachedPollFdCapacity));
+            LlvmValueHandle pollArrayGlobal = ReadLineScratchGlobal(state, "__ashes_detached_pollfds", pollArrayType);
+            LlvmValueHandle pollArrayPtr = GetArrayElementPointer(state, pollArrayType, pollArrayGlobal, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_poll_array_ptr");
+            LlvmValueHandle pollArrayAddress = LlvmApi.BuildPtrToInt(builder, pollArrayPtr, state.I64, prefix + "_poll_array_address");
+            LlvmValueHandle eventMask = EmitWindowsPollEventMask(state, readishWait, prefix + "_poll_event_mask");
+            EmitWindowsInitializePollFd(state, pollArrayAddress, waitHandle, eventMask, prefix + "_pollfd");
+            LlvmValueHandle detachedCount = EmitNetworkingRuntimeCall(state, "ashes_detached_fill_pollfds",
+                [
+                    LlvmApi.BuildAdd(builder, pollArrayAddress, LlvmApi.ConstInt(state.I64, WindowsPollFdSize, 0), prefix + "_poll_array_rest"),
+                    LlvmApi.ConstInt(state.I64, DetachedPollFdCapacity - 1, 0),
+                ],
+                prefix + "_detached_fill");
+            LlvmValueHandle totalCount = LlvmApi.BuildAdd(builder, detachedCount, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_poll_total");
+            _ = EmitWindowsWsaPoll(state, pollArrayPtr, totalCount, waitTimeout, prefix + "_wsapoll_wait");
+        }
+
+        if (detached)
+        {
+            // Approximate the cooperative sleep bookkeeping: when the wait was bounded by a
+            // detached timer, charge that bound against every detached sleeper.
+            LlvmValueHandle boundedWait = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, waitTimeout,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_bounded_wait");
+            LlvmValueHandle elapsed = LlvmApi.BuildSelect(builder, boundedWait, waitTimeout,
+                LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_detached_elapsed");
+            _ = EmitNetworkingRuntimeCall(state, "ashes_detached_advance_timers", [elapsed], prefix + "_detached_advance");
         }
 
         LlvmApi.BuildBr(builder, continueBlock);

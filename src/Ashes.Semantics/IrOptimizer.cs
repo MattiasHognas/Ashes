@@ -496,6 +496,7 @@ public static class IrOptimizer
             IrInst.CreateCompletedTask ct => ct with { ResultTemp = R(ct.ResultTemp) },
             IrInst.AwaitTask at => at with { TaskTemp = R(at.TaskTemp) },
             IrInst.RunTask rt => rt with { TaskTemp = R(rt.TaskTemp) },
+            IrInst.SpawnTask st => st with { TaskTemp = R(st.TaskTemp) },
             IrInst.AllocReusing ar => ar with { TokenTemp = R(ar.TokenTemp) },
             IrInst.ParallelFork pf => pf with { RightClosureTemp = R(pf.RightClosureTemp) },
             IrInst.ParallelJoin pj => pj with { DescTemp = R(pj.DescTemp) },
@@ -1425,6 +1426,7 @@ public static class IrOptimizer
             case IrInst.CreateCompletedTask ct: usedTemps.Add(ct.ResultTemp); break;
             case IrInst.AwaitTask at: usedTemps.Add(at.TaskTemp); break;
             case IrInst.RunTask rt: usedTemps.Add(rt.TaskTemp); break;
+            case IrInst.SpawnTask st: usedTemps.Add(st.TaskTemp); break;
             case IrInst.AllocReusing ar: usedTemps.Add(ar.TokenTemp); break;
             case IrInst.ParallelFork pf: usedTemps.Add(pf.RightClosureTemp); break;
             case IrInst.ParallelJoin pj: usedTemps.Add(pj.DescTemp); break;

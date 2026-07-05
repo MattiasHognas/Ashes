@@ -119,6 +119,11 @@ internal static partial class LlvmCodegen
     private const ushort WindowsPollReadNormal = 0x0100;
     private const ushort WindowsPollWriteNormal = 0x0010;
     private const int WindowsPollFdSize = 16;
+
+    // Max WSAPoll entries in the detached-task wait (slot 0 = the driving task; the rest are
+    // detached socket waits). Overflow tasks are not polled that round — they are stepped again
+    // on the next wait — so this caps poll width, not concurrency.
+    private const int DetachedPollFdCapacity = 256;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
     private const int LinuxRtldNow = 2;
@@ -451,6 +456,7 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
             || ProgramUsesInstruction<IrInst.RunTask>(program)
+            || ProgramUsesInstruction<IrInst.SpawnTask>(program)
             || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
@@ -1447,6 +1453,9 @@ internal static partial class LlvmCodegen
             // RunTask: drive task to completion via event loop.
             IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
                 EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
+            // SpawnTask: detach a task (fire-and-forget); it advances while drivers wait.
+            IrInst.SpawnTask spawnTask => StoreTemp(state, spawnTask.Target,
+                EmitSpawnTask(state, LoadTemp(state, spawnTask.TaskTemp))),
             // Structured parallelism (Ashes.Parallel.both).
             IrInst.ParallelFork parallelFork => StoreTemp(state, parallelFork.DescTarget,
                 EmitParallelFork(state, LoadTemp(state, parallelFork.RightClosureTemp))),

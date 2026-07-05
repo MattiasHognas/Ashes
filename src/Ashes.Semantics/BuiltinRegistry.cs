@@ -53,6 +53,7 @@ public static class BuiltinRegistry
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
+        AsyncSpawn,
         AsyncRace,
         BytesEmpty,
         BytesSingleton,
@@ -362,6 +363,7 @@ public static class BuiltinRegistry
                     ["fromResult"] = new("fromResult", BuiltinValueKind.AsyncFromResult, IsCallable: true, Arity: 1),
                     ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
                     ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
+                    ["spawn"] = new("spawn", BuiltinValueKind.AsyncSpawn, IsCallable: true, Arity: 1),
                     ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Process"] = new(

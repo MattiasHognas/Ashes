@@ -109,6 +109,7 @@ public sealed partial class Lowering
         AsyncFromResult,
         AsyncSleep,
         AsyncAll,
+        AsyncSpawn,
         AsyncRace,
         BytesEmpty,
         BytesSingleton,

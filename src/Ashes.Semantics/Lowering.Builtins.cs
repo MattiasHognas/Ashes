@@ -2130,6 +2130,50 @@ public sealed partial class Lowering
         );
     }
 
+    // Ashes.Async.spawn : Task(E, A) -> Unit
+    private Binding.Intrinsic CreateAsyncSpawnBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncSpawn,
+            new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(taskType, _resolvedTypes["Unit"]))
+        );
+    }
+
+    /// <summary>
+    /// Ashes.Async.spawn(task) — detach a task for fire-and-forget cooperative execution.
+    /// The task's frame is copied into a private arena and it advances whenever any driver
+    /// blocks waiting on a pending leaf; its result is dropped.
+    /// </summary>
+    private (int, TypeRef) LowerAsyncSpawn(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+
+        var (taskTemp, taskType) = LowerExpr(taskArg);
+
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task type not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var errorType = NewTypeVar();
+        var successType = NewTypeVar();
+        var expectedTaskType = new TypeRef.TNamedType(taskSymbol, [errorType, successType]);
+        Unify(taskType, expectedTaskType);
+
+        int unitTemp = NewTemp();
+        Emit(new IrInst.SpawnTask(unitTemp, taskTemp));
+        return (unitTemp, _resolvedTypes["Unit"]);
+    }
+
     // Ashes.Async.all : List(Task(E, A)) -> Task(E, List(A))
     private Binding.Intrinsic CreateAsyncAllBinding()
     {
