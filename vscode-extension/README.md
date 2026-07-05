@@ -124,8 +124,8 @@ download-related features are disabled and an informational message is shown.
 ## Links
 
 - [Ashes repository](https://github.com/MattiasHognas/Ashes)
-- [Language specification](https://github.com/MattiasHognas/Ashes/blob/main/docs/LANGUAGE_SPEC.md)
-- [Debugging guide](https://github.com/MattiasHognas/Ashes/blob/main/docs/DEBUGGING.md)
+- [Language specification](https://github.com/MattiasHognas/Ashes/blob/main/docs/md/reference/language.md)
+- [Debugging guide](https://github.com/MattiasHognas/Ashes/blob/main/docs/md/guide/debugging.md)
 
 ## License
 

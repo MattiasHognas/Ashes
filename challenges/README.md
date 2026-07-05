@@ -19,7 +19,7 @@ The interesting output of each challenge is its `FLAWS.md` — what broke, where
 
 ## Benchmarks Game — math-lib coverage
 
-`Ashes.Math` has landed (see [STANDARD_LIBRARY.md](../docs/STANDARD_LIBRARY.md#ashesmath)), and
+`Ashes.Math` has landed (see [STANDARD_LIBRARY.md](../docs/md/reference/standard-library.md#ashesmath)), and
 this is where each benchmark stands. The math lib's real unlock for this set is the **Int↔Float
 conversions** (`toFloat`, `*ToInt`) it introduces plus the hermetic `sqrt`. Notably **none of
 these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only the hermetic core is on the

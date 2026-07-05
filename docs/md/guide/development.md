@@ -18,7 +18,7 @@ locally.
 
 ## Repository Layout
 
-```
+```text
 Ashes.slnx                 Solution file
 src/
   Ashes.Frontend/           Lexer, parser, AST
@@ -306,5 +306,5 @@ On Windows, run the same command from WSL.
 5. **No `[NotInParallel]` in tests.** This attribute is banned. Fix the
    root cause instead.
 
-See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the full dependency graph
+See [docs/ARCHITECTURE.md](../internals/architecture.md) for the full dependency graph
 and compiler internals.

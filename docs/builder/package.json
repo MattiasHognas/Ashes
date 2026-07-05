@@ -1,0 +1,23 @@
+{
+  "name": "builder",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@11.9.0",
+  "type": "module",
+  "devDependencies": {
+    "@catppuccin/vitepress": "^0.1.2",
+    "@mdit-vue/shared": "^3.0.2",
+    "@types/node": "^26.1.0",
+    "mermaid": "^11.16.0",
+    "vitepress": "2.0.0-alpha.17"
+  }
+}

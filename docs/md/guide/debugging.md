@@ -13,9 +13,9 @@ debugging.
 > with either debugger.
 
 > **Related documents:**
-> - [CLI Specification — Debug Mode](COMPILER_CLI_SPEC.md#debug-mode) for the
+> - [CLI Specification — Debug Mode](../reference/cli.md#debug-mode) for the
 >   `--debug` / `-g` flag reference.
-> - [Compiler Architecture](ARCHITECTURE.md) for the compilation pipeline.
+> - [Compiler Architecture](../internals/architecture.md) for the compilation pipeline.
 
 ---
 
@@ -531,7 +531,7 @@ etc. If not, the binary was not compiled with `--debug`.
 
 ## Architecture
 
-```
+```text
 ┌──────────┐     DAP/stdio       ┌───────────┐     GDB-MI       ┌──────────┐     ptrace     ┌────────┐
 │  VS Code │ ◄─────────────────► │ ashes-dap │ ◄──────────────► │ GDB or   │ ◄────────────► │ Binary │
 │  (IDE)   │                     │ (server)  │                  │ LLDB MI  │                │ (DWARF)│

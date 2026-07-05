@@ -195,7 +195,7 @@ VSCE_PAT=xxxxxxxx just release-github 1.2.3
 
 ## Layout
 
-```
+```text
 justfile                 # entrypoint: just <recipe>
 ci/
   images/Containerfile.* # base (linux-x64) + arm64 + win runner images
@@ -249,7 +249,3 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 - **Permission/ownership oddities in the repo** — Podman runs with
   `--userns=keep-id`; with Docker set `CI_ENGINE=docker` and expect root-owned
   build outputs, or run Docker rootless.
-
-```
-
-```

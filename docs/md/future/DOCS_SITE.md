@@ -50,7 +50,7 @@ The site app lives under `docs/site/`; the markdown moves to `docs/md/`, mirrori
 structure exactly (flat files plus `future/`). No renames beyond the path prefix — the SCREAMING_SNAKE
 filenames stay, so the churn is a prefix change, not a re-review of every link.
 
-```
+```text
 docs/
   md/                         # canonical markdown (moved from docs/*.md)
     LANGUAGE_SPEC.md

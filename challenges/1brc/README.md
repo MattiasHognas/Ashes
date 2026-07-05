@@ -82,7 +82,7 @@ defaults to the core count (override with `--parallel-workers`). Both variants p
 (Previous compiler generation, for reference: sequential 12.8 s @10M; parallel 2 m 36 s @1e9 at an
 8-worker cap. The 2026-07-03 optimization arc — memcmp `Bytes.compare`, closure devirtualization,
 arena-bracket elision, `Map.getStr/setStr`/user `upsertMeasurement` reuse, `Bytes.subView`, and a
-core-count worker cap — is recorded in `docs/future/COMPILER_OPTIMIZATION.md`.)
+core-count worker cap — is recorded in `docs/md/future/COMPILER_OPTIMIZATION.md`.)
 
 The tradeoff: the sequential fold is constant-memory (streams the file, reclaims each iteration in
 place) and scales to any size on tiny RAM but is single-core; the parallel fold is ~5–8× faster (near
@@ -99,7 +99,7 @@ workers need ~1.4x the CPU per equal chunk — 16 workers x ~5 MB trie working s
 96 MB V-cache CCD but thrashes the 32 MB one. Chunk counts above the worker cap measure worse than
 32 (a fork-join tree cannot shed a blocked parent's pending work), which puts this runtime's packing
 ceiling on this box at ~10.2-10.5 s; the sub-10-s follow-up is the work-conserving chunk queue
-(CO-25 in `docs/future/COMPILER_OPTIMIZATION.md`).
+(CO-25 in `docs/md/future/COMPILER_OPTIMIZATION.md`).
 
 ### Quick correctness check (no download)
 

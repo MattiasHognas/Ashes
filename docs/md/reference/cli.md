@@ -3,7 +3,7 @@
 This document is the authoritative reference for every command, flag, and argument supported by the **Ashes compiler CLI** (`ashes`).
 
 > **Source of truth:** The CLI entry point and all argument-parsing logic live in
-> [`src/Ashes.Cli/Program.cs`](../src/Ashes.Cli/Program.cs).
+> [`src/Ashes.Cli/Program.cs`](https://github.com/MattiasHognas/Ashes/blob/main/src/Ashes.Cli/Program.cs).
 > Update that file—and this document—together whenever CLI behaviour changes.
 
 ---
@@ -12,7 +12,7 @@ This document is the authoritative reference for every command, flag, and argume
 
 The Ashes CLI is invoked as:
 
-```
+```sh
 ashes <command> [options] [arguments]
 ```
 
@@ -98,7 +98,7 @@ Compile an Ashes program to a native executable on disk.
 
 #### Synopsis
 
-```
+```sh
 ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
 ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
 ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
@@ -154,7 +154,7 @@ ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>
 Successful status messages are written to **stdout** via Spectre.Console.
 On success, a confirmation line is printed:
 
-```
+```text
 OK  Wrote <size> to <output>
      Target: <target>
      Debug:  yes          (only when --debug / -g is set)
@@ -197,7 +197,7 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 
 #### Synopsis
 
-```
+```sh
 ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
 ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
 ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
@@ -267,7 +267,7 @@ Start an interactive read-eval-print loop. Each expression is compiled to a temp
 
 #### Synopsis
 
-```
+```sh
 ashes repl [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3]
 ```
 
@@ -321,7 +321,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 
 #### Synopsis
 
-```
+```sh
 ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
 ```
 
@@ -344,7 +344,7 @@ ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <as
 
 A test file is a regular `.ash` source file with one or more leading comment directives:
 
-```
+```ash
 // expect: <expected stdout>
 // exit: <expected exit code>   (optional; defaults to 0)
 ```
@@ -379,7 +379,7 @@ panic("empty")
 
 Results are printed as a table to **stdout**:
 
-```
+```text
  Test          Result   Time
 ──────────────────────────────
  hello.ash     PASS     5ms
@@ -420,7 +420,7 @@ Defaults when not provided are 4 spaces and platform newline. Without `-w`, form
 
 #### Synopsis
 
-```
+```sh
 ashes fmt <file|dir> [-w]
 ```
 
@@ -470,7 +470,7 @@ Create a new Ashes project in the current directory by scaffolding an `ashes.jso
 
 #### Synopsis
 
-```
+```sh
 ashes init
 ```
 
@@ -513,7 +513,7 @@ Add a dependency to the nearest `ashes.json` project manifest.
 
 #### Synopsis
 
-```
+```sh
 ashes add <package>
 ```
 
@@ -556,7 +556,7 @@ Remove a dependency from the nearest `ashes.json` project manifest.
 
 #### Synopsis
 
-```
+```sh
 ashes remove <package>
 ```
 
@@ -600,7 +600,7 @@ List project dependencies from the nearest `ashes.json` project manifest. In v0.
 
 #### Synopsis
 
-```
+```sh
 ashes install
 ```
 

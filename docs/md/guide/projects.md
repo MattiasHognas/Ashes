@@ -168,7 +168,7 @@ compiler-provided and are not overridable by project-local modules.
 A module path may also be satisfied by an **inline module** — a `module Name = ...`
 declaration inside a file, which is lifted to the submodule `<File>.<Name>` and is
 addressable across files exactly like a separate `<File>/<Name>.ash` (see
-[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §13.1). A path that is satisfied by *both* an inline
+[LANGUAGE_SPEC.md](../reference/language.md) §13.1). A path that is satisfied by *both* an inline
 module and a file (e.g. `module Vec` inside `Geom.ash` and a file `Geom/Vec.ash`) is a
 compile-time ambiguity error (`ASH022`). This keeps inline ↔ file promotion transparent:
 moving an inline module out to its own file leaves every `import` and call site unchanged,
@@ -241,7 +241,7 @@ Creates a new Ashes project in the current directory.
 - The project name defaults to the current directory name.
 - Fails if `ashes.json` already exists.
 
-### 6.2 ashes add \<package\>
+### 6.2 `ashes add <package>`
 
 Adds a dependency to the project manifest.
 
@@ -249,7 +249,7 @@ Adds a dependency to the project manifest.
 - Adds the package name with version `"*"` to the `dependencies` map.
 - Fails if no `ashes.json` is found.
 
-### 6.3 ashes remove \<package\>
+### 6.3 `ashes remove <package>`
 
 Removes a dependency from the project manifest.
 
@@ -278,7 +278,7 @@ Lists project dependencies. In v0.x the package registry is not yet available, s
 
 Example:
 
-```
+```sh
 ashes run -- hello world
 ```
 

@@ -20,7 +20,7 @@ Line endings
 Top-level declarations
 
 - A file is a sequence of imports, then top-level declarations, then an optional
-  trailing expression (see [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §1.1).
+  trailing expression (see [LANGUAGE_SPEC.md](language.md) §1.1).
 - Exactly one blank line separates adjacent top-level declarations, and one blank
   line separates the last declaration from the trailing expression.
 - The block of `import` lines at the top of the file is not blank-line separated

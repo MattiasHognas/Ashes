@@ -59,7 +59,7 @@ install_deps() {
   step "Installing host prerequisites (podman, just, rootless plumbing)"
 
   # qemu-user-static + binfmt let the arm64 CI leg run a genuine aarch64 container
-  # under emulation (see ensure_binfmt / docs/LOCAL_CI.md).
+  # under emulation (see ensure_binfmt / docs/md/guide/local-ci.md).
   if have pacman; then
     need_root || die "need root/sudo to install packages"
     $SUDO pacman -S --needed --noconfirm podman just slirp4netns fuse-overlayfs shadow qemu-user-static qemu-user-static-binfmt || die "pacman install failed"
@@ -114,7 +114,7 @@ verify_engine() {
 # The arm64 CI leg runs a real aarch64 container, emulated by the host's
 # qemu-aarch64 binfmt_misc handler. The handler MUST carry the F (fix-binary)
 # flag — that's what lets emulation reach into the container and survive the
-# compiler's nested exec of its arm64 output. See docs/LOCAL_CI.md.
+# compiler's nested exec of its arm64 output. See docs/md/guide/local-ci.md.
 binfmt_ok() {
   local h=/proc/sys/fs/binfmt_misc/qemu-aarch64
   [[ -r "$h" ]] && grep -q '^flags:.*F' "$h"
@@ -135,7 +135,7 @@ ensure_binfmt() {
 
   warn "arm64 binfmt handler with the F flag not found — the arm64 CI leg will fail"
   warn "with 'Exec format error' until 'qemu-aarch64' is registered (F flag)."
-  warn "Install qemu-user-static + binfmt and re-run; see docs/LOCAL_CI.md."
+  warn "Install qemu-user-static + binfmt and re-run; see docs/md/guide/local-ci.md."
 }
 
 # --- main ------------------------------------------------------------------

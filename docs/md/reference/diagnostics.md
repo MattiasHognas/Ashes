@@ -46,7 +46,7 @@ emitted and have been retired. The numbers are unused and free for reuse.
 
 These codes cover the flat top-level declaration form (`import* declaration* expr?`)
 and the binding/type import selectors. See
-[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the full grammar and scoping rules.
+[LANGUAGE_SPEC.md](language.md) for the full grammar and scoping rules.
 
 - `ASH013` — **Duplicate top-level binding name.** Two top-level declarations bind
   the same name in the same file (for example two `let x = ...` declarations, or a
@@ -74,8 +74,8 @@ and the binding/type import selectors. See
 ## Capability diagnostics
 
 These codes cover the capability surface (`capability` declarations, `needs` rows,
-`perform`, `handle ... with`). See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §20 for the
-grammar and typing rules, and [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)
+`perform`, `handle ... with`). See [LANGUAGE_SPEC.md](language.md) §20 for the
+grammar and typing rules, and [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)
 for the remaining roadmap.
 
 - `ASH017` — **Unsatisfied capability.** The program's residual capability row at the top level is
@@ -124,7 +124,7 @@ for the remaining roadmap.
 
 These cover inline (`module Name = ...`) declarations. Inline modules resolve through the
 same path as file modules, so unknown-member, unknown-selector, and import-collision cases
-reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §13.1 for the surface.
+reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](language.md) §13.1 for the surface.
 
 - `ASH021` — **Disallowed form in an inline module.** A `module` block contains a trailing
   expression or an `external` declaration — neither is permitted (a module block is
@@ -148,7 +148,7 @@ reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §13.1 for t
 ## Record diagnostics
 
 Records use the brace-free syntax described in
-[LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) §4.1. These diagnostics are currently
+[LANGUAGE_SPEC.md](language.md) §4.1. These diagnostics are currently
 surfaced as parse errors (`ASH003`) or uncoded semantic errors:
 
 - **Removed curly-brace record syntax.** The old `{ ... }` record declaration,

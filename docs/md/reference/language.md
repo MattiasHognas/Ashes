@@ -116,7 +116,7 @@ The reserved `Ashes` namespace is a module root, not a direct alias surface for
 A source file is a flat sequence of imports, then top-level declarations, then an
 optional trailing expression:
 
-```
+```text
 file        ::= import* declaration* expr?
 declaration ::= let | letrec | type | external
 letrec      ::= "let" "recursive" binding ("and" binding)*
@@ -994,12 +994,16 @@ Type rule:
 
 If:
 
+```text
 x : T
 xs : List<T>
+```
 
 Then:
 
+```text
 x :: xs : List<T>
+```
 
 ---
 
@@ -1266,7 +1270,9 @@ Desugaring model:
 
 `| p when cond -> expr` behaves like:
 
+```text
 | p -> if cond then expr else <continue to next arm>
+```
 
 Pattern guards are syntax sugar — no new evaluation rules are introduced.
 
@@ -1452,7 +1458,7 @@ qualifier without spawning a new file. This is purely a compile-time namespacing
 feature: an inline module has no runtime representation, is not a value, and is
 erased during lowering exactly as a file module is.
 
-```
+```ash
 module Geometry =
     let pi = 3.14159
     let area = given (r) -> pi * r * r
@@ -1493,7 +1499,7 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   path.
 
 Diagnostics `ASH021`–`ASH024` cover the inline-module surface (see
-[DIAGNOSTICS.md](DIAGNOSTICS.md)); unknown-member, unknown-selector, and
+[DIAGNOSTICS.md](diagnostics.md)); unknown-member, unknown-selector, and
 import-collision cases reuse `ASH013`–`ASH016`, since inline modules resolve
 through the same path as file modules.
 
@@ -1723,7 +1729,7 @@ namespace. User projects cannot override them with project-local modules.
 ## 13.6 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules are tracked in
-[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md).
+[future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md).
 
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
@@ -2237,7 +2243,7 @@ Async/await has no dedicated diagnostic codes. `async` is a builtin
 (`Ashes.Async.task`), not a block keyword, so there is no "outside `async`"
 state to police; misuse (for example combining tasks with mismatched error
 types, or consuming a `Task` without `await`/`Ashes.Async.run`) surfaces through
-ordinary type-inference diagnostics. See [DIAGNOSTICS.md](DIAGNOSTICS.md) for the
+ordinary type-inference diagnostics. See [DIAGNOSTICS.md](diagnostics.md) for the
 full code table.
 
 ---
@@ -2269,15 +2275,15 @@ resolution, and capabilities and providers declared in imported project modules.
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
 defined; handler evidence is currently per-process, not per-task or per-thread (see
-[future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md)). How handlers compile
+[future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)). How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
-documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+documented in [ARCHITECTURE.md](../internals/architecture.md).
 
 ## 20.1 Capability Declarations
 
 A capability is a named set of operations, declared at the top level like a `type`:
 
-```
+```ash
 capability Clock =
     | now : Unit -> Int          // explicit operation signature
 
@@ -2302,7 +2308,7 @@ capability State(a) =                // capability type parameter, for polymorph
 
 ## 20.2 Performing an Operation
 
-```
+```ash
 let t = perform Clock.now(Unit)  // explicit form
 let t = Clock.now(Unit)          // implicit form — identical program
 ```
@@ -2317,7 +2323,7 @@ operation call (`perform 42` is an error), and operations are always qualified b
 
 A function type may carry a `needs` clause listing the capabilities the function performs:
 
-```
+```ash
 let taxFor  : Int -> Int                          = ...  // pure: no row
 let priceOf : Str -> Int needs {Prices}            = ...  // performs exactly one capability
 let run     : Str -> Int needs {Prices, Clock | e} = ...  // open row: passes other capabilities through
@@ -2357,7 +2363,7 @@ row-polymorphic unification:
 
 ## 20.5 Handlers
 
-```
+```ash
 handle work(Unit) with
     | Clock.now(_)  -> resume(realClock(Unit))   // operation arm: args + one-shot resume
     | Log.log(msg)  -> let _ = emit(msg) in resume(Unit)
@@ -2392,7 +2398,7 @@ A `handle` satisfies a capability *dynamically* — for the extent of a scope. A
 satisfies it *statically*: `provide` supplies a fixed implementation for a **concrete** capability
 instance, resolved at compile time with no handler evidence.
 
-```
+```ash
 capability Clock =
     | now : Unit -> Int
 
@@ -2418,7 +2424,7 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   resolves against the caller's type. The same generic function used at two types is monomorphized
   to both:
 
-  ```
+  ```ash
   let display = given (x) -> Show.show(x)
   display(42)      // resolves to provide Show(Int)
   display(true)    // resolves to provide Show(Bool)  — same function, two instances
@@ -2432,7 +2438,7 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   instance). Because the operation is a runtime value, this covers the shapes inlining cannot:
   **recursive** and **higher-order** generics.
 
-  ```
+  ```ash
   let min : List(a) -> a needs {Ord(a)} =
       given (items) ->
           match items with
@@ -2467,7 +2473,7 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
 
 The same business code runs under any handler; only the interpretation changes:
 
-```
+```ash
 capability Prices =
     | lookup : Str -> Int
 
@@ -2514,13 +2520,13 @@ documented limitation, not a TODO.
 generic-provider limitation), `ASH019` (unknown capability or operation), `ASH020` (invalid
 handler), `ASH025` (the old `effect`/`uses` spellings), `ASH026` (duplicate/incomplete provider),
 and `ASH027` (a capability satisfied by both a provider and a handler) cover this surface; see
-[DIAGNOSTICS.md](DIAGNOSTICS.md).
+[DIAGNOSTICS.md](diagnostics.md).
 
 ---
 
 # 21. Unsupported (Future)
 
-See [future/FUTURE_FEATURES.md](future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
+See [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 
 Note: project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
 (`ashes.json` + `PROJECT_SPEC.md`) and are resolved before expression parsing. Built-in

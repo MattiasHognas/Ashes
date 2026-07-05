@@ -1,4 +1,4 @@
-# Local containerized CI/CD for Ashes — see docs/LOCAL_CI.md.
+# Local containerized CI/CD for Ashes — see docs/md/guide/local-ci.md.
 #
 # Quick start:
 #   just images          # build the three runner images (once)
