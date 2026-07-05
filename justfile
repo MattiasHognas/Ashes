@@ -68,6 +68,10 @@ sast:
 ext:
     ci/jobs.sh ext
 
+# Build the documentation site (docs/builder -> docs/site); fails on dead links.
+docs:
+    ci/jobs.sh docs
+
 publish-cli:
     ci/jobs.sh publish_cli
 

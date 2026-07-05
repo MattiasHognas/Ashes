@@ -67,20 +67,33 @@ deps_check() {
     echo '--- NuGet: outdated packages (report only) ---'
     dotnet list Ashes.slnx package --outdated || true
 
-    echo '--- pnpm: audit any severity (gating) ---'
-    cd vscode-extension
+    corepack enable
+    export COREPACK_ENABLE_AUTO_PIN=0
+    for pkgdir in vscode-extension docs/builder; do
+      echo \"--- pnpm (\$pkgdir): audit any severity (gating) ---\"
+      if ! ( cd \"\$pkgdir\" && pnpm install --frozen-lockfile && pnpm audit --audit-level low ); then
+        echo \"::error:: pnpm advisories found in \$pkgdir.\" >&2
+        fail=1
+      fi
+
+      echo \"--- pnpm (\$pkgdir): outdated packages (report only) ---\"
+      ( cd \"\$pkgdir\" && pnpm outdated ) || true
+    done
+
+    exit \$fail
+  "
+}
+
+# Documentation site build (docs/builder -> docs/site). VitePress fails the
+# build on dead internal links, so this doubles as the docs link gate.
+docs() {
+  run_in base "
+    set -e
+    cd docs/builder
     corepack enable
     export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
-    if ! pnpm audit --audit-level low; then
-      echo '::error:: pnpm advisories found.' >&2
-      fail=1
-    fi
-
-    echo '--- pnpm: outdated packages (report only) ---'
-    pnpm outdated || true
-
-    exit \$fail
+    pnpm docs:build
   "
 }
 
@@ -295,6 +308,7 @@ ci() {
   deps_check
   sast
   ext
+  docs
   publish_cli
   matrix
 }
@@ -610,7 +624,7 @@ release_github() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | deps_check | sast | ext | publish_cli | matrix | matrix_one | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | docs | publish_cli | matrix | matrix_one | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1
