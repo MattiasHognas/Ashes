@@ -8,3 +8,7 @@ overrides:
   # Force a patched serialize-javascript; mocha still pins the vulnerable 6.0.2
   # (GHSA-5c6j-r48x-rmvq, RCE via RegExp.flags / Date.toISOString). 7.x stays CommonJS.
   serialize-javascript: 7.0.6
+  # Force a patched jsdiff; mocha pins diff ^7, vulnerable to DoS in parsePatch/
+  # applyPatch (GHSA-73rr-hh4g-fpgx, fixed in 8.0.3). mocha only uses diff to render
+  # test-failure diffs. Drop once mocha depends on diff >= 8.0.3 itself.
+  diff: ^8.0.3

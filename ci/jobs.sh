@@ -46,7 +46,8 @@ coverage() {
 }
 
 # Dependency freshness + vulnerabilities (the local Dependabot stand-in).
-# Gates on known-vulnerable NuGet packages and high+ pnpm advisories; the
+# Gates on known-vulnerable NuGet packages and on pnpm advisories of any
+# severity (matching the NuGet gate, which has no severity floor); the
 # "outdated" listings are informational only (upstream releases shouldn't break
 # the build). Needs network (NuGet advisory DB + npm registry).
 deps_check() {
@@ -66,13 +67,13 @@ deps_check() {
     echo '--- NuGet: outdated packages (report only) ---'
     dotnet list Ashes.slnx package --outdated || true
 
-    echo '--- pnpm: audit high+ (gating) ---'
+    echo '--- pnpm: audit any severity (gating) ---'
     cd vscode-extension
     corepack enable
     export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
-    if ! pnpm audit --audit-level high; then
-      echo '::error:: pnpm high/critical advisories found.' >&2
+    if ! pnpm audit --audit-level low; then
+      echo '::error:: pnpm advisories found.' >&2
       fail=1
     fi
 

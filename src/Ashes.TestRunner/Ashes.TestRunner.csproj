@@ -11,7 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
     <ProjectReference Include="..\Ashes.Formatter\Ashes.Formatter.csproj" />
-    <PackageReference Include="Spectre.Console" Version="0.57.1" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
   </ItemGroup>
 
   <ItemGroup>
