@@ -1,4 +1,4 @@
-# Ashes Project Specification (v0.x)
+# Ashes Project Specification
 
 This document defines the `ashes.json` project file format and the rules the Ashes CLI and compiler use to discover sources, resolve imports, and choose defaults.
 

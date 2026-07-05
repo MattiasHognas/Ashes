@@ -64,9 +64,7 @@ export default defineConfig({
   title: "Ashes",
   description:
     "A pure functional ML-family language compiled to standalone native executables",
-  head: [
-    ["link", { rel: "icon", type: "image/png", href: `${base}logo.png` }],
-  ],
+  head: [["link", { rel: "icon", type: "image/png", href: `${base}logo.png` }]],
   // Default to the dark (Catppuccin Mocha) look; the toggle stays available.
   appearance: "dark",
 
@@ -96,10 +94,10 @@ export default defineConfig({
         aliases: ["ash"],
       },
     ],
-    theme: {
-      light: "catppuccin-latte",
-      dark: "catppuccin-mocha",
-    },
+    // theme: {
+    //   light: "github-light",
+    //   dark: "github-dark",
+    // },
     // Render ```mermaid fences through the <Mermaid> theme component
     // (client-side, theme-aware) instead of highlighting them as code.
     config: (md) => {

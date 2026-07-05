@@ -1,0 +1,153 @@
+/* --- HIGH CONTRAST NORDIC DESIGN TOKENS --- */
+:root {
+  /* Color Palette Repository */
+  --nord-pure-black: #0c0e12;
+  --nord-panel-dark: #1e222b;
+  --nord-active-dark: #2b303c;
+  --nord-snow-bright: #f0f4fc;
+  --nord-snow-muted: #c2cbdc;
+  --nord-snow-dark: #687690;
+  
+  --nord-pure-white: #ffffff;
+  --nord-panel-light: #f3f5f9;
+  --nord-active-light: #e5e9f0;
+  --nord-charcoal-bright: #2e3440;
+  --nord-charcoal-muted: #4c566a;
+
+  --nord-cyan-glow: #00b4d8;      /* Slightly deeper cyan for light mode readability */
+  --nord-cyan-hover: #0077b6;
+  --nord-blue-steel: #4361ee;
+  --nord-aurora-red: #d90429;
+}
+
+/* =========================================================================
+   1. LIGHT MODE SPECIFIC STYLING 
+   ========================================================================= */
+:root {
+  --vp-c-bg: var(--nord-pure-white) !important;
+  --vp-c-bg-alt: var(--nord-panel-light) !important;
+  --vp-c-bg-elv: var(--nord-active-light) !important;
+  
+  --vp-c-text-1: var(--nord-charcoal-bright) !important;
+  --vp-c-text-2: var(--nord-charcoal-muted) !important;
+  --vp-c-text-3: var(--nord-snow-dark) !important;
+
+  --vp-c-brand-1: var(--nord-cyan-glow) !important;
+  --vp-c-brand-2: var(--nord-blue-steel) !important;
+  --vp-c-brand-3: var(--nord-charcoal-bright) !important;
+
+  --vp-c-default-1: var(--nord-cyan-glow) !important;
+  --vp-c-default-2: var(--nord-panel-light) !important;
+  --vp-c-default-3: transparent !important;
+  
+  --vp-c-important-1: var(--nord-aurora-red) !important;
+  --vp-c-important-2: #fff0f1;
+  --vp-c-important-3: transparent !important;
+
+  --vp-local-nav-bg: var(--nord-pure-white) !important;
+  --vp-home-hero-image-background-image: linear-gradient(135deg, var(--nord-panel-light) 0%, var(--nord-pure-white) 100%) !important;
+}
+
+/* Light mode component assignments */
+:root .VPHomeFeatures .VPFeature,
+:root .VPDocAsideOutlineDropdown .content,
+:root .VPLocalNav {
+  background-color: var(--nord-panel-light) !important;
+}
+:root .VPButton.brand {
+  background-color: var(--nord-cyan-glow) !important;
+  color: var(--nord-pure-white) !important;
+}
+:root .VPButton.brand:hover {
+  background-color: var(--nord-cyan-hover) !important;
+}
+:root .VPButton.alt {
+  background-color: var(--nord-panel-light) !important;
+  color: var(--nord-charcoal-bright) !important;
+}
+:root .VPButton.alt:hover {
+  background-color: var(--nord-active-light) !important;
+}
+
+
+/* =========================================================================
+   2. DARK MODE SPECIFIC STYLING 
+   ========================================================================= */
+.dark {
+  /* Override cyan variables to brighter variants for dark mode contrast */
+  --dark-cyan: #8be9fd;
+  --dark-cyan-hover: #63d5ed;
+  --dark-blue: #74b2ff;
+  --dark-red: #ff6c6b;
+
+  --vp-c-bg: var(--nord-pure-black) !important;
+  --vp-c-bg-alt: var(--nord-panel-dark) !important;
+  --vp-c-bg-elv: var(--nord-active-dark) !important;
+  
+  --vp-c-text-1: var(--nord-snow-bright) !important;
+  --vp-c-text-2: var(--nord-snow-muted) !important;
+  --vp-c-text-3: var(--nord-snow-dark) !important;
+
+  --vp-c-brand-1: var(--dark-cyan) !important;
+  --vp-c-brand-2: var(--dark-blue) !important;
+  --vp-c-brand-3: var(--nord-snow-bright) !important;
+
+  --vp-c-default-1: var(--dark-cyan) !important;
+  --vp-c-default-2: var(--nord-panel-dark) !important;
+  --vp-c-default-3: transparent !important;
+  
+  --vp-c-important-1: var(--dark-red) !important;
+  --vp-c-important-2: #241416;
+  --vp-c-important-3: transparent !important;
+
+  --vp-local-nav-bg: var(--nord-pure-black) !important;
+  --vp-home-hero-image-background-image: linear-gradient(135deg, var(--nord-panel-dark) 0%, var(--nord-pure-black) 100%) !important;
+}
+
+/* Dark mode component assignments */
+.dark .VPHomeFeatures .VPFeature,
+.dark .VPDocAsideOutlineDropdown .content,
+.dark .VPLocalNav {
+  background-color: var(--nord-panel-dark) !important;
+}
+.dark .VPButton.brand {
+  background-color: var(--dark-cyan) !important;
+  color: var(--nord-pure-black) !important;
+}
+.dark .VPButton.brand:hover {
+  background-color: var(--dark-cyan-hover) !important;
+}
+.dark .VPButton.alt {
+  background-color: var(--nord-panel-dark) !important;
+  color: var(--nord-snow-bright) !important;
+}
+.dark .VPButton.alt:hover {
+  background-color: var(--nord-active-dark) !important;
+}
+
+
+/* =========================================================================
+   3. GLOBAL STRUCTURAL RULES (Both Modes)
+   ========================================================================= */
+
+/* Borderless Elements */
+:root .VPButton, .dark .VPButton,
+:root .VPHomeFeatures .VPFeature, .dark .VPHomeFeatures .VPFeature,
+:root .VPDocAsideOutlineDropdown .content, .dark .VPDocAsideOutlineDropdown .content,
+:root .VPLocalNav, .dark .VPLocalNav {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Active Indicator Links */
+:root .outline-link.active { color: var(--nord-cyan-glow) !important; }
+.dark .outline-link.active { color: #8be9fd !important; }
+
+/* Eliminate Logo Background Circle */
+:root .VPHero .image-bg, .dark .VPHero .image-bg {
+  display: none !important;
+  background: none !important;
+}
+:root .VPHero .image-container, .dark .VPHero .image-container {
+  background: none !important;
+}
