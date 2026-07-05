@@ -207,8 +207,10 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
 
 - `just deps-check` — the local **Dependabot** stand-in. **Gates** on
   known-vulnerable NuGet packages (`dotnet list package --vulnerable
---include-transitive`) and high/critical pnpm advisories (`pnpm audit
---audit-level high`). Outdated listings (`dotnet list package --outdated`,
+--include-transitive`) and pnpm advisories of any severity (`pnpm audit
+--audit-level low`), so both ecosystems fail the build alike — the NuGet
+  gate has no severity floor and the pnpm gate matches it. Outdated
+  listings (`dotnet list package --outdated`,
   `pnpm outdated`) are printed for information only — they don't fail the build.
   Dependabot is still useful on GitHub for _opening_ update PRs; this only
   _checks_. For local auto-PRs, self-hosted Renovate is the next step.

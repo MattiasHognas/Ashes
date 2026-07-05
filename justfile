@@ -57,7 +57,7 @@ coverage:
     ci/jobs.sh coverage
 
 # Dependency freshness + vulnerabilities (local Dependabot stand-in). Gates on
-# vulnerable NuGet packages and high+ pnpm advisories; reports outdated packages.
+# vulnerable NuGet packages and pnpm advisories of any severity; reports outdated packages.
 deps-check:
     ci/jobs.sh deps_check
 
