@@ -267,13 +267,14 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 - `withHeader(name)(value)(response)` — add a response header. `Content-Length` and `Connection` are
   always set by the server and must not be added here.
 - `serve(port)(handler)` — `Int -> (HttpRequest -> Task(E, HttpResponse)) -> Task(Str, Unit)`. Binds
-  the port and, per connection, reads one request, parses request line + headers + body, runs the
-  handler (which may `await` async work), writes the response, and closes (`Connection: close`). A
-  handler that completes with `Error` yields a plain `500` so one bad request never stops the loop.
-  Consumed with `Ashes.Async.run`; serves connections concurrently like the plaintext TCP server.
+  the port and, per request, reads it, parses request line + headers + body, runs the handler (which
+  may `await` async work), and writes the response. The connection is kept alive (HTTP/1.1 default),
+  closing on `Connection: close`, on handler failure, or when the peer disconnects. A handler that
+  completes with `Error` yields a plain `500`. Consumed with `Ashes.Async.run`; serves connections
+  concurrently like the plaintext TCP server.
 
-Intentionally small: **one `receive` per connection**, so the request (headers + body) must fit a
-single read; no keep-alive, and no chunked/streaming bodies. See
+Intentionally small: **one `receive` per request**, so a request (headers + body) must fit a single
+read; requests spanning multiple reads and chunked/streaming bodies are not supported. See
 [SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
 
 ```ash

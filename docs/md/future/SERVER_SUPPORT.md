@@ -314,6 +314,9 @@ transport is that HTTPS falls out without a second handler model.
   (`body(req)`), `json` and custom-header (`respond`, `withHeader`) responses, and **async handlers**
   (`handler : HttpRequest -> Task(E, HttpResponse)`, so a handler can `await`; a handler `Error`
   becomes a `500`).
+- HTTP/1.1 **keep-alive**: the connection is reused for successive requests (constant memory across
+  thousands of requests), closing on `Connection: close`, handler failure, or peer disconnect. Each
+  request must still fit a single read (see cross-read buffering above).
 - Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
@@ -332,8 +335,12 @@ transport is that HTTPS falls out without a second handler model.
   incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
   baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
   Windows detached poll array is capped at 256 fds per round.
-- `Ashes.Http.Server` extensions still open: keep-alive (one request per connection today) and
-  chunked/streaming large bodies (the request must fit a single read).
+- `Ashes.Http.Server` cross-read buffering still open: requests that span multiple reads (bodies
+  larger than one ~64KB read, or slow/split requests) and chunked/streaming bodies. This is blocked
+  by a compiler bug — a recursive `async` loop whose accumulator is a *growing* heap value across a
+  socket `await` is not tail-call-optimized and overflows the stack; the buffer must grow across
+  reads, so it needs that fixed first. Keep-alive itself is delivered (below) using a constant-shape
+  loop.
 - Graceful shutdown wiring (see open questions).
 
 ---

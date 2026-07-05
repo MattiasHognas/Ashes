@@ -1011,6 +1011,16 @@ public sealed class LinuxBackendCoverageTests
             var data = await HttpGetRawWithRetryAsync(port, "/data");
             data.ShouldContain("Content-Type: application/json");
             data.ShouldEndWith("{\"ok\":true}");
+
+            // Keep-alive: two requests on a single TCP connection, second response still correct.
+            var (first, second) = await HttpTwoRequestsOneConnectionAsync(port,
+                "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            first.ShouldContain("HTTP/1.1 200 OK");
+            first.ShouldContain("Connection: keep-alive");
+            first.ShouldEndWith("ok");
+            second.ShouldContain("Content-Type: application/json");
+            second.ShouldEndWith("{\"ok\":true}");
         }
         finally
         {
@@ -1020,6 +1030,32 @@ public sealed class LinuxBackendCoverageTests
             }
             DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    // Sends two requests on one persistent connection, returning both responses (keep-alive).
+    private static async Task<(string First, string Second)> HttpTwoRequestsOneConnectionAsync(int port, string firstRequest, string secondRequest)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var stream = client.GetStream();
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(firstRequest)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var firstBuffer = new byte[4096];
+                int firstRead = await stream.ReadAsync(firstBuffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(secondRequest)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                var second = await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout);
+                return (Encoding.UTF8.GetString(firstBuffer, 0, firstRead).Trim(), second.Trim());
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
         }
     }
 

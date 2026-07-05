@@ -1,10 +1,12 @@
-// Ashes.Http.Server — a minimal HTTP/1.1 server layered over Ashes.Net.Tcp.Server. A handler maps a
-// request to a response (handler : HttpRequest -> Task(E, HttpResponse), so handlers can `await`
-// async work such as a downstream call); `serve` reads one request per connection, parses the request
-// line + headers + body, runs the handler, writes the response, and closes (Connection: close). Pure
-// Ashes over the TCP layer, so it works on every target the TCP server does. Intentionally small: one
-// receive per connection (so the request must fit one read), no keep-alive, no chunked/streaming
-// bodies — see docs/md/future/SERVER_SUPPORT.md for what remains.
+// Ashes.Http.Server — an HTTP/1.1 server layered over Ashes.Net.Tcp.Server. A handler maps a request
+// to a response (handler : HttpRequest -> Task(E, HttpResponse), so handlers can `await` async work
+// such as a downstream call); `serve` reads a request, runs the handler, writes the response, and —
+// per HTTP/1.1 — keeps the connection alive (closing on `Connection: close`, on handler failure, or
+// when the peer disconnects). Pure Ashes over the TCP layer, so it works on every target the TCP
+// server does. Intentionally small: one `receive` per request, so a request (headers + body) must fit
+// a single read; requests spanning multiple reads and chunked/streaming bodies are not supported (a
+// growing cross-read buffer is blocked by a recursive-async-loop accumulator bug — see
+// docs/md/future/SERVER_SUPPORT.md).
 //
 // ADT field types must be simple type names, so a request keeps its headers as the raw header block
 // (a Str) and a response keeps its extra headers as a pre-rendered "Name: value\r\n..." block; the
@@ -136,20 +138,48 @@ let reasonPhrase status =
                         then "Internal Server Error"
                         else "OK"
 
-let render resp = 
+let renderConnection connectionValue resp = 
     match resp with
-        | HttpResponse(status, headerBlock, bodyText) -> "HTTP/1.1 " + Ashes.Text.fromInt(status) + " " + reasonPhrase(status) + "\r\n" + headerBlock + "Content-Length: " + Ashes.Text.fromInt(Ashes.Text.byteLength(bodyText)) + "\r\nConnection: close\r\n\r\n" + bodyText
+        | HttpResponse(status, headerBlock, bodyText) -> "HTTP/1.1 " + Ashes.Text.fromInt(status) + " " + reasonPhrase(status) + "\r\n" + headerBlock + "Content-Length: " + Ashes.Text.fromInt(Ashes.Text.byteLength(bodyText)) + "\r\nConnection: " + connectionValue + "\r\n\r\n" + bodyText
+
+let render resp = renderConnection("close")(resp)
+
+let wantsKeepAlive req = 
+    match header(req)("connection") with
+        | Some(conn) -> 
+            if sameHeaderName(conn)("close")
+            then false
+            else true
+        | None -> true
 
 let serve port handler = 
     Ashes.Net.Tcp.Server.serve(port)(given (client) -> 
-        async(match await Ashes.Net.Tcp.receive(client)(65536) with
-            | Error(e) -> Error(e)
-            | Ok(raw) -> 
-                let response = 
-                    match await handler(parseRequest(raw)) with
-                        | Ok(resp) -> render(resp)
-                        | Error(_he) -> render(text(500)("Internal Server Error"))
-                in 
-                    match await Ashes.Net.Tcp.send(client)(response) with
-                        | Error(e2) -> Error(e2)
-                        | Ok(_n) -> await Ashes.Net.Tcp.close(client)))
+        async(let recursive connLoop u = 
+            match await Ashes.Net.Tcp.receive(client)(65536) with
+                | Error(e) -> Error(e)
+                | Ok(raw) -> 
+                    if Ashes.Text.byteLength(raw) == 0
+                    then await Ashes.Net.Tcp.close(client)
+                    else 
+                        let req = parseRequest(raw)
+                        in 
+                            let keepAlive = wantsKeepAlive(req)
+                            in 
+                                match await handler(req) with
+                                    | Ok(resp) -> 
+                                        let wire = 
+                                            renderConnection(if keepAlive
+                                            then "keep-alive"
+                                            else "close")(resp)
+                                        in 
+                                            match await Ashes.Net.Tcp.send(client)(wire) with
+                                                | Error(e2) -> Error(e2)
+                                                | Ok(_n) -> 
+                                                    if keepAlive
+                                                    then connLoop(0)
+                                                    else await Ashes.Net.Tcp.close(client)
+                                    | Error(_he) -> 
+                                        match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
+                                            | Error(e3) -> Error(e3)
+                                            | Ok(_n2) -> await Ashes.Net.Tcp.close(client)
+        in connLoop(0)))
