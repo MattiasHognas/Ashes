@@ -383,6 +383,9 @@ _warn() { echo "  ${_Y}warn${_N} $*" >&2; }
 _die()  { echo "${_R}error${_N} $*" >&2; exit 1; }
 _have() { command -v "$1" >/dev/null 2>&1; }
 _valid_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; }
+# vsce publish of an already-built .vsix; vsce reads the token from $VSCE_PAT
+# (kept out of argv). Shared by the fresh-release path and the resume path.
+_vsce_publish() { pnpm dlx @vscode/vsce@3.9.2 publish --packagePath "$1" --no-dependencies; }
 
 # release_github [version] [-y]: cut a release/X.Y.Z branch from origin/main,
 # build the artifacts (release_build → artifacts/release/), tag vX.Y.Z, and
@@ -448,16 +451,48 @@ release_github() {
   _valid_semver "$version" || _die "invalid version '$version' (expected semver like 1.2.3)"
 
   local tag="v$version" branch="release/$version"
+  local out="artifacts/release" vsix="artifacts/release/ashes-language-$version.vsix"
 
-  # --- collision checks ---
+  # --- already released? resume the Marketplace publish instead of dying ---
+  # A *complete* release (tag on the remote + a GitHub Release for it) means the
+  # only step that can still be pending is the Marketplace publish — it runs last
+  # and is allowed to fail without stranding the tag. Resume it: publish the
+  # released .vsix (local copy if present, else downloaded from the Release) and
+  # stop. Partial states (a tag with no Release, local-only leftovers) still fail
+  # loudly below — those need manual cleanup, not a guess.
+  if git ls-remote --exit-code --tags "$remote" "$tag" >/dev/null 2>&1 \
+    && gh release view "$tag" >/dev/null 2>&1; then
+    _step "Release $tag already exists — resuming Marketplace publish only"
+    [[ -n "${VSCE_PAT:-}" ]] \
+      || _die "VSCE_PAT is not set — set it and re-run (fish: read -s -x VSCE_PAT; sh: read -rs VSCE_PAT && export VSCE_PAT)"
+    if [[ -f "$vsix" ]]; then
+      _ok "using local $vsix"
+    else
+      _step "Downloading $(basename "$vsix") from the $tag GitHub Release"
+      mkdir -p "$out"
+      gh release download "$tag" --pattern "$(basename "$vsix")" --dir "$out" --clobber \
+        || _die "could not download $(basename "$vsix") from release $tag"
+    fi
+    _confirm "Publish $(basename "$vsix") to the VS Code Marketplace (publisher mattiashognas)?" \
+      || _die "aborted"
+    _step "Publishing $vsix to the VS Code Marketplace"
+    _vsce_publish "$vsix" || _die "vsce publish failed — check VSCE_PAT (Azure DevOps PAT, scope Marketplace: Manage)"
+    _ok "published to Marketplace"
+    echo
+    echo "${_G}${_B}Marketplace publish for Ashes ${tag} complete.${_N}"
+    echo "  release: $(gh release view "$tag" --json url --jq .url 2>/dev/null || echo "$tag")"
+    return 0
+  fi
+
+  # --- collision checks (fresh release path) ---
   git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null \
-    && _die "tag $tag already exists locally"
+    && _die "tag $tag exists locally but not as a complete release on $remote — stale leftover? (git tag -d $tag)"
   git ls-remote --exit-code --tags "$remote" "$tag" >/dev/null 2>&1 \
-    && _die "tag $tag already exists on $remote"
+    && _die "tag $tag exists on $remote but has no GitHub Release — inconsistent state, clean up manually"
   git ls-remote --exit-code --heads "$remote" "$branch" >/dev/null 2>&1 \
     && _die "branch $branch already exists on $remote"
   gh release view "$tag" >/dev/null 2>&1 \
-    && _die "a GitHub release for $tag already exists"
+    && _die "a GitHub Release for $tag exists but tag $tag is not on $remote — inconsistent state, clean up manually"
 
   echo
   echo "About to release ${_B}Ashes ${tag}${_N}:"
@@ -506,7 +541,6 @@ release_github() {
   fi
 
   # --- build artifacts ---
-  local out="artifacts/release"
   _step "Building release artifacts (version $version) → $out/"
   release_build "$version"
 
@@ -547,21 +581,20 @@ release_github() {
 
   # --- publish to the VS Code Marketplace (optional, last) ---
   # Gated on VSCE_PAT so the release still works without it. Publishes the exact
-  # .vsix already built and attached to the GitHub Release — no rebuild. vsce reads
-  # the token from $VSCE_PAT (kept out of argv). Run after the Release exists and
-  # past the ERR trap, and tolerate failure: a Marketplace hiccup must not strand
-  # the live tag/release — it can be retried with the printed command.
-  local vsix="$out/ashes-language-$version.vsix"
+  # .vsix already built and attached to the GitHub Release — no rebuild. Run after
+  # the Release exists and past the ERR trap, and tolerate failure: a Marketplace
+  # hiccup must not strand the live tag/release — re-running release_github with
+  # the same version detects the complete release and resumes this publish alone.
   if [[ -n "${VSCE_PAT:-}" ]]; then
     _step "Publishing $vsix to the VS Code Marketplace"
-    if pnpm dlx @vscode/vsce@3.9.2 publish --packagePath "$vsix" --no-dependencies; then
+    if _vsce_publish "$vsix"; then
       _ok "published to Marketplace"
     else
-      _warn "vsce publish failed — GitHub release $tag is live; retry: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.2 publish --packagePath $vsix --no-dependencies"
+      _warn "vsce publish failed — GitHub release $tag is live; retry: VSCE_PAT=… just release-github $version"
     fi
   else
     _warn "VSCE_PAT not set — skipped Marketplace publish (GitHub release $tag is live)"
-    echo "  to publish later: VSCE_PAT=… pnpm dlx @vscode/vsce@3.9.2 publish --packagePath $vsix --no-dependencies"
+    echo "  to publish later: VSCE_PAT=… just release-github $version"
   fi
 
   _restore_branch
