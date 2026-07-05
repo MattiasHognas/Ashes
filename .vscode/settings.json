@@ -17,5 +17,10 @@
   },
   "[markdown]": {
     "editor.formatOnSave": false
+  },
+  "[plaintext]": {
+    "editor.formatOnSave": false,
+    "files.insertFinalNewline": false,
+    "files.trimFinalNewlines": false
   }
 }
