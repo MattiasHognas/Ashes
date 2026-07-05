@@ -103,6 +103,7 @@ public sealed partial class Lowering
         NetTlsSend,
         NetTlsReceive,
         NetTlsClose,
+        NetTlsServerHandshake,
         Panic,
         AsyncRun,
         AsyncTask,

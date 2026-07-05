@@ -601,6 +601,14 @@ public abstract record IrInst
     public sealed record CreateTlsHandshakeTask(int Target, int SocketTemp, int HostTemp) : IrInst;
 
     /// <summary>
+    /// Creates a leaf task that runs the SERVER half of a TLS handshake over an accepted TCP
+    /// socket. CertTemp/KeyTemp are PEM contents (Str): the certificate chain and private key.
+    /// The server config is built once and cached process-wide; the handshake parks on
+    /// WaitTlsWantRead/Write and completes with Ok(TlsSocket).
+    /// </summary>
+    public sealed record CreateTlsServerHandshakeTask(int Target, int SocketTemp, int CertTemp, int KeyTemp) : IrInst;
+
+    /// <summary>
     /// Creates a leaf networking task for sending text over a TLS session.
     /// </summary>
     public sealed record CreateTlsSendTask(int Target, int SslTemp, int TextTemp) : IrInst;
@@ -743,6 +751,8 @@ public static class TaskStructLayout
     public const long StateTlsReceive = -22;
     /// <summary>State index value indicating a leaf TLS close task.</summary>
     public const long StateTlsClose = -23;
+    /// <summary>State index value indicating a leaf server-side TLS handshake task.</summary>
+    public const long StateTlsServerHandshake = -24;
 
     /// <summary>No pending wait is registered for the task.</summary>
     public const long WaitNone = 0;

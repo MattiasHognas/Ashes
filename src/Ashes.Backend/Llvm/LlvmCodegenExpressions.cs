@@ -519,6 +519,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle tlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_connect");
         LlvmBasicBlockHandle checkTlsHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_handshake");
         LlvmBasicBlockHandle tlsHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_handshake");
+        LlvmBasicBlockHandle checkTlsServerHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_server_handshake");
+        LlvmBasicBlockHandle tlsServerHandshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_server_handshake");
         LlvmBasicBlockHandle checkTlsSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_send");
         LlvmBasicBlockHandle tlsSendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_send");
         LlvmBasicBlockHandle checkTlsReceiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_receive");
@@ -660,11 +662,24 @@ internal static partial class LlvmCodegen
             stateIdx,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTlsHandshake), 1),
             prefix + "_is_tls_handshake");
-        LlvmApi.BuildCondBr(builder, isTlsHandshake, tlsHandshakeBlock, checkTlsSendBlock);
+        LlvmApi.BuildCondBr(builder, isTlsHandshake, tlsHandshakeBlock, checkTlsServerHandshakeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, tlsHandshakeBlock);
         LlvmApi.BuildStore(builder,
             EmitNetworkingRuntimeCall(state, "ashes_step_tls_handshake_task", [taskPtr], prefix + "_tls_handshake_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkTlsServerHandshakeBlock);
+        LlvmValueHandle isTlsServerHandshake = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTlsServerHandshake), 1),
+            prefix + "_is_tls_server_handshake");
+        LlvmApi.BuildCondBr(builder, isTlsServerHandshake, tlsServerHandshakeBlock, checkTlsSendBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, tlsServerHandshakeBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_tls_server_handshake_task", [taskPtr], prefix + "_tls_server_handshake_status"),
             statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
@@ -1518,6 +1533,22 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.ConstInt(state.I64, 0, 0), "sleep_arena_end");
 
+        return taskPtr;
+    }
+
+    /// <summary>
+    /// Creates a server-side TLS handshake leaf task: a networking leaf with the accepted socket
+    /// in IoArg0, the certificate-chain PEM (Str) in IoArg1, and the private-key PEM (Str) in
+    /// WaitData1 (unused by the handshake loop, which only caches its session in WaitData0).
+    /// </summary>
+    private static LlvmValueHandle EmitCreateTlsServerHandshakeTask(
+        LlvmCodegenState state,
+        LlvmValueHandle socket,
+        LlvmValueHandle certPem,
+        LlvmValueHandle keyPem)
+    {
+        LlvmValueHandle taskPtr = EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsServerHandshake, socket, certPem, "tls_server_handshake_task");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData1, keyPem, "tls_server_handshake_key_pem");
         return taskPtr;
     }
 

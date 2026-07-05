@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
@@ -833,6 +835,112 @@ public sealed class LinuxBackendCoverageTests
         var ir = new Lowering(diagnostics).Lower(ast);
         diagnostics.ThrowIfAny();
         return ir;
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_serve_tls_echo_via_serve_tls()
+    {
+        // Server-side TLS: the Ashes program terminates TLS (Ashes.Net.Tls.Server.serveTls with a
+        // self-signed cert), the C# test is an SslStream CLIENT that trusts the test cert via a
+        // validation callback. Exercises the rustls server config build (certified key from PEMs),
+        // the server half of the handshake (parking on WaitTlsWantRead/Write), and the shared TLS
+        // send/receive/close paths on an accepted connection.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tls
+            import Ashes.Net.Tls.Server
+            import Ashes.Async
+            let onClient tls =
+                async(match await Ashes.Net.Tls.receive(tls)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tls.close(tls))
+            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_tls_srv_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            WriteSelfSignedServerPems(tmpDir);
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            foreach (var payload in new[] { "tls-one", "tls-two" })
+            {
+                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload);
+                reply.ShouldBe("echo: " + payload);
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    /// <summary>
+    /// Writes a self-signed ECDSA P-256 localhost certificate + PKCS#8 key as cert.pem / key.pem.
+    /// ECDSA keeps handshakes cheap under qemu emulation (see TlsLoopbackTestHost).
+    /// </summary>
+    private static void WriteSelfSignedServerPems(string directory)
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName("localhost");
+        san.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(san.Build());
+        using var certificate = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        File.WriteAllText(Path.Combine(directory, "cert.pem"), certificate.ExportCertificatePem());
+        File.WriteAllText(Path.Combine(directory, "key.pem"), key.ExportPkcs8PrivateKeyPem());
+    }
+
+    private static async Task<string> TlsConnectSendReceiveWithRetryAsync(int port, string payload)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                await using var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+                await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout);
+                var outBytes = Encoding.UTF8.GetBytes(payload);
+                await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                var buffer = new byte[4096];
+                int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                return Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(100);
+            }
+        }
     }
 
     [Test]

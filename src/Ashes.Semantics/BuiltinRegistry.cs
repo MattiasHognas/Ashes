@@ -48,6 +48,7 @@ public static class BuiltinRegistry
         NetTlsSend,
         NetTlsReceive,
         NetTlsClose,
+        NetTlsServerHandshake,
         AsyncRun,
         AsyncTask,
         AsyncFromResult,
@@ -343,6 +344,13 @@ public static class BuiltinRegistry
                 "Ashes.Http.Server",
                 "Ashes.Semantics.StdLib.Ashes.Http.Server.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Net.Tls.Server"] = new(
+                "Ashes.Net.Tls.Server",
+                "Ashes.Semantics.StdLib.Ashes.Net.Tls.Server.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["handshake"] = new("handshake", BuiltinValueKind.NetTlsServerHandshake, IsCallable: true, Arity: 3)
+                }),
             ["Ashes.Net.Tls"] = new(
                 "Ashes.Net.Tls",
                 null,
