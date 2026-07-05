@@ -27,7 +27,7 @@ beyond light configuration.
 | Generator | **VitePress** (latest stable) | Markdown-first, ships Shiki natively, local full-text search built in, fast builds |
 | Highlighting | **Shiki** via VitePress `markdown.languages` | Accepts raw TextMate grammars — the extension's `ashes.tmLanguage.json` loads directly |
 | Ashes grammar | `vscode-extension/syntaxes/ashes.tmLanguage.json` (scope `source.ashes`) | Single source of truth; editor and site can never drift |
-| Diagrams | `vitepress-plugin-mermaid` | The docs already use ` ```mermaid ` blocks (7 today); VitePress does not render them natively |
+| Diagrams | `vitepress-mermaid-renderer` (fallback: small custom markdown-it rule + Vue component) | The docs already use ` ```mermaid ` blocks (7 today); VitePress does not render them natively, and Shiki cannot (it is a highlighter, not a renderer). The older `vitepress-plugin-mermaid` is unmaintained and incompatible with VitePress 2, so it is ruled out. The fallback (~50 lines: fence -> Vue component -> Mermaid.js client-side, with dark/light theme switching) removes plugin risk entirely if the ecosystem goes stale again |
 | Search | VitePress built-in local search (minisearch) | No external service; works on a static host |
 | Package manager | **pnpm**, pinned via `packageManager` | Same rules as `vscode-extension/` (`pnpm@11.x`, committed `pnpm-lock.yaml`) |
 | Node | `^26.0.0` | Matches `vscode-extension/package.json` engines |
@@ -210,5 +210,7 @@ The move and every reference update land in **one commit** so no state ever has 
    structure with unchanged filenames; move and relink in a single commit.
 3. **Tooling:** pnpm pinned via `packageManager` + committed lockfile + Node `^26`, prettier/eslint
    scoped to the site app only — the same rules as `vscode-extension/`.
-4. **Mermaid rendering** via plugin; dead-link checking as a build gate.
+4. **Mermaid rendering** via `vitepress-mermaid-renderer`, with the ~50-line custom markdown-it +
+   Vue-component approach as the sanctioned fallback (theme-aware, no plugin dependency); dead-link
+   checking as a build gate.
 5. **Deployment:** static build to GitHub Pages from `main`; `base` configurable by env var.
