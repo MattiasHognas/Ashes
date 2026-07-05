@@ -64,6 +64,10 @@ vscode-extension/src/test/fixtures/error
 vscode-extension/src/test/fixtures/hello
 vscode-extension/src/test/fixtures/types
 
+# Documenation web
+.pnpm-store
+docs/builder/node_modules/
+
 # Publish output
 dist/
 publish/
