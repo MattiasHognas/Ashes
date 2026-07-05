@@ -8,9 +8,6 @@ importers:
 
   .:
     devDependencies:
-      '@catppuccin/vitepress':
-        specifier: ^0.1.2
-        version: 0.1.2(typescript@5.9.3)
       '@mdit-vue/shared':
         specifier: ^3.0.2
         version: 3.0.2
@@ -23,6 +20,9 @@ importers:
       vitepress:
         specifier: 2.0.0-alpha.17
         version: 2.0.0-alpha.17(@types/node@26.1.0)(postcss@8.5.16)(typescript@5.9.3)
+      vue:
+        specifier: ^3.5.39
+        version: 3.5.39(typescript@5.9.3)
 
 packages:
 
@@ -48,11 +48,6 @@ packages:
 
   '@braintree/sanitize-url@7.1.2':
     resolution: {integrity: sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA==}
-
-  '@catppuccin/vitepress@0.1.2':
-    resolution: {integrity: sha512-dqhgo6U6GWbgh3McAgwemUC8Y2Aj48rRcQx/9iuPzBPAgo7NA3yi7ZcR0wolAENMmoOMAHBV+rz/5DfiGxtZLA==}
-    peerDependencies:
-      typescript: ^5.0.0
 
   '@chevrotain/types@11.1.2':
     resolution: {integrity: sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw==}
@@ -1203,10 +1198,6 @@ snapshots:
 
   '@braintree/sanitize-url@7.1.2': {}
 
-  '@catppuccin/vitepress@0.1.2(typescript@5.9.3)':
-    dependencies:
-      typescript: 5.9.3
-
   '@chevrotain/types@11.1.2': {}
 
   '@docsearch/css@4.6.3': {}
@@ -2208,7 +2199,8 @@ snapshots:
 
   ts-dedent@2.3.0: {}
 
-  typescript@5.9.3: {}
+  typescript@5.9.3:
+    optional: true
 
   uc.micro@2.1.0: {}
 

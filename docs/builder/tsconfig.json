@@ -5,9 +5,10 @@
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
     "strict": true,
+    "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "types": ["node", "vite/client"]
+    "types": ["node"]
   },
   "include": [".vitepress/**/*.ts", ".vitepress/**/*.vue", "env.d.ts"]
 }
