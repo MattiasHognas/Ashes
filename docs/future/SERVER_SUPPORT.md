@@ -298,27 +298,40 @@ transport is that HTTPS falls out without a second handler model.
 
 ---
 
-## New work required
+## Work status
 
-Roughly, and to be refined against the codebase:
+### Delivered (2026-07-05, all three targets, tested per target)
 
-- `Ashes.Net.Tcp.Server`: `bind`, `listen`, `accept` primitives (non-blocking; `accept` as a
-  `WaitSocketRead` on the listener), including the `SO_REUSEPORT` bind option.
-- Multi-reactor spawn: run one cooperative poll loop per structured-parallelism worker, over that
-  worker's accepted connections.
-- Per-connection arena scoping and reclamation, derived from the ownership / resource-safety work,
-  plus per-worker connection bounds.
+- `Ashes.Net.Tcp.Server`: `listen` / `accept` primitives (non-blocking; `accept` parks on
+  `WaitSocketRead`) and the `serve(port)(handler)` combinator.
+- Single-threaded concurrent serving: `serve` spawns each handler via `Ashes.Async.spawn`
+  (detached tasks with private, individually reclaimed arenas — memory is constant under
+  sustained load, which also covers the per-connection reclamation milestone for the
+  single-threaded case). Ownership of resources referenced by a spawned task moves into the task.
+- `Ashes.Http.Server`: minimal HTTP/1.1 — request-line parse (`method` / `path`), response
+  constructors (`text`, status reasons, `Content-Length`), synchronous handler, `Connection: close`.
+- Cross-target parity for all of the above (linux-x64 native, linux-arm64 via qemu, win-x64 via
+  wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`).
+
+### Remaining
+
+- Multi-core multi-reactor: one poll loop per worker over its own connections, with `SO_REUSEPORT`
+  accept distribution (Linux) / a shared listener fallback (Windows). Constraint learned from a
+  spike: `Parallel.both` is fork-join and deadlocks on never-returning reactors — this needs a
+  dedicated long-lived-worker primitive.
+- Scheduler efficiency under high concurrency: each blocking wait currently rebuilds the poll set
+  and re-steps the whole detached list (O(connections) per wake). A persistent epoll set /
+  incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
+  baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
+  Windows detached poll array is capped at 256 fds per round.
+- `Ashes.Http.Server` extensions: request headers and body, keep-alive, streaming/large bodies,
+  `json` response constructor, async handlers (the handler is synchronous today).
 - Graceful shutdown wiring (see open questions).
-- `Ashes.Http.Server`: HTTP/1.1 request parser and response serializer, plus response constructors
-  (`text`, `json`, status helpers) and accessors (`path`, `method`, headers, body).
 - Server-side TLS: expose the rustls-ffi server-config / acceptor surface (the client path uses only
   the client-config and verifier symbols), certificate-chain-and-private-key loading, and the
-  server half of the handshake. Wire the accepted `TlsSocket` into the same accept/reactor path; the
+  server half of the handshake. Wire the accepted `TlsSocket` into the same accept path; the
   scheduler's existing `WaitTlsWantRead` / `WaitTlsWantWrite` handling is reused as-is. `serveTls`
   (HTTP over TLS) and a TLS `tcp.serve` counterpart sit on top of this.
-- Cross-target parity (Windows, arm64) for the accept/reactor path, tracked with the existing
-  cross-target parallelism work; server-side TLS matches the same three targets the rustls runtime
-  already ships to.
 
 ---
 
