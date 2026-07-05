@@ -441,6 +441,16 @@ public static class IrOptimizer
             IrInst.TextFromFloat t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.TextFormatFloat t => t with { ValueTemp = R(t.ValueTemp), DecimalsTemp = R(t.DecimalsTemp) },
             IrInst.TextToHex t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.TextByteLength t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.ReadExact r => r with { CountTemp = R(r.CountTemp) },
+            IrInst.FileReadAllBytes f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.FileMmap f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.SpawnProcess s => s with { ExeTemp = R(s.ExeTemp), ArgsTemp = R(s.ArgsTemp) },
+            IrInst.ProcessWriteStdin p => p with { ProcessTemp = R(p.ProcessTemp), TextTemp = R(p.TextTemp) },
+            IrInst.ProcessReadStdoutLine p => p with { ProcessTemp = R(p.ProcessTemp) },
+            IrInst.ProcessReadStderrLine p => p with { ProcessTemp = R(p.ProcessTemp) },
+            IrInst.ProcessWaitForExit p => p with { ProcessTemp = R(p.ProcessTemp) },
+            IrInst.ProcessKill p => p with { ProcessTemp = R(p.ProcessTemp) },
             IrInst.HttpGet h => h with { UrlTemp = R(h.UrlTemp) },
             IrInst.HttpPost h => h with { UrlTemp = R(h.UrlTemp), BodyTemp = R(h.BodyTemp) },
             IrInst.NetTcpConnect n => n with { HostTemp = R(n.HostTemp), PortTemp = R(n.PortTemp) },
@@ -1365,6 +1375,16 @@ public static class IrOptimizer
             case IrInst.TextFromFloat t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.TextFormatFloat t: usedTemps.Add(t.ValueTemp); usedTemps.Add(t.DecimalsTemp); break;
             case IrInst.TextToHex t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.TextByteLength t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.ReadExact r: usedTemps.Add(r.CountTemp); break;
+            case IrInst.FileReadAllBytes f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.FileMmap f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.SpawnProcess s: usedTemps.Add(s.ExeTemp); usedTemps.Add(s.ArgsTemp); break;
+            case IrInst.ProcessWriteStdin p: usedTemps.Add(p.ProcessTemp); usedTemps.Add(p.TextTemp); break;
+            case IrInst.ProcessReadStdoutLine p: usedTemps.Add(p.ProcessTemp); break;
+            case IrInst.ProcessReadStderrLine p: usedTemps.Add(p.ProcessTemp); break;
+            case IrInst.ProcessWaitForExit p: usedTemps.Add(p.ProcessTemp); break;
+            case IrInst.ProcessKill p: usedTemps.Add(p.ProcessTemp); break;
             case IrInst.HttpGet h: usedTemps.Add(h.UrlTemp); break;
             case IrInst.HttpPost h: usedTemps.Add(h.UrlTemp); usedTemps.Add(h.BodyTemp); break;
             case IrInst.NetTcpConnect n: usedTemps.Add(n.HostTemp); usedTemps.Add(n.PortTemp); break;

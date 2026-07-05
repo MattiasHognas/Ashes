@@ -52,7 +52,7 @@ let render resp =
                                 if status == 500
                                 then "Internal Server Error"
                                 else "OK"
-            in "HTTP/1.1 " + Ashes.Text.fromInt(status) + " " + statusReason + "\r\nContent-Length: " + Ashes.Text.fromInt(Ashes.String.length(bodyText)) + "\r\nConnection: close\r\n\r\n" + bodyText
+            in "HTTP/1.1 " + Ashes.Text.fromInt(status) + " " + statusReason + "\r\nContent-Length: " + Ashes.Text.fromInt(Ashes.Text.byteLength(bodyText)) + "\r\nConnection: close\r\n\r\n" + bodyText
 
 let serve port handler = 
     Ashes.Net.Tcp.Server.serve(port)(given (client) -> 

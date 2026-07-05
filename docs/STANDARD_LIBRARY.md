@@ -222,8 +222,7 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 
 This is intentionally small: the request line + a single `receive` per connection, and a synchronous
 handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
-[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)). `Content-Length` is computed with
-`Ashes.String.length` (character count — equal to the byte count for ASCII bodies).
+[docs/future/SERVER_SUPPORT.md](future/SERVER_SUPPORT.md)).
 
 ```ash
 import Ashes.IO
