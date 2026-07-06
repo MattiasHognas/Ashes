@@ -294,11 +294,11 @@ an `IrProgram`, which the backend consumes.
 
 ### IrProgram structure
 
-```text
-IrProgram
-├── EntryFunction : IrFunction       — the top-level expression
-├── Functions     : List<IrFunction> — lifted lambdas / named functions
-└── StringLiterals: List<IrStringLiteral>
+```mermaid
+flowchart TD
+    IrProgram --> EntryFunction["EntryFunction : IrFunction<br/>the top-level expression"]
+    IrProgram --> Functions["Functions : List(IrFunction)<br/>lifted lambdas / named functions"]
+    IrProgram --> StringLiterals["StringLiterals : List(IrStringLiteral)"]
 ```
 
 Each `IrFunction` contains a flat list of `IrInst` records, a local-slot
@@ -332,17 +332,14 @@ Ashes programs run without a garbage collector. Heap allocation uses a
 **chunked arena allocator** with a bump-pointer cursor and a 4 MB chunk
 size.
 
-```text
-┌──────────────────────── chunk 0 (4 MB) ─────────────────────────┐
-│ [prev=0] [alloc] [alloc] [alloc] ... [free]                     │
-└─────────────────────────────────────────────────────────────────┘
-                                                   │ grow on demand
-                                                   ▼
-┌──────────────────────── chunk 1 (4 MB) ─────────────────────────┐
-│ [prev=chunk0] [alloc] [alloc] ... [free]                        │
-└─────────────────────────────────────────────────────────────────┘
-                                                               ▲
-                                                            cursor
+```mermaid
+flowchart TD
+    c0["chunk 0 · 4 MB<br/>[prev = 0] [alloc] [alloc] [alloc] ... [free]"]
+    c1["chunk 1 · 4 MB<br/>[prev = chunk 0] [alloc] [alloc] ... [free]"]
+    cursor(["bump cursor"])
+    c0 -->|"grow on demand"| c1
+    c1 -.->|"prev pointer"| c0
+    cursor -.->|"points into current chunk"| c1
 ```
 
 - The allocator state lives in **LLVM module-level globals** for the current
