@@ -1,6 +1,6 @@
 # Future: Run-queue async scheduler
 
-## Status: Implemented through servers; `all`/`race` fairness pending
+## Status: Scheduler complete + fair; two server-path items remain
 
 Delivered on branch `async-run-queue` (full gate green throughout — 1342 unit incl. arm64-via-qemu,
 467 e2e):
@@ -11,32 +11,44 @@ Delivered on branch `async-run-queue` (full gate green throughout — 1342 unit 
   epoll for socket/TLS/HTTP leaves, requeue-all-on-wakeup).
 - Spawn on the queue with option-2 per-task arenas: `ArenaOwner` install/restore around each step and
   reap of fire-and-forget spawned roots on completion.
+- **`all` / `race` as parking composite tasks** (`StateAllComposite` / `StateRaceComposite`): a
+  composite enqueues its children (`Waiter` = composite), each child completion decrements the
+  composite's counter (all) or delivers the first result (race), and the re-enqueued composite collects
+  and completes to its own waiter. A spawned handler's `Async.all` now **parks instead of blocking**, so
+  peers run — the fairness repro (4 concurrent `all([sleep 250, sleep 250])` handlers) overlaps at
+  ~254 ms vs the old ~1004 ms.
+- **Zero-init of the run-queue header slots** (`ReadyNext`/`Waiter`/`ArenaOwner`) in every task creator
+  — fixes a release-only (-O2) wild-pointer crash that was surfacing under concurrent HTTP load.
 - On Linux **every** async program — including servers (spawn + sockets) — runs on the scheduler;
   Windows keeps the legacy driver for socket/spawn programs (the epoll wait is Linux-only).
 
-**Remaining: `all` / `race` are still inline-blocking** (`EmitAsyncAll` / `EmitAsyncRace` call the
-blocking `ashes_wait_pending_task_list` and return the result list on the C stack), so a spawned
-handler that does `Async.all` still stalls peers — the original fairness bug. The fix is below.
+Benchmark (clean env): TCP echo **315k** req/s, 0 errors (≈ 2× the .NET baseline); non-networking
+async, client TCP/TLS/HTTP, and single-reactor HTTP servers all correct.
 
-### `all` / `race` as parking composite tasks (the fairness finish)
+### Remaining task 1: forkWorkers children outlive their parent
 
-`Async.all([...])` must create a **composite task** (new negative state, e.g. `StateAllComposite`)
-rather than run inline. The scheduler gains one branch for it, and it is poll-based so it reuses the
-generic `Waiter` delivery:
+`Ashes.Net.Tcp.forkWorkers` forks one reactor process per CPU (`SO_REUSEPORT`). When the parent is
+killed, the reactor children **do not die** — they keep the listening port bound. This leaks processes
+and, via `SO_REUSEPORT`, lets stale reactors steal connections from a fresh server on the same port
+(which corrupted every benchmark measurement during development). The fork sets a parent-death signal
+(`PR_SET_PDEATHSIG`) but it is evidently not taking effect for the reactor children. Audit the
+`EmitStepForkWorkersTask` fork path: confirm `PR_SET_PDEATHSIG` is issued in the child *after* the fork
+with the right signal, that the "parent" it tracks is the process the benchmark/user actually kills
+(not an intermediate), and that the children re-check the parent liveness / shutdown flag. This is the
+enabler — it must land first so task 2 can be measured in a clean environment.
 
-- **First step:** enqueue every child with `Waiter = composite` and the composite's `ArenaOwner`; mark
-  initialized; return "pending-composite" (the scheduler does **not** park it in the leaf list — it has
-  no fd/timer — it simply drops, to be re-enqueued by a child completion).
-- **Each child completion** runs the generic completion path, which enqueues the composite (the
-  clobber of the composite's `ResultSlot` is harmless — the composite reads children directly).
-- **Re-step:** scan children; if all are complete (resp. any, for `race`), collect their results into
-  the list (reuse `EmitAsyncAll`'s existing build/reverse logic) and complete, delivering to the
-  composite's own `Waiter` (the handler coroutine); otherwise return pending-composite again.
+### Remaining task 2: multi-reactor HTTP under high concurrent load
 
-This keeps a handler's `all` from blocking the loop — it parks, peers run, and the composite resumes
-it when its children finish — without the C-stack-depth cost of nested draining. It touches the
-`all`/`race` lowering (create a composite instead of the inline wait), one new task state + its step,
-and one scheduler branch.
+The scheduler *core* is correct for HTTP servers — the `should_serve*` backend tests pass — but those
+run at `--parallel-workers 1` (single reactor). The **default multi-reactor** `Http.Server.serve` under
+the fast `.NET` loadgen reports "server did not come up" / near-total errors, where the equivalent TCP
+echo server is fine (315k). So the fault is in the **forkWorkers multi-reactor path interacting with
+the scheduler and the HTTP handler**, not the scheduler loop itself. Reproduce after task 1 with a
+clean environment: A/B `http_echo` compiled `--parallel-workers 1` vs default against the loadgen. Two
+suspects to check: (a) the HTTP handler not closing the connection under load (the loadgen reads until
+the server closes — a non-close hangs it, unlike a fixed-size read), and (b) each forked reactor's
+scheduler / epoll / arena state after the fork. Add a multi-reactor HTTP concurrency regression test so
+the suite exercises what the benchmark does.
 
 ## Original design (for reference)
 
