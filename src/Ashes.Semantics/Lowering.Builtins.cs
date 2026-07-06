@@ -1612,6 +1612,109 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Lowers the innermost body of an async tail-recursive helper (a <c>let recursive</c> defined
+    /// inside a coroutine body whose own body awaits) as a *transparent* coroutine task:
+    /// - the coroutine's result slot holds the body's RAW value (no Ok-wrap), so a call site that
+    ///   awaits the task implicitly sees the helper body's own type;
+    /// - a restart label is emitted at the body start and a TCO context targets it, so saturated
+    ///   self tail calls store the new arguments into the parameter locals and jump back — the loop
+    ///   stays inside ONE coroutine (no per-iteration task, no waiter chain);
+    /// - awaits in the body are ordinary suspend points on the enclosing scheduler run.
+    /// The helper's parameters reach the coroutine as ordinary captures (they are locals of the
+    /// enclosing lambda frame), so the existing capture machinery carries them; the loop-aware locals
+    /// liveness in <see cref="StateMachineTransform"/> keeps them valid across suspends.
+    /// </summary>
+    private (int, TypeRef) LowerHelperCoroutineTask(HelperCoroutineInfo info)
+    {
+        var body = info.Body;
+        var freeNames = FreeVars(body, new HashSet<string>(StringComparer.Ordinal));
+        var captureNames = new List<string>();
+        var captureTemps = new List<int>();
+        var captureTypes = new List<TypeRef>();
+        foreach (var name in freeNames)
+        {
+            if (Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
+            {
+                var (capTemp, capType) = LowerVar(new Expr.Var(name));
+                captureNames.Add(name);
+                captureTemps.Add(capTemp);
+                captureTypes.Add(Prune(capType));
+            }
+        }
+
+        var globalBindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        foreach (var enclosingScope in _scopes.Reverse())
+        {
+            foreach (var (bindingName, binding) in enclosingScope)
+            {
+                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
+                {
+                    globalBindings[bindingName] = binding;
+                }
+            }
+        }
+
+        var successType = NewTypeVar();
+
+        int EmitLoopBody(IReadOnlyList<int> coroutineCaptureTemps)
+        {
+            bool savedInCoroutine = _inCoroutineBody;
+            _inCoroutineBody = true;
+
+            var scope = _scopes.Peek();
+            foreach (var (bindingName, binding) in globalBindings)
+            {
+                scope[bindingName] = binding;
+            }
+
+            var paramSlotByName = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < captureNames.Count; i++)
+            {
+                int slot = NewLocal();
+                Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
+                RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
+                scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+                if (info.ParamNames.Contains(captureNames[i]))
+                {
+                    paramSlotByName[captureNames[i]] = slot;
+                }
+            }
+
+            // A parameter the body never reads is not captured; the back-edge still stores its new
+            // value by arity, so give it a scratch slot.
+            var orderedParamSlots = new List<int>(info.ParamNames.Count);
+            foreach (var paramName in info.ParamNames)
+            {
+                orderedParamSlots.Add(paramSlotByName.TryGetValue(paramName, out int s) ? s : NewLocal());
+            }
+
+            string restartLabel = $"__async_loop_{_nextAsyncLoopId++}";
+            Emit(new IrInst.Label(restartLabel));
+
+            var savedTco = _tcoCtx;
+            _tcoCtx = new TcoContext
+            {
+                SelfName = info.Name,
+                ParamCount = info.ParamNames.Count,
+                ParamNames = new List<string>(info.ParamNames),
+                ParamSlots = orderedParamSlots,
+                BodyLabel = restartLabel,
+                InTailPosition = true,
+                DescendingChain = false
+            };
+
+            var (valueTemp, valueType) = LowerExpr(body);
+            Unify(valueType, successType);
+
+            _tcoCtx = savedTco;
+            _inCoroutineBody = savedInCoroutine;
+            return valueTemp; // raw body value — no Ok-wrap (transparent to the awaiting call site)
+        }
+
+        return LowerCapturedStringTask(captureTemps, successType, body, EmitLoopBody);
+    }
+
+    /// <summary>
     /// Whether an expression syntactically contains an <c>await</c> anywhere within it. Complete over
     /// the expression forms; a missed case would only fall back to the eager (still-correct) task path.
     /// </summary>
@@ -1670,6 +1773,76 @@ public sealed partial class Lowering
                 return false;
         }
     }
+
+    /// <summary>
+    /// Like <see cref="ExprContainsAwait"/> but does not descend into nested lambda bodies: used to
+    /// decide whether a let-recursive helper inside a coroutine body needs the async-loop lowering
+    /// (only awaits in the helper's own coroutine scope matter).
+    /// </summary>
+    private static bool ContainsAwaitOutsideNestedLambda(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.Await:
+                return true;
+            case Expr.Add x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Subtract x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Multiply x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Divide x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Modulo x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.BitwiseAnd x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.BitwiseOr x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.BitwiseXor x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.ShiftLeft x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.ShiftRight x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.GreaterThan x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.LessThan x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.GreaterOrEqual x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.LessOrEqual x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Equal x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.NotEqual x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.ResultPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.ResultMapErrorPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.Cons x: return ContainsAwaitOutsideNestedLambda(x.Head) || ContainsAwaitOutsideNestedLambda(x.Tail);
+            case Expr.BitwiseNot x: return ContainsAwaitOutsideNestedLambda(x.Operand);
+            case Expr.Call x: return ContainsAwaitOutsideNestedLambda(x.Func) || ContainsAwaitOutsideNestedLambda(x.Arg);
+            case Expr.If x: return ContainsAwaitOutsideNestedLambda(x.Cond) || ContainsAwaitOutsideNestedLambda(x.Then) || ContainsAwaitOutsideNestedLambda(x.Else);
+            // A nested lambda is its own function; its awaits lower to blocking runs regardless and
+            // do not make the ENCLOSING helper's body a suspending loop.
+            case Expr.Lambda: return false;
+            case Expr.Let x: return ContainsAwaitOutsideNestedLambda(x.Value) || ContainsAwaitOutsideNestedLambda(x.Body);
+            case Expr.LetRecursive x: return ContainsAwaitOutsideNestedLambda(x.Value) || ContainsAwaitOutsideNestedLambda(x.Body);
+            case Expr.LetResult x: return ContainsAwaitOutsideNestedLambda(x.Value) || ContainsAwaitOutsideNestedLambda(x.Body);
+            case Expr.TupleLit x: return x.Elements.Any(ContainsAwaitOutsideNestedLambda);
+            case Expr.ListLit x: return x.Elements.Any(ContainsAwaitOutsideNestedLambda);
+            case Expr.RecordLit x: return x.Fields.Any(f => ContainsAwaitOutsideNestedLambda(f.Value));
+            case Expr.RecordUpdate x: return ContainsAwaitOutsideNestedLambda(x.Target) || x.Updates.Any(u => ContainsAwaitOutsideNestedLambda(u.Value));
+            case Expr.Match x:
+                if (ContainsAwaitOutsideNestedLambda(x.Value))
+                {
+                    return true;
+                }
+
+                foreach (var c in x.Cases)
+                {
+                    if (ContainsAwaitOutsideNestedLambda(c.Body) || (c.Guard is not null && ContainsAwaitOutsideNestedLambda(c.Guard)))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether an expression is a direct call to the <c>async</c> intrinsic — a helper whose whole
+    /// body is already an async block needs no async-loop treatment (it returns a task eagerly).
+    /// </summary>
+    private bool IsAsyncIntrinsicCall(Expr expr) =>
+        expr is Expr.Call { Func: Expr.Var av } && Lookup(av.Name) is Binding.Intrinsic { Kind: IntrinsicKind.AsyncTask };
 
     /// <summary>
     /// Ashes.Async.fromResult(result) — creates a pre-completed task.

@@ -37,9 +37,12 @@ echo "building tcp_echo.ash, http_echo.ash, dotnet-tcp.cs, dotnet-http.cs, loadg
 dotnet run --project "$ROOT/src/Ashes.Cli" -c Release -- compile "$HERE/tcp_echo.ash"  -o "$TMP/tcp_echo"  >/dev/null
 dotnet run --project "$ROOT/src/Ashes.Cli" -c Release -- compile "$HERE/http_echo.ash" -o "$TMP/http_echo" >/dev/null
 chmod +x "$TMP/tcp_echo" "$TMP/http_echo"
-dotnet publish "$HERE/dotnet-tcp.cs"  -o "$TMP/dotnet-tcp"  >/dev/null
-dotnet publish "$HERE/dotnet-http.cs" -o "$TMP/dotnet-http" >/dev/null
-dotnet publish "$HERE/loadgen.cs"     -o "$TMP/loadgen"     >/dev/null
+# The .NET baselines are throwaway single-file apps, not shipped code, so exempt them from the repo's
+# strict analyzers (SonarAnalyzer / Meziantou) that would otherwise fail the file-based publish.
+DNPUB="-p:RunAnalyzers=false -p:TreatWarningsAsErrors=false"
+dotnet publish "$HERE/dotnet-tcp.cs"  -o "$TMP/dotnet-tcp"  $DNPUB >/dev/null
+dotnet publish "$HERE/dotnet-http.cs" -o "$TMP/dotnet-http" $DNPUB >/dev/null
+dotnet publish "$HERE/loadgen.cs"     -o "$TMP/loadgen"     $DNPUB >/dev/null
 LOAD="$TMP/loadgen/loadgen"
 
 run_against() {  # $1 = label; $2 = port; $3 = mode; $4.. = server command (backgrounded)

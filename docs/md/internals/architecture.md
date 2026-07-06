@@ -210,13 +210,56 @@ Networking (TCP/HTTP) and TLS are **async-only**: the `Ashes.Http` / `Ashes.Net.
 / `Ashes.Net.Tls` APIs return `Task(E, A)` and are consumed via `async`/`await` /
 `Ashes.Async.run` (the `Task` type is the enforcement — misuse is an ordinary type
 error). Under the hood these lower to **non-blocking leaf tasks** driven by the
-coroutine/state-machine task runner (`StateMachineTransform.cs` + the LLVM task
+coroutine/state-machine machinery (`StateMachineTransform.cs` + the LLVM task
 runner): each leaf task carries wait metadata and steps incrementally, returning
 *pending* on would-block and resuming on readiness — via `epoll` on Linux and
-`WSAPoll` on Windows. `Ashes.Async.all` / `race` step a shared task list and wake on
-any ready task. Networking crosses a per-module runtime ABI (`ashes_tcp_*`,
+`WSAPoll` on Windows. Networking crosses a per-module runtime ABI (`ashes_tcp_*`,
 `ashes_http_*`, `ashes_step_*_task` symbols) rather than calling backend helpers at
 each instruction site.
+
+#### The run-queue scheduler
+
+On Linux, every async program runs on a **flat run-queue scheduler**
+(`ashes_scheduler_run`): tasks link into an intrusive FIFO through a `ReadyNext`
+header slot, and the loop pops a task, steps it once, and routes the outcome —
+*completed* delivers the result to the task's `Waiter` (the task suspended on it)
+and re-enqueues that waiter; *suspended* enqueues the freshly awaited sub-task and
+parks the awaiter; a *pending leaf* moves to a parked list. `await` therefore
+**parks instead of blocking**: no C-stack recursion, and any number of tasks
+interleave fairly on one thread (concurrency, not parallelism). When the ready
+queue drains and the main task is incomplete, an **aggregate wait** blocks until
+the earliest timer deadline or, when socket/TLS/HTTP leaves are parked, an
+`epoll_wait` on a persistent epoll set, then re-queues the parked leaves.
+`Ashes.Async.all` / `race` are **parking composite tasks**: children carry the
+composite as their `Waiter`, each completion decrements the composite's counter
+(`all`) or delivers the first result (`race`), and the composite completes to its
+own waiter — a handler blocked in `all` never serializes its peers.
+`Ashes.Async.spawn` enqueues a detached task with a **private arena**
+(`ArenaOwner` = itself): each scheduler step installs the owning task's arena
+cursor as the global bump allocator and writes it back after, sub-tasks inherit
+the awaiter's owner (zero-copy awaits), and a spawned root's arena is reaped when
+it completes — a server handling many connections does not grow without bound.
+Windows keeps the legacy recursive driver for socket/spawn programs (the
+aggregate wait is epoll-based); non-networking async uses the scheduler on all
+targets.
+
+#### Async tail-recursive loops
+
+A `let recursive` helper defined **inside an async body whose own body awaits**
+(the accept loop of a server, a connection read loop) compiles to **one looping
+coroutine**, not a closure of nested blocking runs: the helper becomes a
+task-returning closure around a *transparent* coroutine (its result slot holds
+the body's raw value, no `Ok`-wrap), saturated call sites await the task
+implicitly (so the call keeps the helper body's source-level type), and a
+saturated **self tail call restarts the coroutine in place** — new arguments are
+stored into the parameter locals and control jumps to a restart label at the body
+start. The loop lives in a single task frame (no per-iteration task allocation,
+no waiter chain), and its awaits are ordinary suspend points on the enclosing
+run. `StateMachineTransform` detects the restart back-edge and switches to
+loop-aware liveness for locals (every written-and-read local is saved/restored at
+every suspend), since positional before/after analysis is unsound across a
+backward jump. Awaits inside *nested plain lambdas* still lower to a blocking
+`RunTask` — only the helper's own coroutine scope suspends.
 
 #### Task frames and memory
 
@@ -231,14 +274,14 @@ save/restore sequences, so suspension serializes the live temps into the struct
 and resumption reloads them — **no machine stack survives across an `await`**;
 a suspended task costs its state struct, not a stack frame.
 
-Task memory is reclaimed by the same ownership-scope watermark mechanism as any
-other arena allocation: there is no per-task free. Spawning many tasks bump-
-allocates one struct each, and that memory returns when an enclosing ownership
-scope resets the arena (subject to the usual conservative escape rules in
-`Lowering.Ownership.cs`). Task execution is **single-threaded on the calling
-thread** — `Ashes.Async.run` / `all` / `race` step the task list on the thread
-that invoked them (concurrency, not parallelism), so all task allocations land
-in the caller's arena and never alias another thread's heap. One structural
+Task memory is reclaimed by the ownership-scope watermark mechanism plus the
+scheduler's spawned-arena reap: ordinary task structs return when an enclosing
+ownership scope resets the arena (subject to the usual conservative escape rules
+in `Lowering.Ownership.cs`), and a spawned root task's private arena is freed by
+the scheduler when the task completes. Task execution is **single-threaded on
+the calling thread** — the scheduler steps every task on the thread that invoked
+`Ashes.Async.run` (concurrency, not parallelism), so all task allocations land
+in that thread's arenas and never alias another thread's heap. One structural
 restriction follows from the layout: a parallel fork/join (`Ashes.Parallel.both`)
 must not straddle an `await`, because the worker descriptor and worker arena are
 not serialized into the state struct; the transform asserts this.

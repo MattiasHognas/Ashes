@@ -83,6 +83,17 @@ public sealed partial class Lowering
 
     private TcoContext? _tcoCtx;
 
+    // Async tail-recursive loops: a `let recursive` helper defined inside a coroutine body whose own
+    // body awaits is lowered as a task-returning closure wrapping a *transparent* coroutine (raw body
+    // result, no Ok-wrap), so its awaits become suspend points on the enclosing run instead of nested
+    // blocking scheduler runs. Self tail calls restart that coroutine in place (store params + jump),
+    // and every saturated call site awaits the returned task implicitly, keeping the helper's source
+    // type (its body's type) at the call site.
+    private sealed record HelperCoroutineInfo(string Name, List<string> ParamNames, Expr Body);
+    private HelperCoroutineInfo? _pendingHelperCoroutine;
+    private readonly Dictionary<string, int> _coroutineHelperArity = new(StringComparer.Ordinal);
+    private int _nextAsyncLoopId;
+
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
 
 
@@ -700,6 +711,17 @@ public sealed partial class Lowering
         var previousExpr = _currentSourceExpr;
         _currentSourceExpr = e;
 
+        // Innermost body of a helper being lowered as an async loop: emit the transparent coroutine
+        // task instead of lowering the body inline (see HelperCoroutineInfo).
+        if (_pendingHelperCoroutine is { } pendingHelper && ReferenceEquals(e, pendingHelper.Body))
+        {
+            _pendingHelperCoroutine = null;
+            var helperLowered = LowerHelperCoroutineTask(pendingHelper);
+            RecordExprHoverType(e, helperLowered.Item2);
+            _currentSourceExpr = previousExpr;
+            return (helperLowered.Item1, Prune(helperLowered.Item2));
+        }
+
         (int Temp, TypeRef Type) lowered = e switch
         {
             Expr.IntLit lit => LowerInt(lit),
@@ -1245,24 +1267,49 @@ public sealed partial class Lowering
         _scopes.Push(child);
 
         (int valTemp, TypeRef valType) valueAndType;
-        if (letRecursive.Value is Expr.Lambda lam)
+        bool helperMarkerAdded = false;
+        if (letRecursive.Value is Expr.Lambda lam
+            && _inCoroutineBody
+            && !IsAsyncIntrinsicCall(GetInnermostBody(lam))
+            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(lam)))
+        {
+            // Async tail-recursive loop: the helper's body awaits and it is defined inside a coroutine
+            // body, so lower it as a task-returning closure around a transparent coroutine (awaits
+            // suspend on the enclosing run; self tail calls restart the coroutine in place). Without
+            // this, every await in the helper would compile to a nested blocking scheduler run.
+            var loopParamCount = CountLambdaChain(lam);
+            var savedPending = _pendingHelperCoroutine;
+            var savedHelperTco = _tcoCtx;
+            _tcoCtx = null;
+            _pendingHelperCoroutine = new HelperCoroutineInfo(letRecursive.Name, CollectLambdaParams(lam), GetInnermostBody(lam));
+            helperMarkerAdded = !_coroutineHelperArity.ContainsKey(letRecursive.Name);
+            if (helperMarkerAdded)
+            {
+                _coroutineHelperArity[letRecursive.Name] = loopParamCount;
+            }
+
+            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
+            _pendingHelperCoroutine = savedPending;
+            _tcoCtx = savedHelperTco;
+        }
+        else if (letRecursive.Value is Expr.Lambda lam2)
         {
             // Detect lambda chain for TCO: given (x) -> given (y) -> body
-            var paramCount = CountLambdaChain(lam);
-            var innermostBody = GetInnermostBody(lam);
+            var paramCount = CountLambdaChain(lam2);
+            var innermostBody = GetInnermostBody(lam2);
             var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
 
             var savedTcoCtx = _tcoCtx;
             if (hasTailSelfCalls)
             {
-                var tcoParamNames = CollectLambdaParams(lam);
+                var tcoParamNames = CollectLambdaParams(lam2);
                 _tcoCtx = new TcoContext
                 {
                     SelfName = letRecursive.Name,
                     ParamCount = paramCount,
                     ParamNames = tcoParamNames,
                     InTailPosition = false,
-                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam), tcoParamNames, letRecursive.Name)
+                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
                 };
             }
             else
@@ -1270,7 +1317,7 @@ public sealed partial class Lowering
                 _tcoCtx = null;
             }
 
-            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
+            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam2);
 
             _tcoCtx = savedTcoCtx;
         }
@@ -1359,6 +1406,11 @@ public sealed partial class Lowering
         }
 
         var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body);
+        if (helperMarkerAdded)
+        {
+            _coroutineHelperArity.Remove(letRecursive.Name);
+        }
+
         _scopes.Pop();
         return (bodyTemp, bodyType);
     }
@@ -2499,6 +2551,30 @@ public sealed partial class Lowering
             int dummy = NewTemp();
             Emit(new IrInst.LoadConstInt(dummy, 0));
             return (dummy, NewTypeVar());
+        }
+
+        // Async-loop helper call site: the helper's closure returns a transparent coroutine task, so
+        // a saturated call awaits it implicitly and yields the helper body's own type — source-level
+        // transparency for `let recursive` loops with awaits. (Self tail calls were already taken by
+        // the TCO branch above and restart the coroutine in place.)
+        if (rootExpr is Expr.Var helperVar
+            && _coroutineHelperArity.TryGetValue(helperVar.Name, out int helperArity)
+            && collectedArgs.Count == helperArity
+            && Lookup(helperVar.Name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme or Binding.Self)
+        {
+            _coroutineHelperArity.Remove(helperVar.Name);
+            var (helperTaskTemp, helperTaskType) = LowerCall(call);
+            _coroutineHelperArity[helperVar.Name] = helperArity;
+
+            _usesAsync = true;
+            int helperResultTemp = NewTemp();
+            Emit(_inCoroutineBody
+                ? new IrInst.AwaitTask(helperResultTemp, helperTaskTemp)
+                : new IrInst.RunTask(helperResultTemp, helperTaskTemp));
+            var helperSuccessType = Prune(helperTaskType) is TypeRef.TNamedType { TypeArgs.Count: 2 } taskNamed
+                ? taskNamed.TypeArgs[1]
+                : NewTypeVar();
+            return (helperResultTemp, helperSuccessType);
         }
 
         if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)

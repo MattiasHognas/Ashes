@@ -1335,6 +1335,84 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_serve_http_concurrently_across_workers()
+    {
+        // Concurrent HTTP under the run-queue scheduler: many simultaneous requests against a
+        // multi-reactor server, every one must get a 200 and the server must stay up. Regression
+        // guard for the async-loop lowering — with the server loops compiled as nested blocking
+        // scheduler runs (instead of one suspending coroutine each), this crashed the reactor.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let route req =
+                async(Ashes.Http.Server.text(200)("ok"))
+            in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(3)(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_httpc_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // Readiness.
+            var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+            warm.ShouldContain("HTTP/1.1 200 OK");
+
+            // Fire many concurrent requests at once; every one must get a 200 and the server must stay up.
+            const int total = 120;
+            var tasks = new List<Task<bool>>(total);
+            for (int i = 0; i < total; i++)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+                    return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
+                }));
+            }
+            bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            int ok = 0;
+            foreach (bool r in results)
+            {
+                if (r)
+                {
+                    ok++;
+                }
+            }
+
+            ok.ShouldBe(total);
+            proc.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_serve_parallel_should_serve_across_workers()
     {
         // serveParallel forks an explicit number of independent reactor processes that each bind the
