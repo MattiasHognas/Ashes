@@ -725,7 +725,9 @@ public static class TaskStructLayout
     public const int FrameSizeBytes = 96;  // total task struct size incl. captures + live slots (i64)
     public const int ArenaCursor = 104;    // detached task's private arena cursor; 0 unless spawned (i64)
     public const int ArenaEnd = 112;       // detached task's private arena end; 0 unless spawned (i64)
-    public const int HeaderSize = 120;     // total header size in bytes
+    public const int ReadyNext = 120;      // run-queue "next ready task" link (i64); run-queue scheduler
+    public const int Waiter = 128;         // task blocked on this task's completion, re-enqueued on it (i64)
+    public const int HeaderSize = 136;     // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 
