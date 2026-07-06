@@ -1084,6 +1084,90 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_read_across_a_parking_receive()
+    {
+        // Regression: a spawned handler that accumulates across a receive which PARKS on epoll used to
+        // overflow the stack (ashes_detached_wait_meta counted the mid-step task as runnable, forcing a
+        // non-blocking spin that leaked per-wait stack scratch). The client sends the request in two
+        // writes with a gap so the second receive parks; the handler must buffer and reply.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            import Ashes.String
+            let onClient client =
+                async(let recursive loop buffered =
+                    if Ashes.String.length(buffered) >= 11
+                    then
+                        match await Ashes.Net.Tcp.send(client)("got:" + buffered) with
+                            | Error(e) -> Error(e)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client)
+                    else
+                        match await Ashes.Net.Tcp.receive(client)(65536) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(chunk) -> loop(buffered + chunk)
+                in loop(""))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_park_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (true)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                    await using var stream = client.GetStream();
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes("hello")).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                    await Task.Delay(250);
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes("-world")).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    var reply = (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+                    reply.ShouldBe("got:hello-world");
+                    break;
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50);
+                }
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_serve_connections_concurrently()
     {
         // serve() spawns each handler (Ashes.Async.spawn), so a slow handler must not serialize

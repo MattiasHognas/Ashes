@@ -1822,6 +1822,22 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
 
+        // When a detached task is itself being stepped (the guard is set), a wait inside that step
+        // must not consult the detached list: the "runnable" task the scan would find is the one
+        // currently executing (still WaitNone because it has not parked yet), which would force a
+        // non-blocking poll and spin the driver, leaking per-wait stack scratch until the stack
+        // overflows. Report "nothing pending" so the wait blocks normally on its own leaf. Mirrors
+        // the guard in ashes_run_detached.
+        LlvmBasicBlockHandle guardedReturnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_guarded_return");
+        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_scan");
+        LlvmValueHandle guard = LlvmApi.BuildLoad2(builder, state.I64, DetachedStepGuardGlobal(state), "dm_guard");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, guard, LlvmApi.ConstInt(state.I64, 0, 0), "dm_stepping"),
+            guardedReturnBlock, scanBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, guardedReturnBlock);
+        LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I64, 0, 0));
+        LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
+
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_check");
         LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_body");
         LlvmBasicBlockHandle timerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_timer");
