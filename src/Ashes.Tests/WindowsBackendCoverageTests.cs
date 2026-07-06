@@ -853,7 +853,12 @@ public sealed class WindowsBackendCoverageTests
                 | Error(e) -> Ashes.IO.print(e)
             """;
 
-        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        // One worker: on real Windows serve is a fork-based multi-reactor (CreateProcessA relaunch +
+        // an inherited shared listener), but Wine's cross-process inherited-socket accept is
+        // unreliable, so we cap to a single reactor here — this still exercises the Windows forkWorkers
+        // path (listener creation, the worker-listener global, the job object) and guards against a
+        // single-process regression. Multi-process serving is verified on Linux (serveParallel test).
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_tls_{Guid.NewGuid():N}.exe");
         Process? proc = null;
@@ -948,7 +953,7 @@ public sealed class WindowsBackendCoverageTests
                 | Error(e) -> Ashes.IO.print(e)
             """;
 
-        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_http_{Guid.NewGuid():N}.exe");
         Process? proc = null;
@@ -1033,7 +1038,7 @@ public sealed class WindowsBackendCoverageTests
                 | Error(e) -> Ashes.IO.print(e)
             """;
 
-        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_srv_{Guid.NewGuid():N}.exe");
         Process? proc = null;

@@ -185,9 +185,10 @@ and each worker serves its connections concurrently on its own thread (cooperati
 stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
 connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
 aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
-compile cap. Linux-only today (x64/arm64); on Windows `serve` is a single reactor. `send` / `receive`
-/ `close` from `Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux
-arm64, and
+compile cap. Multi-core on all three targets: Linux (x64/arm64) forks the workers with a
+`SO_REUSEPORT` listener each; Windows relaunches itself with `CreateProcessA` sharing one inherited
+listener. `send` / `receive` / `close` from `Ashes.Net.Tcp` operate on the accepted client socket.
+Supported on Linux x64, Linux arm64, and
 Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
 
 ```ash

@@ -24,7 +24,7 @@ let serveOne port handler =
             | Ok(listener) -> loop(listener))
 
 let serveParallel port workers handler = 
-    async(match await Ashes.Net.Tcp.Server.forkWorkers(workers) with
+    async(match await Ashes.Net.Tcp.Server.forkWorkers(port)(workers) with
         | Error(e) -> Error(e)
         | Ok(_idx) -> await serveOne(port)(handler))
 

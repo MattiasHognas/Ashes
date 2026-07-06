@@ -575,7 +575,7 @@ public abstract record IrInst
     /// Returns this worker's index (0-based). Synchronous — never parks. Linux-only; a single
     /// process on other targets.
     /// </summary>
-    public sealed record CreateForkWorkersTask(int Target, int CountTemp) : IrInst;
+    public sealed record CreateForkWorkersTask(int Target, int PortTemp, int CountTemp) : IrInst;
 
     /// <summary>
     /// Creates a leaf networking task for TCP accept (accept one connection from a listener).

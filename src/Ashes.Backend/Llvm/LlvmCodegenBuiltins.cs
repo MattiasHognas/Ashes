@@ -148,6 +148,20 @@ internal static partial class LlvmCodegen
             return global;
         });
 
+    /// <summary>
+    /// The shared listener handle for the Windows fork-based multi-reactor (0 = none). The parent sets
+    /// it to the socket it bound; a relaunched worker sets it to the inherited handle. When non-zero,
+    /// <c>listen</c> returns it instead of binding, so every worker accepts on the one shared listener.
+    /// </summary>
+    private static LlvmValueHandle WorkerListenerGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_worker_listener", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_worker_listener");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
     // rawBytes: read the file as raw Bytes — no UTF-8 validation, and (on Linux) no size cap. Used by
     // Ashes.File.readAllBytes. readText passes rawBytes: false (UTF-8-validated, capped).
     private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
@@ -3604,6 +3618,26 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_fail");
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_finish");
 
+        // Windows fork-based multi-reactor: if a shared listener handle has been published (by
+        // forkWorkers, in the parent that bound it or a worker that inherited it), reuse it instead of
+        // binding a second socket to the same port — Windows has no SO_REUSEPORT, so all reactors must
+        // accept on the one shared listener.
+        if (!linux)
+        {
+            LlvmBasicBlockHandle bindNormallyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_bind_normally");
+            LlvmBasicBlockHandle reuseSharedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_listen_reuse_shared");
+            LlvmValueHandle sharedListener = LlvmApi.BuildLoad2(builder, state.I64, WorkerListenerGlobal(state), "step_tcp_listen_shared");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, sharedListener, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_have_shared"),
+                reuseSharedBlock, bindNormallyBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, reuseSharedBlock);
+            LlvmApi.BuildStore(builder,
+                EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, sharedListener), "step_tcp_listen_reuse_complete"),
+                statusSlot);
+            LlvmApi.BuildBr(builder, finishBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, bindNormallyBlock);
+        }
+
         LlvmValueHandle socketFd;
         if (linux)
         {
@@ -3743,9 +3777,15 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitStepForkWorkersTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle requested = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_fork_workers_count");
+        LlvmValueHandle port = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_fork_workers_port");
+        LlvmValueHandle requested = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_fork_workers_count");
         LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_fork_workers_idx");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
+
+        if (!IsLinuxFlavor(state.Flavor))
+        {
+            return EmitStepForkWorkersTaskWindows(state, taskPtr, port, requested);
+        }
 
         if (IsLinuxFlavor(state.Flavor))
         {
@@ -3803,6 +3843,292 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "step_fork_workers_idx_val");
         return EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, idx), "step_fork_workers_complete");
+    }
+
+    /// <summary>
+    /// Windows fork-based multi-reactor. Windows has neither fork nor SO_REUSEPORT, so workers are
+    /// separate processes relaunched from the same executable that share a single inheritable listener
+    /// handle: the parent creates the listener, records it in the __ashes_worker_listener global (so
+    /// its own listen() returns it) and in the ASHES_WORKER_FD environment variable, then relaunches
+    /// itself (count - 1) times with CreateProcessA(bInheritHandles=TRUE). A relaunched worker sees
+    /// ASHES_WORKER_FD set, records the inherited handle in the global (its listen() returns it), and
+    /// does not spawn further. All processes accept on the one shared listener; the kernel serializes
+    /// accept across them.
+    /// </summary>
+    // Parses a decimal C string (at cstrPtr) into an i64, stopping at the first non-digit. No sign.
+    private static LlvmValueHandle EmitCStringToI64(LlvmCodegenState state, LlvmValueHandle cstrPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle accSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_acc");
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_i");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), accSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
+        LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
+        LlvmBasicBlockHandle body = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, loop);
+        LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_i_val");
+        LlvmValueHandle cptr = LlvmApi.BuildGEP2(builder, state.I8, cstrPtr, [i], prefix + "_cptr");
+        LlvmValueHandle c = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I8, cptr, prefix + "_c"), state.I64, prefix + "_c64");
+        LlvmValueHandle ge0 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, c, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ge0");
+        LlvmValueHandle le9 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, c, LlvmApi.ConstInt(state.I64, (byte)'9', 0), prefix + "_le9");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, ge0, le9, prefix + "_digit"), body, done);
+        LlvmApi.PositionBuilderAtEnd(builder, body);
+        LlvmValueHandle acc = LlvmApi.BuildLoad2(builder, state.I64, accSlot, prefix + "_acc_val");
+        LlvmValueHandle digit = LlvmApi.BuildSub(builder, c, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_dig");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, LlvmApi.BuildMul(builder, acc, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_x10"), digit, prefix + "_nacc"), accSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_ni"), idxSlot);
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, done);
+        return LlvmApi.BuildLoad2(builder, state.I64, accSlot, prefix + "_result");
+    }
+
+    // Writes a non-negative i64 as a NUL-terminated decimal string into a >= 24-byte buffer.
+    private static void EmitI64ToCString(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle bufPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Fill a 24-byte scratch from the end, then copy the used tail forward into bufPtr.
+        LlvmTypeHandle tmpType = LlvmApi.ArrayType2(state.I8, 24);
+        LlvmValueHandle tmp = LlvmApi.BuildAlloca(builder, tmpType, prefix + "_tmp");
+        LlvmValueHandle tmpPtr = GetArrayElementPointer(state, tmpType, tmp, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_tmp_ptr");
+        LlvmValueHandle nSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_n");
+        LlvmValueHandle posSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_pos");
+        LlvmApi.BuildStore(builder, value, nSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 23, 0), posSlot);
+        LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
+        LlvmBasicBlockHandle body = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
+        LlvmBasicBlockHandle copy = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy");
+        LlvmBasicBlockHandle copyBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_body");
+        LlvmBasicBlockHandle copyDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_done");
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, loop);
+        LlvmValueHandle n = LlvmApi.BuildLoad2(builder, state.I64, nSlot, prefix + "_n_val");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, n, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_nz"), body, copy);
+        LlvmApi.PositionBuilderAtEnd(builder, body);
+        LlvmValueHandle pos = LlvmApi.BuildLoad2(builder, state.I64, posSlot, prefix + "_pos_val");
+        LlvmValueHandle rem = LlvmApi.BuildURem(builder, n, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_rem");
+        LlvmValueHandle ch = LlvmApi.BuildTrunc(builder, LlvmApi.BuildAdd(builder, rem, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ch64"), state.I8, prefix + "_ch");
+        LlvmApi.BuildStore(builder, ch, LlvmApi.BuildGEP2(builder, state.I8, tmpPtr, [pos], prefix + "_slot"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, n, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_div"), nSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, pos, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_pos_dec"), posSlot);
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, copy);
+        // If value was 0, pos is still 23 and nothing was written; write a single '0'.
+        LlvmValueHandle endPos = LlvmApi.BuildLoad2(builder, state.I64, posSlot, prefix + "_endpos");
+        LlvmValueHandle wasZero = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, endPos, LlvmApi.ConstInt(state.I64, 23, 0), prefix + "_was_zero");
+        LlvmBasicBlockHandle zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_zero");
+        LlvmApi.BuildCondBr(builder, wasZero, zeroBlock, copyBody);
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, (byte)'0', 0), bufPtr);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), LlvmApi.BuildGEP2(builder, state.I8, bufPtr, [LlvmApi.ConstInt(state.I64, 1, 0)], prefix + "_zterm"));
+        LlvmApi.BuildBr(builder, copyDone);
+        // Copy tmp[endPos+1 .. 24) to bufPtr, then NUL-terminate.
+        LlvmApi.PositionBuilderAtEnd(builder, copyBody);
+        LlvmValueHandle srcSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_src");
+        LlvmValueHandle dstSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_dst");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, endPos, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_src0"), srcSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), dstSlot);
+        LlvmBasicBlockHandle cl = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cl");
+        LlvmBasicBlockHandle clBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cl_body");
+        LlvmApi.BuildBr(builder, cl);
+        LlvmApi.PositionBuilderAtEnd(builder, cl);
+        LlvmValueHandle src = LlvmApi.BuildLoad2(builder, state.I64, srcSlot, prefix + "_src_val");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, src, LlvmApi.ConstInt(state.I64, 24, 0), prefix + "_more"), clBody, copyDone);
+        LlvmApi.PositionBuilderAtEnd(builder, clBody);
+        LlvmValueHandle dst = LlvmApi.BuildLoad2(builder, state.I64, dstSlot, prefix + "_dst_val");
+        LlvmValueHandle b = LlvmApi.BuildLoad2(builder, state.I8, LlvmApi.BuildGEP2(builder, state.I8, tmpPtr, [src], prefix + "_srcp"), prefix + "_b");
+        LlvmApi.BuildStore(builder, b, LlvmApi.BuildGEP2(builder, state.I8, bufPtr, [dst], prefix + "_dstp"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, src, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_src_inc"), srcSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, dst, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_dst_inc"), dstSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), LlvmApi.BuildGEP2(builder, state.I8, bufPtr, [LlvmApi.BuildAdd(builder, dst, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_term_at")], prefix + "_termp"));
+        LlvmApi.BuildBr(builder, cl);
+        LlvmApi.PositionBuilderAtEnd(builder, copyDone);
+    }
+
+    // Creates a bound, listening, non-blocking TCP socket on INADDR_ANY:port (Windows). Returns the
+    // socket handle, or a negative value on failure.
+    private static LlvmValueHandle EmitWindowsCreateListenerSocket(LlvmCodegenState state, LlvmValueHandle port, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle wsadataType = LlvmApi.ArrayType2(state.I8, 512);
+        LlvmValueHandle wsadata = LlvmApi.BuildAlloca(builder, wsadataType, prefix + "_wsadata");
+        EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wsadata_ptr"), prefix + "_wsastartup");
+        LlvmValueHandle socketFd = EmitWindowsSocket(state, 2, 1, 6, prefix + "_socket");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 1), resultSlot);
+        LlvmBasicBlockHandle bindBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_bind");
+        LlvmBasicBlockHandle listenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_listen");
+        LlvmBasicBlockHandle okBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_ok");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, socketFd, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), prefix + "_socket_ok"),
+            bindBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bindBlock);
+        LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, prefix + "_sockaddr");
+        LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_sockaddr_bytes");
+        LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
+        LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, state.I64Ptr, prefix + "_sockaddr_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_sockaddr_tail"), state.I64Ptr, prefix + "_sockaddr_tail_i64"));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(i16, 2, 0), LlvmApi.BuildBitCast(builder, sockaddrBytes, i16Ptr, prefix + "_family_ptr"));
+        LlvmValueHandle portPtr = LlvmApi.BuildGEP2(builder, state.I8, sockaddrBytes, [LlvmApi.ConstInt(state.I64, 2, 0)], prefix + "_port_ptr_byte");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, EmitByteSwap16(state, port, prefix + "_port_network"), i16, prefix + "_port_i16"), LlvmApi.BuildBitCast(builder, portPtr, i16Ptr, prefix + "_port_ptr"));
+        LlvmValueHandle bindResult = EmitWindowsBind(state, socketFd, sockaddrBytes, 16, prefix + "_bind_call");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bindResult, LlvmApi.ConstInt(state.I32, 0, 0), prefix + "_bind_ok"), listenBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, listenBlock);
+        LlvmValueHandle listenResult = EmitWindowsListen(state, socketFd, 128, prefix + "_listen_call");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, listenResult, LlvmApi.ConstInt(state.I32, 0, 0), prefix + "_listen_ok"), okBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, okBlock);
+        EmitSetSocketNonBlocking(state, socketFd, prefix + "_nonblocking");
+        LlvmApi.BuildStore(builder, socketFd, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_fd");
+    }
+
+    private static LlvmValueHandle EmitStepForkWorkersTaskWindows(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle port, LlvmValueHandle requested)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        const string p = "step_fork_workers_win";
+
+        // Resolve the kernel32 entry points we need dynamically (keeps this self-contained — no extra
+        // import wiring beyond what socket/listen already pull in).
+        LlvmValueHandle kernel32 = EmitWindowsLoadLibrary(state, EmitStringToCString(state, EmitHeapStringLiteral(state, "KERNEL32.DLL"), p + "_k32_name"), p + "_k32");
+        LlvmValueHandle getEnvFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "GetEnvironmentVariableA"), p + "_getenv_sym"), p + "_getenv");
+        LlvmValueHandle setEnvFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "SetEnvironmentVariableA"), p + "_setenv_sym"), p + "_setenv");
+        LlvmValueHandle getModFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "GetModuleFileNameA"), p + "_getmod_sym"), p + "_getmod");
+        LlvmValueHandle createProcFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "CreateProcessA"), p + "_cp_sym"), p + "_cp");
+        LlvmValueHandle getSysInfoFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "GetSystemInfo"), p + "_gsi_sym"), p + "_gsi");
+        LlvmValueHandle createJobFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "CreateJobObjectA"), p + "_cj_sym"), p + "_cj");
+        LlvmValueHandle setJobInfoFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "SetInformationJobObject"), p + "_sij_sym"), p + "_sij");
+        LlvmValueHandle assignJobFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "AssignProcessToJobObject"), p + "_apj_sym"), p + "_apj");
+        LlvmValueHandle envName = EmitStringToCString(state, EmitHeapStringLiteral(state, "ASHES_WORKER_FD"), p + "_env_name");
+
+        // Read ASHES_WORKER_FD; a non-empty value means this is a relaunched worker.
+        LlvmTypeHandle envBufType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle envBuf = LlvmApi.BuildAlloca(builder, envBufType, p + "_env_buf");
+        LlvmValueHandle envBufPtr = GetArrayElementPointer(state, envBufType, envBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_env_buf_ptr");
+        LlvmTypeHandle getEnvType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]);
+        LlvmValueHandle envLen = EmitCallFunctionAddress(state, getEnvFn, getEnvType, [envName, envBufPtr, LlvmApi.ConstInt(state.I32, 32, 0)], p + "_getenv_call");
+
+        LlvmBasicBlockHandle workerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_worker");
+        LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_parent");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_fail");
+        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_finish");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, p + "_result");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, envLen, LlvmApi.ConstInt(state.I32, 0, 0), p + "_is_worker"),
+            workerBlock, parentBlock);
+
+        // Worker: adopt the inherited listener handle (parsed from the env var) and do not spawn.
+        LlvmApi.PositionBuilderAtEnd(builder, workerBlock);
+        LlvmValueHandle inherited = EmitCStringToI64(state, envBufPtr, p + "_parse");
+        LlvmApi.BuildStore(builder, inherited, WorkerListenerGlobal(state));
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 1, 0)), p + "_worker_complete"), resultSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        // Parent: create the shared listener, publish it, and relaunch (count - 1) workers.
+        LlvmBasicBlockHandle spawnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_spawn");
+        LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
+        LlvmValueHandle listener = EmitWindowsCreateListenerSocket(state, port, p + "_listener");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, listener, LlvmApi.ConstInt(state.I64, 0, 0), p + "_listener_bad"),
+            failBlock, spawnBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, spawnBlock);
+        LlvmApi.BuildStore(builder, listener, WorkerListenerGlobal(state));
+
+        // Orphan cleanup: put this process in a Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        // (0x2000, LimitFlags at offset 16 of JOBOBJECT_EXTENDED_LIMIT_INFORMATION). Workers spawned
+        // below inherit the job, so they are terminated when this process exits — Windows has no
+        // PR_SET_PDEATHSIG. The job handle is intentionally leaked: it must stay open for the life of
+        // the process (closing it would trigger the kill).
+        LlvmValueHandle job = EmitCallFunctionAddress(state, createJobFn, LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I8Ptr]), [LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr)], p + "_create_job");
+        LlvmTypeHandle eliType = LlvmApi.ArrayType2(state.I8, 112);
+        LlvmValueHandle eli = LlvmApi.BuildAlloca(builder, eliType, p + "_eli");
+        LlvmValueHandle eliPtr = GetArrayElementPointer(state, eliType, eli, LlvmApi.ConstInt(state.I64, 0, 0), p + "_eli_ptr");
+        for (int zi = 0; zi < 112 / 8; zi++)
+        {
+            StoreMemory(state, eliPtr, zi * 8, LlvmApi.ConstInt(state.I64, 0, 0), $"{p}_eli_zero_{zi}");
+        }
+
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0x2000, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, eliPtr, [LlvmApi.ConstInt(state.I64, 16, 0)], p + "_limitflags_off"), state.I32Ptr, p + "_limitflags"));
+        EmitCallFunctionAddress(state, setJobInfoFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I8Ptr, state.I32]), [job, LlvmApi.ConstInt(state.I32, 9, 0), eliPtr, LlvmApi.ConstInt(state.I32, 112, 0)], p + "_set_job_info");
+        EmitCallFunctionAddress(state, assignJobFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I64]), [job, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 1)], p + "_assign_job");
+
+        // count = requested > 0 ? requested : GetSystemInfo().dwNumberOfProcessors (offset 32), min 1.
+        LlvmTypeHandle sysInfoType = LlvmApi.ArrayType2(state.I8, 64);
+        LlvmValueHandle sysInfo = LlvmApi.BuildAlloca(builder, sysInfoType, p + "_sysinfo");
+        LlvmValueHandle sysInfoPtr = GetArrayElementPointer(state, sysInfoType, sysInfo, LlvmApi.ConstInt(state.I64, 0, 0), p + "_sysinfo_ptr");
+        EmitCallFunctionAddress(state, getSysInfoFn, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [sysInfoPtr], "");
+        LlvmValueHandle detected = LlvmApi.BuildAnd(builder, LoadMemory(state, sysInfoPtr, 32, p + "_nproc_packed"), LlvmApi.ConstInt(state.I64, 0xFFFFFFFFUL, 0), p + "_nproc");
+        // Honor the --parallel-workers compile cap (same as Linux via EmitEffectiveWorkerCap): a fixed
+        // cap overrides detection; otherwise one worker per online CPU. Floor at 1.
+        LlvmValueHandle capBase = state.Target.ParallelWorkerCap is { } fixedCap
+            ? LlvmApi.ConstInt(state.I64, (ulong)fixedCap, 0)
+            : detected;
+        LlvmValueHandle autoCount = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, capBase, LlvmApi.ConstInt(state.I64, 0, 0), p + "_cap_zero"), LlvmApi.ConstInt(state.I64, 1, 0), capBase, p + "_auto");
+        LlvmValueHandle count = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, requested, LlvmApi.ConstInt(state.I64, 0, 0), p + "_req_auto"), autoCount, requested, p + "_count");
+
+        // Publish the handle for children (they inherit the parent env): SetEnvironmentVariableA.
+        LlvmTypeHandle handleStrType = LlvmApi.ArrayType2(state.I8, 24);
+        LlvmValueHandle handleStr = LlvmApi.BuildAlloca(builder, handleStrType, p + "_handle_str");
+        LlvmValueHandle handleStrPtr = GetArrayElementPointer(state, handleStrType, handleStr, LlvmApi.ConstInt(state.I64, 0, 0), p + "_handle_str_ptr");
+        EmitI64ToCString(state, listener, handleStrPtr, p + "_itoa");
+        EmitCallFunctionAddress(state, setEnvFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr]), [envName, handleStrPtr], p + "_setenv_call");
+
+        // exe path for the relaunch command line.
+        LlvmTypeHandle exeType = LlvmApi.ArrayType2(state.I8, 520);
+        LlvmValueHandle exeBuf = LlvmApi.BuildAlloca(builder, exeType, p + "_exe");
+        LlvmValueHandle exeBufPtr = GetArrayElementPointer(state, exeType, exeBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_exe_ptr");
+        EmitCallFunctionAddress(state, getModFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]), [LlvmApi.ConstNull(state.I8Ptr), exeBufPtr, LlvmApi.ConstInt(state.I32, 520, 0)], p + "_getmod_call");
+
+        // STARTUPINFOA (104 bytes, cb at 0) and PROCESS_INFORMATION (24 bytes), zeroed.
+        LlvmTypeHandle suType = LlvmApi.ArrayType2(state.I8, 104);
+        LlvmValueHandle suBuf = LlvmApi.BuildAlloca(builder, suType, p + "_startupinfo");
+        LlvmValueHandle suPtr = GetArrayElementPointer(state, suType, suBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_startupinfo_ptr");
+        for (int zi = 0; zi < 104 / 8; zi++)
+        {
+            StoreMemory(state, suPtr, zi * 8, LlvmApi.ConstInt(state.I64, 0, 0), $"{p}_su_zero_{zi}");
+        }
+
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 104, 0), LlvmApi.BuildBitCast(builder, suPtr, state.I32Ptr, p + "_su_cb"));
+        LlvmTypeHandle piType = LlvmApi.ArrayType2(state.I8, 24);
+        LlvmValueHandle piBuf = LlvmApi.BuildAlloca(builder, piType, p + "_procinfo");
+        LlvmValueHandle piPtr = GetArrayElementPointer(state, piType, piBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_procinfo_ptr");
+
+        // CreateProcessA(NULL, exe, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi) for i in 1..count-1.
+        LlvmTypeHandle cpType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle iSlot = LlvmApi.BuildAlloca(builder, state.I64, p + "_i");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), iSlot);
+        LlvmBasicBlockHandle spawnLoop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_spawn_loop");
+        LlvmBasicBlockHandle spawnBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_spawn_body");
+        LlvmBasicBlockHandle spawnDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_spawn_done");
+        LlvmApi.BuildBr(builder, spawnLoop);
+        LlvmApi.PositionBuilderAtEnd(builder, spawnLoop);
+        LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, iSlot, p + "_i_val");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, i, count, p + "_more"), spawnBody, spawnDone);
+        LlvmApi.PositionBuilderAtEnd(builder, spawnBody);
+        EmitCallFunctionAddress(state, createProcFn, cpType,
+            [LlvmApi.ConstNull(state.I8Ptr), exeBufPtr, LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstInt(state.I32, 1, 0), LlvmApi.ConstInt(state.I32, 0, 0), LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr), suPtr, piPtr],
+            p + "_cp_call");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), p + "_i_inc"), iSlot);
+        LlvmApi.BuildBr(builder, spawnLoop);
+        LlvmApi.PositionBuilderAtEnd(builder, spawnDone);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), p + "_parent_complete"), resultSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpListenFailedMessage)), p + "_fail_complete"), resultSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, p + "_status");
     }
 
     /// <summary>

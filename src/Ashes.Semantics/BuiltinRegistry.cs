@@ -340,7 +340,7 @@ public static class BuiltinRegistry
                 {
                     ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
                     ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1),
-                    ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 1)
+                    ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Http.Server"] = new(
                 "Ashes.Http.Server",

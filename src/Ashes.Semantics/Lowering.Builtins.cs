@@ -1029,8 +1029,28 @@ public sealed partial class Lowering
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
     }
 
-    private (int, TypeRef) LowerNetForkWorkers(Expr countArg)
+    private (int, TypeRef) LowerNetForkWorkers(Expr portArg, Expr countArg)
     {
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tcp.Server.forkWorkers() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
         using var countSpan = PushDiagnosticSpan(countArg);
         var (countTemp, countType) = LowerExpr(countArg);
         var prunedCountType = Prune(countType);
@@ -1052,7 +1072,7 @@ public sealed partial class Lowering
         }
 
         var taskTemp = NewTemp();
-        Emit(new IrInst.CreateForkWorkersTask(taskTemp, countTemp));
+        Emit(new IrInst.CreateForkWorkersTask(taskTemp, portTemp, countTemp));
         return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
@@ -2047,7 +2067,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.NetForkWorkers,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt())))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt()))))
         );
     }
 
