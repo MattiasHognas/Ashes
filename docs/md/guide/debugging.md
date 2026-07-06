@@ -531,11 +531,11 @@ etc. If not, the binary was not compiled with `--debug`.
 
 ## Architecture
 
-```text
-┌──────────┐     DAP/stdio       ┌───────────┐     GDB-MI       ┌──────────┐     ptrace     ┌────────┐
-│  VS Code │ ◄─────────────────► │ ashes-dap │ ◄──────────────► │ GDB or   │ ◄────────────► │ Binary │
-│  (IDE)   │                     │ (server)  │                  │ LLDB MI  │                │ (DWARF)│
-└──────────┘                     └───────────┘                  └──────────┘                └────────┘
+```mermaid
+flowchart LR
+    vscode["VS Code (IDE)"] <-->|"DAP / stdio"| dap["ashes-dap (server)"]
+    dap <-->|"GDB-MI"| dbg["GDB or LLDB MI"]
+    dbg <-->|"ptrace"| bin["Binary (DWARF)"]
 ```
 
 1. **VS Code** sends DAP requests (setBreakpoints, continue, stackTrace, etc.)
