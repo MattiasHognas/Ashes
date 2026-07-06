@@ -58,6 +58,7 @@ public sealed partial class Lowering
             TypeRef resolved = rightPruned switch
             {
                 TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
@@ -70,6 +71,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
@@ -105,6 +107,13 @@ public sealed partial class Lowering
             return (target, new TypeRef.TFloat());
         }
 
+        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, "add"));
+            return (target, new TypeRef.TBigInt());
+        }
+
         if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
             _usesConcatStr = true;
@@ -126,7 +135,7 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(sub.Left);
         var (rightTemp, rightType) = LowerExpr(sub.Right);
 
-        return LowerNumericBinaryOp(sub, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.SubInt(target, left, right), (target, left, right) => new IrInst.SubFloat(target, left, right), "'-'");
+        return LowerNumericBinaryOp(sub, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.SubInt(target, left, right), (target, left, right) => new IrInst.SubFloat(target, left, right), "'-'", bigIntOp: "sub");
     }
 
     private (int, TypeRef) LowerMultiply(Expr.Multiply mul)
@@ -135,7 +144,7 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(mul.Left);
         var (rightTemp, rightType) = LowerExpr(mul.Right);
 
-        return LowerNumericBinaryOp(mul, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'");
+        return LowerNumericBinaryOp(mul, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'", bigIntOp: "mul");
     }
 
     private (int, TypeRef) LowerDivide(Expr.Divide div)
@@ -144,7 +153,56 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(div.Left);
         var (rightTemp, rightType) = LowerExpr(div.Right);
 
-        return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'", (target, left, right) => new IrInst.DivUInt(target, left, right));
+        return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'", (target, left, right) => new IrInst.DivUInt(target, left, right), bigIntOp: "div");
+    }
+
+    // Modulo (remainder). Int/UInt reuse existing division: a % b = a - (a / b) * b (truncated,
+    // so the remainder's sign follows the dividend, matching C `%`). BigInt uses the mod helper.
+    private (int, TypeRef) LowerModulo(Expr.Modulo mod)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(mod);
+        var (leftTemp, leftType) = LowerExpr(mod.Left);
+        var (rightTemp, rightType) = LowerExpr(mod.Right);
+        var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
+
+        if (resolvedLeft is TypeRef.TBigInt && resolvedRight is TypeRef.TBigInt)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, "mod"));
+            return (target, new TypeRef.TBigInt());
+        }
+
+        if (resolvedLeft is TypeRef.TInt && resolvedRight is TypeRef.TInt)
+        {
+            return (EmitRemainder(leftTemp, rightTemp, isUnsigned: false), new TypeRef.TInt());
+        }
+
+        if (resolvedLeft is TypeRef.TUInt luint && resolvedRight is TypeRef.TUInt ruint)
+        {
+            if (luint.Bits != ruint.Bits)
+            {
+                var widths = PrettyPair(resolvedLeft, resolvedRight);
+                ReportDiagnostic(GetSpan(mod), $"'%' requires matching unsigned widths, got {widths.Left} and {widths.Right}.", DiagnosticCodes.TypeMismatch);
+                return CreateIntErrorFallback();
+            }
+            int raw = EmitRemainder(leftTemp, rightTemp, isUnsigned: true);
+            return (EmitUIntMask(raw, luint.Bits), luint);
+        }
+
+        var types = PrettyPair(resolvedLeft, resolvedRight);
+        ReportDiagnostic(GetSpan(mod), $"'%' requires Int%Int, unsigned%unsigned, or BigInt%BigInt, got {types.Left} and {types.Right}.", DiagnosticCodes.TypeMismatch);
+        return CreateIntErrorFallback();
+    }
+
+    private int EmitRemainder(int leftTemp, int rightTemp, bool isUnsigned)
+    {
+        int quotient = NewTemp();
+        Emit(isUnsigned ? new IrInst.DivUInt(quotient, leftTemp, rightTemp) : new IrInst.DivInt(quotient, leftTemp, rightTemp));
+        int product = NewTemp();
+        Emit(new IrInst.MulInt(product, quotient, rightTemp));
+        int remainder = NewTemp();
+        Emit(new IrInst.SubInt(remainder, leftTemp, product));
+        return remainder;
     }
 
     private (int, TypeRef) LowerBitwiseAnd(Expr.BitwiseAnd bitAnd)
@@ -424,6 +482,7 @@ public sealed partial class Lowering
             TypeRef resolved = rightPruned switch
             {
                 TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
@@ -436,6 +495,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
@@ -447,6 +507,17 @@ public sealed partial class Lowering
         {
             int target = NewTemp();
             Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
+        {
+            int cmpTemp = NewTemp();
+            Emit(new IrInst.BigIntCompare(cmpTemp, leftTemp, rightTemp));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpIntNe(target, cmpTemp, zeroTemp) : new IrInst.CmpIntEq(target, cmpTemp, zeroTemp));
             return (target, new TypeRef.TBool());
         }
 
@@ -497,7 +568,8 @@ public sealed partial class Lowering
         Func<int, int, int, IrInst> intFactory,
         Func<int, int, int, IrInst> floatFactory,
         string op,
-        Func<int, int, int, IrInst>? uintFactory = null)
+        Func<int, int, int, IrInst>? uintFactory = null,
+        string? bigIntOp = null)
     {
         var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
 
@@ -506,6 +578,13 @@ public sealed partial class Lowering
             int target = NewTemp();
             Emit(intFactory(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
+        }
+
+        if (bigIntOp is not null && resolvedLeft is TypeRef.TBigInt && resolvedRight is TypeRef.TBigInt)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, bigIntOp));
+            return (target, new TypeRef.TBigInt());
         }
 
         if (resolvedLeft is TypeRef.TUInt luint && resolvedRight is TypeRef.TUInt ruint)
@@ -613,6 +692,18 @@ public sealed partial class Lowering
             return (target, new TypeRef.TBool());
         }
 
+        // BigInt ordering: compare(a, b) yields -1/0/1, then apply the Int predicate against 0.
+        if (resolvedLeft is TypeRef.TBigInt && resolvedRight is TypeRef.TBigInt)
+        {
+            int cmpTemp = NewTemp();
+            Emit(new IrInst.BigIntCompare(cmpTemp, leftTemp, rightTemp));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int target = NewTemp();
+            Emit(intFactory(target, cmpTemp, zeroTemp));
+            return (target, new TypeRef.TBool());
+        }
+
         if (resolvedLeft is TypeRef.TUInt luint && resolvedRight is TypeRef.TUInt ruint)
         {
             if (luint.Bits != ruint.Bits)
@@ -652,6 +743,7 @@ public sealed partial class Lowering
             TypeRef resolved = right switch
             {
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };
@@ -664,6 +756,7 @@ public sealed partial class Lowering
             TypeRef resolved = left switch
             {
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
             };

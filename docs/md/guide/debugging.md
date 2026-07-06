@@ -5,12 +5,13 @@ set up the VS Code debug extension, and use GDB or LLDB for source-level
 debugging.
 
 > **Supported platforms:**
-> - **Linux** — GDB (default) or LLDB via `lldb` / `lldb-mi`
+> - **Linux** — GDB (default) or LLDB
 > - **Windows** — GDB via MSYS2
 >
-> The Ashes DAP server uses the GDB Machine Interface (MI) protocol.
-> Both GDB and LLDB's MI front-end implement this protocol, so the same adapter works
-> with either debugger.
+> The Ashes DAP server (`ashes-dap`) is the single debug adapter for both
+> debuggers. Each debugger runs as a subprocess driven over its own Debug
+> Adapter Protocol interpreter: `gdb --interpreter=dap` (built into GDB 14+)
+> or `lldb-dap` (the DAP binary that ships with LLDB).
 
 > **Related documents:**
 > - [CLI Specification — Debug Mode](../reference/cli.md#debug-mode) for the
@@ -50,11 +51,16 @@ ashes compile --debug examples/hello.ash -o hello
 | Requirement | Minimum Version | Notes |
 |-------------|----------------|-------|
 | **Ashes compiler** | Latest | `ashes compile --debug` support |
-| **GDB** *or* **LLDB** | GDB 10.0+ / LLDB 14.0+ | Native debugger backend |
+| **GDB** *or* **LLDB** | GDB 14.0+ / LLDB 18.0+ | Native debugger backend, driven over DAP. GDB 14+ has a built-in DAP interpreter (requires a Python-enabled GDB build); LLDB 18+ ships `lldb-dap`. |
 | **VS Code** | 1.80+ | IDE with debugging UI |
 | **Ashes VS Code extension** | 0.0.1+ | Language support, diagnostics, and debugging |
 
 ### Installing GDB
+
+The Ashes DAP server communicates with GDB through GDB's built-in Debug
+Adapter Protocol interpreter (`gdb --interpreter=dap`), available since
+GDB 14 on Python-enabled builds (the default on every major distro and
+MSYS2).
 
 **Linux (Debian/Ubuntu):**
 
@@ -76,16 +82,22 @@ pacman -S mingw-w64-x86_64-gdb
 
 ### Installing LLDB
 
-The Ashes DAP server communicates with LLDB through the MI front-end. On
-Linux, this requires either `lldb-mi` or an LLDB build whose CLI accepts
-`--interpreter=mi2`. If your distro only ships the standard `lldb` CLI
-without MI support, the Ashes LLDB backend cannot attach to it; use GDB or
-install an MI-compatible LLDB frontend instead.
+The Ashes DAP server communicates with LLDB through `lldb-dap`, the Debug
+Adapter Protocol binary included in the standard LLDB distribution — no
+extra frontend is needed. (Plain `lldb` has no machine protocol: the old
+`lldb-mi` frontend left the LLVM tree and is not packaged by modern
+distros, so `ashes-dap` speaks DAP to `lldb-dap` instead.)
 
 **Linux (Debian/Ubuntu):**
 
 ```bash
 sudo apt install lldb
+```
+
+**Linux (Arch/CachyOS):**
+
+```bash
+sudo pacman -S lldb
 ```
 
 > **Tip:** Set the `ashes.debugger` VS Code setting to `"lldb"` (see
@@ -272,7 +284,7 @@ All properties for `type: "ashes"` launch configurations:
 | `cwd` | `string` | No | `${workspaceFolder}` | Working directory for the debugged program. |
 | `stopOnEntry` | `boolean` | No | `false` | When `true`, the debugger pauses at the program entry point before any user code runs. |
 | `debuggerType` | `string` | No | *(from setting)* | Native debugger backend: `"gdb"` or `"lldb"`. When omitted, the value of the `ashes.debugger` extension setting is used. |
-| `debuggerPath` | `string` | No | *(auto)* | Path to the debugger binary. Defaults to `gdb` when `debuggerType` is `"gdb"`. For `"lldb"`, the DAP server first tries `lldb-mi` and then tries `lldb --interpreter=mi2` on LLDB builds that support MI mode. Set this if the binary is not on your `PATH`. |
+| `debuggerPath` | `string` | No | *(auto)* | Path to the debugger binary. Defaults to `gdb` when `debuggerType` is `"gdb"` and to `lldb-dap` when it is `"lldb"`. For `"lldb"`, point this at an `lldb-dap` binary; for `"gdb"`, at a GDB 14+ binary. Set this if the binary is not on your `PATH`. |
 
 ### Example Configurations
 
@@ -356,8 +368,8 @@ The Ashes DAP server supports two native debugger backends:
 
 | Backend | Binary | Best For | Notes |
 |---------|--------|----------|-------|
-| **GDB** | `gdb` | Linux, Windows (MSYS2) | Default. Mature MI support. |
-| **LLDB** | `lldb-mi` or MI-capable `lldb` | Linux | Requires an MI frontend. Plain `lldb` works only on builds that accept `--interpreter=mi2`. |
+| **GDB** | `gdb` | Linux, Windows (MSYS2) | Default. Driven over GDB's built-in DAP interpreter (GDB 14+). |
+| **LLDB** | `lldb-dap` | Linux | Ships with LLDB 18+. Driven over the Debug Adapter Protocol. |
 
 ### Extension Setting
 
@@ -480,11 +492,12 @@ lldb ./main
 Ensure your `launch.json` has a `program` property pointing to a compiled
 binary (not a `.ash` source file). The binary must be compiled with `--debug`.
 
-### "Failed to start GDB" / "Failed to start LLDB"
+### "Failed to start gdb" / "Failed to start lldb-dap"
 
-- Verify the debugger is installed: `gdb --version`, `lldb --version`, or `lldb-mi --version`
-- If the binary is not on `PATH`, set `debuggerPath` in your launch configuration.
-- If LLDB reports `unknown option: --interpreter=mi2`, your `lldb` binary does not expose MI mode. Install `lldb-mi`, point `debuggerPath` at an MI-compatible LLDB frontend, or switch to GDB.
+- Verify the debugger is installed: `gdb --version` (14.0 or newer) or `lldb-dap --version`.
+- GDB's DAP interpreter requires a Python-enabled GDB build (the default everywhere); `gdb --interpreter=dap` failing with an interpreter error means the build lacks Python support.
+- `lldb-dap` is part of the LLDB package on every major distro; installing LLDB provides it.
+- If the binary is not on `PATH`, set `debuggerPath` in your launch configuration (for `"lldb"`, it must point at an `lldb-dap` binary).
 
 ### Breakpoints not hitting
 
@@ -534,14 +547,19 @@ etc. If not, the binary was not compiled with `--debug`.
 ```mermaid
 flowchart LR
     vscode["VS Code (IDE)"] <-->|"DAP / stdio"| dap["ashes-dap (server)"]
-    dap <-->|"GDB-MI"| dbg["GDB or LLDB MI"]
-    dbg <-->|"ptrace"| bin["Binary (DWARF)"]
+    dap <-->|"DAP / stdio"| gdb["gdb --interpreter=dap"]
+    dap <-->|"DAP / stdio"| lldbdap["lldb-dap"]
+    gdb <-->|"ptrace"| bin["Binary (DWARF)"]
+    lldbdap <-->|"ptrace"| bin
 ```
 
 1. **VS Code** sends DAP requests (setBreakpoints, continue, stackTrace, etc.)
    over stdin/stdout to the DAP server.
-2. **ashes-dap** translates DAP requests into Machine Interface (MI) commands
-  and sends them to the selected debugger (GDB or LLDB's MI front-end).
+2. **ashes-dap** drives the selected debugger as a subprocess, speaking the
+   Debug Adapter Protocol over the child's stdio: `gdb --interpreter=dap` or
+   LLDB's bundled `lldb-dap`. Both run through one shared backend that adds
+   Ashes-aware value formatting and smooths over dialect differences (GDB
+   reports arguments in a separate scope, evaluate result shapes differ).
 3. **GDB** or **LLDB** uses `ptrace` to control the debuggee and reads
    DWARF debug info from the binary to map machine code back to source
    locations.

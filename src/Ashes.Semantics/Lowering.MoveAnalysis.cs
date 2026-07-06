@@ -297,6 +297,7 @@ public sealed partial class Lowering
             case Expr.Subtract x: yield return x.Left; yield return x.Right; break;
             case Expr.Multiply x: yield return x.Left; yield return x.Right; break;
             case Expr.Divide x: yield return x.Left; yield return x.Right; break;
+            case Expr.Modulo x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseAnd x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseOr x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseXor x: yield return x.Left; yield return x.Right; break;
@@ -679,6 +680,7 @@ public sealed partial class Lowering
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -970,6 +972,7 @@ public sealed partial class Lowering
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -979,6 +982,7 @@ public sealed partial class Lowering
             case Expr.Subtract:
             case Expr.Multiply:
             case Expr.Divide:
+            case Expr.Modulo:
             case Expr.BitwiseAnd:
             case Expr.BitwiseOr:
             case Expr.BitwiseXor:
@@ -1542,6 +1546,7 @@ public sealed partial class Lowering
             case Expr.QualifiedVar:
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -1599,6 +1604,7 @@ public sealed partial class Lowering
             case Expr.Subtract x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.Multiply x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.Divide x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
+            case Expr.Modulo x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.BitwiseAnd x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.BitwiseOr x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.BitwiseXor x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
@@ -1803,6 +1809,7 @@ public sealed partial class Lowering
             case Expr.Subtract x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.Multiply x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.Divide x: CollectBinary(x.Left, x.Right, enclosing); return;
+            case Expr.Modulo x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.BitwiseAnd x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.BitwiseOr x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.BitwiseXor x: CollectBinary(x.Left, x.Right, enclosing); return;

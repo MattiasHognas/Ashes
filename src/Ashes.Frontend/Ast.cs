@@ -3,6 +3,7 @@ namespace Ashes.Frontend;
 public abstract record Expr
 {
     public sealed record IntLit(long Value) : Expr;
+    public sealed record BigIntLit(string Digits) : Expr;
     public sealed record UIntLit(ulong Value, int Bits) : Expr;
     public sealed record FloatLit(double Value, string Text) : Expr
     {
@@ -20,6 +21,7 @@ public abstract record Expr
     public sealed record Subtract(Expr Left, Expr Right) : Expr;
     public sealed record Multiply(Expr Left, Expr Right) : Expr;
     public sealed record Divide(Expr Left, Expr Right) : Expr;
+    public sealed record Modulo(Expr Left, Expr Right) : Expr;
     public sealed record BitwiseAnd(Expr Left, Expr Right) : Expr;
     public sealed record BitwiseOr(Expr Left, Expr Right) : Expr;
     public sealed record BitwiseXor(Expr Left, Expr Right) : Expr;

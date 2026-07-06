@@ -243,6 +243,32 @@ Lexing and parsing rules:
 
 Float arithmetic and comparisons are introduced in later milestones.
 
+## 2.1.2 Arbitrary-precision integers
+
+Ashes has a native arbitrary-precision signed integer primitive type:
+
+BigInt
+
+`BigInt` is a distinct type from `Int` — there is no implicit conversion. `BigInt` literals use an
+`N` suffix and may be any size:
+
+123N
+999999999999999999999999999999N
+
+The arithmetic operators `+`, `-`, `*`, `/` (truncated toward zero), `%`, and the comparisons
+`==`, `!=`, `<`, `<=`, `>`, `>=` all work on `BigInt` operands (both sides must be `BigInt`):
+
+let squared = 1000000000000N * 1000000000000N
+
+As with `Float`, negation uses subtraction from zero (`0N - x`), not a `-` prefix. `Int↔BigInt`
+conversions are `Ashes.BigInt.fromInt` / `Ashes.BigInt.toInt`, and string conversions are
+`Ashes.Text.fromBigInt` / `Ashes.Text.parseBigInt` (see
+[STANDARD_LIBRARY](standard-library.md#ashesbigint)). Like every value, a `BigInt` is immutable;
+each operation allocates a fresh, normalized result.
+
+The `%` (remainder) operator also applies to `Int` and the unsigned types; the result's sign
+follows the dividend, matching C `%`.
+
 ## 2.2 Strings
 
 “hello”

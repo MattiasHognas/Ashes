@@ -8,12 +8,15 @@ namespace Ashes.Tests;
 public sealed class ProjectSupportTests
 {
     [Test]
-    public void ParseImportHeader_should_strip_header_imports_and_preserve_body()
+    public void ParseImportHeader_should_blank_header_imports_and_preserve_line_numbers()
     {
         var parsed = ProjectSupport.ParseImportHeader("import Ashes.IO\n\ntype Bool = | True | False\nprint(1)", "<memory>");
 
         parsed.ImportNames.ShouldBe(["Ashes.IO"]);
-        parsed.SourceWithoutImports.ShouldBe("type Bool = | True | False\nprint(1)");
+
+        // Header lines are blanked, not removed, so the body keeps its original line numbers
+        // (debug line info and span mapping depend on this parity).
+        parsed.SourceWithoutImports.ShouldBe("\n\ntype Bool = | True | False\nprint(1)");
         parsed.ImportAliases.ShouldBeEmpty();
     }
 

@@ -21,27 +21,28 @@ final result needs a single `sqrt`.
 
 ## What it probes (expected flaws)
 
-- **No math library — `sqrt` is missing.** The final norm is a square root, and there is no
-  `sqrt`/transcendental intrinsic. The benchmark is *blocked* on the math lib for a correct
-  result (the matrix-vector loops themselves are plain float arithmetic and would run).
+- **Float throughput** across the `N×N` multiply-accumulate inner loops; the final norm uses
+  `Ashes.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so a correct result is computable.
 - **No flat mutable array.** `A·u` is the canonical indexed multiply-accumulate; with only a
   persistent `Ashes.Array` (O(log N) access, per-update allocation) or `List` (O(N) index),
   the `N×N` inner loop is heavily penalised and generates per-iteration garbage (arena leak
   #2). A strong probe of the persistent-array cost model under a numeric hot loop.
-- Float throughput once `sqrt` exists; fixed-precision (9 dp) formatting is covered by
-  `Ashes.Text.formatFloat(value)(9)`.
+- Fixed-precision (9 dp) formatting via `Ashes.Text.formatFloat(value)(9)` (shipped).
 
 ## Dependencies / blockers
 
-**BLOCKED on the math lib (`sqrt`)** for the final norm, and penalised by the missing flat
-array for the inner loops. Defer the correct version until `Ashes.Math.sqrt` exists; the
-matrix-vector portion could be exercised earlier as a perf probe.
+**No hard blocker.** `Ashes.Math.sqrt` (final norm) and `Ashes.Text.formatFloat` (9-dp
+formatting) have shipped, so a correct version is implementable now. **Perf caveat (not a
+blocker):** with only a persistent `Ashes.Array` (no flat mutable array), the `N×N` inner
+loop pays O(log N) access and per-update allocation — that cost is itself what this
+benchmark is meant to probe.
 
 ## Status
 
-**Scaffold only.** `spectral-norm.ash` and the `FLAWS.md` writeup are deferred — blocked on math lib.
+**Scaffold only.** `spectral-norm.ash` and the `FLAWS.md` writeup are not written yet, but the
+benchmark is **unblocked** — the persistent-array perf cost is a probe, not a blocker.
 
-## Build & run (once written, after math lib)
+## Build & run (once written)
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/spectral-norm/spectral-norm.ash -o challenges/spectral-norm/spectral-norm

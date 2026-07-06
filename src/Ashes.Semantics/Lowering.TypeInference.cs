@@ -381,6 +381,7 @@ public sealed partial class Lowering
             TypeRef.TUInt { Bits: 64 } => ("u64", precAtom),
             TypeRef.TUInt u => ($"u{u.Bits}", precAtom),
             TypeRef.TFloat => ("Float", precAtom),
+            TypeRef.TBigInt => ("BigInt", precAtom),
             TypeRef.TStr => ("Str", precAtom),
             TypeRef.TBytes => ("Bytes", precAtom),
             TypeRef.TBool => ("Bool", precAtom),

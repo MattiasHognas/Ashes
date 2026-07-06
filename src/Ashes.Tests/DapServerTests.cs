@@ -235,90 +235,6 @@ public sealed class DapServerTests
         caps.SupportsFunctionBreakpoints.ShouldBeFalse();
     }
 
-    // ── MI response parser tests ──────────────────────────────────────────
-
-    [Test]
-    public void ParseStackFrames_extracts_frames_from_mi_response()
-    {
-        var mi = """1^done,stack=[frame={level="0",addr="0x401000",func="main",file="main.ash",fullname="/home/user/main.ash",line="5"},frame={level="1",addr="0x401100",func="helper",file="lib.ash",fullname="/home/user/lib.ash",line="12"}]""";
-
-        var frames = MiResponseParser.ParseStackFrames(mi);
-
-        frames.Length.ShouldBe(2);
-
-        frames[0].Id.ShouldBe(0);
-        frames[0].Name.ShouldBe("main");
-        frames[0].Line.ShouldBe(5);
-        frames[0].Source.ShouldNotBeNull();
-        frames[0].Source!.Name.ShouldBe("main.ash");
-        frames[0].Source!.Path.ShouldBe("/home/user/main.ash");
-
-        frames[1].Id.ShouldBe(1);
-        frames[1].Name.ShouldBe("helper");
-        frames[1].Line.ShouldBe(12);
-        frames[1].Source.ShouldNotBeNull();
-        frames[1].Source!.Path.ShouldBe("/home/user/lib.ash");
-    }
-
-    [Test]
-    public void ParseStackFrames_returns_empty_for_empty_response()
-    {
-        var frames = MiResponseParser.ParseStackFrames("");
-        frames.Length.ShouldBe(0);
-    }
-
-    [Test]
-    public void ParseLocals_extracts_variables_from_mi_response()
-    {
-        var mi = """1^done,locals=[{name="x",value="42"},{name="msg",value="hello"}]""";
-
-        var vars = MiResponseParser.ParseLocals(mi);
-
-        vars.Length.ShouldBe(2);
-        vars[0].Name.ShouldBe("x");
-        vars[0].Value.ShouldBe("42");
-        vars[1].Name.ShouldBe("msg");
-        vars[1].Value.ShouldBe("hello");
-    }
-
-    [Test]
-    public void ParseLocals_returns_empty_for_no_locals()
-    {
-        var mi = """1^done,locals=[]""";
-        var vars = MiResponseParser.ParseLocals(mi);
-        vars.Length.ShouldBe(0);
-    }
-
-    [Test]
-    public void ParseLocals_returns_empty_for_empty_response()
-    {
-        var vars = MiResponseParser.ParseLocals("");
-        vars.Length.ShouldBe(0);
-    }
-
-    [Test]
-    public void ParseVariableObject_extracts_name_value_and_type()
-    {
-        var mi = """5^done,name="var1",numchild="0",value="0x7abc",type="List<Int> *",thread-id="1",has_more="0""";
-
-        var variableObject = MiResponseParser.ParseVariableObject(mi);
-
-        variableObject.ShouldNotBeNull();
-        variableObject!.Name.ShouldBe("var1");
-        variableObject.Value.ShouldBe("0x7abc");
-        variableObject.Type.ShouldBe("List<Int> *");
-    }
-
-    [Test]
-    public void ParseEvaluateExpressionValue_extracts_value()
-    {
-        var mi = "3^done,value=\"42\"";
-
-        var value = MiResponseParser.ParseEvaluateExpressionValue(mi);
-
-        value.ShouldBe("42");
-    }
-
     // ── Backend selection and integration tests ────────────────────────
 
     [Test]
@@ -357,49 +273,43 @@ public sealed class DapServerTests
     }
 
     [Test]
-    public void Lldb_launch_candidates_try_lldb_mi_then_lldb_mi2_by_default()
+    public void Lldb_start_info_defaults_to_lldb_dap()
     {
-        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", "/tmp", null);
+        var startInfo = LldbDebuggerBackend.CreateStartInfo(null);
 
-        candidates.Count.ShouldBe(2);
-
-        candidates[0].FileName.ShouldBe("lldb-mi");
-        candidates[0].ArgumentList.Count.ShouldBe(1);
-        candidates[0].ArgumentList[0].ShouldBe("/tmp/test");
-        candidates[0].WorkingDirectory.ShouldBe("/tmp");
-
-        candidates[1].FileName.ShouldBe("lldb");
-        candidates[1].ArgumentList.Count.ShouldBe(2);
-        candidates[1].ArgumentList[0].ShouldBe("--interpreter=mi2");
-        candidates[1].ArgumentList[1].ShouldBe("/tmp/test");
-        candidates[1].WorkingDirectory.ShouldBe("/tmp");
+        startInfo.FileName.ShouldBe("lldb-dap");
+        startInfo.ArgumentList.ShouldBeEmpty();
     }
 
     [Test]
-    public void Lldb_launch_candidates_use_explicit_lldb_mi_without_mi2_flag()
+    public void Lldb_start_info_uses_explicit_debugger_path()
     {
-        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", null, "/usr/bin/lldb-mi-18");
+        var startInfo = LldbDebuggerBackend.CreateStartInfo("/opt/llvm/bin/lldb-dap");
 
-        candidates.Count.ShouldBe(1);
-        candidates[0].FileName.ShouldBe("/usr/bin/lldb-mi-18");
-        candidates[0].ArgumentList.Count.ShouldBe(1);
-        candidates[0].ArgumentList[0].ShouldBe("/tmp/test");
+        startInfo.FileName.ShouldBe("/opt/llvm/bin/lldb-dap");
+        startInfo.ArgumentList.ShouldBeEmpty();
     }
 
     [Test]
-    public void Lldb_launch_candidates_use_explicit_lldb_with_mi2_flag()
+    public void Gdb_start_info_defaults_to_gdb_dap_interpreter()
     {
-        var candidates = LldbDebuggerBackend.CreateLaunchCandidates("/tmp/test", null, "/usr/bin/lldb");
+        var startInfo = GdbDebuggerBackend.CreateStartInfo(null);
 
-        candidates.Count.ShouldBe(1);
-        candidates[0].FileName.ShouldBe("/usr/bin/lldb");
-        candidates[0].ArgumentList.Count.ShouldBe(2);
-        candidates[0].ArgumentList[0].ShouldBe("--interpreter=mi2");
-        candidates[0].ArgumentList[1].ShouldBe("/tmp/test");
+        startInfo.FileName.ShouldBe("gdb");
+        startInfo.ArgumentList.ShouldBe(["--interpreter=dap", "--quiet"]);
     }
 
     [Test]
-    public async Task Lldb_start_reports_candidate_startup_errors()
+    public void Gdb_start_info_uses_explicit_debugger_path()
+    {
+        var startInfo = GdbDebuggerBackend.CreateStartInfo("/opt/gdb/bin/gdb");
+
+        startInfo.FileName.ShouldBe("/opt/gdb/bin/gdb");
+        startInfo.ArgumentList.ShouldBe(["--interpreter=dap", "--quiet"]);
+    }
+
+    [Test]
+    public async Task Lldb_start_reports_adapter_startup_errors()
     {
         var debuggerPath = CreateFailingDebuggerScript();
 
@@ -407,10 +317,10 @@ public sealed class DapServerTests
         {
             using var backend = new LldbDebuggerBackend();
             var ex = await Should.ThrowAsync<InvalidOperationException>(
-                () => backend.StartAsync("/tmp/test", null, null, debuggerPath)).ConfigureAwait(false);
+                () => backend.StartAsync("/tmp/test", null, null, debuggerPath, stopOnEntry: false)).ConfigureAwait(false);
 
-            ex.Message.ShouldContain("LLDB exited immediately");
-            ex.Message.ShouldContain("unknown option: --interpreter=mi2");
+            ex.Message.ShouldContain("lldb-dap exited immediately");
+            ex.Message.ShouldContain("liblldb.so: cannot open shared object file");
         }
         finally
         {
@@ -515,7 +425,16 @@ public sealed class DapServerTests
     {
         var mock = new MockDebuggerBackend
         {
-            StackTraceResponse = """1^done,stack=[frame={level="0",addr="0x401000",func="main",file="main.ash",fullname="/home/user/main.ash",line="5"}]""",
+            StackFrames =
+            [
+                new DapStackFrame
+                {
+                    Id = 0,
+                    Name = "main",
+                    Source = new DapSource { Name = "main.ash", Path = "/home/user/main.ash" },
+                    Line = 5,
+                },
+            ],
         };
 
         var launchArgs = JsonSerializer.SerializeToElement(new
@@ -628,13 +547,13 @@ public sealed class DapServerTests
 
         if (OperatingSystem.IsWindows())
         {
-            var path = Path.Combine(root, "lldb.cmd");
-            File.WriteAllText(path, "@echo error: unknown option: --interpreter=mi2 1>&2\r\n@exit /b 1\r\n");
+            var path = Path.Combine(root, "lldb-dap.cmd");
+            File.WriteAllText(path, "@echo error: liblldb.so: cannot open shared object file 1>&2\r\n@exit /b 1\r\n");
             return path;
         }
 
-        var scriptPath = Path.Combine(root, "lldb");
-        File.WriteAllText(scriptPath, "#!/bin/sh\necho 'error: unknown option: --interpreter=mi2' >&2\nexit 1\n");
+        var scriptPath = Path.Combine(root, "lldb-dap");
+        File.WriteAllText(scriptPath, "#!/bin/sh\necho 'error: liblldb.so: cannot open shared object file' >&2\nexit 1\n");
         File.SetUnixFileMode(
             scriptPath,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
@@ -710,15 +629,17 @@ internal sealed class MockDebuggerBackend : IDebuggerBackend
     public event Action<string>? OnOutput;
 
     public List<(string Path, int Line)> BreakpointsSet { get; } = [];
-    public string StackTraceResponse { get; init; } = "";
+    public DapStackFrame[] StackFrames { get; init; } = [];
     public DapVariable[] Locals { get; init; } = [];
     public bool Started { get; private set; }
+    public bool StopOnEntryReceived { get; private set; }
     public bool Terminated { get; private set; }
     public bool RunCalled { get; private set; }
 
-    public Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
+    public Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath, bool stopOnEntry)
     {
         Started = true;
+        StopOnEntryReceived = stopOnEntry;
         return Task.CompletedTask;
     }
 
@@ -739,7 +660,7 @@ internal sealed class MockDebuggerBackend : IDebuggerBackend
         return Task.CompletedTask;
     }
 
-    public Task<string> GetStackTraceAsync() => Task.FromResult(StackTraceResponse);
+    public Task<DapStackFrame[]> GetStackTraceAsync() => Task.FromResult(StackFrames);
     public Task<DapVariable[]> GetLocalsAsync() => Task.FromResult(Locals);
 
     public Task TerminateAsync()

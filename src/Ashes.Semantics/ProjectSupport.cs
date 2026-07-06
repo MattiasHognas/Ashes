@@ -273,6 +273,7 @@ public static class ProjectSupport
                     selectorLocalNames[local] = sel;
                     selectors.Add(sel);
                     imports.Add(sel.ModuleName);
+                    sourceLines.Add(string.Empty);
                     continue;
                 }
 
@@ -294,6 +295,8 @@ public static class ProjectSupport
 
                     aliases[alias] = modulePath;
                 }
+
+                sourceLines.Add(string.Empty);
                 continue;
             }
 
@@ -305,6 +308,7 @@ public static class ProjectSupport
 
             if (inHeader && (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal)))
             {
+                sourceLines.Add(line);
                 continue;
             }
 
@@ -318,6 +322,9 @@ public static class ProjectSupport
         // thread the selector list through, so without this an aliased intrinsic selector
         // (`import Ashes.IO.print as say`) would leave `say` undefined. Project mode and the
         // explicit-selector standalone path re-apply the same rewrite downstream, where it is a no-op.
+        // Import and header lines are kept as blank lines rather than removed, so line numbers in the
+        // stripped source (and everything derived from it: DWARF line info, span mapping) match the
+        // original file.
         var sourceWithoutImports = ApplySelectorRenames(string.Join('\n', sourceLines), selectors);
         return new ParsedImportHeader(imports, sourceWithoutImports, aliases, selectors);
     }
@@ -1168,9 +1175,47 @@ public static class ProjectSupport
         // ordinary `let alias = value in <body>` prelude would make the alias body an ordinary
         // expression, so the following flat declarations would no longer be folded and parsing fails.
         // Emit the alias prelude as flat declarations instead so the whole entry stays one flat block.
-        return entryShape.IsFlat
-            ? ApplyAliasesAsFlatDeclarations(entryShape.RawExpressionSource, aliases)
-            : ApplyAliases(entryShape.RawExpressionSource, aliases);
+        return ApplyEntryAliases(entryShape.RawExpressionSource, aliases, entryShape.IsFlat);
+    }
+
+    /// <summary>
+    /// Applies the alias prelude to the entry source while keeping its line numbers aligned with
+    /// the original file: the import header upstream is blanked rather than removed, so the alias
+    /// declarations are written into those leading blank lines instead of being prepended. Debug
+    /// line info and span mapping for the entry file stay 1:1 with what the user sees. Falls back
+    /// to the prepending strategies when there are not enough blank lines to fill.
+    /// </summary>
+    private static string ApplyEntryAliases(string source, IReadOnlyList<KeyValuePair<string, string>> aliases, bool flat)
+    {
+        if (aliases.Count == 0)
+        {
+            return source.TrimEnd();
+        }
+
+        var lines = source.Split('\n');
+        var blankCount = 0;
+        while (blankCount < lines.Length && string.IsNullOrWhiteSpace(lines[blankCount]))
+        {
+            blankCount++;
+        }
+
+        if (aliases.Count > blankCount)
+        {
+            return flat
+                ? ApplyAliasesAsFlatDeclarations(source, aliases)
+                : ApplyAliases(source, aliases);
+        }
+
+        for (var index = 0; index < aliases.Count; index++)
+        {
+            // A flat entry block folds bare `let` declarations; a nested-let entry needs the
+            // `in` so the chain wraps the trailing expression.
+            lines[index] = flat
+                ? $"let {aliases[index].Key} = {aliases[index].Value}"
+                : $"let {aliases[index].Key} = {aliases[index].Value} in";
+        }
+
+        return string.Join('\n', lines).TrimEnd();
     }
 
     /// <summary>
@@ -1531,7 +1576,12 @@ public static class ProjectSupport
 
         var bodyStart = FindExpressionBodyStart(source);
         var typeDeclarationsSource = bodyStart > 0 ? source[..bodyStart] : string.Empty;
-        var rawExpressionSource = bodyStart < source.Length ? source[bodyStart..].Trim() : string.Empty;
+
+        // Keep the body's line numbers aligned with the original file: the hoisted type-declaration
+        // prefix is replaced by an equivalent run of blank lines rather than dropped outright.
+        var rawExpressionSource = bodyStart < source.Length
+            ? new string('\n', typeDeclarationsSource.Count(c => c == '\n')) + source[bodyStart..].TrimEnd()
+            : string.Empty;
         var fragments = ExtractTopLevelBindings(rawExpressionSource, out var remainingBody);
         var topLevelBindings = fragments
             .Select(fragment => new ModuleBindingGroup([fragment], fragment.IsRecursive))
@@ -1701,7 +1751,7 @@ public static class ProjectSupport
         // type/external declarations removed, since those are emitted up front) rather than discarding it.
         shape = new ModuleSourceShape(
             TypeDeclarationsSource: typeDeclarations.ToString(),
-            RawExpressionSource: RemoveSpans(source, hoistedSpans).Trim(),
+            RawExpressionSource: BlankSpans(source, hoistedSpans).TrimEnd(),
             ExpressionBodySource: string.Empty,
             TopLevelBindings: groups,
             LegacyExportName: null,
@@ -1716,26 +1766,28 @@ public static class ProjectSupport
     /// out of the flat entry expression while keeping the flat <c>let</c> declarations and trailing
     /// expression intact.
     /// </summary>
-    private static string RemoveSpans(string source, IReadOnlyList<(int Start, int End)> spans)
+    private static string BlankSpans(string source, IReadOnlyList<(int Start, int End)> spans)
     {
         if (spans.Count == 0)
         {
             return source;
         }
 
-        var builder = new StringBuilder();
-        var copiedUpTo = 0;
+        // Blank the spans instead of removing them: newlines are kept and every other character
+        // becomes a space, so the remaining text keeps its original line and column positions
+        // (debug line info and span mapping stay 1:1 with the user's file).
+        var builder = new StringBuilder(source);
         foreach (var (start, end) in spans)
         {
-            if (start > copiedUpTo)
+            for (var index = start; index < end && index < builder.Length; index++)
             {
-                builder.Append(source[copiedUpTo..start]);
+                if (builder[index] != '\n')
+                {
+                    builder[index] = ' ';
+                }
             }
-
-            copiedUpTo = Math.Max(copiedUpTo, end);
         }
 
-        builder.Append(source[copiedUpTo..]);
         return builder.ToString();
     }
 
@@ -2258,6 +2310,7 @@ public static class ProjectSupport
                     break;
                 case Expr.IntLit:
                 case Expr.UIntLit:
+                case Expr.BigIntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
                 case Expr.BoolLit:
@@ -2273,6 +2326,10 @@ public static class ProjectSupport
                 case Expr.Multiply mul:
                     Visit(mul.Left);
                     Visit(mul.Right);
+                    break;
+                case Expr.Modulo modExpr:
+                    Visit(modExpr.Left);
+                    Visit(modExpr.Right);
                     break;
                 case Expr.Divide div:
                     Visit(div.Left);

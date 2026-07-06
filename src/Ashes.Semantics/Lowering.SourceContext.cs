@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -49,20 +48,39 @@ public sealed partial class Lowering
     /// </summary>
     private void Emit(IrInst inst)
     {
-        if (_lineStarts is not null && _currentSourceExpr is not null)
+        if (_lineStarts is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
         {
             var span = AstSpans.GetOrDefault(_currentSourceExpr);
-            if (span.Length > 0 || span.Start > 0)
+            if ((span.Length > 0 || span.Start > 0) && ResolveSourceLocation(span.Start) is { } resolved)
             {
-                var (filePath, line, column) = ResolveSourceLocation(span.Start);
-                inst = inst with { Location = new SourceLocation(filePath, line, column) };
+                inst = inst with { Location = new SourceLocation(resolved.FilePath, resolved.Line, resolved.Column) };
             }
         }
 
         _inst.Add(inst);
     }
 
-    private (string FilePath, int Line, int Column) ResolveSourceLocation(int absolutePosition)
+    /// <summary>
+    /// Arena and ownership machinery does not correspond to any source statement, so it must not
+    /// carry the line of whichever expression happened to be current when it was emitted. The
+    /// backend expands several of these into multi-block code (copy-out loops, cold reclaim
+    /// paths); a stale user line on them creates line-table entries at addresses the program
+    /// never executes, which then shadow the real breakpoint address for that line. Unlocated
+    /// instructions get the artificial line-0 location DWARF reserves for compiler-generated
+    /// code instead.
+    /// </summary>
+    private static bool IsRuntimeMachinery(IrInst inst)
+    {
+        return inst is IrInst.SaveArenaState
+            or IrInst.RestoreArenaState
+            or IrInst.ReclaimArenaChunks
+            or IrInst.CopyOutArena
+            or IrInst.CopyOutArenaToSpace
+            or IrInst.Drop
+            or IrInst.Borrow;
+    }
+
+    private (string FilePath, int Line, int Column)? ResolveSourceLocation(int absolutePosition)
     {
         // Multi-file resolution: find which module the position falls in
         if (_moduleOffsets is not null)
@@ -81,6 +99,12 @@ public sealed partial class Lowering
                     }
                 }
             }
+
+            // The position falls in stitching glue between module regions (boundary bindings,
+            // wrapping parentheses). Mapping it against the combined source would attribute a
+            // nonsense line to the entry file, so leave the instruction unlocated — the backend
+            // gives it the artificial line-0 location DWARF uses for compiler-generated code.
+            return null;
         }
 
         // Single-file fallback

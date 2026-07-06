@@ -20,26 +20,28 @@ loop), which suits Ashes — *except* for the arithmetic width.
 
 ## What it probes (expected flaws)
 
-- **No arbitrary-precision integers (bignum).** Ashes `Int` is a fixed 64-bit machine
-  integer; there is no `BigInt`. The spigot's accumulators overflow after a few dozen digits,
-  so the canonical algorithm cannot be expressed correctly at all. This is a *fundamental*
-  capability gap, not a performance flaw — distinct from the allocator/array/math gaps the
-  other benchmarks probe.
-- If a bignum were hand-built in Ashes (lists/arrays of limbs), it would then stress the
-  persistent-array cost model and the arena leak — but that measures the workaround, not the
-  language.
+- **Arbitrary-precision integer throughput.** The spigot's accumulators grow without bound, so
+  every step is `Ashes.BigInt` arithmetic (`mul`, `add`, `sub`, `div`, `compare`). This exercises
+  the native bignum runtime and its immutable, arena-allocated values under a tight loop.
+- **Arena churn.** Each bignum operation allocates a fresh value, so a long digit run stresses
+  the arena exactly as the memory model predicts — the cost this benchmark is meant to surface.
 
 ## Dependencies / blockers
 
-**BLOCKED on arbitrary-precision integers (bignum).** Not addressed by the math lib (which is
-about `Float` transcendentals); this needs a `BigInt` type / library. Defer until that exists,
-or implement only as an explicit "bignum-in-Ashes" stress test with that caveat documented.
+**None.** Native `Ashes.BigInt` (arbitrary-precision integers) has shipped — see the
+[architecture notes](../../docs/md/internals/architecture.md#bigint-arbitrary-precision-integers).
+`pidigits.ash` implements the unbounded spigot with it (using `BigInt` operators and `N` literals);
+the digits match π (`3141592653 5897932384 …`).
 
 ## Status
 
-**Scaffold only.** `pidigits.ash` and the `FLAWS.md` writeup are deferred — blocked on bignum.
+**Implemented.** `pidigits.ash` streams the first `N` digits of π in the Benchmarks Game output
+format (ten digits per line, each tagged with the running count; defaults to 27, or pass `N` as an
+argument). Correctness of the bignum runtime is covered by `tests/bigint_pidigits.ash`,
+`tests/bigint_core.ash`, `tests/bigint_edge.ash`, `tests/bigint_conversions.ash`, and
+`tests/bigint_literals.ash`; see [FLAWS.md](FLAWS.md) for the writeup.
 
-## Build & run (once written, after bignum)
+## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/pidigits/pidigits.ash -o challenges/pidigits/pidigits

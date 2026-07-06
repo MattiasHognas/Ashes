@@ -22,20 +22,22 @@ conversions** (`toFloat`, `*ToInt`) it introduces plus the hermetic `sqrt`. Nota
 these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only the hermetic core is on the
 critical path. Two needs fell **outside** the math lib: a **fixed-precision float formatter**
 (`fromFloat` hardcodes 6 fractional digits; n-body and spectral-norm require 9 dp) — now shipped
-as `Ashes.Text.formatFloat(value)(decimals)` — and **bignum** (pidigits), still open.
+as `Ashes.Text.formatFloat(value)(decimals)` — and **bignum** (pidigits), now shipped as the
+native `Ashes.BigInt` type (see the [architecture notes](../docs/md/internals/architecture.md#bigint-arbitrary-precision-integers)).
 
 | Challenge | Covered by math lib? | Remaining gap |
 |---|---|---|
 | [binary-trees](binary-trees/README.md) | n/a (no math) | — |
 | [fannkuch-redux](fannkuch-redux/README.md) | n/a (no math) | pure-solvable; probes arena churn #2 |
-| [fasta](fasta/README.md) | ✅ `toFloat` | — |
-| [mandelbrot](mandelbrot/README.md) | ✅ `toFloat` | — |
+| [fasta](fasta/README.md) | yes, `toFloat` | — |
+| [mandelbrot](mandelbrot/README.md) | yes, `toFloat` | — |
 | [reverse-complement](reverse-complement/README.md) | n/a (no math) | — |
 | [regex-redux](regex-redux/README.md) | n/a (no math) | regex-engine perf at scale |
-| [k-nucleotide](k-nucleotide/README.md) | ✅ `toFloat` | — (3-dp percentages via `formatFloat`) |
-| [n-body](n-body/README.md) | ✅ `sqrt` | — (9-dp via `formatFloat`) |
-| [spectral-norm](spectral-norm/README.md) | ✅ `sqrt` + `toFloat` | — (9-dp via `formatFloat`) |
-| [pidigits](pidigits/README.md) | ❌ | ❌ **bignum** (out of scope of the math lib) |
+| [k-nucleotide](k-nucleotide/README.md) | yes, `toFloat` | — (3-dp percentages via `formatFloat`) |
+| [n-body](n-body/README.md) | yes, `sqrt` | — (9-dp via `formatFloat`) |
+| [spectral-norm](spectral-norm/README.md) | yes, `sqrt` + `toFloat` | — (9-dp via `formatFloat`) |
+| [pidigits](pidigits/README.md) | n/a (integers) | — (native `Ashes.BigInt`) |
 
-Net: `Ashes.Math` plus the (now shipped) fixed-precision float formatter fully serves 9 of 10;
-pidigits needs a separate bignum decision. Each folder's `README.md` has the per-benchmark detail.
+Net: `Ashes.Math` plus the fixed-precision float formatter serves the 9 float-oriented
+benchmarks, and native `Ashes.BigInt` unblocks pidigits — the whole set is now expressible.
+Each folder's `README.md` has the per-benchmark detail.

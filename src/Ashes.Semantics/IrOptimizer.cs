@@ -440,6 +440,12 @@ public static class IrOptimizer
             IrInst.TextFromInt t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.TextFromFloat t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.TextFormatFloat t => t with { ValueTemp = R(t.ValueTemp), DecimalsTemp = R(t.DecimalsTemp) },
+            IrInst.BigIntFromInt t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.BigIntToString t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.BigIntToInt t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.BigIntFromString t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.BigIntBinary t => t with { Left = R(t.Left), Right = R(t.Right) },
+            IrInst.BigIntCompare t => t with { Left = R(t.Left), Right = R(t.Right) },
             IrInst.TextToHex t => t with { ValueTemp = R(t.ValueTemp) },
             IrInst.TextByteLength t => t with { TextTemp = R(t.TextTemp) },
             IrInst.ReadExact r => r with { CountTemp = R(r.CountTemp) },
@@ -1377,6 +1383,12 @@ public static class IrOptimizer
             case IrInst.TextFromInt t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.TextFromFloat t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.TextFormatFloat t: usedTemps.Add(t.ValueTemp); usedTemps.Add(t.DecimalsTemp); break;
+            case IrInst.BigIntFromInt t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.BigIntToString t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.BigIntToInt t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.BigIntFromString t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.BigIntBinary t: usedTemps.Add(t.Left); usedTemps.Add(t.Right); break;
+            case IrInst.BigIntCompare t: usedTemps.Add(t.Left); usedTemps.Add(t.Right); break;
             case IrInst.TextToHex t: usedTemps.Add(t.ValueTemp); break;
             case IrInst.TextByteLength t: usedTemps.Add(t.TextTemp); break;
             case IrInst.ReadExact r: usedTemps.Add(r.CountTemp); break;

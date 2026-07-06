@@ -14,6 +14,11 @@ public abstract record TypeRef
     // but wrap at their declared bit width for arithmetic, matching C unsigned semantics.
     public sealed record TUInt(int Bits) : TypeRef;
     public sealed record TFloat : TypeRef;
+    // Arbitrary-precision signed integer. Native heap value:
+    // pointer to { i64 header = (negFlag<<32)|limbCount, i64 limb[...] }, sign-magnitude, base 2^64,
+    // normalized (zero = header 0, no limbs). Immutable; each op allocates a fresh value. The
+    // arithmetic is emitted as LLVM-IR runtime helpers by the backend, on demand.
+    public sealed record TBigInt : TypeRef;
     public sealed record TStr : TypeRef;
     // Immutable byte buffer: layout is identical to TStr → {length:i64, data:u8[length]}.
     public sealed record TBytes : TypeRef;
@@ -120,6 +125,17 @@ public abstract record IrInst
     // arguments and the result are Float (f64). The openlibm bitcode is linked into the module when
     // the program uses any of these (ProgramUsesMathRuntimeAbi), so the symbol resolves internally.
     public sealed record CallLibm(int Target, string Symbol, IReadOnlyList<int> Args) : IrInst;
+
+    // Ashes.BigInt operations, backed by emitted LLVM-IR runtime helpers.
+    // BigInt values are heap pointers (i64). The codegen pre-sizes result buffers from operand limb
+    // counts and calls the allocation-free C helpers.
+    public sealed record BigIntFromInt(int Target, int ValueTemp) : IrInst;      // Int -> BigInt
+    public sealed record BigIntToString(int Target, int ValueTemp) : IrInst;     // BigInt -> Str
+    public sealed record BigIntToInt(int Target, int ValueTemp) : IrInst;        // BigInt -> Result(Str, Int)
+    public sealed record BigIntFromString(int Target, int ValueTemp) : IrInst;   // Str -> Result(Str, BigInt)
+    // Op ∈ { "add", "sub", "mul", "div", "mod" }: BigInt -> BigInt -> BigInt.
+    public sealed record BigIntBinary(int Target, int Left, int Right, string Op) : IrInst;
+    public sealed record BigIntCompare(int Target, int Left, int Right) : IrInst; // BigInt -> BigInt -> Int
 
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;

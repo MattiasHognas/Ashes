@@ -796,6 +796,13 @@ internal static partial class LlvmCodegen
         EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
         EmitBuiltinBcmp(target, i8, i64, i8Ptr);
 
+        // Emit the Ashes.BigInt arbitrary-precision runtime helpers as LLVM IR (like the
+        // freestanding memcmp/strlen helpers) when the program uses BigInt.
+        if (ProgramUsesBigIntRuntimeAbi(program))
+        {
+            EmitBigIntRuntimeHelpers(target);
+        }
+
         // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
         // point and lifted closures. The current runtime ABI layer does not unwind.
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
@@ -1092,6 +1099,14 @@ internal static partial class LlvmCodegen
     private static bool ProgramUsesMathRuntimeAbi(IrProgram program)
     {
         return ProgramUsesInstruction<IrInst.CallLibm>(program);
+    }
+
+    private static bool ProgramUsesBigIntRuntimeAbi(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.BigIntFromInt>(program)
+            || ProgramUsesInstruction<IrInst.BigIntToString>(program)
+            || ProgramUsesInstruction<IrInst.BigIntBinary>(program)
+            || ProgramUsesInstruction<IrInst.BigIntCompare>(program);
     }
 
     /// <summary>
@@ -1399,6 +1414,13 @@ internal static partial class LlvmCodegen
                     LlvmApi.BuildBr(target.Builder, state.GetLabelBlock(label.Name));
                 }
 
+                // Label blocks are pre-created (forward jumps need the handles), which appends
+                // them ahead of any blocks the instruction expansions create later. Move each
+                // into flow position as it is reached: physical block order then follows IR
+                // order, so the lowest address of a source line is the line's first executed
+                // instruction (a breakpoint on an `if` line must bind to the condition, not to
+                // a join/else block that happened to be laid out earlier).
+                LlvmApi.MoveBasicBlockAfter(state.GetLabelBlock(label.Name), LlvmApi.GetInsertBlock(target.Builder));
                 LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetLabelBlock(label.Name));
                 terminated = false;
                 continue;
@@ -1406,7 +1428,9 @@ internal static partial class LlvmCodegen
 
             if (terminated)
             {
-                LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetOrCreateFallthroughBlock(index));
+                var fallthrough = state.GetOrCreateFallthroughBlock(index);
+                LlvmApi.MoveBasicBlockAfter(fallthrough, LlvmApi.GetInsertBlock(target.Builder));
+                LlvmApi.PositionBuilderAtEnd(target.Builder, fallthrough);
                 terminated = false;
             }
 
@@ -1462,6 +1486,12 @@ internal static partial class LlvmCodegen
             IrInst.TextFromFloat textFromFloat => StoreTemp(state, textFromFloat.Target, EmitFloatToString(state, LoadTempAsFloat(state, textFromFloat.ValueTemp), "text_from_float")),
             IrInst.TextFormatFloat textFormatFloat => StoreTemp(state, textFormatFloat.Target, EmitFloatToFixedString(state, LoadTempAsFloat(state, textFormatFloat.ValueTemp), LoadTemp(state, textFormatFloat.DecimalsTemp), "text_format_float")),
             IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(state, LoadTemp(state, textToHex.ValueTemp), "text_to_hex")),
+            IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(state, LoadTemp(state, bigIntFromInt.ValueTemp))),
+            IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
+            IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),
+            IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
+            IrInst.BigIntBinary bigIntBinary => StoreTemp(state, bigIntBinary.Target, EmitBigIntBinary(state, LoadTemp(state, bigIntBinary.Left), LoadTemp(state, bigIntBinary.Right), bigIntBinary.Op)),
+            IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
             IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpGetAbiCall(state, LoadTemp(state, httpGet.UrlTemp))),
             IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpPostAbiCall(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp))),
             IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnectAbiCall(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),

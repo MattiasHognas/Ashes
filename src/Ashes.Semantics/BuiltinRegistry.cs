@@ -36,6 +36,16 @@ public static class BuiltinRegistry
         TextFromFloat,
         TextFormatFloat,
         TextToHex,
+        BigIntFromInt,
+        BigIntToString,
+        BigIntToInt,
+        BigIntFromString,
+        BigIntAdd,
+        BigIntSub,
+        BigIntMul,
+        BigIntDiv,
+        BigIntMod,
+        BigIntCompare,
         HttpGet,
         HttpPost,
         NetTcpConnect,
@@ -280,8 +290,24 @@ public static class BuiltinRegistry
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
                     ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
                     ["formatFloat"] = new("formatFloat", BuiltinValueKind.TextFormatFloat, IsCallable: true, Arity: 2),
+                    ["fromBigInt"] = new("fromBigInt", BuiltinValueKind.BigIntToString, IsCallable: true, Arity: 1),
+                    ["parseBigInt"] = new("parseBigInt", BuiltinValueKind.BigIntFromString, IsCallable: true, Arity: 1),
                     ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1),
                     ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.BigInt"] = new(
+                "Ashes.BigInt",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.BigIntFromInt, IsCallable: true, Arity: 1),
+                    ["toInt"] = new("toInt", BuiltinValueKind.BigIntToInt, IsCallable: true, Arity: 1),
+                    ["add"] = new("add", BuiltinValueKind.BigIntAdd, IsCallable: true, Arity: 2),
+                    ["sub"] = new("sub", BuiltinValueKind.BigIntSub, IsCallable: true, Arity: 2),
+                    ["mul"] = new("mul", BuiltinValueKind.BigIntMul, IsCallable: true, Arity: 2),
+                    ["div"] = new("div", BuiltinValueKind.BigIntDiv, IsCallable: true, Arity: 2),
+                    ["mod"] = new("mod", BuiltinValueKind.BigIntMod, IsCallable: true, Arity: 2),
+                    ["compare"] = new("compare", BuiltinValueKind.BigIntCompare, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Bytes"] = new(
                 "Ashes.Bytes",
