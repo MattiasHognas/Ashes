@@ -9,12 +9,10 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-Where a challenge surfaces compiler flaws, they are recorded in its `FLAWS.md`.
-
 - [`1brc/`](1brc/README.md) — the One Billion Row Challenge; a full 1e9-row stress test that runs
   in ~8.3 s (every flaw it originally surfaced has since been fixed).
 - The folders below are the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-  set — **scaffolds for now** (README only; `.ash` + run + `FLAWS.md` deferred).
+  set — **scaffolds for now** (README only; `.ash` + run deferred).
 
 ## Benchmarks Game — math-lib coverage
 
