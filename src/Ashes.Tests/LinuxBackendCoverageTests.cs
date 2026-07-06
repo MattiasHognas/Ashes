@@ -1335,12 +1335,12 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    [Skip("Known-failing repro: concurrent HTTP requests crash the reactor under the run-queue scheduler — a wild pointer in user handler code (lambda_3/coroutine_2 per addr2line), distinct from the uninitialized-field crash already fixed. Sequential HTTP and concurrent TCP both work. See docs/md/future/ASYNC_SCHEDULER.md task 2 — un-skip once fixed.")]
     public async Task Linux_backend_llvm_should_serve_http_concurrently_across_workers()
     {
-        // Concurrent HTTP under the run-queue scheduler. Sequential HTTP (should_serve_http_over_the_tcp_server)
-        // and concurrent TCP (should_serve_connections_concurrently) both pass, but firing HTTP requests
-        // concurrently segfaults the reactor. Reliable repro through the harness; kept skipped until fixed.
+        // Concurrent HTTP under the run-queue scheduler: many simultaneous requests against a
+        // multi-reactor server, every one must get a 200 and the server must stay up. Regression
+        // guard for the async-loop lowering — with the server loops compiled as nested blocking
+        // scheduler runs (instead of one suspending coroutine each), this crashed the reactor.
         if (!OperatingSystem.IsLinux())
         {
             return;

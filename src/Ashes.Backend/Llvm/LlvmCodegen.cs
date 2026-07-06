@@ -468,7 +468,7 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
             || ProgramUsesInstruction<IrInst.Drop>(program);
-        // Run-queue scheduler eligibility (see docs/md/future/ASYNC_SCHEDULER.md). Its v1 scope is
+        // Run-queue scheduler eligibility. Its v1 scope is
         // coroutines + timer (sleep) leaves with global-arena tasks, so it is used only when the program
         // uses async (RunTask) but no socket/TLS/HTTP leaf and no spawn (both need per-task arena
         // install/reap and the socket epoll wait, which land in later phases). Such programs still use

@@ -1700,7 +1700,7 @@ internal static partial class LlvmCodegen
     private static bool DetachedRuntimeAvailable(LlvmCodegenState state) =>
         LlvmApi.GetNamedFunction(state.Target.Module, "ashes_run_detached").Ptr != 0;
 
-    // Run-queue scheduler (see docs/md/future/ASYNC_SCHEDULER.md). The ready queue is an intrusive
+    // Run-queue scheduler. The ready queue is an intrusive
     // FIFO of task structs linked through TaskStructLayout.ReadyNext, with head/tail globals.
     private static LlvmValueHandle ReadyQueueHeadGlobal(LlvmCodegenState state) =>
         ReadLineScratchGlobal(state, "__ashes_ready_head", state.I64);

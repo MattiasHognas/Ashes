@@ -68,8 +68,13 @@ public static class StateMachineTransform
         // Compute live temps across each await point
         var liveAcross = ComputeLiveTempsAcrossAwaits(instructions, awaitPositions);
 
-        // Compute local slots that are written before and read after each await point
-        var liveLocalsAcross = ComputeLiveLocalsAcrossAwaits(instructions, awaitPositions);
+        // Compute local slots that are written before and read after each await point. With a
+        // backward jump in the body (an async tail-recursive loop's restart edge), positional
+        // before/after liveness is unsound for locals: a local written only in the entry code
+        // (e.g. a captured value copied to its local) can be read after a resume via the back-edge,
+        // where the entry code does not re-execute. Temps stay positional — every temp's defining
+        // instruction lies inside the loop and re-executes ahead of any back-edge reachable use.
+        var liveLocalsAcross = ComputeLiveLocalsAcrossAwaits(instructions, awaitPositions, HasBackwardJump(instructions));
 
         // Build the union of all live temps (each gets a unique slot in the state struct)
         var allLiveTemps = new SortedSet<int>();
@@ -439,14 +444,71 @@ public static class StateMachineTransform
     }
 
     /// <summary>
+    /// Whether any jump in the body targets a label defined at or before the jump's own position —
+    /// a loop back-edge. Emitted only by the async tail-recursive-loop lowering (the helper
+    /// coroutine's restart edge); plain async bodies are forward-only.
+    /// </summary>
+    private static bool HasBackwardJump(List<IrInst> instructions)
+    {
+        var labelPositions = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.Label label)
+            {
+                labelPositions[label.Name] = i;
+            }
+        }
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            string? target = instructions[i] switch
+            {
+                IrInst.Jump j => j.Target,
+                IrInst.JumpIfFalse jf => jf.Target,
+                _ => null
+            };
+            if (target is not null && labelPositions.TryGetValue(target, out int pos) && pos <= i)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// For each await point, computes which local slots are live across that point
     /// (written before and read after the await). Local slot 0 (state struct) and
     /// slot 1 (dummy arg) are excluded since they're function parameters.
     /// </summary>
     private static List<HashSet<int>> ComputeLiveLocalsAcrossAwaits(
-        List<IrInst> instructions, List<int> awaitPositions)
+        List<IrInst> instructions, List<int> awaitPositions, bool hasBackEdge)
     {
         var result = new List<HashSet<int>>();
+
+        if (hasBackEdge)
+        {
+            // A back-edge makes any written-and-read local potentially live across any await
+            // (reads positionally before the await are reachable after a resume via the loop).
+            // Save/restore the full written∩read set at every suspend point.
+            var writtenAnywhere = new HashSet<int>();
+            var readAnywhere = new HashSet<int>();
+            foreach (var inst in instructions)
+            {
+                foreach (int slot in GetWrittenLocalSlots(inst)) writtenAnywhere.Add(slot);
+                foreach (int slot in GetReadLocalSlots(inst)) readAnywhere.Add(slot);
+            }
+
+            writtenAnywhere.IntersectWith(readAnywhere);
+            writtenAnywhere.Remove(0);
+            writtenAnywhere.Remove(1);
+            foreach (int _ in awaitPositions)
+            {
+                result.Add(new HashSet<int>(writtenAnywhere));
+            }
+
+            return result;
+        }
 
         foreach (int awaitPos in awaitPositions)
         {
