@@ -55,7 +55,7 @@ internal static class LlvmTargetSetup
         }
         else
         {
-            cpu = targetId == Backends.TargetIds.LinuxArm64 ? "generic" : "x86-64";
+            cpu = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal) ? "generic" : "x86-64";
             features = string.Empty;
         }
 

@@ -74,15 +74,15 @@ public sealed class LinuxArm64BackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("GET / HTTP/1.1");
                 request.ShouldContain("Host: localhost");
 
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
-            host: "localhost");
+            host: "localhost").ConfigureAwait(false);
 
         result.Stdout.ShouldBe("hello from https\n");
     }
@@ -110,15 +110,15 @@ public sealed class LinuxArm64BackendCoverageTests
             """,
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("GET / HTTP/1.1");
                 request.ShouldContain("Host: localhost");
 
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
-            host: "localhost");
+            host: "localhost").ConfigureAwait(false);
 
         result.Stdout.ShouldBe("18|hello from https\n");
     }
@@ -146,7 +146,7 @@ public sealed class LinuxArm64BackendCoverageTests
             let joined = Ashes.Parallel.reduce(given (a) -> given (b) -> a + "," + b)("")(given (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
 
             Ashes.IO.print(joined)
-            """));
+            """)).ConfigureAwait(false);
         result.Stdout.ShouldBe("0,1,4,9,16,25,36\n");
     }
 
@@ -161,7 +161,7 @@ public sealed class LinuxArm64BackendCoverageTests
         var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgram("""
             external strlen(Str) -> Int = "strlen@libc.so.6"
             Ashes.IO.print(strlen("ash" + "es"))
-            """));
+            """)).ConfigureAwait(false);
         result.Stdout.ShouldBe("5\n");
     }
 
@@ -177,13 +177,13 @@ public sealed class LinuxArm64BackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                _ = await ReadTextAsync(stream, 4096);
+                _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
             trustServerCertificate: false,
-            allowServerHandshakeFailure: true);
+            allowServerHandshakeFailure: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer\n");
     }
@@ -200,14 +200,14 @@ public sealed class LinuxArm64BackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                _ = await ReadTextAsync(stream, 4096);
+                _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
             host: "127.0.0.1",
             certificateHost: "localhost",
-            allowServerHandshakeFailure: true);
+            allowServerHandshakeFailure: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: NotValidForName\n");
     }
@@ -229,18 +229,21 @@ public sealed class LinuxArm64BackendCoverageTests
             """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("http://__HOST__:__PORT__/a"), Ashes.Http.get("http://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
-                await using var stream = client.GetStream();
-                var request = await ReadTextAsync(stream, 4096);
-                request.ShouldContain("Host: 127.0.0.1");
-                // Both endpoints respond with the same body ("ok") so the test result is
-                // deterministic regardless of which Async.race task technically completes first
-                // (avoids timing flakiness on QEMU/loaded CI runners).
-                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                    request.ShouldContain("Host: 127.0.0.1");
+                    // Both endpoints respond with the same body ("ok") so the test result is
+                    // deterministic regardless of which Async.race task technically completes first
+                    // (avoids timing flakiness on QEMU/loaded CI runners).
+                    var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok");
+                    await stream.WriteAsync(response).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
             },
             expectedClientCount: 2,
-            tolerateClientDisconnect: true);
+            tolerateClientDisconnect: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("ok\n");
     }
@@ -257,15 +260,15 @@ public sealed class LinuxArm64BackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("GET /empty HTTP/1.1");
                 request.ShouldContain("Host: localhost");
 
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
-            host: "localhost");
+            host: "localhost").ConfigureAwait(false);
 
         result.Stdout.ShouldBe("empty\n");
     }
@@ -311,11 +314,11 @@ public sealed class LinuxArm64BackendCoverageTests
             psi.RedirectStandardError = true;
             psi.UseShellExecute = false;
             psi.WorkingDirectory = tmpDir;
-            proc = await TestProcessHelper.StartProcessAsync(psi);
+            proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
 
             foreach (var payload in new[] { "arm-tls-one", "arm-tls-two" })
             {
-                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload);
+                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload).ConfigureAwait(false);
                 reply.ShouldBe("echo: " + payload);
             }
         }
@@ -352,18 +355,21 @@ public sealed class LinuxArm64BackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
-                await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout);
-                var outBytes = Encoding.UTF8.GetBytes(payload);
-                await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                var buffer = new byte[4096];
-                int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                return Encoding.UTF8.GetString(buffer, 0, read);
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+                await using (tls.ConfigureAwait(false))
+                {
+                    await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var outBytes = Encoding.UTF8.GetBytes(payload);
+                    await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var buffer = new byte[4096];
+                    int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(100);
+                await Task.Delay(100).ConfigureAwait(false);
             }
         }
     }
@@ -404,13 +410,13 @@ public sealed class LinuxArm64BackendCoverageTests
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
             psi.UseShellExecute = false;
-            proc = await TestProcessHelper.StartProcessAsync(psi);
+            proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
 
-            var health = await HttpGetRawWithRetryAsync(port, "/health");
+            var health = await HttpGetRawWithRetryAsync(port, "/health").ConfigureAwait(false);
             health.ShouldContain("HTTP/1.1 200 OK");
             health.ShouldEndWith("ok");
 
-            var missing = await HttpGetRawWithRetryAsync(port, "/nope");
+            var missing = await HttpGetRawWithRetryAsync(port, "/nope").ConfigureAwait(false);
             missing.ShouldContain("HTTP/1.1 404 Not Found");
             missing.ShouldEndWith("not found");
         }
@@ -434,15 +440,18 @@ public sealed class LinuxArm64BackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var stream = client.GetStream();
-                await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(50);
+                await Task.Delay(50).ConfigureAwait(false);
             }
         }
     }
@@ -489,12 +498,12 @@ public sealed class LinuxArm64BackendCoverageTests
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
             psi.UseShellExecute = false;
-            proc = await TestProcessHelper.StartProcessAsync(psi);
+            proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
 
             // Drive three sequential connections; serve handles one at a time.
             foreach (var payload in new[] { "arm64-one", "arm64-two", "arm64-three" })
             {
-                var reply = await ConnectSendReceiveWithRetryAsync(port, payload);
+                var reply = await ConnectSendReceiveWithRetryAsync(port, payload).ConfigureAwait(false);
                 reply.ShouldBe("echo: " + payload);
             }
         }
@@ -526,18 +535,21 @@ public sealed class LinuxArm64BackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var stream = client.GetStream();
-                var outBytes = Encoding.UTF8.GetBytes(payload);
-                await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                var buffer = new byte[4096];
-                int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                return Encoding.UTF8.GetString(buffer, 0, read);
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var outBytes = Encoding.UTF8.GetBytes(payload);
+                    await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var buffer = new byte[4096];
+                    int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
                 // Server not up yet (or between sequential connections) — retry until the accept timeout.
-                await Task.Delay(50);
+                await Task.Delay(50).ConfigureAwait(false);
             }
         }
     }
@@ -554,7 +566,7 @@ public sealed class LinuxArm64BackendCoverageTests
         int expectedExitCode = 0)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithLinuxArm64LlvmAsync(ir, environmentVariables, expectedExitCode);
+        return await CompileRunWithLinuxArm64LlvmAsync(ir, environmentVariables, expectedExitCode).ConfigureAwait(false);
     }
 
     private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmAsync(
@@ -582,23 +594,23 @@ public sealed class LinuxArm64BackendCoverageTests
                 }
             }
 
-            using var proc = await TestProcessHelper.StartProcessAsync(psi);
+            using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
             var stdoutTask = proc.StandardOutput.ReadToEndAsync();
             var stderrTask = proc.StandardError.ReadToEndAsync();
             try
             {
-                await proc.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout);
+                await proc.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
                 TryKillProcess(proc);
-                var stdout = await stdoutTask;
-                var stderr = await stderrTask;
+                var stdout = await stdoutTask.ConfigureAwait(false);
+                var stderr = await stderrTask.ConfigureAwait(false);
                 throw new TimeoutException($"Compiled linux-arm64 process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
             }
 
-            var finalStdout = await stdoutTask;
-            var finalStderr = await stderrTask;
+            var finalStdout = await stdoutTask.ConfigureAwait(false);
+            var finalStderr = await stderrTask.ConfigureAwait(false);
             proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {finalStderr}");
             return new ExecutionResult(finalStdout, finalStderr, proc.ExitCode);
         }
@@ -619,10 +631,10 @@ public sealed class LinuxArm64BackendCoverageTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var serverTask = RunHttpLoopbackServerAsync(listener, expectedClientCount, handleClientAsync, tolerateClientDisconnect);
-        var result = await CompileRunWithLinuxArm64LlvmAsync(source);
-        var serverException = await serverTask;
+        var result = await CompileRunWithLinuxArm64LlvmAsync(source).ConfigureAwait(false);
+        var serverException = await serverTask.ConfigureAwait(false);
         serverException.ShouldBeNull(serverException?.ToString());
         return result;
     }
@@ -641,13 +653,13 @@ public sealed class LinuxArm64BackendCoverageTests
                 for (var index = 0; index < expectedClientCount; index++)
                 {
                     using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
-                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
                     client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     clients.Add(client);
                 }
 
-                await Task.WhenAll(clients.Select(client => HandleHttpClientAsync(client, handleClientAsync, tolerateClientDisconnect)));
+                await Task.WhenAll(clients.Select(client => HandleHttpClientAsync(client, handleClientAsync, tolerateClientDisconnect))).ConfigureAwait(false);
             }
             finally
             {
@@ -673,7 +685,7 @@ public sealed class LinuxArm64BackendCoverageTests
     {
         try
         {
-            await handleClientAsync(client).WaitAsync(SocketTestConstants.SocketTimeout);
+            await handleClientAsync(client).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
         }
         catch (IOException) when (tolerateClientDisconnect)
         {
@@ -694,18 +706,18 @@ public sealed class LinuxArm64BackendCoverageTests
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host).ConfigureAwait(false);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync, tolerateClientDisconnect);
         IReadOnlyDictionary<string, string>? environmentVariables = trustServerCertificate
-            ? new Dictionary<string, string>
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
             }
             : null;
-        var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: environmentVariables);
-        var serverException = await serverTask;
+        var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
+        var serverException = await serverTask.ConfigureAwait(false);
         if (allowServerHandshakeFailure && serverException is IOException ioException)
         {
             ioException.Message.ShouldContain("unexpected EOF");
@@ -880,7 +892,7 @@ public sealed class LinuxArm64BackendCoverageTests
             try
             {
                 using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
-                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token).ConfigureAwait(false);
                 if (count == 0)
                 {
                     break;

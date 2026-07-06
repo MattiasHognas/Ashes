@@ -29,7 +29,7 @@ public sealed class DapServerTests
         inputStream.Position = 0;
 
         var transport = new DapTransport(inputStream, outputStream);
-        var received = await transport.ReadRequestAsync();
+        var received = await transport.ReadRequestAsync().ConfigureAwait(false);
 
         received.ShouldNotBeNull();
         received.Command.ShouldBe("initialize");
@@ -79,7 +79,7 @@ public sealed class DapServerTests
         var outputStream = new MemoryStream();
         var transport = new DapTransport(inputStream, outputStream);
 
-        var result = await transport.ReadRequestAsync();
+        var result = await transport.ReadRequestAsync().ConfigureAwait(false);
         result.ShouldBeNull();
     }
 
@@ -93,12 +93,12 @@ public sealed class DapServerTests
             CreateRequest(2, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var initResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "initialize"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "initialize"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         initResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         initResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
@@ -112,12 +112,12 @@ public sealed class DapServerTests
             CreateRequest(2, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var messages = ParseDapOutput(outputStream);
         var initializedEvent = messages.FirstOrDefault(m =>
-            m.TryGetProperty("type", out var type) && type.GetString() == "event"
-            && m.TryGetProperty("event", out var evt) && evt.GetString() == "initialized");
+            m.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "event"
+, StringComparison.Ordinal) && m.TryGetProperty("event", out var evt) && string.Equals(evt.GetString(), "initialized", StringComparison.Ordinal));
 
         initializedEvent.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
     }
@@ -131,12 +131,12 @@ public sealed class DapServerTests
             CreateRequest(3, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var threadsResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "threads"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "threads"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         threadsResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         threadsResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
@@ -152,12 +152,12 @@ public sealed class DapServerTests
             CreateRequest(3, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var errorResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "nonExistentCommand"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "nonExistentCommand"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         errorResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         errorResponse.GetProperty("success").GetBoolean().ShouldBeFalse();
@@ -178,12 +178,12 @@ public sealed class DapServerTests
             CreateRequest(3, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var bpResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "setBreakpoints"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "setBreakpoints"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         bpResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         bpResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
@@ -407,7 +407,7 @@ public sealed class DapServerTests
         {
             using var backend = new LldbDebuggerBackend();
             var ex = await Should.ThrowAsync<InvalidOperationException>(
-                () => backend.StartAsync("/tmp/test", null, null, debuggerPath));
+                () => backend.StartAsync("/tmp/test", null, null, debuggerPath)).ConfigureAwait(false);
 
             ex.Message.ShouldContain("LLDB exited immediately");
             ex.Message.ShouldContain("unknown option: --interpreter=mi2");
@@ -440,15 +440,15 @@ public sealed class DapServerTests
             capturedBackend = mock;
             return mock;
         });
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         capturedBackend.ShouldNotBeNull();
         capturedBackend.ShouldBeOfType<MockDebuggerBackend>();
 
         var responses = ParseDapOutput(outputStream);
         var launchResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "launch"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "launch"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         launchResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         launchResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
@@ -475,7 +475,7 @@ public sealed class DapServerTests
             receivedDebuggerType = debuggerType;
             return new MockDebuggerBackend();
         });
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         receivedDebuggerType.ShouldBe("lldb");
     }
@@ -504,7 +504,7 @@ public sealed class DapServerTests
             CreateRequest(4, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream, _ => mock);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         mock.BreakpointsSet.ShouldContain(("/test/main.ash", 5));
         mock.BreakpointsSet.ShouldContain(("/test/main.ash", 10));
@@ -531,12 +531,12 @@ public sealed class DapServerTests
             CreateRequest(4, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream, _ => mock);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var stResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "stackTrace"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "stackTrace"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         stResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         stResponse.GetProperty("success").GetBoolean().ShouldBeTrue();
@@ -579,12 +579,12 @@ public sealed class DapServerTests
             CreateRequest(4, "disconnect"));
 
         using var server = new DapServer(inputStream, outputStream, _ => mock);
-        await server.RunAsync();
+        await server.RunAsync().ConfigureAwait(false);
 
         var responses = ParseDapOutput(outputStream);
         var varResponse = responses.FirstOrDefault(r =>
-            r.TryGetProperty("command", out var cmd) && cmd.GetString() == "variables"
-            && r.TryGetProperty("type", out var type) && type.GetString() == "response");
+            r.TryGetProperty("command", out var cmd) && string.Equals(cmd.GetString(), "variables"
+, StringComparison.Ordinal) && r.TryGetProperty("type", out var type) && string.Equals(type.GetString(), "response", StringComparison.Ordinal));
 
         varResponse.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
         varResponse.GetProperty("success").GetBoolean().ShouldBeTrue();

@@ -35,13 +35,13 @@ public sealed class DapServer : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
-            var request = await _transport.ReadRequestAsync(ct);
+            var request = await _transport.ReadRequestAsync(ct).ConfigureAwait(false);
             if (request is null)
             {
                 break; // EOF
             }
 
-            await HandleRequestAsync(request);
+            await HandleRequestAsync(request).ConfigureAwait(false);
         }
     }
 
@@ -53,43 +53,43 @@ public sealed class DapServer : IDisposable
                 HandleInitialize(request);
                 break;
             case "launch":
-                await HandleLaunchAsync(request);
+                await HandleLaunchAsync(request).ConfigureAwait(false);
                 break;
             case "setBreakpoints":
-                await HandleSetBreakpointsAsync(request);
+                await HandleSetBreakpointsAsync(request).ConfigureAwait(false);
                 break;
             case "configurationDone":
-                await HandleConfigurationDoneAsync(request);
+                await HandleConfigurationDoneAsync(request).ConfigureAwait(false);
                 break;
             case "threads":
                 HandleThreads(request);
                 break;
             case "stackTrace":
-                await HandleStackTraceAsync(request);
+                await HandleStackTraceAsync(request).ConfigureAwait(false);
                 break;
             case "scopes":
                 HandleScopes(request);
                 break;
             case "variables":
-                await HandleVariablesAsync(request);
+                await HandleVariablesAsync(request).ConfigureAwait(false);
                 break;
             case "continue":
-                await HandleContinueAsync(request);
+                await HandleContinueAsync(request).ConfigureAwait(false);
                 break;
             case "next":
-                await HandleNextAsync(request);
+                await HandleNextAsync(request).ConfigureAwait(false);
                 break;
             case "stepIn":
-                await HandleStepInAsync(request);
+                await HandleStepInAsync(request).ConfigureAwait(false);
                 break;
             case "stepOut":
-                await HandleStepOutAsync(request);
+                await HandleStepOutAsync(request).ConfigureAwait(false);
                 break;
             case "disconnect":
-                await HandleDisconnectAsync(request);
+                await HandleDisconnectAsync(request).ConfigureAwait(false);
                 break;
             case "terminate":
-                await HandleTerminateAsync(request);
+                await HandleTerminateAsync(request).ConfigureAwait(false);
                 break;
             default:
                 _transport.SendResponse(request, success: false, message: $"Unknown command: {request.Command}");
@@ -131,14 +131,14 @@ public sealed class DapServer : IDisposable
                 _launchArgs.Program,
                 _launchArgs.Cwd,
                 _launchArgs.Args,
-                _launchArgs.DebuggerPath);
+                _launchArgs.DebuggerPath).ConfigureAwait(false);
 
             // Set any breakpoints that were sent before launch
             foreach (var (path, lines) in _pendingBreakpoints)
             {
                 foreach (var line in lines)
                 {
-                    await _debugger.SetBreakpointAsync(path, line);
+                    await _debugger.SetBreakpointAsync(path, line).ConfigureAwait(false);
                 }
             }
 
@@ -148,7 +148,7 @@ public sealed class DapServer : IDisposable
             // If stopOnEntry, don't auto-run (debugger will stop at entry)
             if (!_launchArgs.StopOnEntry && _configurationDone)
             {
-                await _debugger.RunAsync();
+                await _debugger.RunAsync().ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -221,7 +221,7 @@ public sealed class DapServer : IDisposable
                 {
                     try
                     {
-                        await _debugger.SetBreakpointAsync(args.Source.Path, bp.Line);
+                        await _debugger.SetBreakpointAsync(args.Source.Path, bp.Line).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -260,7 +260,7 @@ public sealed class DapServer : IDisposable
         // If launch was already called and not stopOnEntry, start execution
         if (_debugger is not null && _launchArgs is not null && !_launchArgs.StopOnEntry)
         {
-            await _debugger.RunAsync();
+            await _debugger.RunAsync().ConfigureAwait(false);
         }
     }
 
@@ -277,7 +277,7 @@ public sealed class DapServer : IDisposable
         DapStackFrame[] stackFrames = [];
         if (_debugger is not null)
         {
-            var miResponse = await _debugger.GetStackTraceAsync();
+            var miResponse = await _debugger.GetStackTraceAsync().ConfigureAwait(false);
             stackFrames = MiResponseParser.ParseStackFrames(miResponse);
         }
 
@@ -304,7 +304,7 @@ public sealed class DapServer : IDisposable
         DapVariable[] variables = [];
         if (_debugger is not null)
         {
-            variables = await _debugger.GetLocalsAsync();
+            variables = await _debugger.GetLocalsAsync().ConfigureAwait(false);
         }
 
         _transport.SendResponse(request, success: true, body: new
@@ -315,37 +315,37 @@ public sealed class DapServer : IDisposable
 
     private async Task HandleContinueAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.ContinueAsync();
+        if (_debugger is not null) await _debugger.ContinueAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true, body: new { allThreadsContinued = true });
     }
 
     private async Task HandleNextAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.StepOverAsync();
+        if (_debugger is not null) await _debugger.StepOverAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleStepInAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.StepInAsync();
+        if (_debugger is not null) await _debugger.StepInAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleStepOutAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.StepOutAsync();
+        if (_debugger is not null) await _debugger.StepOutAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleDisconnectAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.TerminateAsync();
+        if (_debugger is not null) await _debugger.TerminateAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true);
     }
 
     private async Task HandleTerminateAsync(DapRequest request)
     {
-        if (_debugger is not null) await _debugger.TerminateAsync();
+        if (_debugger is not null) await _debugger.TerminateAsync().ConfigureAwait(false);
         _transport.SendResponse(request, success: true);
     }
 

@@ -655,7 +655,7 @@ public sealed class LspDocumentServiceTests
     {
         return token.TokenType == tokenType
                && token.Length == expectedText.Length
-               && LspSemanticTokenTestHelpers.ExtractTokenText(source, token.Line, token.Character, token.Length) == expectedText;
+               && string.Equals(LspSemanticTokenTestHelpers.ExtractTokenText(source, token.Line, token.Character, token.Length), expectedText, StringComparison.Ordinal);
     }
 
     private static string CreateTempProjectDirectory(string mathAshSource = "let add_one = given (x) -> x + 1 in add_one")

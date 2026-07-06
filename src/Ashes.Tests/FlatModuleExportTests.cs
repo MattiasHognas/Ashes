@@ -52,7 +52,7 @@ public sealed class FlatModuleExportTests
             ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(6))\n"));
 
-        var stdout = await BuildAndRunAsync(dir, "Main");
+        var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
 
         stdout.TrimEnd().ShouldBe("7");
     }
@@ -64,7 +64,7 @@ public sealed class FlatModuleExportTests
             ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(double(6))\n"));
 
-        var stdout = await BuildAndRunAsync(dir, "Main");
+        var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
 
         stdout.TrimEnd().ShouldBe("12");
     }
@@ -78,7 +78,7 @@ public sealed class FlatModuleExportTests
                 "and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)\n"),
             ("Main", "import B\nAshes.IO.print(B.isEven(10))\n"));
 
-        var stdout = await BuildAndRunAsync(dir, "Main");
+        var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
 
         stdout.TrimEnd().ShouldBe("true");
     }
@@ -90,7 +90,7 @@ public sealed class FlatModuleExportTests
             ("B", "type Color =\n    | Red\n    | Green\nlet favorite = Red\n"),
             ("Main", "import B\nAshes.IO.print(match favorite with | Red -> 1 | Green -> 2)\n"));
 
-        var stdout = await BuildAndRunAsync(dir, "Main");
+        var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
 
         stdout.TrimEnd().ShouldBe("1");
     }
@@ -119,7 +119,7 @@ public sealed class FlatModuleExportTests
     {
         var plan = ProjectSupport.BuildCompilationPlan(BuildProject(dir, entryModule));
         var combinedSource = ProjectSupport.BuildCompilationSource(plan);
-        return await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules);
+        return await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false);
     }
 
     private static string WriteModules(params (string Name, string Source)[] modules)
@@ -167,10 +167,10 @@ public sealed class FlatModuleExportTests
             UseShellExecute = false
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
 
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;

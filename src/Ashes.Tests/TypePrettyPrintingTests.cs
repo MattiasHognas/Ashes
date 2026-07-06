@@ -38,7 +38,7 @@ public sealed class TypePrettyPrintingTests
         var lowering = new Lowering(new Diagnostics());
         var prettyMethod = typeof(Lowering)
             .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
-            .Single(m => m.Name == "Pretty" && m.GetParameters().Length == 1);
+            .Single(m => string.Equals(m.Name, "Pretty", StringComparison.Ordinal) && m.GetParameters().Length == 1);
 
         var typeSymbol = new TypeSymbol(
             "Maybe",

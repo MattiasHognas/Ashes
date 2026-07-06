@@ -1835,7 +1835,7 @@ public sealed class Parser
     {
         var token = Consume(TokenKind.Ident);
         var name = token.Text;
-        if (name == "_")
+        if (string.Equals(name, "_", StringComparison.Ordinal))
         {
             return RegisterPattern(new Pattern.Wildcard(), token.Position, token.End);
         }

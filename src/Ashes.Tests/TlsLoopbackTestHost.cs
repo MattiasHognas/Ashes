@@ -77,7 +77,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         string tempDirectory = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
         string trustCertificatePath = Path.Combine(tempDirectory, "test-root-ca.pem");
-        await File.WriteAllTextAsync(trustCertificatePath, rootCertificate.ExportCertificatePem());
+        await File.WriteAllTextAsync(trustCertificatePath, rootCertificate.ExportCertificatePem()).ConfigureAwait(false);
 
         // Generate a second, unrelated self-signed root CA and write its PEM. Tests that exercise
         // untrusted-certificate behavior point SSL_CERT_FILE at this file so verification goes
@@ -89,7 +89,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         untrustedRootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(untrustedRootRequest.PublicKey, false));
         using X509Certificate2 untrustedRootCertificate = untrustedRootRequest.CreateSelfSigned(notBefore, rootNotAfter);
         string untrustedCertificatePath = Path.Combine(tempDirectory, "test-untrusted-root-ca.pem");
-        await File.WriteAllTextAsync(untrustedCertificatePath, untrustedRootCertificate.ExportCertificatePem());
+        await File.WriteAllTextAsync(untrustedCertificatePath, untrustedRootCertificate.ExportCertificatePem()).ConfigureAwait(false);
 
         return new TlsLoopbackTestHost(tempDirectory, serverCertificate, trustCertificatePath, untrustedCertificatePath);
     }
@@ -115,13 +115,13 @@ internal sealed class TlsLoopbackTestHost : IDisposable
                 for (var index = 0; index < expectedClientCount; index++)
                 {
                     using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
-                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
                     client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     clients.Add(client);
                 }
 
-                await Task.WhenAll(clients.Select(client => HandleClientAsync(client, serverCertificate, handleClientAsync, tolerateClientDisconnect)));
+                await Task.WhenAll(clients.Select(client => HandleClientAsync(client, serverCertificate, handleClientAsync, tolerateClientDisconnect))).ConfigureAwait(false);
             }
             finally
             {
@@ -158,10 +158,10 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         {
             await stream
                 .AuthenticateAsServerAsync(serverCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false)
-                .WaitAsync(SocketTestConstants.TlsHandshakeTimeout);
-            await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout);
-            await stream.FlushAsync();
-            await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout);
+                .WaitAsync(SocketTestConstants.TlsHandshakeTimeout).ConfigureAwait(false);
+            await handleClientAsync(stream).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+            await stream.FlushAsync().ConfigureAwait(false);
+            await stream.ShutdownAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
         }
         catch (IOException) when (tolerateClientDisconnect)
         {

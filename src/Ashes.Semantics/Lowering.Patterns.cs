@@ -709,7 +709,7 @@ public sealed partial class Lowering
         switch (p)
         {
             case Pattern.Var v:
-                if (v.Name != "_")
+                if (!string.Equals(v.Name, "_", StringComparison.Ordinal))
                 {
                     yield return v.Name;
                 }
@@ -1274,7 +1274,7 @@ public sealed partial class Lowering
             Pattern.Constructor ctor => ctor.Patterns.Count == 0
                 ? ctor.Name
                 : $"{ctor.Name}({string.Join(", ", ctor.Patterns.Select(FormatPattern))})",
-            Pattern.IntLit intLit => intLit.Value.ToString(),
+            Pattern.IntLit intLit => intLit.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Pattern.StrLit strLit => $"\"{strLit.Value}\"",
             Pattern.BoolLit boolLit => boolLit.Value ? "true" : "false",
             _ => "_"

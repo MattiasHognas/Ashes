@@ -35,7 +35,7 @@ public sealed class TopLevelScopingTests
             let c = b + a in Ashes.IO.print(c)
             """;
 
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3\n");
     }
 
     [Test]
@@ -97,7 +97,7 @@ public sealed class TopLevelScopingTests
             let b = 2
             """;
 
-        var (stdout, exitCode) = await CompileRunCaptureProgramWithExitAsync(src);
+        var (stdout, exitCode) = await CompileRunCaptureProgramWithExitAsync(src).ConfigureAwait(false);
         stdout.ShouldBe("");
         exitCode.ShouldBe(0);
     }
@@ -110,7 +110,7 @@ public sealed class TopLevelScopingTests
             return;
         }
 
-        (await CompileRunCaptureProgramAsync("Ashes.IO.print(42)")).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync("Ashes.IO.print(42)").ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -127,7 +127,7 @@ public sealed class TopLevelScopingTests
             in Ashes.IO.print(x + y)
             """;
 
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3\n");
     }
 
     private static Diagnostics LowerProgram(string source)
@@ -140,7 +140,7 @@ public sealed class TopLevelScopingTests
 
     private static async Task<string> CompileRunCaptureProgramAsync(string source)
     {
-        var (stdout, _) = await CompileRunCaptureProgramWithExitAsync(source);
+        var (stdout, _) = await CompileRunCaptureProgramWithExitAsync(source).ConfigureAwait(false);
         return stdout;
     }
 
@@ -153,7 +153,7 @@ public sealed class TopLevelScopingTests
         var ir = new Lowering(diag).Lower(program);
         diag.ThrowIfAny();
 
-        return await RunElfAsync(ir);
+        return await RunElfAsync(ir).ConfigureAwait(false);
     }
 
     private static async Task<(string Stdout, int ExitCode)> RunElfAsync(IrProgram ir)
@@ -173,10 +173,10 @@ public sealed class TopLevelScopingTests
             UseShellExecute = false
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
 
         return (stdout, proc.ExitCode);
     }

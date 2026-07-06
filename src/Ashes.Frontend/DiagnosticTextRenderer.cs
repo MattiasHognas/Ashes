@@ -36,7 +36,7 @@ public static class DiagnosticTextRenderer
                 var lineText = sourceView.GetLine(location.Line);
                 if (lineText is not null)
                 {
-                    var lineNumberText = location.Line.ToString();
+                    var lineNumberText = location.Line.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     sb.Append(' ', lineNumberText.Length);
                     sb.AppendLine(" |");
                     sb.Append(lineNumberText);

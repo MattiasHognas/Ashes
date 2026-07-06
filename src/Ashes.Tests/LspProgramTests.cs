@@ -19,9 +19,9 @@ public sealed class LspProgramTests
             id = 1,
             method = "initialize",
             @params = new { }
-        });
+        }).ConfigureAwait(false);
 
-        var initializeResponse = await ReadMessageAsync(process);
+        var initializeResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         initializeResponse.GetProperty("id").GetInt32().ShouldBe(1);
         initializeResponse.GetProperty("result").GetProperty("capabilities").GetProperty("documentFormattingProvider").GetBoolean().ShouldBeTrue();
 
@@ -39,9 +39,9 @@ public sealed class LspProgramTests
                     text = "if true then 1"
                 }
             }
-        });
+        }).ConfigureAwait(false);
 
-        var openDiagnostics = await ReadMessageAsync(process);
+        var openDiagnostics = await ReadMessageAsync(process).ConfigureAwait(false);
         openDiagnostics.GetProperty("method").GetString().ShouldBe("textDocument/publishDiagnostics");
         openDiagnostics.GetProperty("params").GetProperty("diagnostics").GetArrayLength().ShouldBeGreaterThan(0);
 
@@ -54,9 +54,9 @@ public sealed class LspProgramTests
             {
                 textDocument = new { uri }
             }
-        });
+        }).ConfigureAwait(false);
 
-        var invalidFormatting = await ReadMessageAsync(process);
+        var invalidFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
         invalidFormatting.GetProperty("id").GetInt32().ShouldBe(2);
         invalidFormatting.GetProperty("result").GetArrayLength().ShouldBe(0);
 
@@ -72,9 +72,9 @@ public sealed class LspProgramTests
                     new { text = "Ashes.IO.print(40+2)" }
                 }
             }
-        });
+        }).ConfigureAwait(false);
 
-        var changedDiagnostics = await ReadMessageAsync(process);
+        var changedDiagnostics = await ReadMessageAsync(process).ConfigureAwait(false);
         changedDiagnostics.GetProperty("method").GetString().ShouldBe("textDocument/publishDiagnostics");
         changedDiagnostics.GetProperty("params").GetProperty("diagnostics").GetArrayLength().ShouldBe(0);
 
@@ -87,9 +87,9 @@ public sealed class LspProgramTests
             {
                 textDocument = new { uri }
             }
-        });
+        }).ConfigureAwait(false);
 
-        var formattingResponse = await ReadMessageAsync(process);
+        var formattingResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         formattingResponse.GetProperty("id").GetInt32().ShouldBe(3);
         var edits = formattingResponse.GetProperty("result");
         edits.GetArrayLength().ShouldBe(1);
@@ -101,9 +101,9 @@ public sealed class LspProgramTests
             id = 4,
             method = "unknown/method",
             @params = new { }
-        });
+        }).ConfigureAwait(false);
 
-        var unknownResponse = await ReadMessageAsync(process);
+        var unknownResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         unknownResponse.GetProperty("id").GetInt32().ShouldBe(4);
         unknownResponse.GetProperty("result").ValueKind.ShouldBe(JsonValueKind.Null);
 
@@ -115,9 +115,9 @@ public sealed class LspProgramTests
             {
                 textDocument = new { uri }
             }
-        });
+        }).ConfigureAwait(false);
 
-        var closeDiagnostics = await ReadMessageAsync(process);
+        var closeDiagnostics = await ReadMessageAsync(process).ConfigureAwait(false);
         closeDiagnostics.GetProperty("method").GetString().ShouldBe("textDocument/publishDiagnostics");
         closeDiagnostics.GetProperty("params").GetProperty("diagnostics").GetArrayLength().ShouldBe(0);
 
@@ -127,9 +127,9 @@ public sealed class LspProgramTests
             id = 5,
             method = "shutdown",
             @params = new { }
-        });
+        }).ConfigureAwait(false);
 
-        var shutdownResponse = await ReadMessageAsync(process);
+        var shutdownResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         shutdownResponse.GetProperty("id").GetInt32().ShouldBe(5);
         shutdownResponse.GetProperty("result").ValueKind.ShouldBe(JsonValueKind.Null);
 
@@ -137,9 +137,9 @@ public sealed class LspProgramTests
         {
             jsonrpc = "2.0",
             method = "exit"
-        });
+        }).ConfigureAwait(false);
 
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
         process.ExitCode.ShouldBe(0);
     }
 
@@ -152,9 +152,9 @@ public sealed class LspProgramTests
         {
             jsonrpc = "2.0",
             method = "exit"
-        });
+        }).ConfigureAwait(false);
 
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
         process.ExitCode.ShouldBe(1);
     }
 
@@ -186,8 +186,8 @@ public sealed class LspProgramTests
                 id = 1,
                 method = "initialize",
                 @params = new { }
-            });
-            _ = await ReadMessageAsync(process);
+            }).ConfigureAwait(false);
+            _ = await ReadMessageAsync(process).ConfigureAwait(false);
 
             await WriteMessageAsync(process, new
             {
@@ -201,8 +201,8 @@ public sealed class LspProgramTests
                         text = "let x = if true then 1 else 2 in Ashes.IO.print(x)"
                     }
                 }
-            });
-            _ = await ReadMessageAsync(process); // diagnostics
+            }).ConfigureAwait(false);
+            _ = await ReadMessageAsync(process).ConfigureAwait(false); // diagnostics
 
             await WriteMessageAsync(process, new
             {
@@ -213,9 +213,9 @@ public sealed class LspProgramTests
                 {
                     textDocument = new { uri }
                 }
-            });
+            }).ConfigureAwait(false);
 
-            var defaultFormatting = await ReadMessageAsync(process);
+            var defaultFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
             var defaultText = defaultFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
             defaultText.ShouldContain("\tif true");
 
@@ -233,17 +233,17 @@ public sealed class LspProgramTests
                         insertSpaces = true
                     }
                 }
-            });
+            }).ConfigureAwait(false);
 
-            var overrideFormatting = await ReadMessageAsync(process);
+            var overrideFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
             var overrideText = overrideFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
             overrideText.ShouldContain("  if true");
             overrideText.ShouldNotContain("\tif true");
 
-            await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } });
-            _ = await ReadMessageAsync(process);
-            await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" });
-            await process.WaitForExitAsync();
+            await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
+            _ = await ReadMessageAsync(process).ConfigureAwait(false);
+            await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
+            await process.WaitForExitAsync().ConfigureAwait(false);
             process.ExitCode.ShouldBe(0);
         }
         finally
@@ -263,9 +263,9 @@ public sealed class LspProgramTests
             id = 1,
             method = "initialize",
             @params = new { }
-        });
+        }).ConfigureAwait(false);
 
-        var initResponse = await ReadMessageAsync(process);
+        var initResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         var caps = initResponse.GetProperty("result").GetProperty("capabilities");
         caps.TryGetProperty("semanticTokensProvider", out _).ShouldBeTrue();
         caps.TryGetProperty("completionProvider", out _).ShouldBeTrue();
@@ -278,9 +278,9 @@ public sealed class LspProgramTests
             jsonrpc = "2.0",
             method = "textDocument/didOpen",
             @params = new { textDocument = new { uri, text = source } }
-        });
+        }).ConfigureAwait(false);
 
-        _ = await ReadMessageAsync(process); // diagnostics notification
+        _ = await ReadMessageAsync(process).ConfigureAwait(false); // diagnostics notification
 
         await WriteMessageAsync(process, new
         {
@@ -288,9 +288,9 @@ public sealed class LspProgramTests
             id = 2,
             method = "textDocument/semanticTokens/full",
             @params = new { textDocument = new { uri } }
-        });
+        }).ConfigureAwait(false);
 
-        var tokenResponse = await ReadMessageAsync(process);
+        var tokenResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         tokenResponse.GetProperty("id").GetInt32().ShouldBe(2);
         var data = tokenResponse.GetProperty("result").GetProperty("data");
         data.GetArrayLength().ShouldBeGreaterThan(0);
@@ -318,9 +318,9 @@ public sealed class LspProgramTests
             id = 3,
             method = "textDocument/completion",
             @params = new { textDocument = new { uri }, position = new { line = 1, character = 0 } }
-        });
+        }).ConfigureAwait(false);
 
-        var completionResponse = await ReadMessageAsync(process);
+        var completionResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         completionResponse.GetProperty("id").GetInt32().ShouldBe(3);
         var items = completionResponse.GetProperty("result");
         items.GetArrayLength().ShouldBeGreaterThan(0);
@@ -330,10 +330,10 @@ public sealed class LspProgramTests
         labels.ShouldContain("None");
         labels.ShouldContain("Some");
 
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } });
-        _ = await ReadMessageAsync(process);
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" });
-        await process.WaitForExitAsync();
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
         process.ExitCode.ShouldBe(0);
     }
 
@@ -348,8 +348,8 @@ public sealed class LspProgramTests
             id = 1,
             method = "initialize",
             @params = new { }
-        });
-        _ = await ReadMessageAsync(process);
+        }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
 
         const string uri = "file:///tmp/module_completion.ash";
         const string source = "import Ashes.List\nAshes.IO.";
@@ -359,8 +359,8 @@ public sealed class LspProgramTests
             jsonrpc = "2.0",
             method = "textDocument/didOpen",
             @params = new { textDocument = new { uri, text = source } }
-        });
-        _ = await ReadMessageAsync(process);
+        }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
 
         await WriteMessageAsync(process, new
         {
@@ -368,9 +368,9 @@ public sealed class LspProgramTests
             id = 2,
             method = "textDocument/completion",
             @params = new { textDocument = new { uri }, position = new { line = 1, character = 9 } }
-        });
+        }).ConfigureAwait(false);
 
-        var completionResponse = await ReadMessageAsync(process);
+        var completionResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         completionResponse.GetProperty("id").GetInt32().ShouldBe(2);
         var items = completionResponse.GetProperty("result");
         var labels = Enumerable.Range(0, items.GetArrayLength())
@@ -380,10 +380,10 @@ public sealed class LspProgramTests
         labels.ShouldContain("panic");
         labels.ShouldContain("args");
 
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 3, method = "shutdown", @params = new { } });
-        _ = await ReadMessageAsync(process);
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" });
-        await process.WaitForExitAsync();
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 3, method = "shutdown", @params = new { } }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
         process.ExitCode.ShouldBe(0);
     }
 
@@ -408,9 +408,9 @@ public sealed class LspProgramTests
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
         var header = Encoding.ASCII.GetBytes($"Content-Length: {bytes.Length}\r\n\r\n");
 
-        await process.StandardInput.BaseStream.WriteAsync(header);
-        await process.StandardInput.BaseStream.WriteAsync(bytes);
-        await process.StandardInput.BaseStream.FlushAsync();
+        await process.StandardInput.BaseStream.WriteAsync(header).ConfigureAwait(false);
+        await process.StandardInput.BaseStream.WriteAsync(bytes).ConfigureAwait(false);
+        await process.StandardInput.BaseStream.FlushAsync().ConfigureAwait(false);
     }
 
     private static async Task<JsonElement> ReadMessageAsync(Process process)
@@ -418,7 +418,7 @@ public sealed class LspProgramTests
         int contentLength = -1;
         while (true)
         {
-            var line = await ReadHeaderLineAsync(process.StandardOutput.BaseStream);
+            var line = await ReadHeaderLineAsync(process.StandardOutput.BaseStream).ConfigureAwait(false);
             line.ShouldNotBeNull();
 
             if (line.Length == 0)
@@ -428,7 +428,7 @@ public sealed class LspProgramTests
 
             if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
             {
-                int.TryParse(line["Content-Length:".Length..].Trim(), out contentLength);
+                int.TryParse(line["Content-Length:".Length..].Trim(), System.Globalization.CultureInfo.InvariantCulture, out contentLength);
             }
         }
 
@@ -438,7 +438,7 @@ public sealed class LspProgramTests
 
         while (read < contentLength)
         {
-            var chunk = await process.StandardOutput.BaseStream.ReadAsync(body.AsMemory(read, contentLength - read));
+            var chunk = await process.StandardOutput.BaseStream.ReadAsync(body.AsMemory(read, contentLength - read)).ConfigureAwait(false);
             chunk.ShouldBeGreaterThan(0);
             read += chunk;
         }
@@ -453,7 +453,7 @@ public sealed class LspProgramTests
         while (true)
         {
             var b = new byte[1];
-            var n = await stream.ReadAsync(b);
+            var n = await stream.ReadAsync(b).ConfigureAwait(false);
             if (n == 0)
             {
                 return ms.Length == 0 ? null : Encoding.ASCII.GetString(ms.ToArray());
@@ -462,7 +462,7 @@ public sealed class LspProgramTests
             if (b[0] == '\r')
             {
                 var next = new byte[1];
-                var nextRead = await stream.ReadAsync(next);
+                var nextRead = await stream.ReadAsync(next).ConfigureAwait(false);
                 if (nextRead == 0)
                 {
                     return Encoding.ASCII.GetString(ms.ToArray());

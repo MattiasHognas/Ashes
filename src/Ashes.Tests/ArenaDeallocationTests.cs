@@ -316,7 +316,7 @@ public sealed class ArenaDeallocationTests
             "The guard should allocate heap-backed list cells before evaluating the false guard branch.");
 
         var jumpIfFalse = (IrInst.JumpIfFalse)instructions[jumpIfFalseIndex];
-        var cleanupLabelIndex = instructions.FindIndex(i => i is IrInst.Label label && label.Name == jumpIfFalse.Target);
+        var cleanupLabelIndex = instructions.FindIndex(i => i is IrInst.Label label && string.Equals(label.Name, jumpIfFalse.Target, StringComparison.Ordinal));
         cleanupLabelIndex.ShouldBeGreaterThan(jumpIfFalseIndex,
             "Guard cleanup label should appear after the guard branch.");
 
@@ -386,7 +386,7 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         // Find the body label (contains "_body")
-        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body", StringComparison.Ordinal));
         bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
 
         // SaveArenaState should appear right after the body label
@@ -416,7 +416,7 @@ public sealed class ArenaDeallocationTests
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
                 && insts[i + 2] is IrInst.RestoreStackPointer
                 && insts[i + 3] is IrInst.Jump j
-                && j.Target.Contains("_body"))
+                && j.Target.Contains("_body", StringComparison.Ordinal))
             {
                 foundTcoRestore = true;
                 break;
@@ -440,7 +440,7 @@ public sealed class ArenaDeallocationTests
         var insts = tcoFunc.Instructions;
 
         // Find the SaveArenaState after body label
-        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body", StringComparison.Ordinal));
         var save = (IrInst.SaveArenaState)insts[bodyLabelIdx + 1];
 
         // Find RestoreArenaState + ReclaimArenaChunks before the jump back
@@ -450,7 +450,7 @@ public sealed class ArenaDeallocationTests
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
                 && insts[i + 2] is IrInst.RestoreStackPointer
                 && insts[i + 3] is IrInst.Jump j
-                && j.Target.Contains("_body"))
+                && j.Target.Contains("_body", StringComparison.Ordinal))
             {
                 restore.CursorLocalSlot.ShouldBe(save.CursorLocalSlot,
                     "TCO arena Save and Restore should use matching cursor slots.");
@@ -509,7 +509,7 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
-        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body"));
+        var bodyLabelIdx = insts.FindIndex(i => i is IrInst.Label lbl && lbl.Name.Contains("_body", StringComparison.Ordinal));
         bodyLabelIdx.ShouldBeGreaterThanOrEqualTo(0, "TCO function should have a body label.");
         insts[bodyLabelIdx + 1].ShouldBeOfType<IrInst.SaveArenaState>(
             "SaveArenaState should be emitted immediately after the TCO body label.");
@@ -595,7 +595,7 @@ public sealed class ArenaDeallocationTests
                 && insts[i + 1] is IrInst.ReclaimArenaChunks
                 && insts[i + 2] is IrInst.RestoreStackPointer
                 && insts[i + 3] is IrInst.Jump j
-                && j.Target.Contains("_body"))
+                && j.Target.Contains("_body", StringComparison.Ordinal))
             {
                 foundTcoRestore = true;
                 break;
@@ -684,7 +684,7 @@ public sealed class ArenaDeallocationTests
         static bool IsJumpBackToBodyLabel(object inst)
         {
             var text = inst.ToString() ?? string.Empty;
-            return text.Contains("_body") && (text.Contains("Jump") || text.Contains("Branch") || text.Contains("Br"));
+            return text.Contains("_body", StringComparison.Ordinal) && (text.Contains("Jump", StringComparison.Ordinal) || text.Contains("Branch", StringComparison.Ordinal) || text.Contains("Br", StringComparison.Ordinal));
         }
 
         bool found = false;
@@ -1377,7 +1377,7 @@ public sealed class ArenaDeallocationTests
     private static IrFunction FindTcoFunction(IrProgram ir)
     {
         return ir.Functions.First(f =>
-            f.Instructions.Any(i => i is IrInst.Jump j && j.Target.Contains("_body")));
+            f.Instructions.Any(i => i is IrInst.Jump j && j.Target.Contains("_body", StringComparison.Ordinal)));
     }
 
     private static bool HasSaveArenaState(List<IrInst> instructions)
@@ -1413,6 +1413,6 @@ public sealed class ArenaDeallocationTests
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
     {
-        return instructions.Any(i => i is IrInst.Drop d && d.TypeName == typeName);
+        return instructions.Any(i => i is IrInst.Drop d && string.Equals(d.TypeName, typeName, StringComparison.Ordinal));
     }
 }

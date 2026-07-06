@@ -8,31 +8,42 @@ public sealed class LspFormattingTests
     public async Task Formatting_should_return_single_full_document_edit()
     {
         const string source = "Ashes.IO.print(40+2)";
-        await using var document = TempDocument.Create("Formatting.ash", source);
-        await using var harness = await LspHarness.StartAsync();
+        var document = TempDocument.Create("Formatting.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var edits = await harness.FormatAsync(document.Uri);
 
-        _ = await harness.DidOpenAsync(document.Uri, source);
-        var edits = await harness.FormatAsync(document.Uri);
-
-        edits.ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Array);
-        edits.GetArrayLength().ShouldBe(1);
-        edits[0].GetProperty("newText").GetString().ShouldBe("Ashes.IO.print(40 + 2)\n");
+                edits.ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Array);
+                edits.GetArrayLength().ShouldBe(1);
+                edits[0].GetProperty("newText").GetString().ShouldBe("Ashes.IO.print(40 + 2)\n");
+            }
+        }
     }
 
     [Test]
     public async Task Diagnostics_should_not_crash_for_empty_or_comment_only_documents()
     {
-        await using var emptyDocument = TempDocument.Create("Empty.ash", string.Empty);
-        await using var commentDocument = TempDocument.Create("Comment.ash", "// comment\n");
-        await using var harness = await LspHarness.StartAsync();
+        var emptyDocument = TempDocument.Create("Empty.ash", string.Empty);
+        await using (emptyDocument.ConfigureAwait(false))
+        {
+            var commentDocument = TempDocument.Create("Comment.ash", "// comment\n");
+            await using (commentDocument.ConfigureAwait(false))
+            {
+                await using var harness = await LspHarness.StartAsync();
 
-        var emptyDiagnostics = await harness.DidOpenAsync(emptyDocument.Uri, string.Empty);
-        var commentDiagnostics = await harness.DidOpenAsync(commentDocument.Uri, "// comment\n");
+                var emptyDiagnostics = await harness.DidOpenAsync(emptyDocument.Uri, string.Empty);
+                var commentDiagnostics = await harness.DidOpenAsync(commentDocument.Uri, "// comment\n");
 
-        emptyDiagnostics.Diagnostics.Count.ShouldBe(1);
-        emptyDiagnostics.Diagnostics[0].GetProperty("code").GetString().ShouldBe("ASH003");
-        commentDiagnostics.Diagnostics.Count.ShouldBe(1);
-        commentDiagnostics.Diagnostics[0].GetProperty("code").GetString().ShouldBe("ASH003");
+                emptyDiagnostics.Diagnostics.Count.ShouldBe(1);
+                emptyDiagnostics.Diagnostics[0].GetProperty("code").GetString().ShouldBe("ASH003");
+                commentDiagnostics.Diagnostics.Count.ShouldBe(1);
+                commentDiagnostics.Diagnostics[0].GetProperty("code").GetString().ShouldBe("ASH003");
+            }
+        }
     }
 
     private sealed class TempDocument : IAsyncDisposable

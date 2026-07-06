@@ -28,7 +28,7 @@ public sealed class DapTransport
 
     public async Task<DapRequest?> ReadRequestAsync(CancellationToken ct = default)
     {
-        var json = await ReadMessageAsync(ct);
+        var json = await ReadMessageAsync(ct).ConfigureAwait(false);
         if (json is null)
         {
             return null;
@@ -88,7 +88,7 @@ public sealed class DapTransport
 
     private async Task<string?> ReadMessageAsync(CancellationToken ct)
     {
-        var headerLine = await ReadLineAsync(ct);
+        var headerLine = await ReadLineAsync(ct).ConfigureAwait(false);
         if (headerLine is null)
         {
             return null;
@@ -103,7 +103,7 @@ public sealed class DapTransport
                 contentLength = int.Parse(valueStr, System.Globalization.CultureInfo.InvariantCulture);
             }
 
-            headerLine = await ReadLineAsync(ct);
+            headerLine = await ReadLineAsync(ct).ConfigureAwait(false);
         }
 
         if (contentLength == 0)
@@ -115,7 +115,7 @@ public sealed class DapTransport
         int totalRead = 0;
         while (totalRead < contentLength)
         {
-            int read = await _input.ReadAsync(buffer.AsMemory(totalRead, contentLength - totalRead), ct);
+            int read = await _input.ReadAsync(buffer.AsMemory(totalRead, contentLength - totalRead), ct).ConfigureAwait(false);
             if (read == 0)
             {
                 return null;
@@ -133,7 +133,7 @@ public sealed class DapTransport
         var buf = new byte[1];
         while (true)
         {
-            int read = await _input.ReadAsync(buf, ct);
+            int read = await _input.ReadAsync(buf, ct).ConfigureAwait(false);
             if (read == 0)
             {
                 return sb.Length > 0 ? sb.ToString() : null;

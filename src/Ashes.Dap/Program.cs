@@ -39,7 +39,7 @@ public static class Program
         using var server = new DapServer(Console.OpenStandardInput(), Console.OpenStandardOutput());
         try
         {
-            await server.RunAsync(cts.Token);
+            await server.RunAsync(cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

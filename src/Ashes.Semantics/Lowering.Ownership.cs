@@ -278,7 +278,7 @@ public sealed partial class Lowering
                 // Resources/resource-bearing aggregates close their handles; closures ("Function")
                 // may carry a resource dropper (closure+24) set when they captured-and-escaped a
                 // resource (Gap B), so drop them too — it's a cheap no-op for ordinary closures.
-                if ((info.IsResource || info.IsResourceBearing || info.TypeName == "Function") && !info.IsDropped)
+                if ((info.IsResource || info.IsResourceBearing || string.Equals(info.TypeName, "Function", StringComparison.Ordinal)) && !info.IsDropped)
                 {
                     EmitOwnedValueDrop(info);
                     info.IsDropped = true;

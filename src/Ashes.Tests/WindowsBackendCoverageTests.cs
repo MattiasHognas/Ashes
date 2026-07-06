@@ -191,7 +191,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))");
+        var result = await CompileRunWithWindowsLlvmAsync("let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))").ConfigureAwait(false);
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -203,7 +203,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""");
+        var result = await CompileRunWithWindowsLlvmAsync("""let mk = given (x) -> given (y) -> let ignored = [x, y] in x + y in let f = mk(20) in Ashes.IO.print(f(22))""").ConfigureAwait(false);
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -217,7 +217,7 @@ public sealed class WindowsBackendCoverageTests
 
         var result = await CompileRunWithWindowsLlvmAsync(
             "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")",
-            ["first", "second"]);
+            ["first", "second"]).ConfigureAwait(false);
         result.Stdout.ShouldBe("first:second\n");
     }
 
@@ -232,7 +232,7 @@ public sealed class WindowsBackendCoverageTests
         var result = await CompileRunWithWindowsLlvmAsync(LowerProgram("""
             external lstrlen(Str) -> Int = "lstrlenA@KERNEL32.DLL"
             Ashes.IO.print(lstrlen("ash" + "es"))
-            """));
+            """)).ConfigureAwait(false);
         result.Stdout.ShouldBe("5\n");
     }
 
@@ -246,7 +246,7 @@ public sealed class WindowsBackendCoverageTests
 
         var result = await CompileRunWithWindowsLlvmAsync(
             """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
-            stdin: "hello\r\n");
+            stdin: "hello\r\n").ConfigureAwait(false);
         result.Stdout.ShouldBe("hello\n");
     }
 
@@ -260,7 +260,7 @@ public sealed class WindowsBackendCoverageTests
 
         var result = await CompileRunWithWindowsLlvmAsync(
             """match Ashes.IO.readLine(Unit) with | None -> Ashes.IO.print("none") | Some(text) -> Ashes.IO.print(text)""",
-            stdin: "");
+            stdin: "").ConfigureAwait(false);
         result.Stdout.ShouldBe("none\n");
     }
 
@@ -275,11 +275,11 @@ public sealed class WindowsBackendCoverageTests
         var tmpDir = CreateTempDirectory();
         try
         {
-            await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello");
+            await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello").ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
                 """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-                workingDirectory: tmpDir);
+                workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
         finally
@@ -301,7 +301,7 @@ public sealed class WindowsBackendCoverageTests
         {
             var result = await CompileRunWithWindowsLlvmAsync(
                 """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-                workingDirectory: tmpDir);
+                workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
         }
         finally
@@ -321,11 +321,11 @@ public sealed class WindowsBackendCoverageTests
         var tmpDir = CreateTempDirectory();
         try
         {
-            await File.WriteAllBytesAsync(Path.Combine(tmpDir, "invalid_utf8.bin"), [0xFF, 0xFE, 0xFD]);
+            await File.WriteAllBytesAsync(Path.Combine(tmpDir, "invalid_utf8.bin"), [0xFF, 0xFE, 0xFD]).ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
                 """match Ashes.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-                workingDirectory: tmpDir);
+                workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
         }
         finally
@@ -347,7 +347,7 @@ public sealed class WindowsBackendCoverageTests
         {
             var result = await CompileRunWithWindowsLlvmAsync(
                 """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
-                workingDirectory: tmpDir);
+                workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
         finally
@@ -372,11 +372,11 @@ public sealed class WindowsBackendCoverageTests
                 // connection while the client's HTTP request is still unread, the OS issues a
                 // TCP RST instead of a graceful FIN, which the client observes as a connection
                 // reset (errno 10054) and turns this into a flaky failure.
-                _ = await ReadTextAsync(stream, 4096);
+                _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
-            });
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("hello from https\n");
     }
@@ -393,13 +393,13 @@ public sealed class WindowsBackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                _ = await ReadTextAsync(stream, 4096);
+                _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
             trustServerCertificate: false,
-            allowServerHandshakeFailure: true);
+            allowServerHandshakeFailure: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: UnknownIssuer\n");
     }
@@ -416,14 +416,14 @@ public sealed class WindowsBackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                _ = await ReadTextAsync(stream, 4096);
+                _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nshould-not-succeed");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
             host: "127.0.0.1",
             certificateHost: "localhost",
-            allowServerHandshakeFailure: true);
+            allowServerHandshakeFailure: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("Ashes TLS handshake failed: invalid peer certificate: NotValidForName\n");
     }
@@ -440,18 +440,18 @@ public sealed class WindowsBackendCoverageTests
             """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("Host: localhost");
                 // Both endpoints respond with the same body ("ok") so the test result is
                 // deterministic regardless of which Async.race task technically completes first
                 // (avoids timing flakiness on Wine / CI runners).
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
             host: "localhost",
             expectedClientCount: 2,
-            tolerateClientDisconnect: true);
+            tolerateClientDisconnect: true).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("ok\n");
     }
@@ -468,15 +468,15 @@ public sealed class WindowsBackendCoverageTests
             """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("GET /empty HTTP/1.1");
                 request.ShouldContain("Host: localhost");
 
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
-            host: "localhost");
+            host: "localhost").ConfigureAwait(false);
 
         result.Stdout.ShouldBe("empty\n");
     }
@@ -490,7 +490,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(head + "|" + tail)""");
+            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(head + "|" + tail)""").ConfigureAwait(false);
         result.Stdout.ShouldBe("é|!\n");
     }
 
@@ -503,7 +503,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """match Ashes.Text.parseInt("-42") with | Ok(value) -> Ashes.IO.print(value) | Error(msg) -> Ashes.IO.print(msg)""");
+            """match Ashes.Text.parseInt("-42") with | Ok(value) -> Ashes.IO.print(value) | Error(msg) -> Ashes.IO.print(msg)""").ConfigureAwait(false);
         result.Stdout.ShouldBe("-42\n");
     }
 
@@ -516,7 +516,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """match Ashes.Text.parseFloat("1e3") with | Ok(value) -> if value == 1000.0 then Ashes.IO.print("ok") else Ashes.IO.print("bad") | Error(msg) -> Ashes.IO.print(msg)""");
+            """match Ashes.Text.parseFloat("1e3") with | Ok(value) -> if value == 1000.0 then Ashes.IO.print("ok") else Ashes.IO.print("bad") | Error(msg) -> Ashes.IO.print(msg)""").ConfigureAwait(false);
         result.Stdout.ShouldBe("ok\n");
     }
 
@@ -529,7 +529,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(0.0 - 12.25) + "|" + Ashes.Text.toHex(48879))""");
+            """Ashes.IO.print(Ashes.Text.fromInt(-42) + "|" + Ashes.Text.fromFloat(0.0 - 12.25) + "|" + Ashes.Text.toHex(48879))""").ConfigureAwait(false);
         result.Stdout.ShouldBe("-42|-12.25|0xbeef\n");
     }
 
@@ -542,7 +542,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """Ashes.IO.print(Ashes.Text.formatFloat(3.141592653589793)(9) + "|" + Ashes.Text.formatFloat(0.0 - 12.25)(3) + "|" + Ashes.Text.formatFloat(2.5)(0))""");
+            """Ashes.IO.print(Ashes.Text.formatFloat(3.141592653589793)(9) + "|" + Ashes.Text.formatFloat(0.0 - 12.25)(3) + "|" + Ashes.Text.formatFloat(2.5)(0))""").ConfigureAwait(false);
         result.Stdout.ShouldBe("3.141592654|-12.250|3\n");
     }
 
@@ -557,11 +557,11 @@ public sealed class WindowsBackendCoverageTests
         var tmpDir = CreateTempDirectory();
         try
         {
-            await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x");
+            await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x").ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
                 """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
-                workingDirectory: tmpDir);
+                workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("true:false\n");
         }
         finally
@@ -578,7 +578,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)");
+        var result = await CompileRunWithWindowsLlvmAsync("if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)").ConfigureAwait(false);
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -590,7 +590,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b) | _ -> Ashes.IO.print(0)");
+        var result = await CompileRunWithWindowsLlvmAsync("match ([1, 2], (3, 4)) with | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b) | _ -> Ashes.IO.print(0)").ConfigureAwait(false);
         result.Stdout.ShouldBe("8\n");
     }
 
@@ -602,7 +602,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("if (\"he\" + \"llo\") == \"hello\" then Ashes.IO.print(42) else Ashes.IO.print(0)");
+        var result = await CompileRunWithWindowsLlvmAsync("if (\"he\" + \"llo\") == \"hello\" then Ashes.IO.print(42) else Ashes.IO.print(0)").ConfigureAwait(false);
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -614,7 +614,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.write(\"hi\")");
+        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.write(\"hi\")").ConfigureAwait(false);
         result.Stdout.ShouldBe("hi");
     }
 
@@ -631,7 +631,7 @@ public sealed class WindowsBackendCoverageTests
             let value = Pair(40, 2)
             in match value with
             | Pair(a, b) -> Ashes.IO.print(a + b)
-            """));
+            """)).ConfigureAwait(false);
         result.Stdout.ShouldBe("42\n");
     }
 
@@ -643,7 +643,7 @@ public sealed class WindowsBackendCoverageTests
             return;
         }
 
-        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.panic(\"boom\")", expectedExitCode: 1);
+        var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.panic(\"boom\")", expectedExitCode: 1).ConfigureAwait(false);
         result.Stdout.ShouldBe("boom\n");
     }
 
@@ -697,7 +697,7 @@ public sealed class WindowsBackendCoverageTests
         IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var ir = LowerExpression(source);
-        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables);
+        return await CompileRunWithWindowsLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables).ConfigureAwait(false);
     }
 
     private static async Task<ExecutionResult> CompileRunWithWindowsLlvmAsync(
@@ -714,7 +714,7 @@ public sealed class WindowsBackendCoverageTests
         var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}.exe");
         try
         {
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
 
             var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
             psi.RedirectStandardInput = stdin is not null;
@@ -740,12 +740,12 @@ public sealed class WindowsBackendCoverageTests
             using var proc = Process.Start(psi)!;
             if (stdin is not null)
             {
-                await proc.StandardInput.WriteAsync(stdin);
+                await proc.StandardInput.WriteAsync(stdin).ConfigureAwait(false);
                 proc.StandardInput.Close();
             }
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await proc.WaitForExitAsync().ConfigureAwait(false);
 
             proc.ExitCode.ShouldBe(expectedExitCode, $"stderr: {stderr}");
             return new ExecutionResult(stdout, stderr, proc.ExitCode);
@@ -769,18 +769,18 @@ public sealed class WindowsBackendCoverageTests
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host);
-        IReadOnlyDictionary<string, string>? environmentVariables = new Dictionary<string, string>
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host).ConfigureAwait(false);
+        IReadOnlyDictionary<string, string>? environmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["SSL_CERT_FILE"] = TestProcessHelper.ConvertHostPathForWindowsExecution(
                 trustServerCertificate ? tlsHost.TrustCertificatePath : tlsHost.UntrustedCertificatePath)
         };
 
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(), StringComparison.Ordinal);
+        var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync, tolerateClientDisconnect);
-        var result = await CompileRunWithWindowsLlvmAsync(source, environmentVariables: environmentVariables);
-        var serverException = await serverTask;
+        var result = await CompileRunWithWindowsLlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
+        var serverException = await serverTask.ConfigureAwait(false);
         if (allowServerHandshakeFailure && serverException is IOException ioException)
         {
             ioException.Message.ShouldContain("unexpected EOF");
@@ -804,7 +804,7 @@ public sealed class WindowsBackendCoverageTests
             try
             {
                 using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
-                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token).ConfigureAwait(false);
                 if (count == 0)
                 {
                     break;
@@ -865,7 +865,7 @@ public sealed class WindowsBackendCoverageTests
         try
         {
             WriteSelfSignedServerPems(tmpDir);
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
             var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
@@ -875,7 +875,7 @@ public sealed class WindowsBackendCoverageTests
 
             foreach (var payload in new[] { "win-tls-one", "win-tls-two" })
             {
-                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload);
+                var reply = await TlsConnectSendReceiveWithRetryAsync(port, payload).ConfigureAwait(false);
                 reply.ShouldBe("echo: " + payload);
             }
         }
@@ -912,18 +912,21 @@ public sealed class WindowsBackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
-                await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout);
-                var outBytes = Encoding.UTF8.GetBytes(payload);
-                await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                var buffer = new byte[4096];
-                int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                return Encoding.UTF8.GetString(buffer, 0, read);
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var tls = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+                await using (tls.ConfigureAwait(false))
+                {
+                    await tls.AuthenticateAsClientAsync("localhost").WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var outBytes = Encoding.UTF8.GetBytes(payload);
+                    await tls.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var buffer = new byte[4096];
+                    int read = await tls.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(100);
+                await Task.Delay(100).ConfigureAwait(false);
             }
         }
     }
@@ -959,7 +962,7 @@ public sealed class WindowsBackendCoverageTests
         Process? proc = null;
         try
         {
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
             var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
@@ -967,11 +970,11 @@ public sealed class WindowsBackendCoverageTests
             psi.WorkingDirectory = tmpDir;
             proc = Process.Start(psi)!;
 
-            var health = await HttpGetRawWithRetryAsync(port, "/health");
+            var health = await HttpGetRawWithRetryAsync(port, "/health").ConfigureAwait(false);
             health.ShouldContain("HTTP/1.1 200 OK");
             health.ShouldEndWith("ok");
 
-            var missing = await HttpGetRawWithRetryAsync(port, "/nope");
+            var missing = await HttpGetRawWithRetryAsync(port, "/nope").ConfigureAwait(false);
             missing.ShouldContain("HTTP/1.1 404 Not Found");
             missing.ShouldEndWith("not found");
         }
@@ -995,15 +998,18 @@ public sealed class WindowsBackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var stream = client.GetStream();
-                await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(50);
+                await Task.Delay(50).ConfigureAwait(false);
             }
         }
     }
@@ -1044,7 +1050,7 @@ public sealed class WindowsBackendCoverageTests
         Process? proc = null;
         try
         {
-            await File.WriteAllBytesAsync(exePath, exeBytes);
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
             var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
@@ -1054,7 +1060,7 @@ public sealed class WindowsBackendCoverageTests
 
             foreach (var payload in new[] { "win-one", "win-two", "win-three" })
             {
-                var reply = await ConnectSendReceiveWithRetryAsync(port, payload);
+                var reply = await ConnectSendReceiveWithRetryAsync(port, payload).ConfigureAwait(false);
                 reply.ShouldBe("echo: " + payload);
             }
         }
@@ -1101,17 +1107,20 @@ public sealed class WindowsBackendCoverageTests
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
-                await using var stream = client.GetStream();
-                var outBytes = Encoding.UTF8.GetBytes(payload);
-                await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                var buffer = new byte[4096];
-                int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
-                return Encoding.UTF8.GetString(buffer, 0, read);
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var outBytes = Encoding.UTF8.GetBytes(payload);
+                    await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var buffer = new byte[4096];
+                    int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(50);
+                await Task.Delay(50).ConfigureAwait(false);
             }
         }
     }

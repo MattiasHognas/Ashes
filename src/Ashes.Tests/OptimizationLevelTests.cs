@@ -24,7 +24,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        var result = await CompileAndRunAsync("Ashes.IO.print(40 + 2)", level);
+        var result = await CompileAndRunAsync("Ashes.IO.print(40 + 2)", level).ConfigureAwait(false);
         result.Stdout.ShouldBe("42");
     }
 
@@ -39,7 +39,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        var result = await CompileAndRunAsync("""Ashes.IO.print("hello " + "world")""", level);
+        var result = await CompileAndRunAsync("""Ashes.IO.print("hello " + "world")""", level).ConfigureAwait(false);
         result.Stdout.ShouldBe("hello world");
     }
 
@@ -59,7 +59,7 @@ public sealed class OptimizationLevelTests
             | (x :: _, (a, b)) -> Ashes.IO.print(x + a + b)
             | _ -> Ashes.IO.print(0)
             """;
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("8");
     }
 
@@ -75,7 +75,7 @@ public sealed class OptimizationLevelTests
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
         const string source = "let recursive fib = given (n) -> match n with | 0 -> 0 | 1 -> 1 | _ -> fib(n - 1) + fib(n - 2) in Ashes.IO.print(fib(10))";
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("55");
     }
 
@@ -91,7 +91,7 @@ public sealed class OptimizationLevelTests
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
         const string source = "let mk = given (x) -> given (y) -> x + y in let add20 = mk(20) in Ashes.IO.print(add20(22))";
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("42");
     }
 
@@ -107,7 +107,7 @@ public sealed class OptimizationLevelTests
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
         const string source = "let recursive loop = given (acc) -> given (n) -> match n with | 0 -> acc | _ -> loop(acc + n)(n - 1) in Ashes.IO.print(loop(0)(100))";
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("5050");
     }
 
@@ -123,7 +123,7 @@ public sealed class OptimizationLevelTests
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
         const string source = "if (1.5 + 2.5) == 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0)";
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("42");
     }
 
@@ -139,7 +139,7 @@ public sealed class OptimizationLevelTests
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
         const string source = """if ("he" + "llo") == "hello" then Ashes.IO.print(42) else Ashes.IO.print(0)""";
-        var result = await CompileAndRunAsync(source, level);
+        var result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
         result.Stdout.ShouldBe("42");
     }
 
@@ -182,7 +182,7 @@ public sealed class OptimizationLevelTests
             let recursive fib = given (n) -> if n < 2 then n else fib(n - 1) + fib(n - 2)
             in Ashes.IO.print(Ashes.Text.fromInt(fib(20)))
             """;
-        var result = await CompileAndRunAsync(source, level, emitDebugInfo: true);
+        var result = await CompileAndRunAsync(source, level, emitDebugInfo: true).ConfigureAwait(false);
         result.Stdout.ShouldBe("6765");
     }
 
@@ -220,10 +220,10 @@ public sealed class OptimizationLevelTests
                 UseShellExecute = false
             };
 
-            using var proc = await TestProcessHelper.StartProcessAsync(psi);
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+            var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await proc.WaitForExitAsync().ConfigureAwait(false);
 
             proc.ExitCode.ShouldBe(0, $"[{level}] stderr: {stderr}");
             return new ExecutionResult(stdout.TrimEnd(), stderr, proc.ExitCode);

@@ -55,7 +55,7 @@ static string DeriveOutputPath(string inputPath, string targetId)
     var dir = Path.GetDirectoryName(inputPath);
     var name = Path.GetFileNameWithoutExtension(inputPath);
 
-    var outName = targetId == TargetIds.WindowsX64 ? name + ".exe" : name;
+    var outName = string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name;
     return string.IsNullOrWhiteSpace(dir) ? outName : Path.Combine(dir!, outName);
 }
 
@@ -84,7 +84,7 @@ static string DeriveProjectOutputPath(AshesProject project, string targetId)
         ? project.Name!
         : Path.GetFileNameWithoutExtension(project.EntryPath);
 
-    if (targetId == TargetIds.WindowsX64)
+    if (string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal))
     {
         outputName += ".exe";
     }
@@ -114,7 +114,7 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
         throw new CliUserException($"File not found: {inputFile}");
     }
 
-    return await File.ReadAllTextAsync(inputFile);
+    return await File.ReadAllTextAsync(inputFile).ConfigureAwait(false);
 }
 
 static byte[] CompileToImage(
@@ -236,9 +236,9 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
     Directory.CreateDirectory(tmpDir);
 
     var name = "ashes_" + Guid.NewGuid().ToString("N");
-    var exePath = Path.Combine(tmpDir, targetId == TargetIds.WindowsX64 ? name + ".exe" : name);
+    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
 
-    await File.WriteAllBytesAsync(exePath, image);
+    await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
 
     if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
     {
@@ -268,7 +268,7 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
 
     var stdoutTask = p.StandardOutput.ReadToEndAsync();
     var stderrTask = p.StandardError.ReadToEndAsync();
-    await Task.WhenAll(stdoutTask, stderrTask, p.WaitForExitAsync());
+    await Task.WhenAll(stdoutTask, stderrTask, p.WaitForExitAsync()).ConfigureAwait(false);
 
     return (p.ExitCode, stdoutTask.Result, stderrTask.Result);
 }
@@ -279,9 +279,9 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
     Directory.CreateDirectory(tmpDir);
 
     var name = "ashes_" + Guid.NewGuid().ToString("N");
-    var exePath = Path.Combine(tmpDir, targetId == TargetIds.WindowsX64 ? name + ".exe" : name);
+    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
 
-    await File.WriteAllBytesAsync(exePath, image);
+    await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
 
     if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
     {
@@ -307,7 +307,7 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
 
     using var p = StartCompiledProcess(psi);
 
-    await p.WaitForExitAsync();
+    await p.WaitForExitAsync().ConfigureAwait(false);
     return p.ExitCode;
 }
 
@@ -478,7 +478,7 @@ static async Task<string?> ReadReplLineAsync(string prompt)
     if (Console.IsInputRedirected)
     {
         Console.Write(prompt);
-        return await Console.In.ReadLineAsync();
+        return await Console.In.ReadLineAsync().ConfigureAwait(false);
     }
 
     return AnsiConsole.Prompt(new TextPrompt<string>($"[grey]{prompt}[/] ").AllowEmpty());
@@ -507,11 +507,11 @@ try
 {
     return command switch
     {
-        "compile" => await RunCompileAsync(args.Skip(1).ToArray()),
-        "run" => await RunRunAsync(args.Skip(1).ToArray()),
-        "repl" => await RunReplAsync(args.Skip(1).ToArray()),
+        "compile" => await RunCompileAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
+        "run" => await RunRunAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
+        "repl" => await RunReplAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
         "test" => RunTest(args.Skip(1).ToArray()),
-        "fmt" => await RunFmtAsync(args.Skip(1).ToArray()),
+        "fmt" => await RunFmtAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
         "init" => RunInit(args.Skip(1).ToArray()),
         "add" => RunAdd(args.Skip(1).ToArray()),
         "remove" => RunRemove(args.Skip(1).ToArray()),
@@ -543,7 +543,7 @@ catch (Exception ex)
 
 async Task<int> RunCompileAsync(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -564,13 +564,13 @@ async Task<int> RunCompileAsync(string[] a)
     {
         var arg = a[i];
 
-        if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
-        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
-        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
-        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
-        if ((arg == "-o" || arg == "--out") && i + 1 < a.Length) { outPath = a[++i]; continue; }
-        if (arg == "--expr" && i + 1 < a.Length) { expr = a[++i]; continue; }
-        if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
+        if ((string.Equals(arg, "-o", StringComparison.Ordinal) || string.Equals(arg, "--out", StringComparison.Ordinal)) && i + 1 < a.Length) { outPath = a[++i]; continue; }
+        if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < a.Length) { expr = a[++i]; continue; }
+        if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
@@ -599,7 +599,7 @@ async Task<int> RunCompileAsync(string[] a)
     byte[] image;
     if (project is null)
     {
-        var source = await ReadSourceAsync(inputFile, expr);
+        var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
         var displayPath = inputFile ?? "<expr>";
         try
         {
@@ -640,14 +640,14 @@ async Task<int> RunCompileAsync(string[] a)
         ? DeriveProjectOutputPath(project, target)
         : inputFile is not null
             ? DeriveOutputPath(inputFile, target)
-            : "out" + (target == TargetIds.WindowsX64 ? ".exe" : "");
+            : "out" + (string.Equals(target, TargetIds.WindowsX64, StringComparison.Ordinal) ? ".exe" : "");
 
     var outDir = Path.GetDirectoryName(outPath);
     if (!string.IsNullOrWhiteSpace(outDir))
     {
         Directory.CreateDirectory(outDir!);
     }
-    await File.WriteAllBytesAsync(outPath, image);
+    await File.WriteAllBytesAsync(outPath, image).ConfigureAwait(false);
 
     AnsiConsole.MarkupLine($"[green]OK[/] Wrote [bold]{Runner.FormatSize(image.Length)}[/] to [italic]{outPath}[/]");
     AnsiConsole.MarkupLine($"     Target: [bold]{target}[/]");
@@ -661,7 +661,7 @@ async Task<int> RunCompileAsync(string[] a)
 
 async Task<int> RunRunAsync(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -684,12 +684,12 @@ async Task<int> RunRunAsync(string[] a)
     for (int i = 0; i < cliArgs.Length; i++)
     {
         var arg = cliArgs[i];
-        if (arg == "--target" && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
-        if (arg == "--target-cpu" && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
-        if (arg == "--parallel-stack-size" && i + 1 < cliArgs.Length) { parallelStackBytes = ParseParallelStackSize(cliArgs[++i]); continue; }
-        if (arg == "--parallel-workers" && i + 1 < cliArgs.Length) { parallelWorkers = ParseParallelWorkers(cliArgs[++i]); continue; }
-        if (arg == "--expr" && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
-        if (arg == "--project" && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
+        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
+        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
+        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { parallelStackBytes = ParseParallelStackSize(cliArgs[++i]); continue; }
+        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { parallelWorkers = ParseParallelWorkers(cliArgs[++i]); continue; }
+        if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
+        if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
@@ -716,7 +716,7 @@ async Task<int> RunRunAsync(string[] a)
     byte[] image;
     if (project is null)
     {
-        var source = await ReadSourceAsync(inputFile, expr);
+        var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
         var displayPath = inputFile ?? "<expr>";
         try
         {
@@ -752,12 +752,12 @@ async Task<int> RunRunAsync(string[] a)
         }
     }
 
-    return await RunImageWithInheritedStdioAsync(image, target, progArgs);
+    return await RunImageWithInheritedStdioAsync(image, target, progArgs).ConfigureAwait(false);
 }
 
 async Task<int> RunReplAsync(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -771,10 +771,10 @@ async Task<int> RunReplAsync(string[] a)
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
-        if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
-        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
-        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
-        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
+        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         throw new CliUsageException("Unknown argument.");
     }
@@ -792,7 +792,7 @@ async Task<int> RunReplAsync(string[] a)
     {
         var buffer = new List<string>();
 
-        var first = await ReadReplLineAsync("> ");
+        var first = await ReadReplLineAsync("> ").ConfigureAwait(false);
         if (first is null)
         {
             break;
@@ -828,7 +828,7 @@ async Task<int> RunReplAsync(string[] a)
                 AnsiConsole.MarkupLine($"Target: [bold]{target}[/]");
                 continue;
             }
-            if (parts.Length == 2 && (parts[1] == TargetIds.LinuxX64 || parts[1] == TargetIds.LinuxArm64 || parts[1] == TargetIds.WindowsX64))
+            if (parts.Length == 2 && (string.Equals(parts[1], TargetIds.LinuxX64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.LinuxArm64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.WindowsX64, StringComparison.Ordinal)))
             {
                 target = parts[1];
                 AnsiConsole.MarkupLine($"Target set to [bold]{target}[/]");
@@ -847,7 +847,7 @@ async Task<int> RunReplAsync(string[] a)
 
             if (LooksIncomplete(candidate))
             {
-                var more = await ReadReplLineAsync("| ");
+                var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
                 if (more is null)
                 {
                     break;
@@ -874,7 +874,7 @@ async Task<int> RunReplAsync(string[] a)
                     break;
                 }
 
-                var (exit, stdout, stderr) = await RunImageCaptureAsync(image!, target);
+                var (exit, stdout, stderr) = await RunImageCaptureAsync(image!, target).ConfigureAwait(false);
 
                 if (exit == 0)
                 {
@@ -904,7 +904,7 @@ async Task<int> RunReplAsync(string[] a)
 
             if (compileError is not null && IsLikelyNeedMoreInput(compileError))
             {
-                var more = await ReadReplLineAsync("| ");
+                var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
                 if (more is null)
                 {
                     break;
@@ -932,7 +932,7 @@ async Task<int> RunReplAsync(string[] a)
 
 int RunTest(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -949,11 +949,11 @@ int RunTest(string[] a)
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
-        if (arg == "--target" && i + 1 < a.Length) { target = a[++i]; continue; }
-        if (arg == "--target-cpu" && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
-        if (arg == "--parallel-stack-size" && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
-        if (arg == "--parallel-workers" && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
-        if (arg == "--project" && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; continue; }
+        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
+        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
+        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
+        if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
         {
@@ -972,7 +972,7 @@ int RunTest(string[] a)
 
 async Task<int> RunFmtAsync(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -984,7 +984,7 @@ async Task<int> RunFmtAsync(string[] a)
     }
 
     var writeInPlace = a.Contains("-w", StringComparer.Ordinal) || a.Contains("--write", StringComparer.Ordinal);
-    var targets = a.Where(x => x != "-w" && x != "--write").ToArray();
+    var targets = a.Where(x => !string.Equals(x, "-w", StringComparison.Ordinal) && !string.Equals(x, "--write", StringComparison.Ordinal)).ToArray();
     if (targets.Length != 1)
     {
         throw new CliUsageException("Provide exactly one file or directory.");
@@ -1021,7 +1021,7 @@ async Task<int> RunFmtAsync(string[] a)
     var sw = Stopwatch.StartNew();
     foreach (var file in files)
     {
-        var src = await File.ReadAllTextAsync(file);
+        var src = await File.ReadAllTextAsync(file).ConfigureAwait(false);
         // Inline `module` blocks are a compile-time stitching construct with no AST node, so the
         // formatter cannot model them. Leave such files untouched (the author's layout is
         // authoritative) rather than error or mangle; full formatting fidelity is future work.
@@ -1063,9 +1063,9 @@ async Task<int> RunFmtAsync(string[] a)
 
         if (writeInPlace)
         {
-            if (formatted != src)
+            if (!string.Equals(formatted, src, StringComparison.Ordinal))
             {
-                await File.WriteAllTextAsync(file, formatted);
+                await File.WriteAllTextAsync(file, formatted).ConfigureAwait(false);
             }
         }
         else
@@ -1173,7 +1173,7 @@ static void PrintRuntimeFailure(int exitCode, string stdout, string stderr)
 {
     var sb = new System.Text.StringBuilder();
     sb.Append("runtime error: process exited with code ");
-    sb.AppendLine(exitCode.ToString());
+    sb.AppendLine(exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
     if (!string.IsNullOrWhiteSpace(stdout))
     {
@@ -1198,10 +1198,10 @@ static System.Text.Json.JsonSerializerOptions CreateProjectJsonOptions() => new(
 
 static (Dictionary<string, object?> Fields, Dictionary<string, object?> Dependencies) ReadProjectJson(System.Text.Json.JsonElement root)
 {
-    var obj = new Dictionary<string, object?>();
+    var obj = new Dictionary<string, object?>(StringComparer.Ordinal);
     foreach (var prop in root.EnumerateObject())
     {
-        if (prop.Name == "dependencies")
+        if (string.Equals(prop.Name, "dependencies", StringComparison.Ordinal))
         {
             continue;
         }
@@ -1209,7 +1209,7 @@ static (Dictionary<string, object?> Fields, Dictionary<string, object?> Dependen
         obj[prop.Name] = DeserializeJsonElement(prop.Value);
     }
 
-    var deps = new Dictionary<string, object?>();
+    var deps = new Dictionary<string, object?>(StringComparer.Ordinal);
     if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
     {
         foreach (var dep in existingDeps.EnumerateObject())
@@ -1249,7 +1249,7 @@ static void WriteProjectJson(string projectFilePath, Dictionary<string, object?>
 
 static int RunInit(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -1270,7 +1270,7 @@ static int RunInit(string[] a)
     var projectName = new DirectoryInfo(cwd).Name;
     var entryRelative = Path.Combine("src", "Main.ash");
 
-    var projectJson = new Dictionary<string, object>
+    var projectJson = new Dictionary<string, object>(StringComparer.Ordinal)
     {
         ["name"] = projectName,
         ["entry"] = entryRelative.Replace('\\', '/'),
@@ -1296,7 +1296,7 @@ static int RunInit(string[] a)
 
 static int RunAdd(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -1330,7 +1330,7 @@ static int RunAdd(string[] a)
 
 static int RunRemove(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -1376,7 +1376,7 @@ static int RunRemove(string[] a)
 
 static int RunInstall(string[] a)
 {
-    if (a.Length == 1 && (a[0] == "--help" || a[0] == "-h"))
+    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
         return Usage(0);
     }
@@ -1395,7 +1395,7 @@ static int RunInstall(string[] a)
     using var doc = ParseProjectJson(projectFilePath);
     var root = doc.RootElement;
 
-    var deps = new Dictionary<string, string>();
+    var deps = new Dictionary<string, string>(StringComparer.Ordinal);
     if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
     {
         foreach (var dep in existingDeps.EnumerateObject())
@@ -1430,7 +1430,7 @@ static object? DeserializeJsonElement(System.Text.Json.JsonElement element)
         System.Text.Json.JsonValueKind.False => false,
         System.Text.Json.JsonValueKind.Null => null,
         System.Text.Json.JsonValueKind.Array => element.EnumerateArray().Select(DeserializeJsonElement).ToArray(),
-        System.Text.Json.JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => DeserializeJsonElement(p.Value)),
+        System.Text.Json.JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => DeserializeJsonElement(p.Value), StringComparer.Ordinal),
         _ => element.GetRawText()
     };
 }

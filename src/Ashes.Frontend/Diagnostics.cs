@@ -55,7 +55,7 @@ public sealed class CompileDiagnosticException(IReadOnlyList<DiagnosticEntry> er
         var sb = new StringBuilder();
         foreach (var e in errors)
         {
-            sb.AppendLine($"[pos {e.Pos}] {e.Message}");
+            sb.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"[pos {e.Pos}] {e.Message}");
         }
 
         return sb.ToString();

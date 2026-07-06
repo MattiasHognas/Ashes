@@ -1510,7 +1510,7 @@ public sealed partial class Lowering
             return -1;
         }
 
-        return int.TryParse(marker.AsSpan(1), out var i) ? i : -1;
+        return int.TryParse(marker.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture, out var i) ? i : -1;
     }
 
     /// <summary>

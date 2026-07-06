@@ -21,20 +21,20 @@ internal static class AshesValueFormatter
         }
 
         var normalizedType = NormalizeType(type);
-        if (normalizedType == "Bool")
+        if (string.Equals(normalizedType, "Bool", StringComparison.Ordinal))
         {
             return FormatBool(rawValue);
         }
 
-        if (normalizedType == "Str*")
+        if (string.Equals(normalizedType, "Str*", StringComparison.Ordinal))
         {
-            var formatted = await FormatStringAsync(rawValue, evaluateExpressionAsync);
+            var formatted = await FormatStringAsync(rawValue, evaluateExpressionAsync).ConfigureAwait(false);
             return formatted ?? rawValue;
         }
 
         if (TryGetListElementType(normalizedType, out var elementType))
         {
-            var formatted = await FormatListAsync(rawValue, elementType, evaluateExpressionAsync, 0);
+            var formatted = await FormatListAsync(rawValue, elementType, evaluateExpressionAsync, 0).ConfigureAwait(false);
             return formatted ?? rawValue;
         }
 
@@ -63,8 +63,8 @@ internal static class AshesValueFormatter
         while (current != 0 && remaining-- > 0)
         {
             var currentHex = ToHexPointer(current);
-            var headValue = await evaluateExpressionAsync($"*(long long*){currentHex}");
-            var tailValue = await evaluateExpressionAsync($"*((long long*){currentHex} + 1)");
+            var headValue = await evaluateExpressionAsync($"*(long long*){currentHex}").ConfigureAwait(false);
+            var tailValue = await evaluateExpressionAsync($"*((long long*){currentHex} + 1)").ConfigureAwait(false);
             if (headValue is null || tailValue is null)
             {
                 return null;
@@ -88,24 +88,24 @@ internal static class AshesValueFormatter
         int depth)
     {
         var normalizedType = NormalizeType(elementType);
-        if (normalizedType == "Int" || normalizedType == "Float")
+        if (string.Equals(normalizedType, "Int", StringComparison.Ordinal) || string.Equals(normalizedType, "Float", StringComparison.Ordinal))
         {
             return rawValue;
         }
 
-        if (normalizedType == "Bool")
+        if (string.Equals(normalizedType, "Bool", StringComparison.Ordinal))
         {
             return FormatBool(rawValue);
         }
 
-        if (normalizedType == "Str*")
+        if (string.Equals(normalizedType, "Str*", StringComparison.Ordinal))
         {
-            return await FormatStringAsync(rawValue, evaluateExpressionAsync) ?? rawValue;
+            return await FormatStringAsync(rawValue, evaluateExpressionAsync).ConfigureAwait(false) ?? rawValue;
         }
 
         if (TryGetListElementType(normalizedType, out var nestedElementType))
         {
-            return await FormatListAsync(rawValue, nestedElementType, evaluateExpressionAsync, depth) ?? rawValue;
+            return await FormatListAsync(rawValue, nestedElementType, evaluateExpressionAsync, depth).ConfigureAwait(false) ?? rawValue;
         }
 
         return rawValue;
@@ -121,7 +121,7 @@ internal static class AshesValueFormatter
         }
 
         var addressHex = ToHexPointer(address);
-        var lengthValue = await evaluateExpressionAsync($"*(long long*){addressHex}");
+        var lengthValue = await evaluateExpressionAsync($"*(long long*){addressHex}").ConfigureAwait(false);
         if (!long.TryParse(lengthValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var length) || length < 0)
         {
             return null;
@@ -131,7 +131,7 @@ internal static class AshesValueFormatter
         var bytes = new byte[byteCount];
         for (var index = 0; index < byteCount; index++)
         {
-            var byteValue = await evaluateExpressionAsync($"*((unsigned char*){addressHex} + {8 + index})");
+            var byteValue = await evaluateExpressionAsync($"*((unsigned char*){addressHex} + {8 + index})").ConfigureAwait(false);
             if (!byte.TryParse(byteValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out bytes[index]))
             {
                 return null;
@@ -188,11 +188,11 @@ internal static class AshesValueFormatter
 
         elementType = inner + "*";
         if (!inner.EndsWith("*", StringComparison.Ordinal)
-            && (inner == "Int" || inner == "Float" || inner == "Bool"))
+            && (string.Equals(inner, "Int", StringComparison.Ordinal) || string.Equals(inner, "Float", StringComparison.Ordinal) || string.Equals(inner, "Bool", StringComparison.Ordinal)))
         {
             elementType = inner;
         }
-        else if (!inner.EndsWith("*", StringComparison.Ordinal) && inner == "Str")
+        else if (!inner.EndsWith("*", StringComparison.Ordinal) && string.Equals(inner, "Str", StringComparison.Ordinal))
         {
             elementType = "Str*";
         }

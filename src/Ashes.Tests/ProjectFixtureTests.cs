@@ -23,7 +23,7 @@ public sealed class ProjectFixtureTests
             yield break;
         }
 
-        foreach (var dir in Directory.GetDirectories(root).OrderBy(x => x))
+        foreach (var dir in Directory.GetDirectories(root).OrderBy(x => x, StringComparer.Ordinal))
         {
             yield return dir;
         }
@@ -65,7 +65,7 @@ public sealed class ProjectFixtureTests
 
         var compilationPlan = ProjectSupport.BuildCompilationPlan(project);
         var combinedSource = ProjectSupport.BuildCompilationSource(compilationPlan);
-        var stdout = await CompileRunCaptureAsync(combinedSource, compilationPlan.ImportedStdModules);
+        var stdout = await CompileRunCaptureAsync(combinedSource, compilationPlan.ImportedStdModules).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe(expected);
     }
 
@@ -141,10 +141,10 @@ public sealed class ProjectFixtureTests
                 UseShellExecute = false
             };
 
-            using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+            var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await proc.WaitForExitAsync().ConfigureAwait(false);
 
             proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
             return stdout;

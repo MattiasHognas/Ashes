@@ -25,7 +25,7 @@ public sealed class LspHarness : IAsyncDisposable
 
     public static async Task<LspHarness> StartAsync(TimeSpan? timeout = null)
     {
-        await ServerLock.WaitAsync();
+        await ServerLock.WaitAsync().ConfigureAwait(false);
 
         try
         {
@@ -44,7 +44,7 @@ public sealed class LspHarness : IAsyncDisposable
                 ?? throw new InvalidOperationException("Failed to start ashes-lsp process.");
 
             var harness = new LspHarness(process, lspAssemblyPath, timeout ?? TimeSpan.FromSeconds(10));
-            await harness.InitializeAsync();
+            await harness.InitializeAsync().ConfigureAwait(false);
             return harness;
         }
         catch
@@ -63,9 +63,9 @@ public sealed class LspHarness : IAsyncDisposable
                 uri,
                 text
             }
-        });
+        }).ConfigureAwait(false);
 
-        return await WaitForDiagnosticsAsync(uri);
+        return await WaitForDiagnosticsAsync(uri).ConfigureAwait(false);
     }
 
     public async Task<PublishedDiagnostics> DidChangeAsync(string uri, string text)
@@ -77,9 +77,9 @@ public sealed class LspHarness : IAsyncDisposable
             {
                 new { text }
             }
-        });
+        }).ConfigureAwait(false);
 
-        return await WaitForDiagnosticsAsync(uri);
+        return await WaitForDiagnosticsAsync(uri).ConfigureAwait(false);
     }
 
     public async Task<PublishedDiagnostics> DidCloseAsync(string uri)
@@ -87,9 +87,9 @@ public sealed class LspHarness : IAsyncDisposable
         await SendNotificationAsync("textDocument/didClose", new
         {
             textDocument = new { uri }
-        });
+        }).ConfigureAwait(false);
 
-        return await WaitForDiagnosticsAsync(uri);
+        return await WaitForDiagnosticsAsync(uri).ConfigureAwait(false);
     }
 
     public async Task<JsonElement?> HoverAsync(string uri, int line, int character)
@@ -98,7 +98,7 @@ public sealed class LspHarness : IAsyncDisposable
         {
             textDocument = new { uri },
             position = new { line, character }
-        });
+        }).ConfigureAwait(false);
 
         var result = response.GetProperty("result");
         return result.ValueKind == JsonValueKind.Null ? null : result.Clone();
@@ -110,7 +110,7 @@ public sealed class LspHarness : IAsyncDisposable
         {
             textDocument = new { uri },
             position = new { line, character }
-        });
+        }).ConfigureAwait(false);
 
         var result = response.GetProperty("result");
         return result.ValueKind == JsonValueKind.Null ? null : result.Clone();
@@ -122,7 +122,7 @@ public sealed class LspHarness : IAsyncDisposable
         {
             textDocument = new { uri },
             position = new { line, character }
-        });
+        }).ConfigureAwait(false);
 
         var result = response.GetProperty("result");
         return result.ValueKind == JsonValueKind.Array
@@ -140,7 +140,7 @@ public sealed class LspHarness : IAsyncDisposable
         {
             textDocument = new { uri },
             options = new { insertSpaces, tabSize }
-        });
+        }).ConfigureAwait(false);
 
         return response.GetProperty("result").Clone();
     }
@@ -155,15 +155,15 @@ public sealed class LspHarness : IAsyncDisposable
         }
 
         _shutdownRequested = true;
-        var response = await SendRequestAsync("shutdown", new { });
+        var response = await SendRequestAsync("shutdown", new { }).ConfigureAwait(false);
         response.GetProperty("result").ValueKind.ShouldBe(JsonValueKind.Null);
 
-        await SendNotificationAsync("exit", null);
+        await SendNotificationAsync("exit", null).ConfigureAwait(false);
 
         using var cts = new CancellationTokenSource(_timeout);
         try
         {
-            await _process.WaitForExitAsync(cts.Token);
+            await _process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -185,7 +185,7 @@ public sealed class LspHarness : IAsyncDisposable
             {
                 try
                 {
-                    await ShutdownAsync();
+                    await ShutdownAsync().ConfigureAwait(false);
                 }
                 catch
                 {
@@ -203,7 +203,7 @@ public sealed class LspHarness : IAsyncDisposable
 
     private async Task InitializeAsync()
     {
-        var response = await SendRequestAsync("initialize", new { });
+        var response = await SendRequestAsync("initialize", new { }).ConfigureAwait(false);
         var capabilities = response.GetProperty("result").GetProperty("capabilities");
         capabilities.GetProperty("textDocumentSync").GetInt32().ShouldBe(1);
         capabilities.GetProperty("hoverProvider").GetBoolean().ShouldBeTrue();
@@ -221,11 +221,11 @@ public sealed class LspHarness : IAsyncDisposable
             id,
             method,
             @params = parameters
-        });
+        }).ConfigureAwait(false);
 
         while (true)
         {
-            var message = await ReadMessageAsync();
+            var message = await ReadMessageAsync().ConfigureAwait(false);
             if (message.TryGetProperty("id", out var responseId)
                 && responseId.ValueKind == JsonValueKind.Number
                 && responseId.GetInt32() == id)
@@ -244,14 +244,14 @@ public sealed class LspHarness : IAsyncDisposable
             jsonrpc = "2.0",
             method,
             @params = parameters
-        });
+        }).ConfigureAwait(false);
     }
 
     private async Task<PublishedDiagnostics> WaitForDiagnosticsAsync(string uri)
     {
         while (true)
         {
-            var message = await ReadMessageAsync();
+            var message = await ReadMessageAsync().ConfigureAwait(false);
             if (!message.TryGetProperty("method", out var methodElement)
                 || !string.Equals(methodElement.GetString(), "textDocument/publishDiagnostics", StringComparison.Ordinal))
             {
@@ -283,9 +283,9 @@ public sealed class LspHarness : IAsyncDisposable
         using var cts = new CancellationTokenSource(_timeout);
         try
         {
-            await _process.StandardInput.BaseStream.WriteAsync(header, cts.Token);
-            await _process.StandardInput.BaseStream.WriteAsync(bytes, cts.Token);
-            await _process.StandardInput.BaseStream.FlushAsync(cts.Token);
+            await _process.StandardInput.BaseStream.WriteAsync(header, cts.Token).ConfigureAwait(false);
+            await _process.StandardInput.BaseStream.WriteAsync(bytes, cts.Token).ConfigureAwait(false);
+            await _process.StandardInput.BaseStream.FlushAsync(cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -298,7 +298,7 @@ public sealed class LspHarness : IAsyncDisposable
         int contentLength = -1;
         while (true)
         {
-            var line = await ReadHeaderLineAsync();
+            var line = await ReadHeaderLineAsync().ConfigureAwait(false);
             if (line is null)
             {
                 throw CreateProtocolException("LSP output closed before a complete message header was read.");
@@ -310,7 +310,7 @@ public sealed class LspHarness : IAsyncDisposable
             }
 
             if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(line["Content-Length:".Length..].Trim(), out var parsed))
+                && int.TryParse(line["Content-Length:".Length..].Trim(), System.Globalization.CultureInfo.InvariantCulture, out var parsed))
             {
                 contentLength = parsed;
             }
@@ -328,7 +328,7 @@ public sealed class LspHarness : IAsyncDisposable
             using var cts = new CancellationTokenSource(_timeout);
             try
             {
-                var chunk = await _process.StandardOutput.BaseStream.ReadAsync(body.AsMemory(read, contentLength - read), cts.Token);
+                var chunk = await _process.StandardOutput.BaseStream.ReadAsync(body.AsMemory(read, contentLength - read), cts.Token).ConfigureAwait(false);
                 if (chunk == 0)
                 {
                     throw CreateProtocolException("LSP output closed before a complete message body was read.");
@@ -358,7 +358,7 @@ public sealed class LspHarness : IAsyncDisposable
 
             try
             {
-                read = await _process.StandardOutput.BaseStream.ReadAsync(b, cts.Token);
+                read = await _process.StandardOutput.BaseStream.ReadAsync(b, cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -378,7 +378,7 @@ public sealed class LspHarness : IAsyncDisposable
 
                 try
                 {
-                    nextRead = await _process.StandardOutput.BaseStream.ReadAsync(next, nextCts.Token);
+                    nextRead = await _process.StandardOutput.BaseStream.ReadAsync(next, nextCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {

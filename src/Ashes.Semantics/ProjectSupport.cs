@@ -550,7 +550,7 @@ public static class ProjectSupport
                     $"{fullPath}#{inline.ModuleName}",
                     inline.Source,
                     [],
-                    new Dictionary<string, string>(),
+                    new Dictionary<string, string>(StringComparer.Ordinal),
                     []);
                 children.Add(childModule);
                 resolvedByModuleName[inline.ModuleName] = childModule;
@@ -746,7 +746,7 @@ public static class ProjectSupport
                 $"{entryFilePath}#{inline.ModuleName}",
                 inline.Source,
                 [],
-                new Dictionary<string, string>(),
+                new Dictionary<string, string>(StringComparer.Ordinal),
                 []));
         }
 
@@ -755,7 +755,7 @@ public static class ProjectSupport
             entryFilePath,
             ApplySelectorRenames(entryOuter, entrySelectors),
             importNames.ToList(),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             entrySelectors);
         orderedModules.Add(entryModule);
 

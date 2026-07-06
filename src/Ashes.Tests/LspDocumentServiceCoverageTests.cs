@@ -276,7 +276,7 @@ public sealed class LspDocumentServiceCoverageTests
             var mainPath = Path.Combine(root, "Main.ash");
             const string source = "let recursive f = given (x) -> if x == 0 then 1 else f(x) in f(3)";
             File.WriteAllText(mainPath, source);
-            var fInCall = source.LastIndexOf("f(3)");
+            var fInCall = source.LastIndexOf("f(3)", StringComparison.Ordinal);
 
             var definition = DocumentService.GetDefinition(source, fInCall, mainPath);
 

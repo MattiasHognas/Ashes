@@ -341,7 +341,7 @@ public sealed class ResourceLifecycleTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && drop.TypeName == typeName)
+            if (inst is IrInst.Drop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
                 return true;
         }
         return false;

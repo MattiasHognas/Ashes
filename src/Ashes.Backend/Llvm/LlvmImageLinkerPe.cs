@@ -57,7 +57,7 @@ internal static partial class LlvmImageLinker
 
             // COFF BSS sections have PointerToRawData=0 (no file-backed data); they are
             // emitted as a separate PE section whose VirtualSize the loader zero-fills.
-            bool isBss = section.Name == ".bss" || (section.PointerToRawData == 0 && totalSize > 0);
+            bool isBss = string.Equals(section.Name, ".bss", StringComparison.Ordinal) || (section.PointerToRawData == 0 && totalSize > 0);
             if (isBss)
             {
                 uint bssAlign = (BssDataAlignment - (bssTotalSize % BssDataAlignment)) % BssDataAlignment;
@@ -654,7 +654,7 @@ internal static partial class LlvmImageLinker
                 PointerToRelocations: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 24, 4)),
                 NumberOfRelocations: BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 32, 2)));
 
-            if (name == ".text")
+            if (string.Equals(name, ".text", StringComparison.Ordinal))
             {
                 textSectionIndex = i;
             }
@@ -820,7 +820,7 @@ internal static partial class LlvmImageLinker
             short sectionNumber = BinaryPrimitives.ReadInt16LittleEndian(bytes.Slice(offset + 12, 2));
             byte auxCount = bytes[offset + 17];
 
-            if (name == entrySymbolName)
+            if (string.Equals(name, entrySymbolName, StringComparison.Ordinal))
             {
                 if (sectionNumber != expectedSectionNumber)
                 {
