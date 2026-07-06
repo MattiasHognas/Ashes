@@ -800,7 +800,10 @@ internal static partial class LlvmImageLinker
 
             switch (relocationType)
             {
+                // Absolute relocations are patched identically on both architectures; the
+                // aarch64 cases appear in debug sections linked through this shared path.
                 case ElfRelocX86_64_64:
+                case ElfRelocAArch64Abs64:
                     {
                         Span<byte> patch64 = targetSectionBytes.AsSpan(checked((int)relocOffset), 8);
                         BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
@@ -827,6 +830,7 @@ internal static partial class LlvmImageLinker
                     }
                     break;
                 case ElfRelocX86_64_32:
+                case ElfRelocAArch64Abs32:
                     {
                         Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
                         BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));

@@ -1375,6 +1375,13 @@ internal static partial class LlvmCodegen
                     LlvmApi.BuildBr(target.Builder, state.GetLabelBlock(label.Name));
                 }
 
+                // Label blocks are pre-created (forward jumps need the handles), which appends
+                // them ahead of any blocks the instruction expansions create later. Move each
+                // into flow position as it is reached: physical block order then follows IR
+                // order, so the lowest address of a source line is the line's first executed
+                // instruction (a breakpoint on an `if` line must bind to the condition, not to
+                // a join/else block that happened to be laid out earlier).
+                LlvmApi.MoveBasicBlockAfter(state.GetLabelBlock(label.Name), LlvmApi.GetInsertBlock(target.Builder));
                 LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetLabelBlock(label.Name));
                 terminated = false;
                 continue;
@@ -1382,7 +1389,9 @@ internal static partial class LlvmCodegen
 
             if (terminated)
             {
-                LlvmApi.PositionBuilderAtEnd(target.Builder, state.GetOrCreateFallthroughBlock(index));
+                var fallthrough = state.GetOrCreateFallthroughBlock(index);
+                LlvmApi.MoveBasicBlockAfter(fallthrough, LlvmApi.GetInsertBlock(target.Builder));
+                LlvmApi.PositionBuilderAtEnd(target.Builder, fallthrough);
                 terminated = false;
             }
 

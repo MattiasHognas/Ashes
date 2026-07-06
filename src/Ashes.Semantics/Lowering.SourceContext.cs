@@ -48,7 +48,7 @@ public sealed partial class Lowering
     /// </summary>
     private void Emit(IrInst inst)
     {
-        if (_lineStarts is not null && _currentSourceExpr is not null)
+        if (_lineStarts is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
         {
             var span = AstSpans.GetOrDefault(_currentSourceExpr);
             if ((span.Length > 0 || span.Start > 0) && ResolveSourceLocation(span.Start) is { } resolved)
@@ -58,6 +58,26 @@ public sealed partial class Lowering
         }
 
         _inst.Add(inst);
+    }
+
+    /// <summary>
+    /// Arena and ownership machinery does not correspond to any source statement, so it must not
+    /// carry the line of whichever expression happened to be current when it was emitted. The
+    /// backend expands several of these into multi-block code (copy-out loops, cold reclaim
+    /// paths); a stale user line on them creates line-table entries at addresses the program
+    /// never executes, which then shadow the real breakpoint address for that line. Unlocated
+    /// instructions get the artificial line-0 location DWARF reserves for compiler-generated
+    /// code instead.
+    /// </summary>
+    private static bool IsRuntimeMachinery(IrInst inst)
+    {
+        return inst is IrInst.SaveArenaState
+            or IrInst.RestoreArenaState
+            or IrInst.ReclaimArenaChunks
+            or IrInst.CopyOutArena
+            or IrInst.CopyOutArenaToSpace
+            or IrInst.Drop
+            or IrInst.Borrow;
     }
 
     private (string FilePath, int Line, int Column)? ResolveSourceLocation(int absolutePosition)

@@ -24,6 +24,7 @@ internal static partial class LlvmImageLinker
     private const ushort CoffRelocAmd64Rel32_3 = 0x0007;
     private const ushort CoffRelocAmd64Rel32_4 = 0x0008;
     private const ushort CoffRelocAmd64Rel32_5 = 0x0009;
+    private const ushort CoffRelocAmd64SecRel = 0x000B;
 
     private const int PeDosHeaderSize = 64;
     private const int PeSignatureSize = 4;
@@ -397,9 +398,19 @@ internal static partial class LlvmImageLinker
             sectionBaseVas,
             externalSymbolVas);
 
+        ApplyCoffDebugRelocations(
+            objectBytes,
+            parsed.DebugSections,
+            parsed.SymbolTableOffset,
+            parsed.SymbolCount,
+            parsed.TextSectionNumber,
+            sectionBaseVas,
+            externalSymbolVas);
+
         // Compute section count and file layout
         bool hasBss = bssTotalSize > 0;
-        int sectionCount = hasBss ? 3 : 2; // .text, .rdata, optionally .bss
+        int debugSectionCount = parsed.DebugSections.Count;
+        int sectionCount = (hasBss ? 3 : 2) + debugSectionCount; // .text, .rdata, optionally .bss, debug sections
         int headersSize = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + PeOptionalHeaderSize + sectionCount * PeSectionHeaderSize;
         uint headersFileSize = AlignUp((uint)headersSize, PeFileAlignment);
 
@@ -428,6 +439,52 @@ internal static partial class LlvmImageLinker
 
         uint totalFileSize = hasBss ? bssFileOffset : rdataFileOffset + rdataRawSize;
 
+        // Lay out debug sections after all loadable content. They are mapped (the PE format has
+        // no non-ALLOC sections) but marked discardable; debuggers locate them by name.
+        var debugRvas = new uint[debugSectionCount];
+        var debugFileOffsets = new uint[debugSectionCount];
+        uint debugRvaCursor = sizeOfImage;
+        uint debugFileCursor = totalFileSize;
+        for (int i = 0; i < debugSectionCount; i++)
+        {
+            debugRvas[i] = debugRvaCursor;
+            debugFileOffsets[i] = debugFileCursor;
+            debugRvaCursor = AlignUp(checked(debugRvaCursor + (uint)parsed.DebugSections[i].Bytes.Length), PeSectionAlignment);
+            debugFileCursor = AlignUp(checked(debugFileCursor + (uint)parsed.DebugSections[i].Bytes.Length), PeFileAlignment);
+        }
+
+        // PE section names longer than 8 characters (every .debug_* name) go through a COFF
+        // string table referenced as "/<offset>" — the MinGW/LLD convention debuggers understand.
+        // The table sits at the end of the file with PointerToSymbolTable aiming at it and a
+        // symbol count of zero.
+        uint stringTableFileOffset = 0;
+        byte[] stringTableBytes = [];
+        var debugNameFields = new string[debugSectionCount];
+        if (debugSectionCount > 0)
+        {
+            sizeOfImage = debugRvaCursor;
+            using var stringTable = new MemoryStream();
+            stringTable.Write(new byte[4]); // total-size field, patched below
+            for (int i = 0; i < debugSectionCount; i++)
+            {
+                string name = parsed.DebugSections[i].Name;
+                if (name.Length <= 8)
+                {
+                    debugNameFields[i] = name;
+                    continue;
+                }
+
+                debugNameFields[i] = "/" + stringTable.Position.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                stringTable.Write(Encoding.ASCII.GetBytes(name));
+                stringTable.WriteByte(0);
+            }
+
+            stringTableBytes = stringTable.ToArray();
+            BinaryPrimitives.WriteUInt32LittleEndian(stringTableBytes.AsSpan(0, 4), (uint)stringTableBytes.Length);
+            stringTableFileOffset = debugFileCursor;
+            totalFileSize = checked(stringTableFileOffset + (uint)stringTableBytes.Length);
+        }
+
         var output = new byte[totalFileSize];
 
         // DOS header (minimal)
@@ -447,7 +504,9 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff, 2), 0x8664);      // Machine: AMD64
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 2, 2), checked((ushort)sectionCount));
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 4, 4), 0);       // TimeDateStamp
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 8, 4), 0);       // PointerToSymbolTable
+        // With debug sections present, PointerToSymbolTable references the (empty) symbol table
+        // whose trailing string table resolves the "/<offset>" long section names.
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 8, 4), stringTableFileOffset); // PointerToSymbolTable
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 12, 4), 0);      // NumberOfSymbols
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 16, 2), PeOptionalHeaderSize); // SizeOfOptionalHeader
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 18, 2), 0x0022); // Characteristics: EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
@@ -527,11 +586,33 @@ internal static partial class LlvmImageLinker
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), 0);                     // SizeOfRawData (zero for BSS)
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), 0);                     // PointerToRawData
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0xC0000080);           // Characteristics: UNINITIALIZED_DATA | READ | WRITE
+            secOff += PeSectionHeaderSize;
+        }
+
+        // Debug section headers
+        for (int i = 0; i < debugSectionCount; i++)
+        {
+            Encoding.ASCII.GetBytes(debugNameFields[i]).CopyTo(output.AsSpan(secOff));
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)parsed.DebugSections[i].Bytes.Length); // VirtualSize
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), debugRvas[i]);                              // VirtualAddress
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), AlignUp((uint)parsed.DebugSections[i].Bytes.Length, PeFileAlignment)); // SizeOfRawData
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), debugFileOffsets[i]);                       // PointerToRawData
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0x42000040);           // Characteristics: INITIALIZED_DATA | DISCARDABLE | READ
+            secOff += PeSectionHeaderSize;
         }
 
         // Write section data
         Array.Copy(codeBytes, 0, output, (int)textFileOffset, codeBytes.Length);
         Array.Copy(rdataBytes, 0, output, (int)rdataFileOffset, rdataBytes.Length);
+        for (int i = 0; i < debugSectionCount; i++)
+        {
+            Array.Copy(parsed.DebugSections[i].Bytes, 0, output, (int)debugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
+        }
+
+        if (stringTableBytes.Length > 0)
+        {
+            Array.Copy(stringTableBytes, 0, output, (int)stringTableFileOffset, stringTableBytes.Length);
+        }
 
         return output;
     }
@@ -668,7 +749,71 @@ internal static partial class LlvmImageLinker
         CoffSectionHeader textSection = sections[textSectionIndex];
         byte[] textBytes = bytes.Slice(checked((int)textSection.PointerToRawData), checked((int)textSection.SizeOfRawData)).ToArray();
         int entryOffset = FindCoffSymbolOffset(bytes, symbolTableOffset, symbolCount, sections, entrySymbolName, textSectionIndex + 1);
-        return new ParsedCoffObject(textBytes, entryOffset, textSection, sections, symbolTableOffset, symbolCount, textSectionIndex + 1);
+
+        // Collect DWARF debug sections (present only for --debug compilations) so they can be
+        // carried into the final image for GDB.
+        var debugSections = new List<CoffDebugSection>();
+        for (int i = 0; i < sectionCount; i++)
+        {
+            if (sections[i].Name.StartsWith(".debug", StringComparison.Ordinal) && sections[i].SizeOfRawData > 0)
+            {
+                byte[] sectionBytes = bytes.Slice(checked((int)sections[i].PointerToRawData), checked((int)sections[i].SizeOfRawData)).ToArray();
+                debugSections.Add(new CoffDebugSection(sections[i].Name, i + 1, sectionBytes, sections[i]));
+            }
+        }
+
+        return new ParsedCoffObject(textBytes, entryOffset, textSection, sections, symbolTableOffset, symbolCount, textSectionIndex + 1, debugSections);
+    }
+
+    /// <summary>
+    /// Applies the relocations inside DWARF debug sections. LLVM emits two kinds there:
+    /// <c>IMAGE_REL_AMD64_SECREL</c> for section-relative DWARF references (offsets into
+    /// .debug_str, .debug_abbrev, ...) and <c>IMAGE_REL_AMD64_ADDR64</c> for code addresses
+    /// (.debug_addr entries). Debug sections keep zero-base semantics, so a SECREL value is
+    /// just the target symbol's offset within its section.
+    /// </summary>
+    private static void ApplyCoffDebugRelocations(
+        ReadOnlySpan<byte> bytes,
+        IReadOnlyList<CoffDebugSection> debugSections,
+        uint symbolTableOffset,
+        uint symbolCount,
+        int textSectionNumber,
+        IReadOnlyDictionary<int, ulong> sectionBaseVas,
+        IReadOnlyDictionary<string, ulong> importSymbolVas)
+    {
+        foreach (CoffDebugSection debugSection in debugSections)
+        {
+            CoffSectionHeader header = debugSection.Header;
+            for (int i = 0; i < header.NumberOfRelocations; i++)
+            {
+                int offset = checked((int)header.PointerToRelocations + i * 10);
+                uint relocationOffset = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4));
+                int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
+                ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
+                CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
+
+                switch (relocationType)
+                {
+                    case CoffRelocAmd64SecRel:
+                        {
+                            Span<byte> patch = debugSection.Bytes.AsSpan(checked((int)relocationOffset), 4);
+                            uint addend = BinaryPrimitives.ReadUInt32LittleEndian(patch);
+                            BinaryPrimitives.WriteUInt32LittleEndian(patch, checked(addend + symbol.Value));
+                        }
+                        break;
+                    case CoffRelocAmd64Addr64:
+                        {
+                            Span<byte> patch = debugSection.Bytes.AsSpan(checked((int)relocationOffset), 8);
+                            ulong addend = BinaryPrimitives.ReadUInt64LittleEndian(patch);
+                            ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+                            BinaryPrimitives.WriteUInt64LittleEndian(patch, checked(targetVa + addend));
+                        }
+                        break;
+                    default:
+                        throw new InvalidOperationException($"LLVM COFF emitted unsupported debug relocation type 0x{relocationType:X4} in {debugSection.Name}.");
+                }
+            }
+        }
     }
 
     private static void ApplyCoffTextRelocations(
@@ -851,14 +996,7 @@ internal static partial class LlvmImageLinker
         {
             int stringTableOffset = checked((int)(symbolTableOffset + symbolCount * 18));
             int nameOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(nameBytes[4..8]));
-            int start = stringTableOffset + nameOffset;
-            int end = start;
-            while (end < fileBytes.Length && fileBytes[end] != 0)
-            {
-                end++;
-            }
-
-            return Encoding.ASCII.GetString(fileBytes.Slice(start, end - start));
+            return ReadStringTableName(fileBytes, stringTableOffset + nameOffset);
         }
 
         int length = 0;
@@ -867,7 +1005,31 @@ internal static partial class LlvmImageLinker
             length++;
         }
 
+        // Section headers spell long names as "/<decimal offset into the string table>" —
+        // a different convention from the zero-prefixed symbol form above. DWARF section
+        // names (.debug_info, ...) all exceed 8 characters and use it.
+        if (length > 1 && nameBytes[0] == (byte)'/')
+        {
+            var digits = Encoding.ASCII.GetString(nameBytes[1..length]);
+            if (int.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int tableOffset))
+            {
+                int stringTableOffset = checked((int)(symbolTableOffset + symbolCount * 18));
+                return ReadStringTableName(fileBytes, stringTableOffset + tableOffset);
+            }
+        }
+
         return Encoding.ASCII.GetString(nameBytes[..length]);
+    }
+
+    private static string ReadStringTableName(ReadOnlySpan<byte> fileBytes, int start)
+    {
+        int end = start;
+        while (end < fileBytes.Length && fileBytes[end] != 0)
+        {
+            end++;
+        }
+
+        return Encoding.ASCII.GetString(fileBytes[start..end]);
     }
 
     private static byte[] BuildWindowsTrampoline(int entryOffsetInText, ulong exitProcessIatVa)
@@ -925,7 +1087,14 @@ internal static partial class LlvmImageLinker
         CoffSectionHeader[] Sections,
         uint SymbolTableOffset,
         uint SymbolCount,
-        int TextSectionNumber);
+        int TextSectionNumber,
+        IReadOnlyList<CoffDebugSection> DebugSections);
+
+    private readonly record struct CoffDebugSection(
+        string Name,
+        int SectionNumber,
+        byte[] Bytes,
+        CoffSectionHeader Header);
 
     private readonly record struct CoffSectionHeader(
         string Name,

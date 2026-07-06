@@ -123,6 +123,25 @@ internal static partial class LlvmImageLinker
             tlsBlockOffsets,
             tlsTprelBase);
 
+        // Patch DWARF section-internal relocations (str_offsets bases, abbrev/line offsets,
+        // .debug_addr entries). Debug sections are non-ALLOC and keep a zero base in the final
+        // image, so section-relative references resolve to raw offsets — same as the x64 linker.
+        var debugSectionBaseVas = new Dictionary<int, ulong>(laidOutData.SectionBaseVas);
+        foreach (var debugSection in parsed.DebugSections)
+        {
+            debugSectionBaseVas[debugSection.SectionIndex] = 0;
+        }
+
+        ApplyElfDebugRelocations(
+            objectBytes,
+            parsed.DebugSections,
+            parsed.DebugRelocationSections,
+            parsed.SymbolTable,
+            parsed.TextSectionIndex,
+            objectTextVa,
+            debugSectionBaseVas,
+            externalSymbolVas);
+
         byte[] codeBytes = BuildArm64Trampoline(parsed.EntryOffsetInText)
             .Concat(parsed.TextBytes)
             .Concat(importLayout.StubBytes)

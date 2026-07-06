@@ -160,6 +160,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetInsertBlock")]
     public static partial LlvmBasicBlockHandle GetInsertBlock(LlvmBuilderHandle builder);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMMoveBasicBlockAfter")]
+    public static partial void MoveBasicBlockAfter(LlvmBasicBlockHandle block, LlvmBasicBlockHandle movePosition);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeBuilder")]
     public static partial void DisposeBuilder(LlvmBuilderHandle builder);
 
