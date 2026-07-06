@@ -291,7 +291,7 @@ RAM. See [`README.md`](README.md) for how to reproduce.
 
 ---
 
-## #1 — No buffered or streaming file IO  — ✅ FIXED
+## #1 — No buffered or streaming file IO  — FIXED
 
 **Fix, part 1 (stdin):** `readLine`/`readExact` now read through a refillable 64 KB
 module-global buffer (`EmitReadLine`/`EmitReadExact`, `LlvmCodegenBuiltins.cs`;
@@ -332,7 +332,7 @@ cost before any computation happens. (Per-line cap is 64 KiB,
 **Impact:** even a correct run is bottlenecked on per-byte syscalls; there is no
 API to read a megabyte at a time.
 
-## #1b — Compiler bug: a `readLine` loop segfaults after a few hundred lines  — ✅ FIXED
+## #1b — Compiler bug: a `readLine` loop segfaults after a few hundred lines  — FIXED
 
 **Fix:** `readLine`'s 64 KB line buffer and scratch slots are now reused module
 globals (`.bss`) instead of a per-call stack `alloca`
@@ -410,7 +410,7 @@ grows monotonically and OOMs (`panic("failed to allocate heap memory from OS")`)
 long before a billion rows. No scalar accumulator can hold per-station state, so
 there is no way to keep the loop in the arena-resettable regime.
 
-## #3 — No mutable or hash-based accumulator  — ✅ FIXED (for the fold)
+## #3 — No mutable or hash-based accumulator  — FIXED (for the fold)
 
 **Fix (the hashing half):** added `Ashes.Bytes.hash` (64-bit FNV-1a intrinsic) and a
 new shipped module `Ashes.HashMap` (`lib/Ashes/HashMap.ash`) — a persistent map keyed
@@ -436,7 +436,7 @@ persistent tree, not a flat buffer (`docs/md/reference/standard-library.md:138`)
 `Node` allocations**, every read being read-modify-write (a `get` *and* a `set`).
 There is no O(1) update available.
 
-## #4 — A correct String ordering is not constructible  — ✅ FIXED
+## #4 — A correct String ordering is not constructible  — FIXED
 
 **Fix:** added the intrinsic `Ashes.Bytes.fromText(text) : Bytes` (an O(1) identity
 reinterpret — `Str` and `Bytes` share the `[len][bytes]` layout) and the stdlib
@@ -474,7 +474,7 @@ made correct for the real input without language/stdlib additions.
 
 ---
 
-## #5 — No data parallelism for CPU work  — ✅ FIXED
+## #5 — No data parallelism for CPU work  — FIXED
 
 **1BRC needs:** to shard the file across cores. `Ashes.Async` is for IO/networking
 tasks (`Task`/`await`), not data-parallel CPU work.
@@ -487,7 +487,7 @@ data-parallel `map`/`reduce` (`CO-1`) landed. brc is now sharded across cores: `
 splits the file into per-core chunks and folds each on a worker (`CO-14`), constant-memory per worker
 (`CO-10`) — running the full 1e9-row challenge in ~2m36s.
 
-## #6 — Compiler bug: a shipped-module reference inside a function body fails to resolve  — ✅ FIXED
+## #6 — Compiler bug: a shipped-module reference inside a function body fails to resolve  — FIXED
 
 **Fix:** `FreeVars` (`src/Ashes.Semantics/Lowering.cs`) now treats a `QualifiedVar`
 that resolves to a stitched shipped/user-module binding (`Ashes_String_indexOf`, …)
