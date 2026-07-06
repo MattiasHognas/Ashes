@@ -22,7 +22,8 @@ internal static partial class LlvmCodegen
         public bool IsOptimized { get; }
 
         private readonly Dictionary<string, LlvmMetadataHandle> _fileCache = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, LlvmMetadataHandle> _subprograms = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (LlvmMetadataHandle Subprogram, string? FilePath)> _subprograms = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string Label, string FilePath), LlvmMetadataHandle> _lexicalBlockFiles = new();
         private readonly Dictionary<string, LlvmMetadataHandle> _typeCache = new(StringComparer.Ordinal);
 
         public DebugInfoContext(
@@ -162,20 +163,52 @@ internal static partial class LlvmCodegen
         }
 
         public LlvmMetadataHandle CreateSubprogram(
-            string name, string linkageName, LlvmMetadataHandle file, uint line)
+            string name, string linkageName, LlvmMetadataHandle file, uint line, string? filePath)
         {
             var sp = LlvmApi.DIBuilderCreateFunction(
                 DIBuilder, CompileUnit,
                 name, linkageName, file,
                 line, SubroutineType,
                 isOptimized: IsOptimized);
-            _subprograms[linkageName] = sp;
+            _subprograms[linkageName] = (sp, filePath);
             return sp;
         }
 
         public LlvmMetadataHandle? GetSubprogram(string linkageName)
         {
-            return _subprograms.TryGetValue(linkageName, out var sp) ? sp : null;
+            return _subprograms.TryGetValue(linkageName, out var entry) ? entry.Subprogram : null;
+        }
+
+        /// <summary>
+        /// Returns the debug scope for an instruction at <paramref name="filePath"/> inside the
+        /// function <paramref name="linkageName"/>. When the instruction's file differs from the
+        /// subprogram's own file (module-stitched compilations mix files within one function), the
+        /// subprogram scope is wrapped in a DILexicalBlockFile so the DWARF line table records the
+        /// instruction's real file rather than inheriting the subprogram's.
+        /// </summary>
+        public LlvmMetadataHandle? GetScopeForFile(string linkageName, string? filePath)
+        {
+            if (!_subprograms.TryGetValue(linkageName, out var entry))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(filePath)
+                || string.Equals(filePath, entry.FilePath, StringComparison.Ordinal))
+            {
+                return entry.Subprogram;
+            }
+
+            var key = (linkageName, filePath);
+            if (_lexicalBlockFiles.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var scope = LlvmApi.DIBuilderCreateLexicalBlockFile(
+                DIBuilder, entry.Subprogram, GetOrCreateFile(filePath), 0);
+            _lexicalBlockFiles[key] = scope;
+            return scope;
         }
 
         public void SetDebugLocation(LlvmBuilderHandle builder, SourceLocation loc, LlvmMetadataHandle scope)
@@ -211,11 +244,13 @@ internal static partial class LlvmCodegen
             return null;
         }
 
-        // Determine default file from first instruction with a source location
+        // Determine default file from the first instruction located in a real source file;
+        // stitched module pseudo-files ("<std:...>") only name the compile unit when nothing
+        // better exists.
         string defaultFileName = "main.ash";
         string defaultDirectory = ".";
 
-        var firstLoc = FindFirstSourceLocation(program);
+        var firstLoc = FindFirstUserSourceLocation(program) ?? FindFirstSourceLocation(program);
         if (firstLoc is not null)
         {
             defaultFileName = Path.GetFileName(firstLoc.Value.FilePath);
@@ -224,6 +259,30 @@ internal static partial class LlvmCodegen
 
         return new DebugInfoContext(target, defaultFileName, defaultDirectory,
             isOptimized: options.OptimizationLevel > Backends.BackendOptimizationLevel.O0);
+    }
+
+    private static SourceLocation? FindFirstUserSourceLocation(IrProgram program)
+    {
+        foreach (var inst in program.EntryFunction.Instructions)
+        {
+            if (inst.Location is { } loc && !loc.FilePath.StartsWith('<'))
+            {
+                return loc;
+            }
+        }
+
+        foreach (var func in program.Functions)
+        {
+            foreach (var inst in func.Instructions)
+            {
+                if (inst.Location is { } loc && !loc.FilePath.StartsWith('<'))
+                {
+                    return loc;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static SourceLocation? FindFirstSourceLocation(IrProgram program)
@@ -274,7 +333,7 @@ internal static partial class LlvmCodegen
             ? function.Label
             : function.Label.Replace("_start_", "", StringComparison.Ordinal);
 
-        var sp = dbg.CreateSubprogram(displayName, function.Label, file, line);
+        var sp = dbg.CreateSubprogram(displayName, function.Label, file, line, firstLoc?.FilePath);
         LlvmApi.SetSubprogram(llvmFunction, sp);
     }
 
@@ -289,12 +348,14 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        var scope = dbg.GetSubprogram(functionLabel);
-        if (instruction.Location is { } loc && scope is not null)
+        if (instruction.Location is { } loc && dbg.GetScopeForFile(functionLabel, loc.FilePath) is { } fileScope)
         {
-            dbg.SetDebugLocation(builder, loc, scope.Value);
+            dbg.SetDebugLocation(builder, loc, fileScope);
+            return;
         }
-        else if (scope is not null)
+
+        var scope = dbg.GetSubprogram(functionLabel);
+        if (scope is not null)
         {
             // LLVM's verifier and inliner require every call to a function that carries debug info to
             // carry a !dbg location itself; at -O2/-O3 the inliner also stitches each inlined

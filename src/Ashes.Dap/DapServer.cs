@@ -4,8 +4,10 @@ namespace Ashes.Dap;
 
 /// <summary>
 /// Debug Adapter Protocol server for Ashes. Communicates with the IDE
-/// (VS Code) over stdin/stdout and delegates to a native debugger:
-/// GDB via the Machine Interface protocol, or LLDB via its lldb-dap adapter.
+/// (VS Code) over stdin/stdout and delegates to a native debugger
+/// subprocess driven over its own DAP interpreter
+/// (<c>gdb --interpreter=dap</c> or <c>lldb-dap</c>), adding Ashes-aware
+/// value formatting on top.
 /// </summary>
 public sealed class DapServer : IDisposable
 {

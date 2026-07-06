@@ -715,6 +715,13 @@ internal static partial class LlvmApi
         return DIBuilderCreateBasicType(builder, name, (nint)name.Length, sizeInBits, encoding, 0);
     }
 
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateLexicalBlockFile")]
+    public static partial LlvmMetadataHandle DIBuilderCreateLexicalBlockFile(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        LlvmMetadataHandle file,
+        uint discriminator);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateTypedef", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmMetadataHandle DIBuilderCreateTypedef(
         LlvmDIBuilderHandle builder,

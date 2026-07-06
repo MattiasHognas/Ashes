@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -52,17 +51,16 @@ public sealed partial class Lowering
         if (_lineStarts is not null && _currentSourceExpr is not null)
         {
             var span = AstSpans.GetOrDefault(_currentSourceExpr);
-            if (span.Length > 0 || span.Start > 0)
+            if ((span.Length > 0 || span.Start > 0) && ResolveSourceLocation(span.Start) is { } resolved)
             {
-                var (filePath, line, column) = ResolveSourceLocation(span.Start);
-                inst = inst with { Location = new SourceLocation(filePath, line, column) };
+                inst = inst with { Location = new SourceLocation(resolved.FilePath, resolved.Line, resolved.Column) };
             }
         }
 
         _inst.Add(inst);
     }
 
-    private (string FilePath, int Line, int Column) ResolveSourceLocation(int absolutePosition)
+    private (string FilePath, int Line, int Column)? ResolveSourceLocation(int absolutePosition)
     {
         // Multi-file resolution: find which module the position falls in
         if (_moduleOffsets is not null)
@@ -81,6 +79,12 @@ public sealed partial class Lowering
                     }
                 }
             }
+
+            // The position falls in stitching glue between module regions (boundary bindings,
+            // wrapping parentheses). Mapping it against the combined source would attribute a
+            // nonsense line to the entry file, so leave the instruction unlocated — the backend
+            // gives it the artificial line-0 location DWARF uses for compiler-generated code.
+            return null;
         }
 
         // Single-file fallback
