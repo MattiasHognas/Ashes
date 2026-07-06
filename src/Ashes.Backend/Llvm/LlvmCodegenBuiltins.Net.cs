@@ -177,6 +177,8 @@ internal static partial class LlvmCodegen
         DeclareRuntimeFunction("ashes_step_task_until_wait_or_done", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_wait_pending_task_list", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_run_detached", LlvmApi.FunctionType(i64, []));
+        DeclareRuntimeFunction("ashes_ready_enqueue", LlvmApi.FunctionType(i64, [i64]));
+        DeclareRuntimeFunction("ashes_ready_dequeue", LlvmApi.FunctionType(i64, []));
         DeclareRuntimeFunction("ashes_detached_wait_meta", LlvmApi.FunctionType(i64, []));
         DeclareRuntimeFunction("ashes_detached_advance_timers", LlvmApi.FunctionType(i64, [i64]));
         if (flavor == LlvmCodegenFlavor.WindowsX64)
@@ -321,6 +323,16 @@ internal static partial class LlvmCodegen
             "ashes_run_detached",
             LlvmApi.FunctionType(i64, []),
             (state, fn) => EmitRunDetachedBody(state));
+
+        EmitRuntimeFunction(
+            "ashes_ready_enqueue",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitReadyEnqueueBody(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
+            "ashes_ready_dequeue",
+            LlvmApi.FunctionType(i64, []),
+            (state, fn) => EmitReadyDequeueBody(state));
 
         EmitRuntimeFunction(
             "ashes_detached_wait_meta",

@@ -1683,6 +1683,83 @@ internal static partial class LlvmCodegen
     private static bool DetachedRuntimeAvailable(LlvmCodegenState state) =>
         LlvmApi.GetNamedFunction(state.Target.Module, "ashes_run_detached").Ptr != 0;
 
+    // Run-queue scheduler (see docs/md/future/ASYNC_SCHEDULER.md). The ready queue is an intrusive
+    // FIFO of task structs linked through TaskStructLayout.ReadyNext, with head/tail globals.
+    private static LlvmValueHandle ReadyQueueHeadGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_ready_head", state.I64);
+
+    private static LlvmValueHandle ReadyQueueTailGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_ready_tail", state.I64);
+
+    /// <summary>
+    /// Body of <c>ashes_ready_enqueue(task)</c>: append a task to the tail of the run queue. Sets the
+    /// task's <c>ReadyNext</c> to 0 and links it after the current tail (or as the head when empty).
+    /// </summary>
+    private static LlvmValueHandle EmitReadyEnqueueBody(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = ReadyQueueHeadGlobal(state);
+        LlvmValueHandle tailGlobal = ReadyQueueTailGlobal(state);
+
+        StoreMemory(state, taskPtr, TaskStructLayout.ReadyNext, LlvmApi.ConstInt(state.I64, 0, 0), "enq_clear_next");
+
+        LlvmBasicBlockHandle emptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "enq_empty");
+        LlvmBasicBlockHandle appendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "enq_append");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "enq_done");
+
+        LlvmValueHandle tail = LlvmApi.BuildLoad2(builder, state.I64, tailGlobal, "enq_tail");
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, tail, LlvmApi.ConstInt(state.I64, 0, 0), "enq_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, emptyBlock, appendBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
+        LlvmApi.BuildStore(builder, taskPtr, headGlobal);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, appendBlock);
+        StoreMemory(state, tail, TaskStructLayout.ReadyNext, taskPtr, "enq_link");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmApi.BuildStore(builder, taskPtr, tailGlobal);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_ready_dequeue()</c>: pop and return the head task of the run queue, or 0 when
+    /// the queue is empty. Clears the tail global when the queue becomes empty.
+    /// </summary>
+    private static LlvmValueHandle EmitReadyDequeueBody(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headGlobal = ReadyQueueHeadGlobal(state);
+        LlvmValueHandle tailGlobal = ReadyQueueTailGlobal(state);
+
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "deq_result_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+        LlvmBasicBlockHandle popBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "deq_pop");
+        LlvmBasicBlockHandle clearTailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "deq_clear_tail");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "deq_done");
+
+        LlvmValueHandle head = LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "deq_head");
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, head, LlvmApi.ConstInt(state.I64, 0, 0), "deq_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, doneBlock, popBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, popBlock);
+        LlvmApi.BuildStore(builder, head, resultSlot);
+        LlvmValueHandle next = LoadMemory(state, head, TaskStructLayout.ReadyNext, "deq_next");
+        LlvmApi.BuildStore(builder, next, headGlobal);
+        LlvmValueHandle nextEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, next, LlvmApi.ConstInt(state.I64, 0, 0), "deq_next_empty");
+        LlvmApi.BuildCondBr(builder, nextEmpty, clearTailBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, clearTailBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), tailGlobal);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "deq_result");
+    }
+
     private static LlvmValueHandle EmitSpawnTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
