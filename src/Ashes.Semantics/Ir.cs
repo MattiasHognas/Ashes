@@ -727,7 +727,8 @@ public static class TaskStructLayout
     public const int ArenaEnd = 112;       // detached task's private arena end; 0 unless spawned (i64)
     public const int ReadyNext = 120;      // run-queue "next ready task" link (i64); run-queue scheduler
     public const int Waiter = 128;         // task blocked on this task's completion, re-enqueued on it (i64)
-    public const int HeaderSize = 136;     // total header size in bytes
+    public const int ArenaOwner = 136;     // nearest spawned-ancestor whose arena this task shares; 0 = global (i64)
+    public const int HeaderSize = 144;     // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 

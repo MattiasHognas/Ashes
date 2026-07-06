@@ -189,9 +189,28 @@ Options to resolve (pick before coding the loop):
 3. **Never free on completion; rely on reactor-lifetime arenas.** Simplest, but reintroduces unbounded
    growth for long-lived reactors — rejected (the whole point of private-arena reaping is bounded RSS).
 
-Leaning toward (2): it preserves today's zero-copy `await` fast path and localizes the copy to the
-spawned→reactor boundary that already exists. The loop, the `Waiter` delivery, and `handle_complete`
-must be specified against whichever option is chosen.
+**Chosen: option (2).** It is the performance winner — it keeps every `await` zero-copy (a typical
+handler awaits 4+ times per request; option 1 would add a deep result copy-out at each, i.e. millions
+of avoidable copies/second at server throughput), and localizes the one required copy to the
+spawned→reactor boundary that already exists today. The loop, `Waiter` delivery, and `handle_complete`
+are specified against this:
+
+- **Sub-tasks** (created by an `await`, incl. `all`/`race` children) allocate in and are stepped with
+  the **awaiter's** installed arena — never freed on completion; their result is already in the
+  awaiter's arena, so delivery to the `Waiter` is a pointer store, zero-copy.
+- **Spawned tasks** keep their private arena (`EmitSpawnTask`), installed around each of their steps
+  exactly as `ashes_run_detached` does today, and reaped on completion. A spawned task's result
+  crosses into the reactor only where the reactor consumes it, and is deep-copied out there (reusing
+  the existing arena copy-out machinery) before the private arena is freed.
+
+Because sub-tasks are stepped **independently** (not nested on the parent's stack), "the awaiter's
+arena" must be recoverable at step time. So each task carries an **`ArenaOwner`** header pointer: the
+nearest spawned-ancestor task whose private `ArenaCursor`/`ArenaEnd` it shares (0 = the global arena,
+used by the main task and its sub-tasks). It propagates on creation — a newly created sub-task
+inherits its creator's `ArenaOwner`; a spawned task is its own owner. The scheduler installs
+`ArenaOwner`'s cursor around each step and writes the grown cursor back, so all tasks sharing an owner
+allocate through one cursor. `ArenaOwner` is distinct from `Waiter`: an `all`/`race` child's waiter is
+the composite task, but its arena owner is the enclosing spawned handler.
 
 ---
 
