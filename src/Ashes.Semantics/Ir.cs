@@ -766,6 +766,20 @@ public static class TaskStructLayout
     public const long StateTlsClose = -23;
     /// <summary>State index value indicating a leaf server-side TLS handshake task.</summary>
     public const long StateTlsServerHandshake = -24;
+    /// <summary>
+    /// Run-queue composite task: <c>Ashes.Async.all</c>. Holds the child task list in <c>IoArg0</c>,
+    /// a phase flag in <c>IoArg1</c> (0 = children not yet enqueued, 1 = enqueued), and a pending
+    /// child counter in <c>WaitData0</c> (decremented by each child's completion; the composite is
+    /// re-enqueued and collects results when it reaches 0).
+    /// </summary>
+    public const long StateAllComposite = -40;
+    /// <summary>
+    /// Run-queue composite task: <c>Ashes.Async.race</c>. Holds the child list in <c>IoArg0</c>, a
+    /// phase flag in <c>IoArg1</c>, and a resolved flag in <c>WaitData0</c> (0 until the first child
+    /// completes, whose result is delivered to the composite's <c>ResultSlot</c> and which re-enqueues
+    /// the composite; later child completions are ignored).
+    /// </summary>
+    public const long StateRaceComposite = -41;
 
     /// <summary>No pending wait is registered for the task.</summary>
     public const long WaitNone = 0;

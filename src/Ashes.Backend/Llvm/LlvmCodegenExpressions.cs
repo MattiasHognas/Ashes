@@ -1836,6 +1836,87 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Steps an <c>all</c> / <c>race</c> composite task. First step (phase 0): enqueue every child with
+    /// <c>Waiter</c> = this composite and the composite's <c>ArenaOwner</c>, record the child count, and
+    /// return pending (the scheduler drops the composite; each child completion decrements the counter —
+    /// or, for race, delivers the first result — and re-enqueues the composite). Later step (phase 1):
+    /// the composite is runnable because all children finished (all) or the first finished (race), so it
+    /// collects the result and completes, delivering to its own waiter. Returns 1 = complete, 0 = pending.
+    /// </summary>
+    private static LlvmValueHandle EmitStepComposite(LlvmCodegenState state, LlvmValueHandle task, bool isRace, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_status");
+        LlvmApi.BuildStore(builder, zero, statusSlot);
+
+        LlvmBasicBlockHandle enqueueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_enqueue");
+        LlvmBasicBlockHandle phase1Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_phase1");
+        LlvmBasicBlockHandle emptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_empty");
+        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, task, TaskStructLayout.IoArg1, prefix + "_phase"), zero, prefix + "_is_phase0"), enqueueBlock, phase1Block);
+
+        // Phase 0: enqueue all children linked back to this composite.
+        LlvmApi.PositionBuilderAtEnd(builder, enqueueBlock);
+        StoreMemory(state, task, TaskStructLayout.IoArg1, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_set_phase1");
+        LlvmValueHandle owner = LoadMemory(state, task, TaskStructLayout.ArenaOwner, prefix + "_owner");
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cursor");
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count");
+        LlvmApi.BuildStore(builder, LoadMemory(state, task, TaskStructLayout.IoArg0, prefix + "_list"), cursorSlot);
+        LlvmApi.BuildStore(builder, zero, countSlot);
+        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
+        LlvmBasicBlockHandle afterLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_loop");
+        LlvmApi.BuildBr(builder, loopBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, prefix + "_cur");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, zero, prefix + "_loop_end"), afterLoopBlock, bodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle child = LoadMemory(state, cur, 0, prefix + "_child");
+        LlvmApi.BuildStore(builder, LoadMemory(state, cur, 8, prefix + "_tail"), cursorSlot);
+        StoreMemory(state, child, TaskStructLayout.Waiter, task, prefix + "_child_waiter");
+        StoreMemory(state, child, TaskStructLayout.ArenaOwner, owner, prefix + "_child_owner");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [child], prefix + "_enqueue_child");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_count_cur"), LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_count_inc"), countSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterLoopBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_final_count");
+        // all: WaitData0 is the pending-child counter. race: it is the resolved flag, initially 0.
+        StoreMemory(state, task, TaskStructLayout.WaitData0, isRace ? zero : count, prefix + "_store_counter");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count, zero, prefix + "_is_empty"), emptyBlock, pendingBlock);
+
+        // Empty child list: collect immediately (Ok([]) for all, unit for race).
+        LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
+        LlvmValueHandle emptyResult = isRace
+            ? LoadMemory(state, EmitAsyncRaceInline(state, LoadMemory(state, task, TaskStructLayout.IoArg0, prefix + "_empty_list")), TaskStructLayout.ResultSlot, prefix + "_empty_race_result")
+            : LoadMemory(state, EmitAsyncAllInline(state, LoadMemory(state, task, TaskStructLayout.IoArg0, prefix + "_empty_list_all")), TaskStructLayout.ResultSlot, prefix + "_empty_all_result");
+        StoreMemory(state, task, TaskStructLayout.ResultSlot, emptyResult, prefix + "_empty_store");
+        StoreMemory(state, task, TaskStructLayout.StateIndex, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_empty_done");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
+        LlvmApi.BuildStore(builder, zero, statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        // Phase 1: children finished; collect. all -> rebuild the ordered result list; race -> the first
+        // child's result is already in ResultSlot (delivered by the completion path).
+        LlvmApi.PositionBuilderAtEnd(builder, phase1Block);
+        if (!isRace)
+        {
+            StoreMemory(state, task, TaskStructLayout.ResultSlot, LoadMemory(state, EmitAsyncAllInline(state, LoadMemory(state, task, TaskStructLayout.IoArg0, prefix + "_p1_list")), TaskStructLayout.ResultSlot, prefix + "_p1_all_result"), prefix + "_p1_store");
+        }
+        StoreMemory(state, task, TaskStructLayout.StateIndex, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_p1_done");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), statusSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, prefix + "_status_result");
+    }
+
+    /// <summary>
     /// Body of <c>ashes_scheduler_run(mainTask)</c>: the flat run-queue loop. Seeds the queue with the
     /// main task, then repeatedly pops a ready task and steps it once. A leaf that completes, or a
     /// coroutine that returns COMPLETED, delivers its result to its <c>Waiter</c> (clearing the waiter's
@@ -1875,6 +1956,17 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle deliverBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_deliver");
         LlvmBasicBlockHandle noWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_no_waiter");
         LlvmBasicBlockHandle reapBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reap");
+        LlvmBasicBlockHandle leafCoroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_leaf_coro");
+        LlvmBasicBlockHandle compositeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_composite");
+        LlvmBasicBlockHandle allStepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_all_step");
+        LlvmBasicBlockHandle raceStepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_step");
+        LlvmBasicBlockHandle compAfterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_comp_after");
+        LlvmBasicBlockHandle allWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_all_waiter");
+        LlvmBasicBlockHandle notAllWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_not_all_waiter");
+        LlvmBasicBlockHandle enqueueCompositeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_enqueue_composite");
+        LlvmBasicBlockHandle raceWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_waiter");
+        LlvmBasicBlockHandle raceFirstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_first");
+        LlvmBasicBlockHandle normalWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_normal_waiter");
 
         LlvmApi.BuildBr(builder, loopBlock);
 
@@ -1901,7 +1993,30 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, completedConst, "sched_is_done"), completeBlock, notDoneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, notDoneBlock);
+        LlvmValueHandle isRaceComposite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateRaceComposite), 1), "sched_is_race_comp");
+        LlvmValueHandle isComposite = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateAllComposite), 1), "sched_is_all_comp"),
+            isRaceComposite, "sched_is_composite");
+        LlvmApi.BuildCondBr(builder, isComposite, compositeBlock, leafCoroBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, leafCoroBlock);
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, "sched_is_leaf"), leafBlock, coroBlock);
+
+        // Composite (all/race): install its arena, step it, and complete or drop (a child completion
+        // re-enqueues it) — see EmitStepComposite.
+        LlvmApi.PositionBuilderAtEnd(builder, compositeBlock);
+        LlvmValueHandle compStatusSlot = LlvmApi.BuildAlloca(builder, state.I64, "sched_comp_status_slot");
+        (LlvmValueHandle compOwner, LlvmValueHandle compSavedCursor, LlvmValueHandle compSavedEnd) = EmitInstallTaskArena(state, task, "sched_comp");
+        LlvmApi.BuildCondBr(builder, isRaceComposite, raceStepBlock, allStepBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, allStepBlock);
+        LlvmApi.BuildStore(builder, EmitStepComposite(state, task, isRace: false, "sched_all"), compStatusSlot);
+        LlvmApi.BuildBr(builder, compAfterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, raceStepBlock);
+        LlvmApi.BuildStore(builder, EmitStepComposite(state, task, isRace: true, "sched_race"), compStatusSlot);
+        LlvmApi.BuildBr(builder, compAfterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, compAfterBlock);
+        EmitRestoreTaskArena(state, compOwner, compSavedCursor, compSavedEnd, "sched_comp");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildLoad2(builder, state.I64, compStatusSlot, "sched_comp_status"), zero, "sched_comp_complete"), completeBlock, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
         (LlvmValueHandle leafOwner, LlvmValueHandle leafSavedCursor, LlvmValueHandle leafSavedEnd) = EmitInstallTaskArena(state, task, "sched_leaf");
@@ -1938,10 +2053,36 @@ internal static partial class LlvmCodegen
         LlvmValueHandle waiter = LoadMemory(state, completedTask, TaskStructLayout.Waiter, "sched_waiter");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "sched_has_waiter"), deliverBlock, noWaiterBlock);
 
-        // A waiter resumes with the completed task's result. (A spawned root task delivered here keeps
-        // its arena — no copy-out yet — so an awaited spawn currently leaks; fire-and-forget spawns,
-        // the server case, take the no-waiter path and are reaped.)
+        // Deliver to the waiter. A normal coroutine waiter resumes with the result. A composite waiter
+        // is different: an all-composite only decrements its pending counter (and is enqueued once, when
+        // it reaches 0 — it reads its children directly); a race-composite takes the first child's result
+        // and is enqueued once. (A spawned root task delivered here keeps its arena — no copy-out yet —
+        // so an awaited spawn currently leaks; fire-and-forget spawns take the no-waiter path and reap.)
         LlvmApi.PositionBuilderAtEnd(builder, deliverBlock);
+        LlvmValueHandle waiterState = LoadMemory(state, waiter, TaskStructLayout.StateIndex, "sched_waiter_state");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waiterState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateAllComposite), 1), "sched_waiter_is_all"), allWaiterBlock, notAllWaiterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, allWaiterBlock);
+        LlvmValueHandle newCounter = LlvmApi.BuildSub(builder, LoadMemory(state, waiter, TaskStructLayout.WaitData0, "sched_all_counter"), LlvmApi.ConstInt(state.I64, 1, 0), "sched_all_counter_dec");
+        StoreMemory(state, waiter, TaskStructLayout.WaitData0, newCounter, "sched_all_counter_store");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, newCounter, zero, "sched_all_ready"), enqueueCompositeBlock, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, notAllWaiterBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waiterState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateRaceComposite), 1), "sched_waiter_is_race"), raceWaiterBlock, normalWaiterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, raceWaiterBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, waiter, TaskStructLayout.WaitData0, "sched_race_resolved"), zero, "sched_race_unresolved"), raceFirstBlock, loopBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, raceFirstBlock);
+        StoreMemory(state, waiter, TaskStructLayout.ResultSlot, LoadMemory(state, completedTask, TaskStructLayout.ResultSlot, "sched_race_result"), "sched_race_deliver");
+        StoreMemory(state, waiter, TaskStructLayout.WaitData0, LlvmApi.ConstInt(state.I64, 1, 0), "sched_race_mark_resolved");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_race_enqueue");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, enqueueCompositeBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_all_enqueue");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, normalWaiterBlock);
         StoreMemory(state, waiter, TaskStructLayout.ResultSlot, LoadMemory(state, completedTask, TaskStructLayout.ResultSlot, "sched_completed_result"), "sched_deliver_result");
         StoreMemory(state, waiter, TaskStructLayout.AwaitedTask, zero, "sched_clear_awaited");
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_enqueue_waiter");
@@ -2748,7 +2889,44 @@ internal static partial class LlvmCodegen
     ///   3. Wrap the result list in a completed task.
     /// All blocks are inlined in the caller's function.
     /// </summary>
+    // Allocates a run-queue composite task (StateAllComposite / StateRaceComposite) holding the child
+    // task list in IoArg0; the scheduler drives it (enqueues children, collects on completion). The
+    // ArenaOwner is left 0 here and set when the awaiting coroutine suspends on it.
+    private static LlvmValueHandle EmitCreateCompositeTask(LlvmCodegenState state, LlvmValueHandle taskListPtr, long compositeState)
+    {
+        LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        StoreMemory(state, taskPtr, TaskStructLayout.StateIndex, LlvmApi.ConstInt(state.I64, unchecked((ulong)compositeState), 1), "comp_state");
+        StoreMemory(state, taskPtr, TaskStructLayout.CoroutineFn, zero, "comp_fn");
+        StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, zero, "comp_result");
+        StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask, zero, "comp_awaited");
+        StoreMemory(state, taskPtr, TaskStructLayout.NextTask, zero, "comp_next");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg0, taskListPtr, "comp_list");
+        StoreMemory(state, taskPtr, TaskStructLayout.IoArg1, zero, "comp_phase");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, zero, "comp_counter");
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, zero, "comp_wait_kind");
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes, LlvmApi.ConstInt(state.I64, TaskStructLayout.HeaderSize, 0), "comp_frame");
+        StoreMemory(state, taskPtr, TaskStructLayout.ReadyNext, zero, "comp_ready_next");
+        StoreMemory(state, taskPtr, TaskStructLayout.Waiter, zero, "comp_waiter");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaOwner, zero, "comp_owner");
+        return taskPtr;
+    }
+
     private static LlvmValueHandle EmitAsyncAll(LlvmCodegenState state, LlvmValueHandle taskListPtr)
+    {
+        // Run-queue mode: a parking composite so a spawned handler's Async.all does not block peers.
+        if (state.UseRunQueueScheduler)
+        {
+            return EmitCreateCompositeTask(state, taskListPtr, TaskStructLayout.StateAllComposite);
+        }
+
+        return EmitAsyncAllInline(state, taskListPtr);
+    }
+
+    // Inline, blocking Async.all: drives all children to completion (ashes_wait_pending_task_list) and
+    // returns a completed task holding Ok(list) or the first failure. Used off the run-queue scheduler
+    // (legacy driver) and by the all-composite step to collect once every child has completed.
+    private static LlvmValueHandle EmitAsyncAllInline(LlvmCodegenState state, LlvmValueHandle taskListPtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
@@ -2888,6 +3066,17 @@ internal static partial class LlvmCodegen
     /// All blocks are inlined in the caller's function.
     /// </summary>
     private static LlvmValueHandle EmitAsyncRace(LlvmCodegenState state, LlvmValueHandle taskListPtr)
+    {
+        // Run-queue mode: a parking composite so a spawned handler's Async.race does not block peers.
+        if (state.UseRunQueueScheduler)
+        {
+            return EmitCreateCompositeTask(state, taskListPtr, TaskStructLayout.StateRaceComposite);
+        }
+
+        return EmitAsyncRaceInline(state, taskListPtr);
+    }
+
+    private static LlvmValueHandle EmitAsyncRaceInline(LlvmCodegenState state, LlvmValueHandle taskListPtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
