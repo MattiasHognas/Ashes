@@ -1090,6 +1090,77 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_decode_a_chunked_request_body()
+    {
+        // Transfer-Encoding: chunked request body — decoded and echoed. Also split across two writes so
+        // the second read parks, exercising cross-read chunk buffering.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let onReq req = async(Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_chunked_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (true)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                    await using var stream = client.GetStream();
+                    var head = Encoding.ASCII.GetBytes("POST /e HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nWiki\r\n");
+                    await stream.WriteAsync(head).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                    await Task.Delay(200);
+                    var tail = Encoding.ASCII.GetBytes("5\r\npedia\r\n0\r\n\r\n");
+                    await stream.WriteAsync(tail).AsTask().WaitAsync(SocketTestConstants.SocketTimeout);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    var reply = (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout)).Trim();
+                    reply.ShouldEndWith("body=Wikipedia");
+                    break;
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50);
+                }
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_serve_parallel_should_serve_across_workers()
     {
         // serveParallel forks an explicit number of independent reactor processes that each bind the

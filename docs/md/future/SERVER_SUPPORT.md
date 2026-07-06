@@ -317,7 +317,8 @@ transport is that HTTPS falls out without a second handler model.
 - HTTP/1.1 **keep-alive** and **cross-read buffering**: the connection is reused for successive
   requests; reads are buffered until a full request (headers + `Content-Length` bytes of body) is
   available, so bodies larger than one read and slow/split requests work. Closes on
-  `Connection: close`, handler failure, or peer disconnect.
+  `Connection: close`, handler failure, or peer disconnect. Request bodies may be framed by
+  `Content-Length` or `Transfer-Encoding: chunked` (chunk extensions ignored, trailers unsupported).
 - Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
@@ -351,8 +352,8 @@ transport is that HTTPS falls out without a second handler model.
   incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
   baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
   Windows detached poll array is capped at 256 fds per round.
-- `Ashes.Http.Server` chunked transfer-encoding request bodies (a request body is sized by
-  `Content-Length` today) and streaming/incremental request or response bodies.
+- `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
+  today, whether Content-Length- or chunked-framed).
 - Graceful shutdown wiring (see open questions).
 
 ---

@@ -5,8 +5,8 @@
 // when the peer disconnects). Pure Ashes over the TCP layer, so it works on every target the TCP
 // server does. Reads are buffered until a full request has arrived (headers complete and
 // Content-Length bytes of body), so requests larger than one read and slow/split requests work.
-// Chunked transfer-encoding request bodies are not supported — a body must be sized by
-// Content-Length. See docs/md/future/SERVER_SUPPORT.md for what remains.
+// Request bodies may be sized by Content-Length or Transfer-Encoding: chunked (chunk
+// extensions ignored, trailers not supported). See docs/md/future/SERVER_SUPPORT.md for what remains.
 //
 // ADT field types must be simple type names, so a request keeps its headers as the raw header block
 // (a Str) and a response keeps its extra headers as a pre-rendered "Name: value\r\n..." block; the
@@ -27,6 +27,10 @@ type HttpResponse =
 type HttpParse =
     | HttpNeedMore
     | HttpParsed(HttpRequest, Bool, Str)
+
+type ChunkResult =
+    | ChunkNeedMore
+    | ChunkDone(Str, Int)
 
 let method req = 
     match req with
@@ -161,6 +165,58 @@ let keepAliveOf headerBlock version =
             then false
             else true
 
+let recursive parseHexRange bytes pos endPos acc = 
+    if pos >= endPos
+    then acc
+    else 
+        let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(pos))
+        in 
+            let d = 
+                if b >= 48
+                then 
+                    if b <= 57
+                    then b - 48
+                    else 
+                        if b >= 97
+                        then 
+                            if b <= 102
+                            then b - 87
+                            else -1
+                        else 
+                            if b >= 65
+                            then 
+                                if b <= 70
+                                then b - 55
+                                else -1
+                            else -1
+                else -1
+            in 
+                if d < 0
+                then acc
+                else parseHexRange(bytes)(pos + 1)(endPos)(acc * 16 + d)
+
+let recursive decodeChunkedFrom allBytes pos acc = 
+    (let nl = Ashes.Bytes.indexOf(allBytes)(10)(pos)
+    in 
+        if nl < 0
+        then ChunkNeedMore
+        else 
+            let size = parseHexRange(allBytes)(pos)(nl)(0)
+            in 
+                if size == 0
+                then 
+                    if Ashes.Bytes.length(allBytes) < nl + 3
+                    then ChunkNeedMore
+                    else ChunkDone(acc)(nl + 3)
+                else 
+                    let dataStart = nl + 1
+                    in 
+                        let need = dataStart + size + 2
+                        in 
+                            if Ashes.Bytes.length(allBytes) < need
+                            then ChunkNeedMore
+                            else decodeChunkedFrom(allBytes)(need)(acc + Ashes.Bytes.subText(allBytes)(dataStart)(size)))
+
 let tryParseBuffered buffered = 
     (let headEnd = Ashes.String.indexOf(buffered)("\r\n\r\n")
     in 
@@ -181,40 +237,51 @@ let tryParseBuffered buffered =
                             then ""
                             else Ashes.String.drop(headSection)(firstLineEnd + 2)
                         in 
-                            let contentLength = 
-                                match headerInBlock(headerBlock)("content-length") with
-                                    | None -> 0
-                                    | Some(lenText) -> 
-                                        match Ashes.Text.parseInt(lenText) with
-                                            | Error(_pe) -> 0
-                                            | Ok(n) -> 
-                                                if n < 0
-                                                then 0
-                                                else n
+                            let allBytes = Ashes.Bytes.fromText(buffered)
                             in 
-                                let allBytes = Ashes.Bytes.fromText(buffered)
+                                let headBytes = headEnd + 4
                                 in 
-                                    let headBytes = headEnd + 4
+                                    let version = 
+                                        match Ashes.String.split(requestLine)(" ") with
+                                            | _m :: _p :: v :: _more -> v
+                                            | _other -> "HTTP/1.1"
                                     in 
-                                        let availableBody = Ashes.Bytes.length(allBytes) - headBytes
+                                        let keepAlive = keepAliveOf(headerBlock)(version)
                                         in 
-                                            if availableBody < contentLength
-                                            then HttpNeedMore
-                                            else 
-                                                let bodyText = Ashes.Bytes.subText(allBytes)(headBytes)(contentLength)
+                                            let build = 
+                                                given (body) -> 
+                                                    given (rest) -> 
+                                                        match Ashes.String.split(requestLine)(" ") with
+                                                            | m :: pth :: _v -> HttpParsed(HttpRequest(m)(pth)(headerBlock)(body))(keepAlive)(rest)
+                                                            | _other -> HttpParsed(HttpRequest("GET")("/")(headerBlock)(body))(keepAlive)(rest)
+                                            in 
+                                                let isChunked = 
+                                                    match headerInBlock(headerBlock)("transfer-encoding") with
+                                                        | Some(te) -> sameHeaderName(Ashes.String.trim(te))("chunked")
+                                                        | None -> false
                                                 in 
-                                                    let rest = Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)
-                                                    in 
-                                                        let version = 
-                                                            match Ashes.String.split(requestLine)(" ") with
-                                                                | _m :: _p :: v :: _more -> v
-                                                                | _other -> "HTTP/1.1"
+                                                    if isChunked
+                                                    then 
+                                                        match decodeChunkedFrom(allBytes)(headBytes)("") with
+                                                            | ChunkNeedMore -> HttpNeedMore
+                                                            | ChunkDone(body, endOffset) -> build(body)(Ashes.Bytes.subText(allBytes)(endOffset)(Ashes.Bytes.length(allBytes) - endOffset))
+                                                    else 
+                                                        let contentLength = 
+                                                            match headerInBlock(headerBlock)("content-length") with
+                                                                | None -> 0
+                                                                | Some(lenText) -> 
+                                                                    match Ashes.Text.parseInt(lenText) with
+                                                                        | Error(_pe) -> 0
+                                                                        | Ok(n) -> 
+                                                                            if n < 0
+                                                                            then 0
+                                                                            else n
                                                         in 
-                                                            let keepAlive = keepAliveOf(headerBlock)(version)
+                                                            let availableBody = Ashes.Bytes.length(allBytes) - headBytes
                                                             in 
-                                                                match Ashes.String.split(requestLine)(" ") with
-                                                                    | m :: pth :: _v -> HttpParsed(HttpRequest(m)(pth)(headerBlock)(bodyText))(keepAlive)(rest)
-                                                                    | _other -> HttpParsed(HttpRequest("GET")("/")(headerBlock)(bodyText))(keepAlive)(rest))
+                                                                if availableBody < contentLength
+                                                                then HttpNeedMore
+                                                                else build(Ashes.Bytes.subText(allBytes)(headBytes)(contentLength))(Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
 
 let connectionHandler handler = 
     given (client) -> 
