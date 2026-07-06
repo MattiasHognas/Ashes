@@ -1818,7 +1818,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, mainState, completedConst, "sched_main_done"), returnBlock, waitBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
-        EmitSchedulerTimerWait(state);
+        EmitSchedulerAggregateWait(state);
         LlvmApi.BuildBr(builder, loopBlock);
 
         // Step the popped task.
@@ -1873,75 +1873,151 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Aggregate timer wait for the run-queue scheduler: with the ready queue empty, sleeps once until
-    /// the earliest parked-leaf deadline, decrements every parked timer leaf's remaining by that amount,
-    /// and moves the elapsed ones (remaining &lt;= 0) back onto the ready queue so they complete on the
-    /// next step. Parked leaves are linked through <c>ReadyNext</c> off <c>__ashes_parked_head</c>.
+    /// Aggregate wait for the run-queue scheduler: with the ready queue empty, blocks until a parked
+    /// leaf is ready, then re-queues every parked leaf so the loop re-steps them (a leaf whose I/O is
+    /// still not ready re-parks on its next step). Timer leaves fold into the wait timeout and have
+    /// their remaining decremented by the elapsed time; socket/TLS leaves (Linux) register their fd in
+    /// the persistent epoll set and the wait is an <c>epoll_wait</c>. With no socket leaves the wait is a
+    /// cooperative sleep to the earliest timer deadline. Parked leaves link through <c>ReadyNext</c> off
+    /// <c>__ashes_parked_head</c>. Requeue-all-on-wakeup is O(parked) per wakeup — correct with the
+    /// level-triggered epoll set; per-fd wakeup targeting is a later refinement.
     /// </summary>
-    private static void EmitSchedulerTimerWait(LlvmCodegenState state)
+    private static void EmitSchedulerAggregateWait(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle parkedHeadGlobal = ParkedLeavesHeadGlobal(state);
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle maxVal = LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0);
+        LlvmValueHandle timerKind = LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0);
+        bool linux = IsLinuxFlavor(state.Flavor);
 
-        LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_min_slot");
-        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_cursor_slot");
-        LlvmValueHandle newHeadSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_new_head_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0), minSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "swt_head0"), cursorSlot);
+        LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_min_slot");
+        LlvmValueHandle hasSocketSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_has_socket_slot");
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_cursor_slot");
+        LlvmValueHandle elapsedSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_elapsed_slot");
+        LlvmApi.BuildStore(builder, maxVal, minSlot);
+        LlvmApi.BuildStore(builder, zero, hasSocketSlot);
+        LlvmApi.BuildStore(builder, zero, elapsedSlot);
 
-        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_scan");
-        LlvmBasicBlockHandle scanBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_scan_body");
-        LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_sleep");
-        LlvmBasicBlockHandle partitionBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_partition");
-        LlvmBasicBlockHandle partBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_part_body");
-        LlvmBasicBlockHandle elapsedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_elapsed");
-        LlvmBasicBlockHandle keepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_keep");
-        LlvmBasicBlockHandle partNextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_part_next");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_done");
+        // Persistent per-reactor epoll fd (created once, reused).
+        LlvmValueHandle epollFd = zero;
+        if (linux)
+        {
+            LlvmValueHandle epollGlobal = EpollFdGlobal(state);
+            LlvmValueHandle epollFdSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_epoll_fd_slot");
+            LlvmValueHandle existingFd = LlvmApi.BuildLoad2(builder, state.I64, epollGlobal, "saw_epoll_existing");
+            LlvmApi.BuildStore(builder, existingFd, epollFdSlot);
+            LlvmBasicBlockHandle createEpollBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_epoll_create");
+            LlvmBasicBlockHandle haveEpollBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_epoll_have");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, existingFd, zero, "saw_epoll_uncreated"), createEpollBlock, haveEpollBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, createEpollBlock);
+            LlvmValueHandle newFd = EmitLinuxSyscall(state, SyscallEpollCreate1, zero, zero, zero, "saw_epoll_create1");
+            LlvmApi.BuildStore(builder, newFd, epollGlobal);
+            LlvmApi.BuildStore(builder, newFd, epollFdSlot);
+            LlvmApi.BuildBr(builder, haveEpollBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, haveEpollBlock);
+            epollFd = LlvmApi.BuildLoad2(builder, state.I64, epollFdSlot, "saw_epoll_fd");
+        }
 
-        // Pass 1: minimum remaining sleep.
+        // Pass 1: minimum timer remaining + register socket leaves in the epoll set.
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "saw_head0"), cursorSlot);
+        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_scan");
+        LlvmBasicBlockHandle scanBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_scan_body");
+        LlvmBasicBlockHandle timerBranch = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_timer");
+        LlvmBasicBlockHandle socketBranch = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_socket");
+        LlvmBasicBlockHandle scanNextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_scan_next");
+        LlvmBasicBlockHandle afterScanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_after_scan");
         LlvmApi.BuildBr(builder, scanBlock);
         LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
-        LlvmValueHandle scanCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "swt_scan_cur");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCur, zero, "swt_scan_end"), sleepBlock, scanBodyBlock);
+        LlvmValueHandle scanCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "saw_scan_cur");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCur, zero, "saw_scan_end"), afterScanBlock, scanBodyBlock);
         LlvmApi.PositionBuilderAtEnd(builder, scanBodyBlock);
-        LlvmValueHandle rem = LoadMemory(state, scanCur, TaskStructLayout.SleepDurationMs, "swt_rem");
-        LlvmValueHandle curMin = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "swt_cur_min");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, rem, curMin, "swt_lt"), rem, curMin, "swt_min_upd"), minSlot);
-        LlvmApi.BuildStore(builder, LoadMemory(state, scanCur, TaskStructLayout.ReadyNext, "swt_scan_next"), cursorSlot);
+        LlvmValueHandle scanKind = LoadMemory(state, scanCur, TaskStructLayout.WaitKind, "saw_scan_kind");
+        LlvmApi.BuildStore(builder, LoadMemory(state, scanCur, TaskStructLayout.ReadyNext, "saw_scan_next_load"), cursorSlot);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanKind, timerKind, "saw_is_timer"), timerBranch, socketBranch);
+        LlvmApi.PositionBuilderAtEnd(builder, timerBranch);
+        LlvmValueHandle rem = LoadMemory(state, scanCur, TaskStructLayout.SleepDurationMs, "saw_rem");
+        LlvmValueHandle curMin = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "saw_cur_min");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, rem, curMin, "saw_lt"), rem, curMin, "saw_min_upd"), minSlot);
+        LlvmApi.BuildBr(builder, scanNextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, socketBranch);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), hasSocketSlot);
+        if (linux)
+        {
+            LlvmValueHandle readish = LlvmApi.BuildOr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), "saw_is_read1"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantRead, 0), "saw_is_read3"),
+                "saw_readish");
+            LlvmValueHandle mask = LlvmApi.BuildSelect(builder, readish, LlvmApi.ConstInt(state.I64, 0x001, 0), LlvmApi.ConstInt(state.I64, 0x004, 0), "saw_mask");
+            _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_register", [epollFd, LoadMemory(state, scanCur, TaskStructLayout.WaitHandle, "saw_wait_handle"), mask], "saw_register");
+        }
+        LlvmApi.BuildBr(builder, scanNextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, scanNextBlock);
         LlvmApi.BuildBr(builder, scanBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterScanBlock);
 
-        // Sleep once until the earliest deadline (skipped when the list is empty / min <= 0).
-        LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
-        LlvmValueHandle minRem = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "swt_min");
-        EmitNanosleep(state, minRem);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "swt_head1"), cursorSlot);
-        LlvmApi.BuildStore(builder, zero, newHeadSlot);
-        LlvmApi.BuildBr(builder, partitionBlock);
+        // Block until ready. With sockets, epoll_wait bounded by the earliest timer; else sleep to it.
+        LlvmValueHandle minRem = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "saw_min");
+        LlvmValueHandle sleepMs = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_no_timer"), zero, minRem, "saw_sleep_ms");
+        if (linux)
+        {
+            LlvmValueHandle hasSocket = LlvmApi.BuildLoad2(builder, state.I64, hasSocketSlot, "saw_has_socket");
+            LlvmTypeHandle eventType = LlvmApi.ArrayType2(state.I8, 16);
+            LlvmValueHandle eventOut = GetArrayElementPointer(state, eventType, LlvmApi.BuildAlloca(builder, eventType, "saw_event_out_storage"), zero, "saw_event_out");
+            LlvmBasicBlockHandle socketWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_socket_wait");
+            LlvmBasicBlockHandle timerWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_timer_wait");
+            LlvmBasicBlockHandle afterWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_after_wait");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, hasSocket, zero, "saw_do_epoll"), socketWaitBlock, timerWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, socketWaitBlock);
+            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_epoll_no_timer"), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), minRem, "saw_epoll_timeout");
+            LlvmValueHandle startMs = EmitMonotonicNowMs(state, "saw_wait_start");
+            LlvmValueHandle eventArg = LlvmApi.BuildPtrToInt(builder, eventOut, state.I64, "saw_event_arg");
+            if (IsLinuxArm64Flavor(state.Flavor))
+            {
+                EmitLinuxSyscall6(state, SyscallEpollWait, epollFd, eventArg, LlvmApi.ConstInt(state.I64, 1, 0), timeout, zero, zero, "saw_epoll_wait");
+            }
+            else
+            {
+                EmitLinuxSyscall4(state, SyscallEpollWait, epollFd, eventArg, LlvmApi.ConstInt(state.I64, 1, 0), timeout, "saw_epoll_wait");
+            }
+            LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, EmitMonotonicNowMs(state, "saw_wait_end"), startMs, "saw_epoll_elapsed"), elapsedSlot);
+            LlvmApi.BuildBr(builder, afterWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, timerWaitBlock);
+            EmitNanosleep(state, sleepMs);
+            LlvmApi.BuildStore(builder, sleepMs, elapsedSlot);
+            LlvmApi.BuildBr(builder, afterWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, afterWaitBlock);
+        }
+        else
+        {
+            EmitNanosleep(state, sleepMs);
+            LlvmApi.BuildStore(builder, sleepMs, elapsedSlot);
+        }
+        LlvmValueHandle elapsed = LlvmApi.BuildLoad2(builder, state.I64, elapsedSlot, "saw_elapsed");
 
-        // Pass 2: decrement each remaining by the slept amount; requeue elapsed, keep the rest parked.
-        LlvmApi.PositionBuilderAtEnd(builder, partitionBlock);
-        LlvmValueHandle partCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "swt_part_cur");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, partCur, zero, "swt_part_end"), doneBlock, partBodyBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, partBodyBlock);
-        LlvmValueHandle savedNext = LoadMemory(state, partCur, TaskStructLayout.ReadyNext, "swt_saved_next");
-        LlvmValueHandle newRem = LlvmApi.BuildSub(builder, LoadMemory(state, partCur, TaskStructLayout.SleepDurationMs, "swt_part_rem"), minRem, "swt_new_rem");
-        StoreMemory(state, partCur, TaskStructLayout.SleepDurationMs, newRem, "swt_store_rem");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, newRem, zero, "swt_elapsed_cmp"), elapsedBlock, keepBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, elapsedBlock);
-        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [partCur], "swt_requeue");
-        LlvmApi.BuildBr(builder, partNextBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, keepBlock);
-        StoreMemory(state, partCur, TaskStructLayout.ReadyNext, LlvmApi.BuildLoad2(builder, state.I64, newHeadSlot, "swt_new_head"), "swt_keep_link");
-        LlvmApi.BuildStore(builder, partCur, newHeadSlot);
-        LlvmApi.BuildBr(builder, partNextBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, partNextBlock);
-        LlvmApi.BuildStore(builder, savedNext, cursorSlot);
-        LlvmApi.BuildBr(builder, partitionBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, newHeadSlot, "swt_final_new_head"), parkedHeadGlobal);
+        // Pass 2: re-queue every parked leaf; decrement timer leaves by the elapsed time.
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "saw_head1"), cursorSlot);
+        LlvmBasicBlockHandle reqBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_requeue");
+        LlvmBasicBlockHandle reqBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_requeue_body");
+        LlvmBasicBlockHandle reqDecBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_requeue_dec");
+        LlvmBasicBlockHandle reqEnqBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_requeue_enq");
+        LlvmBasicBlockHandle reqDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_requeue_done");
+        LlvmApi.BuildBr(builder, reqBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reqBlock);
+        LlvmValueHandle reqCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "saw_req_cur");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, reqCur, zero, "saw_req_end"), reqDoneBlock, reqBodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reqBodyBlock);
+        LlvmValueHandle reqNext = LoadMemory(state, reqCur, TaskStructLayout.ReadyNext, "saw_req_next");
+        LlvmApi.BuildStore(builder, reqNext, cursorSlot);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, reqCur, TaskStructLayout.WaitKind, "saw_req_kind"), timerKind, "saw_req_is_timer"), reqDecBlock, reqEnqBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reqDecBlock);
+        StoreMemory(state, reqCur, TaskStructLayout.SleepDurationMs, LlvmApi.BuildSub(builder, LoadMemory(state, reqCur, TaskStructLayout.SleepDurationMs, "saw_req_rem"), elapsed, "saw_req_new_rem"), "saw_req_store_rem");
+        LlvmApi.BuildBr(builder, reqEnqBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reqEnqBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [reqCur], "saw_req_enqueue");
+        LlvmApi.BuildBr(builder, reqBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reqDoneBlock);
+        LlvmApi.BuildStore(builder, zero, parkedHeadGlobal);
     }
 
     private static LlvmValueHandle EmitSpawnTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
