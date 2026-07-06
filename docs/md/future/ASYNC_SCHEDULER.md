@@ -155,12 +155,43 @@ Key properties:
 - **The persistent epoll set** (already built) is the parked-leaf registry: park = register, wake =
   the fd's task is enqueued. Timers fold into the `epoll_wait` timeout as today.
 
-### Multi-reactor and arenas are unaffected
+### Multi-reactor is unaffected
 
 Each reactor process still runs its own scheduler over its own queue (the fork-based multi-reactor is
-orthogonal). Each task keeps its private arena, installed around its step exactly as
-`ashes_run_detached` does today. The arena model, the state-machine transform, and the leaf step
-functions are reused unchanged; only the *driver* changes.
+orthogonal). The state-machine transform and the leaf step functions are reused unchanged; only the
+*driver* changes.
+
+### Open design issue: arenas and cross-task result lifetime
+
+This is the subtlety that must be nailed before the loop is written, or it will produce
+use-after-free bugs. Today everything is nested on one C stack, so:
+
+- An awaited sub-task is allocated in, and runs in, its **parent's** arena. Its result is therefore
+  already in the parent's arena when the parent resumes and reads it — trivially alive.
+- A spawned task has its **own** private arena chunk chain (`EmitSpawnTask`), freed on completion by
+  `ashes_run_detached` (the task struct itself lives in its first chunk).
+
+Decoupling sub-tasks into the queue breaks the first assumption: a sub-task is now stepped
+independently, so "the parent's arena is installed" is no longer automatic, and a completing task's
+**result** (a heap value like `Ok(socket)`) must outlive whatever arena is torn down at completion.
+Concretely: if a spawned task's private arena is freed on completion (as today) but its result was
+allocated there, delivering that result to a waiter is a use-after-free.
+
+Options to resolve (pick before coding the loop):
+
+1. **Per-task arenas for every task, results copied to the waiter on delivery.** On `handle_complete`,
+   deep-copy the result out of the completing task's arena into the waiter's arena before freeing.
+   Uniform but adds a copy-out at every completion (reuse the existing arena copy-out machinery).
+2. **Sub-tasks share the awaiter's arena; only spawned tasks get private arenas.** Keeps the nested
+   model's zero-copy for the common `await` case; a spawned task's result is copied out to the reactor
+   arena when the reactor (its logical waiter) consumes it. Closer to today's behavior, fewer copies,
+   but two arena regimes to track per task.
+3. **Never free on completion; rely on reactor-lifetime arenas.** Simplest, but reintroduces unbounded
+   growth for long-lived reactors — rejected (the whole point of private-arena reaping is bounded RSS).
+
+Leaning toward (2): it preserves today's zero-copy `await` fast path and localizes the copy to the
+spawned→reactor boundary that already exists. The loop, the `Waiter` delivery, and `handle_complete`
+must be specified against whichever option is chosen.
 
 ---
 
