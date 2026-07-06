@@ -1691,6 +1691,11 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle ReadyQueueTailGlobal(LlvmCodegenState state) =>
         ReadLineScratchGlobal(state, "__ashes_ready_tail", state.I64);
 
+    // Parked-on-leaf tasks (not runnable until their wait is satisfied), linked through ReadyNext — a
+    // task is only ever in the ready queue OR the parked list, never both, so the link is shared.
+    private static LlvmValueHandle ParkedLeavesHeadGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_parked_head", state.I64);
+
     /// <summary>
     /// Body of <c>ashes_ready_enqueue(task)</c>: append a task to the tail of the run queue. Sets the
     /// task's <c>ReadyNext</c> to 0 and links it after the current tail (or as the head when empty).
@@ -1758,6 +1763,185 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "deq_result");
+    }
+
+    /// <summary>
+    /// Body of <c>ashes_scheduler_run(mainTask)</c>: the flat run-queue loop. Seeds the queue with the
+    /// main task, then repeatedly pops a ready task and steps it once. A leaf that completes, or a
+    /// coroutine that returns COMPLETED, delivers its result to its <c>Waiter</c> (clearing the waiter's
+    /// <c>AwaitedTask</c>) and re-enqueues the waiter. A coroutine that SUSPENDS links its fresh
+    /// <c>AwaitedTask</c> back to itself via <c>Waiter</c> and enqueues that sub-task, then parks. A leaf
+    /// that stays pending joins the parked list. When the ready queue drains, it blocks in the
+    /// aggregate timer wait until the earliest sleep elapses and re-queues the elapsed leaves; the loop
+    /// ends when the main task has completed. Returns the main task's result.
+    /// v1 scope: global-arena tasks (no per-task <c>ArenaOwner</c> install) and timer leaves only — it
+    /// is wired for non-networking async programs; socket-bearing programs still use the legacy driver.
+    /// </summary>
+    private static LlvmValueHandle EmitSchedulerRunBody(LlvmCodegenState state, LlvmValueHandle mainTask)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle completedConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
+        LlvmValueHandle taskSlot = LlvmApi.BuildAlloca(builder, state.I64, "sched_task_slot");
+        // The main task is created by EmitCreateTask, which does not initialize the run-queue header
+        // fields; zero them so the root task has no stale Waiter (delivered-to on completion) or
+        // ArenaOwner. Sub-tasks get these set by the scheduler when they are enqueued.
+        StoreMemory(state, mainTask, TaskStructLayout.Waiter, LlvmApi.ConstInt(state.I64, 0, 0), "sched_main_no_waiter");
+        StoreMemory(state, mainTask, TaskStructLayout.ArenaOwner, LlvmApi.ConstInt(state.I64, 0, 0), "sched_main_no_owner");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [mainTask], "sched_seed");
+
+        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_loop");
+        LlvmBasicBlockHandle emptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_empty");
+        LlvmBasicBlockHandle waitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_wait");
+        LlvmBasicBlockHandle returnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_return");
+        LlvmBasicBlockHandle haveTaskBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_have_task");
+        LlvmBasicBlockHandle notDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_not_done");
+        LlvmBasicBlockHandle leafBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_leaf");
+        LlvmBasicBlockHandle parkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_park");
+        LlvmBasicBlockHandle coroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_coro");
+        LlvmBasicBlockHandle suspendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_suspend");
+        LlvmBasicBlockHandle completeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_complete");
+        LlvmBasicBlockHandle deliverBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_deliver");
+
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        // Pop the next ready task.
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle popped = EmitNetworkingRuntimeCall(state, "ashes_ready_dequeue", [], "sched_pop");
+        LlvmApi.BuildStore(builder, popped, taskSlot);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, popped, zero, "sched_queue_empty"), emptyBlock, haveTaskBlock);
+
+        // Queue empty: finished if the main task is done, else block until a parked leaf is ready.
+        LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
+        LlvmValueHandle mainState = LoadMemory(state, mainTask, TaskStructLayout.StateIndex, "sched_main_state");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, mainState, completedConst, "sched_main_done"), returnBlock, waitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, waitBlock);
+        EmitSchedulerTimerWait(state);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        // Step the popped task.
+        LlvmApi.PositionBuilderAtEnd(builder, haveTaskBlock);
+        LlvmValueHandle task = LlvmApi.BuildLoad2(builder, state.I64, taskSlot, "sched_task");
+        LlvmValueHandle stateIdx = LoadMemory(state, task, TaskStructLayout.StateIndex, "sched_state_idx");
+        // An already-completed task delivers to its waiter (e.g. an immediately-ready awaited value).
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, completedConst, "sched_is_done"), completeBlock, notDoneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, notDoneBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, "sched_is_leaf"), leafBlock, coroBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
+        LlvmValueHandle leafStatus = EmitStepLeafTask(state, task, "sched_leaf_step");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, leafStatus, zero, "sched_leaf_done"), completeBlock, parkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, parkBlock);
+        LlvmValueHandle parkedHeadGlobal = ParkedLeavesHeadGlobal(state);
+        StoreMemory(state, task, TaskStructLayout.ReadyNext, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "sched_parked_head"), "sched_park_link");
+        LlvmApi.BuildStore(builder, task, parkedHeadGlobal);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, coroBlock);
+        LlvmValueHandle coroutineFn = LoadMemory(state, task, TaskStructLayout.CoroutineFn, "sched_coro_fn");
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "sched_coro_ptr");
+        LlvmValueHandle coroStatus = LlvmApi.BuildCall2(builder, coroutineFnType, typedFnPtr, [task, zero], "sched_coro_status");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, coroStatus, zero, "sched_suspended"), suspendBlock, completeBlock);
+
+        // Suspended on a fresh AwaitedTask: schedule it, link it back to this task, and park this task.
+        LlvmApi.PositionBuilderAtEnd(builder, suspendBlock);
+        LlvmValueHandle awaited = LoadMemory(state, task, TaskStructLayout.AwaitedTask, "sched_awaited");
+        StoreMemory(state, awaited, TaskStructLayout.Waiter, task, "sched_set_waiter");
+        StoreMemory(state, awaited, TaskStructLayout.ArenaOwner, LoadMemory(state, task, TaskStructLayout.ArenaOwner, "sched_owner"), "sched_inherit_owner");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [awaited], "sched_enqueue_sub");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        // Completed: hand the result to the waiter (if any) and re-enqueue it.
+        LlvmApi.PositionBuilderAtEnd(builder, completeBlock);
+        LlvmValueHandle completedTask = LlvmApi.BuildLoad2(builder, state.I64, taskSlot, "sched_completed");
+        LlvmValueHandle waiter = LoadMemory(state, completedTask, TaskStructLayout.Waiter, "sched_waiter");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "sched_has_waiter"), deliverBlock, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, deliverBlock);
+        StoreMemory(state, waiter, TaskStructLayout.ResultSlot, LoadMemory(state, completedTask, TaskStructLayout.ResultSlot, "sched_completed_result"), "sched_deliver_result");
+        StoreMemory(state, waiter, TaskStructLayout.AwaitedTask, zero, "sched_clear_awaited");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_enqueue_waiter");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, returnBlock);
+        return LoadMemory(state, mainTask, TaskStructLayout.ResultSlot, "sched_result");
+    }
+
+    /// <summary>
+    /// Aggregate timer wait for the run-queue scheduler: with the ready queue empty, sleeps once until
+    /// the earliest parked-leaf deadline, decrements every parked timer leaf's remaining by that amount,
+    /// and moves the elapsed ones (remaining &lt;= 0) back onto the ready queue so they complete on the
+    /// next step. Parked leaves are linked through <c>ReadyNext</c> off <c>__ashes_parked_head</c>.
+    /// </summary>
+    private static void EmitSchedulerTimerWait(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle parkedHeadGlobal = ParkedLeavesHeadGlobal(state);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
+        LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_min_slot");
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_cursor_slot");
+        LlvmValueHandle newHeadSlot = LlvmApi.BuildAlloca(builder, state.I64, "swt_new_head_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0), minSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "swt_head0"), cursorSlot);
+
+        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_scan");
+        LlvmBasicBlockHandle scanBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_scan_body");
+        LlvmBasicBlockHandle sleepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_sleep");
+        LlvmBasicBlockHandle partitionBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_partition");
+        LlvmBasicBlockHandle partBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_part_body");
+        LlvmBasicBlockHandle elapsedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_elapsed");
+        LlvmBasicBlockHandle keepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_keep");
+        LlvmBasicBlockHandle partNextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_part_next");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "swt_done");
+
+        // Pass 1: minimum remaining sleep.
+        LlvmApi.BuildBr(builder, scanBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
+        LlvmValueHandle scanCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "swt_scan_cur");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanCur, zero, "swt_scan_end"), sleepBlock, scanBodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, scanBodyBlock);
+        LlvmValueHandle rem = LoadMemory(state, scanCur, TaskStructLayout.SleepDurationMs, "swt_rem");
+        LlvmValueHandle curMin = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "swt_cur_min");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, rem, curMin, "swt_lt"), rem, curMin, "swt_min_upd"), minSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, scanCur, TaskStructLayout.ReadyNext, "swt_scan_next"), cursorSlot);
+        LlvmApi.BuildBr(builder, scanBlock);
+
+        // Sleep once until the earliest deadline (skipped when the list is empty / min <= 0).
+        LlvmApi.PositionBuilderAtEnd(builder, sleepBlock);
+        LlvmValueHandle minRem = LlvmApi.BuildLoad2(builder, state.I64, minSlot, "swt_min");
+        EmitNanosleep(state, minRem);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, parkedHeadGlobal, "swt_head1"), cursorSlot);
+        LlvmApi.BuildStore(builder, zero, newHeadSlot);
+        LlvmApi.BuildBr(builder, partitionBlock);
+
+        // Pass 2: decrement each remaining by the slept amount; requeue elapsed, keep the rest parked.
+        LlvmApi.PositionBuilderAtEnd(builder, partitionBlock);
+        LlvmValueHandle partCur = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "swt_part_cur");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, partCur, zero, "swt_part_end"), doneBlock, partBodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, partBodyBlock);
+        LlvmValueHandle savedNext = LoadMemory(state, partCur, TaskStructLayout.ReadyNext, "swt_saved_next");
+        LlvmValueHandle newRem = LlvmApi.BuildSub(builder, LoadMemory(state, partCur, TaskStructLayout.SleepDurationMs, "swt_part_rem"), minRem, "swt_new_rem");
+        StoreMemory(state, partCur, TaskStructLayout.SleepDurationMs, newRem, "swt_store_rem");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, newRem, zero, "swt_elapsed_cmp"), elapsedBlock, keepBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, elapsedBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [partCur], "swt_requeue");
+        LlvmApi.BuildBr(builder, partNextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, keepBlock);
+        StoreMemory(state, partCur, TaskStructLayout.ReadyNext, LlvmApi.BuildLoad2(builder, state.I64, newHeadSlot, "swt_new_head"), "swt_keep_link");
+        LlvmApi.BuildStore(builder, partCur, newHeadSlot);
+        LlvmApi.BuildBr(builder, partNextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, partNextBlock);
+        LlvmApi.BuildStore(builder, savedNext, cursorSlot);
+        LlvmApi.BuildBr(builder, partitionBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, newHeadSlot, "swt_final_new_head"), parkedHeadGlobal);
     }
 
     private static LlvmValueHandle EmitSpawnTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
