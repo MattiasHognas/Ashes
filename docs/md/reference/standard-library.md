@@ -113,8 +113,10 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `uncons(text)` returning `Maybe((Str, Str))`
 - `parseInt(text)` returning `Result(Str, Int)`
 - `parseFloat(text)` returning `Result(Str, Float)`
+- `parseBigInt(text)` returning `Result(Str, BigInt)` — decimal parse into a [`BigInt`](#ashesbigint)
 - `fromInt(value)` returning `Str`
 - `fromFloat(value)` returning `Str`
+- `fromBigInt(value)` returning `Str` — decimal rendering of a [`BigInt`](#ashesbigint)
 - `formatFloat(value)(decimals)` returning `Str` — fixed-precision decimal formatting: exactly
   `decimals` fractional digits, trailing zeros kept (`formatFloat(1.5)(9)` is `1.500000000`,
   `formatFloat(2.5)(0)` is `3`). `decimals` is clamped to the range 0–18. Rounding is
@@ -375,6 +377,33 @@ Transcendentals (Layer 2, openlibm-backed):
 
 Domain errors follow IEEE-754 (`sqrt(-1.0)` is `NaN`), so the Float functions
 stay total.
+
+### `Ashes.BigInt`
+
+Native **arbitrary-precision signed integers** (`BigInt`). Values are immutable and
+arena-allocated; each operation returns a fresh, normalized value. The arithmetic is emitted
+directly as LLVM-IR runtime helpers by the backend (no runtime dependency, no external library);
+see the [architecture notes](../internals/architecture.md#bigint-arbitrary-precision-integers).
+
+- `fromInt(n)` returning `BigInt` — widen a 64-bit `Int`
+- `toInt(a)` returning `Result(Str, Int)` — `Ok` when it fits an `Int`, else `Error`
+- `add(a)(b)`, `sub(a)(b)`, `mul(a)(b)` returning `BigInt`
+- `div(a)(b)` returning `BigInt` — quotient, truncated toward zero (division by zero yields `0`)
+- `mod(a)(b)` returning `BigInt` — remainder; its sign follows the dividend
+- `compare(a)(b)` returning `Int` — `-1`, `0`, or `1`
+
+`BigInt` is a distinct primitive with no implicit conversion to/from `Int`. It supports **`N`
+literals** (`123N`) and the **operators** `+ - * / %` plus the comparisons `== != < <= > >=`, so
+the named functions above are rarely needed directly. Decimal string conversions live in
+`Ashes.Text`: `fromBigInt(a)` (→ `Str`) and `parseBigInt(s)` (→ `Result(Str, BigInt)`), matching
+`fromInt`/`parseInt`.
+
+```
+import Ashes.BigInt as big
+let squared = 1000000000000N * 1000000000000N
+Ashes.IO.print(Ashes.Text.fromBigInt(squared))
+// 1000000000000000000000000
+```
 
 ### `Ashes.Array`
 

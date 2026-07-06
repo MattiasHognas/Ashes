@@ -492,11 +492,12 @@ public sealed partial class Lowering
     private static bool ExprHasCallOrAggregate(Expr e) => e switch
     {
         Expr.Call or Expr.TupleLit or Expr.ListLit or Expr.Cons or Expr.RecordLit or Expr.RecordUpdate => true,
-        Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => false,
+        Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => false,
         Expr.Add x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Subtract x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Multiply x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Divide x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.Modulo x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.BitwiseAnd x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.BitwiseOr x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.BitwiseXor x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
@@ -703,6 +704,7 @@ public sealed partial class Lowering
         {
             Expr.IntLit lit => LowerInt(lit),
             Expr.UIntLit lit => LowerUInt(lit),
+            Expr.BigIntLit lit => LowerBigIntLit(lit),
             Expr.FloatLit lit => LowerFloat(lit),
             Expr.StrLit str => LowerStr(str),
             Expr.BoolLit b => LowerBool(b),
@@ -712,6 +714,7 @@ public sealed partial class Lowering
             Expr.Subtract sub => LowerSubtract(sub),
             Expr.Multiply mul => LowerMultiply(mul),
             Expr.Divide div => LowerDivide(div),
+            Expr.Modulo mod => LowerModulo(mod),
             Expr.BitwiseAnd bitAnd => LowerBitwiseAnd(bitAnd),
             Expr.BitwiseOr bitOr => LowerBitwiseOr(bitOr),
             Expr.BitwiseXor bitXor => LowerBitwiseXor(bitXor),
@@ -2530,6 +2533,16 @@ public sealed partial class Lowering
                 IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
                 IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
                 IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
+                IntrinsicKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
+                IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
+                IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
+                IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
+                IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
+                IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
+                IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
+                IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
+                IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
+                IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
                 IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
                 IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                 IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
@@ -2646,6 +2659,16 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
+                    BuiltinRegistry.BuiltinValueKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
+                    BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
+                    BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
+                    BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
+                    BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
+                    BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
                     BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
@@ -3307,6 +3330,7 @@ public sealed partial class Lowering
             {
                 case Expr.IntLit:
                 case Expr.UIntLit:
+                case Expr.BigIntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
                 case Expr.BoolLit:
@@ -3359,6 +3383,10 @@ public sealed partial class Lowering
                 case Expr.Divide div:
                     Visit(div.Left, bnd);
                     Visit(div.Right, bnd);
+                    return;
+                case Expr.Modulo modExpr:
+                    Visit(modExpr.Left, bnd);
+                    Visit(modExpr.Right, bnd);
                     return;
                 case Expr.BitwiseAnd bitAnd:
                     Visit(bitAnd.Left, bnd);
@@ -3546,7 +3574,7 @@ public sealed partial class Lowering
 
         switch (e)
         {
-            case Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
                 return e;
             case Expr.Var v:
                 return renames.TryGetValue(v.Name, out var tgt) ? new Expr.Var(tgt) : e;
@@ -3554,6 +3582,7 @@ public sealed partial class Lowering
             case Expr.Subtract b: return new Expr.Subtract(S(b.Left), S(b.Right));
             case Expr.Multiply b: return new Expr.Multiply(S(b.Left), S(b.Right));
             case Expr.Divide b: return new Expr.Divide(S(b.Left), S(b.Right));
+            case Expr.Modulo b: return new Expr.Modulo(S(b.Left), S(b.Right));
             case Expr.BitwiseAnd b: return new Expr.BitwiseAnd(S(b.Left), S(b.Right));
             case Expr.BitwiseOr b: return new Expr.BitwiseOr(S(b.Left), S(b.Right));
             case Expr.BitwiseXor b: return new Expr.BitwiseXor(S(b.Left), S(b.Right));
@@ -3656,6 +3685,7 @@ public sealed partial class Lowering
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -3677,6 +3707,9 @@ public sealed partial class Lowering
             case Expr.Divide div:
                 return UsesNameOnlyAsDirectCallee(div.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(div.Right, targetName, shadowed);
+            case Expr.Modulo modExpr:
+                return UsesNameOnlyAsDirectCallee(modExpr.Left, targetName, shadowed)
+                    && UsesNameOnlyAsDirectCallee(modExpr.Right, targetName, shadowed);
             case Expr.BitwiseAnd bitAnd:
                 return UsesNameOnlyAsDirectCallee(bitAnd.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(bitAnd.Right, targetName, shadowed);

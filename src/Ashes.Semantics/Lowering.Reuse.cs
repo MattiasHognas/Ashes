@@ -1211,6 +1211,7 @@ public sealed partial class Lowering
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -1228,6 +1229,8 @@ public sealed partial class Lowering
                 return ExprReferencesName(mul.Left, targetName, shadowed) || ExprReferencesName(mul.Right, targetName, shadowed);
             case Expr.Divide div:
                 return ExprReferencesName(div.Left, targetName, shadowed) || ExprReferencesName(div.Right, targetName, shadowed);
+            case Expr.Modulo modExpr:
+                return ExprReferencesName(modExpr.Left, targetName, shadowed) || ExprReferencesName(modExpr.Right, targetName, shadowed);
             case Expr.BitwiseAnd bitAnd:
                 return ExprReferencesName(bitAnd.Left, targetName, shadowed) || ExprReferencesName(bitAnd.Right, targetName, shadowed);
             case Expr.BitwiseOr bitOr:

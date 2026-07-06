@@ -531,11 +531,12 @@ public static class Formatter
     {
         return e switch
         {
-            Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
+            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
             Expr.Add a => IsSingleLine(a.Left, preferPipelines) && IsSingleLine(a.Right, preferPipelines),
             Expr.Subtract sub => IsSingleLine(sub.Left, preferPipelines) && IsSingleLine(sub.Right, preferPipelines),
             Expr.Multiply mul => IsSingleLine(mul.Left, preferPipelines) && IsSingleLine(mul.Right, preferPipelines),
             Expr.Divide div => IsSingleLine(div.Left, preferPipelines) && IsSingleLine(div.Right, preferPipelines),
+            Expr.Modulo modExpr => IsSingleLine(modExpr.Left, preferPipelines) && IsSingleLine(modExpr.Right, preferPipelines),
             Expr.BitwiseAnd bitAnd => IsSingleLine(bitAnd.Left, preferPipelines) && IsSingleLine(bitAnd.Right, preferPipelines),
             Expr.BitwiseOr bitOr => IsSingleLine(bitOr.Left, preferPipelines) && IsSingleLine(bitOr.Right, preferPipelines),
             Expr.BitwiseXor bitXor => IsSingleLine(bitXor.Left, preferPipelines) && IsSingleLine(bitXor.Right, preferPipelines),
@@ -1059,6 +1060,11 @@ public static class Formatter
                 sb.Append(u.Bits);
                 return;
 
+            case Expr.BigIntLit big:
+                sb.Append(big.Digits);
+                sb.Append('N');
+                return;
+
             case Expr.FloatLit f:
                 sb.Append(FormatFloatLiteral(f));
                 return;
@@ -1213,6 +1219,25 @@ public static class Formatter
                     WriteExprInline(sb, div.Left, indent, PrecMul, preferPipelines, options);
                     sb.Append(" / ");
                     WriteExprInline(sb, div.Right, indent, PrecMul + 1, preferPipelines, options);
+                    if (needsParens)
+                    {
+                        sb.Append(')');
+                    }
+
+                    return;
+                }
+
+            case Expr.Modulo modExpr:
+                {
+                    var needsParens = parentPrec > PrecMul;
+                    if (needsParens)
+                    {
+                        sb.Append('(');
+                    }
+
+                    WriteExprInline(sb, modExpr.Left, indent, PrecMul, preferPipelines, options);
+                    sb.Append(" % ");
+                    WriteExprInline(sb, modExpr.Right, indent, PrecMul + 1, preferPipelines, options);
                     if (needsParens)
                     {
                         sb.Append(')');
@@ -1439,7 +1464,7 @@ public static class Formatter
 
                     // Function position: if it's a lambda/let/if/add, parenthesize
                     var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
-                        or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide
+                        or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
                         or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
                         or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
                     if (funcNeedsParens)

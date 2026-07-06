@@ -916,6 +916,16 @@ public sealed partial class Lowering
         IntrinsicKind.BytesAppend => 2,
         IntrinsicKind.BytesAppendByte => 2,
         IntrinsicKind.TextFormatFloat => 2,
+        IntrinsicKind.BigIntFromInt => 1,
+        IntrinsicKind.BigIntToString => 1,
+        IntrinsicKind.BigIntToInt => 1,
+        IntrinsicKind.BigIntFromString => 1,
+        IntrinsicKind.BigIntAdd => 2,
+        IntrinsicKind.BigIntSub => 2,
+        IntrinsicKind.BigIntMul => 2,
+        IntrinsicKind.BigIntDiv => 2,
+        IntrinsicKind.BigIntMod => 2,
+        IntrinsicKind.BigIntCompare => 2,
         IntrinsicKind.BytesGetU16Le => 2,
         IntrinsicKind.BytesGetU32Le => 2,
         IntrinsicKind.BytesGetU64Le => 2,
@@ -1615,6 +1625,7 @@ public sealed partial class Lowering
             case Expr.Subtract x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.Multiply x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.Divide x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.Modulo x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.BitwiseAnd x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.BitwiseOr x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.BitwiseXor x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
@@ -1875,6 +1886,200 @@ public sealed partial class Lowering
             IntrinsicKind.TextFormatFloat,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr())))
         );
+    }
+
+    // ── Ashes.BigInt intrinsics ──────────────────────────────────────────────────────────────
+    private Binding.Intrinsic CreateBigIntFromIntBinding() =>
+        new(IntrinsicKind.BigIntFromInt, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TBigInt())));
+
+    private Binding.Intrinsic CreateBigIntToStringBinding() =>
+        new(IntrinsicKind.BigIntToString, new TypeScheme([], new TypeRef.TFun(new TypeRef.TBigInt(), new TypeRef.TStr())));
+
+    private Binding.Intrinsic CreateBigIntToIntBinding() =>
+        new(IntrinsicKind.BigIntToInt, new TypeScheme([], new TypeRef.TFun(new TypeRef.TBigInt(), CreateStringResultType(new TypeRef.TInt()))));
+
+    private Binding.Intrinsic CreateBigIntFromStringBinding() =>
+        new(IntrinsicKind.BigIntFromString, new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBigInt()))));
+
+    private (int, TypeRef) LowerBigIntToInt(Expr arg)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var pruned = Prune(valueType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (valueTemp, pruned);
+        }
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TBigInt());
+        }
+        else if (pruned is not TypeRef.TBigInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.toInt() expects BigInt but got {Pretty(pruned)}.");
+            return (valueTemp, pruned);
+        }
+        var target = NewTemp();
+        Emit(new IrInst.BigIntToInt(target, valueTemp));
+        return (target, CreateStringResultType(new TypeRef.TInt()));
+    }
+
+    private (int, TypeRef) LowerBigIntFromString(Expr arg)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var pruned = Prune(valueType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (valueTemp, pruned);
+        }
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TStr());
+        }
+        else if (pruned is not TypeRef.TStr)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Text.parseBigInt() expects Str but got {Pretty(pruned)}.");
+            return (valueTemp, pruned);
+        }
+        var target = NewTemp();
+        Emit(new IrInst.BigIntFromString(target, valueTemp));
+        return (target, CreateStringResultType(new TypeRef.TBigInt()));
+    }
+
+    private Binding.Intrinsic CreateBigIntBinaryBinding(IntrinsicKind kind) =>
+        new(kind, new TypeScheme([], new TypeRef.TFun(new TypeRef.TBigInt(), new TypeRef.TFun(new TypeRef.TBigInt(), new TypeRef.TBigInt()))));
+
+    private Binding.Intrinsic CreateBigIntCompareBinding() =>
+        new(IntrinsicKind.BigIntCompare, new TypeScheme([], new TypeRef.TFun(new TypeRef.TBigInt(), new TypeRef.TFun(new TypeRef.TBigInt(), new TypeRef.TInt()))));
+
+    // A `<digits>N` BigInt literal. Fits-in-i64 values go straight through fromInt; larger ones are
+    // built with chunked Horner in base 10^18 (each 18-digit chunk fits an i64), reusing the BigInt
+    // mul/add ops. The literal digits are validated by the lexer, so no error path is needed here.
+    private (int, TypeRef) LowerBigIntLit(Expr.BigIntLit lit)
+    {
+        string digits = lit.Digits;
+        if (long.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long small))
+        {
+            return (EmitBigIntFromLongConst(small), new TypeRef.TBigInt());
+        }
+
+        const int chunkDigits = 18;
+        const long chunkBase = 1_000_000_000_000_000_000L; // 10^18
+        int firstLen = digits.Length % chunkDigits;
+        if (firstLen == 0)
+        {
+            firstLen = chunkDigits;
+        }
+        int accTemp = EmitBigIntFromLongConst(long.Parse(digits[..firstLen], System.Globalization.CultureInfo.InvariantCulture));
+        for (int pos = firstLen; pos < digits.Length; pos += chunkDigits)
+        {
+            int baseTemp = EmitBigIntFromLongConst(chunkBase);
+            int mulTemp = NewTemp();
+            Emit(new IrInst.BigIntBinary(mulTemp, accTemp, baseTemp, "mul"));
+            int chunkTemp = EmitBigIntFromLongConst(long.Parse(digits.Substring(pos, chunkDigits), System.Globalization.CultureInfo.InvariantCulture));
+            int addTemp = NewTemp();
+            Emit(new IrInst.BigIntBinary(addTemp, mulTemp, chunkTemp, "add"));
+            accTemp = addTemp;
+        }
+        return (accTemp, new TypeRef.TBigInt());
+    }
+
+    private int EmitBigIntFromLongConst(long value)
+    {
+        int constTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(constTemp, value));
+        int target = NewTemp();
+        Emit(new IrInst.BigIntFromInt(target, constTemp));
+        return target;
+    }
+
+    private (int, TypeRef) LowerBigIntFromInt(Expr arg)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var pruned = Prune(valueType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (valueTemp, pruned);
+        }
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+        }
+        else if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.fromInt() expects Int but got {Pretty(pruned)}.");
+            return (valueTemp, pruned);
+        }
+        var target = NewTemp();
+        Emit(new IrInst.BigIntFromInt(target, valueTemp));
+        return (target, new TypeRef.TBigInt());
+    }
+
+    private (int, TypeRef) LowerBigIntToString(Expr arg)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var pruned = Prune(valueType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (valueTemp, pruned);
+        }
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TBigInt());
+        }
+        else if (pruned is not TypeRef.TBigInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.toString() expects BigInt but got {Pretty(pruned)}.");
+            return (valueTemp, pruned);
+        }
+        var target = NewTemp();
+        Emit(new IrInst.BigIntToString(target, valueTemp));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerBigIntBinary(Expr leftArg, Expr rightArg, string op, string display, bool resultIsInt)
+    {
+        var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+        if (Prune(leftType) is TypeRef.TNever)
+        {
+            return (leftTemp, Prune(leftType));
+        }
+        var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
+        if (Prune(rightType) is TypeRef.TNever)
+        {
+            return (rightTemp, Prune(rightType));
+        }
+        var target = NewTemp();
+        if (resultIsInt)
+        {
+            Emit(new IrInst.BigIntCompare(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TInt());
+        }
+        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op));
+        return (target, new TypeRef.TBigInt());
+    }
+
+    private (int, TypeRef) LowerBigIntOperand(Expr arg, string display)
+    {
+        using var span = PushDiagnosticSpan(arg);
+        var (temp, type) = LowerExpr(arg);
+        var pruned = Prune(type);
+        if (pruned is TypeRef.TNever)
+        {
+            return (temp, pruned);
+        }
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TBigInt());
+        }
+        else if (pruned is not TypeRef.TBigInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"{display} expects BigInt but got {Pretty(pruned)}.");
+        }
+        return (temp, new TypeRef.TBigInt());
     }
 
     private Binding.Intrinsic CreateTextToHexBinding()

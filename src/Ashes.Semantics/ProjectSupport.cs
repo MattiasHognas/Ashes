@@ -2258,6 +2258,7 @@ public static class ProjectSupport
                     break;
                 case Expr.IntLit:
                 case Expr.UIntLit:
+                case Expr.BigIntLit:
                 case Expr.FloatLit:
                 case Expr.StrLit:
                 case Expr.BoolLit:
@@ -2273,6 +2274,10 @@ public static class ProjectSupport
                 case Expr.Multiply mul:
                     Visit(mul.Left);
                     Visit(mul.Right);
+                    break;
+                case Expr.Modulo modExpr:
+                    Visit(modExpr.Left);
+                    Visit(modExpr.Right);
                     break;
                 case Expr.Divide div:
                     Visit(div.Left);
