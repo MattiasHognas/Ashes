@@ -359,10 +359,13 @@ transport is that HTTPS falls out without a second handler model.
   the multi-reactor, TCP echo leads the .NET baseline and HTTP roughly doubles it at conc 64.
 
 ### Remaining
-- Scheduler efficiency refinements: detached tasks still do not advance during `Ashes.Async.all` /
-  `race` waits (that wait path builds its own poll set rather than sharing the persistent epoll set),
-  and the leaf wait wakes one event per epoll_wait (batching several would cut syscalls further under
-  very high concurrency).
+- Scheduler: a **detached** handler that itself blocks in `Ashes.Async.all` / `race` cannot advance
+  peer handlers, because the cooperative scheduler steps detached tasks re-entrantly under a guard
+  (`__ashes_detached_stepping`) that a nested wait must respect to avoid re-stepping itself. So two
+  connections whose handlers both do `Async.all` serialize rather than overlap. The real fix is a
+  proper run-queue scheduler (park/enqueue/resume) rather than re-entrant stepping — a larger
+  architectural change. Also minor: the leaf wait wakes one event per `epoll_wait` (batching several
+  would cut syscalls further under very high concurrency).
 - `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
   today, whether Content-Length- or chunked-framed).
 
