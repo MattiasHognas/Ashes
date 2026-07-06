@@ -166,7 +166,7 @@
               },
               "debuggerPath": {
                 "type": "string",
-                "description": "Path to the debugger binary. Defaults to 'gdb'. For debuggerType 'lldb', the DAP server first tries 'lldb-mi' and then tries 'lldb --interpreter=mi2' on MI-capable LLDB builds.",
+                "description": "Path to the debugger binary. Defaults to 'gdb' for debuggerType 'gdb' and to 'lldb-dap' (bundled with LLDB) for debuggerType 'lldb'.",
                 "default": ""
               },
               "debuggerType": {

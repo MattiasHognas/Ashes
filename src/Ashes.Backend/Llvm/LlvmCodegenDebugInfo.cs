@@ -61,13 +61,15 @@ internal static partial class LlvmCodegen
             // Subroutine type (no parameters — all Ashes functions use i64 calling convention)
             SubroutineType = LlvmApi.DIBuilderCreateSubroutineType(DIBuilder, DefaultFile);
 
-            // Basic debug types
-            IntType = LlvmApi.DIBuilderCreateBasicType(
-                DIBuilder, "Int", 64, LlvmApi.DwarfAteSigned);
-            FloatType = LlvmApi.DIBuilderCreateBasicType(
-                DIBuilder, "Float", 64, LlvmApi.DwarfAteFloat);
-            BoolType = LlvmApi.DIBuilderCreateBasicType(
-                DIBuilder, "Bool", 64, LlvmApi.DwarfAteBoolean);
+            // Basic debug types. Ashes names are emitted as typedefs over
+            // anonymous-named base types with standard encoding/size pairs:
+            // GDB reports the typedef name directly, and LLDB's clang-based
+            // type system resolves the underlying base type by encoding and
+            // size (a custom-named base type would come back as "long", and
+            // an 8-byte boolean base type does not map at all).
+            IntType = CreateNamedType("Int", "__ashes_i64", LlvmApi.DwarfAteSigned);
+            FloatType = CreateNamedType("Float", "__ashes_f64", LlvmApi.DwarfAteFloat);
+            BoolType = CreateNamedType("Bool", "__ashes_b64", LlvmApi.DwarfAteSigned);
 
             _typeCache["Int"] = IntType;
             _typeCache["Float"] = FloatType;
@@ -101,10 +103,16 @@ internal static partial class LlvmCodegen
             return created;
         }
 
+        private LlvmMetadataHandle CreateNamedType(string typeName, string underlyingName, uint encoding)
+        {
+            var underlying = LlvmApi.DIBuilderCreateBasicType(
+                DIBuilder, underlyingName, 64, encoding);
+            return LlvmApi.DIBuilderCreateTypedef(DIBuilder, underlying, typeName, DefaultFile, CompileUnit);
+        }
+
         private LlvmMetadataHandle CreateReferenceType(string typeName)
         {
-            var pointee = LlvmApi.DIBuilderCreateBasicType(
-                DIBuilder, typeName, 64, LlvmApi.DwarfAteSigned);
+            var pointee = CreateNamedType(typeName, "__ashes_word", LlvmApi.DwarfAteSigned);
             return LlvmApi.DIBuilderCreatePointerType(DIBuilder, pointee, 64);
         }
 

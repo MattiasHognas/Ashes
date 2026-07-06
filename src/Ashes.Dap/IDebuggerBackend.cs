@@ -11,14 +11,14 @@ public interface IDebuggerBackend : IDisposable
     event Action<int>? OnExited;
     event Action<string>? OnOutput;
 
-    Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath);
+    Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath, bool stopOnEntry);
     Task SetBreakpointAsync(string filePath, int line);
     Task ContinueAsync();
     Task StepOverAsync();
     Task StepInAsync();
     Task StepOutAsync();
     Task RunAsync();
-    Task<string> GetStackTraceAsync();
+    Task<DapStackFrame[]> GetStackTraceAsync();
     Task<DapVariable[]> GetLocalsAsync();
     Task TerminateAsync();
 }

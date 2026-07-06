@@ -3,211 +3,549 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Ashes.Dap;
 
 /// <summary>
-/// Debugger backend that drives LLDB via the LLDB-MI (Machine Interface)
-/// protocol.  LLDB-MI is a GDB-MI–compatible front-end available as a
-/// standalone <c>lldb-mi</c> binary or built into <c>lldb</c> on builds
-/// that accept <c>--interpreter=mi2</c>.
+/// Debugger backend that drives LLDB through <c>lldb-dap</c>, the Debug
+/// Adapter Protocol server that ships with LLDB. The backend acts as a DAP
+/// client to the <c>lldb-dap</c> subprocess, translating the
+/// <see cref="IDebuggerBackend"/> operations into DAP requests.
 /// </summary>
 public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 {
-    private Process? _lldb;
-    private StreamWriter? _lldbIn;
-    private int _tokenCounter;
-    private readonly ConcurrentDictionary<int, TaskCompletionSource<string>> _pendingCommands = new();
+    private const string DefaultAdapterBinary = "lldb-dap";
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private Process? _adapter;
+    private Stream? _adapterIn;
+    private int _seq;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _pendingRequests = new();
+    private readonly TaskCompletionSource _initializedEvent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<JsonElement>? _launchResponse;
+    private readonly Dictionary<string, List<int>> _breakpointsByFile = [];
+    private readonly object _writeLock = new();
+    private int _lastThreadId;
     private string _launchError = string.Empty;
 
     public event Action<string>? OnStopped;
     public event Action<int>? OnExited;
     public event Action<string>? OnOutput;
 
-    public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
+    public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath, bool stopOnEntry)
     {
-        Exception? lastError = null;
-        foreach (var startInfo in CreateLaunchCandidates(program, cwd, debuggerPath))
+        var startInfo = CreateStartInfo(debuggerPath);
+
+        try
         {
-            try
-            {
-                var lldb = Process.Start(startInfo);
-                if (lldb is not null)
-                {
-                    if (await ExitedDuringStartupAsync(lldb).ConfigureAwait(false))
-                    {
-                        lastError = await CreateStartupFailureAsync(startInfo, lldb).ConfigureAwait(false);
-                        lldb.Dispose();
-                        continue;
-                    }
-
-                    _lldb = lldb;
-                    _lldbIn = _lldb.StandardInput;
-                    _lldbIn.AutoFlush = true;
-
-                    // Start reading LLDB output and draining stderr to prevent pipe buffer deadlocks.
-                    _ = Task.Run(() => ReadOutputAsync(_lldb.StandardOutput));
-                    _ = Task.Run(() => DrainStreamAsync(_lldb.StandardError));
-
-                    if (args is not null && args.Length > 0)
-                    {
-                        var escapedArgs = string.Join(" ", args.Select(EscapeArg));
-                        await SendCommandAsync($"-exec-arguments {escapedArgs}").ConfigureAwait(false);
-                    }
-
-                    return;
-                }
-
-                lastError = new InvalidOperationException($"Failed to start LLDB using '{startInfo.FileName}'.");
-            }
-            catch (Win32Exception ex)
-            {
-                lastError = ex;
-            }
+            _adapter = Process.Start(startInfo);
+        }
+        catch (Win32Exception ex)
+        {
+            throw CreateStartFailure(startInfo.FileName, ex);
         }
 
-        if (_lldb is null)
+        if (_adapter is null)
         {
-            throw CreateStartFailure(debuggerPath, lastError);
+            throw CreateStartFailure(startInfo.FileName, innerException: null);
         }
+
+        if (await ExitedDuringStartupAsync(_adapter).ConfigureAwait(false))
+        {
+            var failure = await CreateStartupFailureAsync(startInfo, _adapter).ConfigureAwait(false);
+            _adapter.Dispose();
+            _adapter = null;
+            throw failure;
+        }
+
+        _adapterIn = _adapter.StandardInput.BaseStream;
+        _ = Task.Run(() => ReadAdapterOutputAsync(_adapter.StandardOutput.BaseStream));
+        _ = Task.Run(() => DrainStreamAsync(_adapter.StandardError));
+
+        _ = await SendRequestAsync("initialize", new
+        {
+            clientID = "ashes-dap",
+            adapterID = "lldb-dap",
+            linesStartAt1 = true,
+            columnsStartAt1 = true,
+            pathFormat = "path",
+        }).ConfigureAwait(false);
+
+        // lldb-dap answers the launch request only after configurationDone,
+        // so the response is awaited later in RunAsync.
+        _launchResponse = SendRequestWithoutAwaiting("launch", new
+        {
+            program,
+            args = args ?? [],
+            cwd,
+            stopOnEntry,
+        });
+
+        await WaitForInitializedEventAsync().ConfigureAwait(false);
     }
 
-    internal static IReadOnlyList<ProcessStartInfo> CreateLaunchCandidates(string program, string? cwd, string? debuggerPath)
+    internal static ProcessStartInfo CreateStartInfo(string? debuggerPath)
     {
-        if (!string.IsNullOrWhiteSpace(debuggerPath))
+        return new ProcessStartInfo(string.IsNullOrWhiteSpace(debuggerPath) ? DefaultAdapterBinary : debuggerPath)
         {
-            return [CreateProcessStartInfo(debuggerPath, program, cwd, useInterpreterMi2: ShouldUseInterpreterMi2(debuggerPath))];
-        }
-
-        return
-        [
-            CreateProcessStartInfo("lldb-mi", program, cwd, useInterpreterMi2: false),
-            CreateProcessStartInfo("lldb", program, cwd, useInterpreterMi2: true),
-        ];
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
     }
 
     public async Task SetBreakpointAsync(string filePath, int line)
     {
-        await SendCommandAsync(BuildBreakpointInsertCommand(filePath, line)).ConfigureAwait(false);
+        if (!_breakpointsByFile.TryGetValue(filePath, out var lines))
+        {
+            lines = [];
+            _breakpointsByFile[filePath] = lines;
+        }
+
+        if (!lines.Contains(line))
+        {
+            lines.Add(line);
+        }
+
+        // DAP setBreakpoints replaces all breakpoints for the file, so the
+        // accumulated set is sent every time.
+        _ = await SendRequestAsync("setBreakpoints", new
+        {
+            source = new { name = Path.GetFileName(filePath), path = filePath },
+            breakpoints = lines.Select(l => new { line = l }).ToArray(),
+        }).ConfigureAwait(false);
     }
 
     public async Task ContinueAsync()
     {
-        await SendCommandAsync("-exec-continue").ConfigureAwait(false);
+        _ = await SendRequestAsync("continue", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
     public async Task StepOverAsync()
     {
-        await SendCommandAsync("-exec-next").ConfigureAwait(false);
+        _ = await SendRequestAsync("next", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
     public async Task StepInAsync()
     {
-        await SendCommandAsync("-exec-step").ConfigureAwait(false);
+        _ = await SendRequestAsync("stepIn", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
     public async Task StepOutAsync()
     {
-        await SendCommandAsync("-exec-finish").ConfigureAwait(false);
+        _ = await SendRequestAsync("stepOut", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
     public async Task RunAsync()
     {
-        await SendCommandAsync("-exec-run").ConfigureAwait(false);
+        _ = await SendRequestAsync("configurationDone", new { }).ConfigureAwait(false);
+
+        if (_launchResponse is not null)
+        {
+            _ = await AwaitResponseAsync(_launchResponse, "launch").ConfigureAwait(false);
+        }
     }
 
-    public async Task<string> GetStackTraceAsync()
+    public async Task<DapStackFrame[]> GetStackTraceAsync()
     {
-        return await SendCommandAsync("-stack-list-frames").ConfigureAwait(false);
+        var body = await SendRequestAsync("stackTrace", new
+        {
+            threadId = _lastThreadId,
+            startFrame = 0,
+            levels = 20,
+        }).ConfigureAwait(false);
+
+        if (!body.TryGetProperty("stackFrames", out var frames) || frames.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return [.. frames.EnumerateArray().Select(ParseStackFrame)];
     }
 
     public async Task<DapVariable[]> GetLocalsAsync()
     {
-        // -stack-list-variables includes function arguments; -stack-list-locals would not.
-        var localsResponse = await SendCommandAsync("-stack-list-variables 1").ConfigureAwait(false);
-        var locals = MiResponseParser.ParseVariables(localsResponse);
-        var variables = new List<DapVariable>(locals.Length);
-
-        foreach (var local in locals)
+        var (localsReference, frameId) = await GetLocalsScopeReferenceAsync().ConfigureAwait(false);
+        if (localsReference == 0)
         {
-            var typedVariable = await CreateTypedVariableAsync(local.Name, local.Value).ConfigureAwait(false);
-            variables.Add(typedVariable ?? local);
+            return [];
         }
 
-        return [.. variables];
+        var body = await SendRequestAsync("variables", new { variablesReference = localsReference }).ConfigureAwait(false);
+        if (!body.TryGetProperty("variables", out var variables) || variables.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var result = new List<DapVariable>();
+        foreach (var variable in variables.EnumerateArray())
+        {
+            var name = GetStringProperty(variable, "name");
+            if (name is null)
+            {
+                continue;
+            }
+
+            var value = GetStringProperty(variable, "value") ?? "";
+            var type = GetStringProperty(variable, "type");
+            var formattedValue = await AshesValueFormatter.FormatAsync(
+                value,
+                type,
+                expression => EvaluateExpressionAsync(expression, frameId)).ConfigureAwait(false);
+
+            result.Add(new DapVariable
+            {
+                Name = name,
+                Value = string.IsNullOrWhiteSpace(formattedValue) ? value : formattedValue,
+                Type = type,
+                VariablesReference = 0,
+            });
+        }
+
+        return [.. result];
     }
 
     public async Task TerminateAsync()
     {
-        if (_lldb is not null && !_lldb.HasExited)
+        if (_adapter is not null && !_adapter.HasExited)
         {
             try
             {
-                await SendCommandAsync("-gdb-exit").ConfigureAwait(false);
-                await _lldb.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                _ = await SendRequestAsync("disconnect", new { terminateDebuggee = true }).ConfigureAwait(false);
+                await _adapter.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
             }
             catch
             {
-                try { _lldb.Kill(); }
+                try { _adapter.Kill(); }
                 catch (InvalidOperationException) { /* process already exited */ }
                 catch (SystemException) { /* process no longer accessible */ }
             }
         }
     }
 
-    private async Task<string> SendCommandAsync(string command)
+    private async Task<(int LocalsReference, int FrameId)> GetLocalsScopeReferenceAsync()
     {
-        if (_lldbIn is null)
+        var stackBody = await SendRequestAsync("stackTrace", new
         {
-            throw new InvalidOperationException("LLDB is not running.");
+            threadId = _lastThreadId,
+            startFrame = 0,
+            levels = 1,
+        }).ConfigureAwait(false);
+
+        if (!stackBody.TryGetProperty("stackFrames", out var frames)
+            || frames.ValueKind != JsonValueKind.Array
+            || frames.GetArrayLength() == 0
+            || !frames[0].TryGetProperty("id", out var frameIdElement))
+        {
+            return (0, 0);
         }
 
-        var token = Interlocked.Increment(ref _tokenCounter);
-        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingCommands[token] = tcs;
-
-        try
+        var frameId = frameIdElement.GetInt32();
+        var scopesBody = await SendRequestAsync("scopes", new { frameId }).ConfigureAwait(false);
+        if (!scopesBody.TryGetProperty("scopes", out var scopes) || scopes.ValueKind != JsonValueKind.Array)
         {
-            await _lldbIn.WriteLineAsync($"{token}{command}").ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            throw CreateCommandFailure(command, ex);
+            return (0, frameId);
         }
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        using var registration = cts.Token.Register(
-            () => tcs.TrySetException(new TimeoutException($"Timed out waiting for LLDB response to '{command}'.")));
-
-        try
+        foreach (var scope in scopes.EnumerateArray())
         {
-            var result = await tcs.Task.ConfigureAwait(false);
-            if (result.Contains("^error", StringComparison.Ordinal))
+            var name = GetStringProperty(scope, "name");
+            if (string.Equals(name, "Locals", StringComparison.OrdinalIgnoreCase)
+                && scope.TryGetProperty("variablesReference", out var reference))
             {
-                throw new InvalidOperationException(ExtractMiField(result, "msg") ?? result);
+                return (reference.GetInt32(), frameId);
             }
-
-            return result;
         }
-        finally
+
+        return (0, frameId);
+    }
+
+    private async Task<string?> EvaluateExpressionAsync(string expression, int frameId)
+    {
+        try
         {
-            _pendingCommands.TryRemove(token, out _);
+            // "watch" context returns bare values; "repl" wraps results in
+            // "(type) $N = ..." and mis-evaluates cast expressions.
+            var body = await SendRequestAsync("evaluate", new
+            {
+                expression,
+                context = "watch",
+                frameId,
+            }).ConfigureAwait(false);
+
+            var result = GetStringProperty(body, "result");
+            return result is null ? null : NormalizeEvaluateResult(result);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
         }
     }
 
-    private async Task ReadOutputAsync(StreamReader reader)
+    /// <summary>
+    /// LLDB expression results look like <c>(long) $0 = 42</c>; strip the
+    /// type/name prefix so callers see just the value.
+    /// </summary>
+    private static string NormalizeEvaluateResult(string result)
+    {
+        var match = EvaluateResultRegex().Match(result);
+        return match.Success ? match.Groups[1].Value : result;
+    }
+
+    [GeneratedRegex(@"^\([^)]*\)\s*\$?\w*\s*=\s*(.*)$", RegexOptions.Singleline)]
+    private static partial Regex EvaluateResultRegex();
+
+    private static DapStackFrame ParseStackFrame(JsonElement frame)
+    {
+        var sourceName = default(string);
+        var sourcePath = default(string);
+        if (frame.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.Object)
+        {
+            sourceName = GetStringProperty(source, "name");
+            sourcePath = GetStringProperty(source, "path");
+        }
+
+        return new DapStackFrame
+        {
+            Id = frame.TryGetProperty("id", out var id) ? id.GetInt32() : 0,
+            Name = GetStringProperty(frame, "name") ?? "??",
+            Source = (sourceName ?? sourcePath) is not null
+                ? new DapSource { Name = sourceName, Path = sourcePath ?? sourceName }
+                : null,
+            Line = frame.TryGetProperty("line", out var line) ? line.GetInt32() : 0,
+            Column = frame.TryGetProperty("column", out var column) ? column.GetInt32() : 0,
+        };
+    }
+
+    private static string? GetStringProperty(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+    }
+
+    private async Task<JsonElement> SendRequestAsync(string command, object arguments)
+    {
+        var tcs = SendRequestWithoutAwaiting(command, arguments);
+        return await AwaitResponseAsync(tcs, command).ConfigureAwait(false);
+    }
+
+    private TaskCompletionSource<JsonElement> SendRequestWithoutAwaiting(string command, object arguments)
+    {
+        if (_adapterIn is null)
+        {
+            throw new InvalidOperationException("lldb-dap is not running.");
+        }
+
+        var seq = Interlocked.Increment(ref _seq);
+        var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingRequests[seq] = tcs;
+
+        var json = JsonSerializer.Serialize(new
+        {
+            seq,
+            type = "request",
+            command,
+            arguments,
+        }, SerializerOptions);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var header = Encoding.ASCII.GetBytes($"Content-Length: {bytes.Length}\r\n\r\n");
+
+        try
+        {
+            lock (_writeLock)
+            {
+                _adapterIn.Write(header);
+                _adapterIn.Write(bytes);
+                _adapterIn.Flush();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            _pendingRequests.TryRemove(seq, out _);
+            throw CreateCommandFailure(command, ex);
+        }
+
+        return tcs;
+    }
+
+    private async Task<JsonElement> AwaitResponseAsync(TaskCompletionSource<JsonElement> tcs, string command)
+    {
+        using var cts = new CancellationTokenSource(RequestTimeout);
+        using var registration = cts.Token.Register(
+            () => tcs.TrySetException(new TimeoutException($"Timed out waiting for lldb-dap response to '{command}'.")));
+
+        var response = await tcs.Task.ConfigureAwait(false);
+
+        if (response.TryGetProperty("success", out var success) && !success.GetBoolean())
+        {
+            var message = GetStringProperty(response, "message") ?? $"lldb-dap rejected '{command}'.";
+            throw new InvalidOperationException(message);
+        }
+
+        return response.TryGetProperty("body", out var body) ? body.Clone() : default;
+    }
+
+    private async Task WaitForInitializedEventAsync()
+    {
+        using var cts = new CancellationTokenSource(RequestTimeout);
+        using var registration = cts.Token.Register(
+            () => _initializedEvent.TrySetException(new TimeoutException("Timed out waiting for the lldb-dap initialized event.")));
+
+        await _initializedEvent.Task.ConfigureAwait(false);
+    }
+
+    private async Task ReadAdapterOutputAsync(Stream output)
     {
         try
         {
-            while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+            while (await ReadMessageAsync(output).ConfigureAwait(false) is { } json)
             {
-                ProcessMiLine(line);
+                ProcessAdapterMessage(json);
             }
         }
         catch (ObjectDisposedException)
         {
-            // LLDB process was disposed
+            // lldb-dap process was disposed
+        }
+    }
+
+    private void ProcessAdapterMessage(string json)
+    {
+        JsonElement message;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            message = document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        switch (GetStringProperty(message, "type"))
+        {
+            case "response":
+                if (message.TryGetProperty("request_seq", out var requestSeq)
+                    && _pendingRequests.TryRemove(requestSeq.GetInt32(), out var tcs))
+                {
+                    tcs.TrySetResult(message);
+                }
+
+                break;
+            case "event":
+                ProcessAdapterEvent(message);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void ProcessAdapterEvent(JsonElement message)
+    {
+        var body = message.TryGetProperty("body", out var b) ? b : default;
+        switch (GetStringProperty(message, "event"))
+        {
+            case "initialized":
+                _initializedEvent.TrySetResult();
+                break;
+            case "stopped":
+                if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("threadId", out var threadId))
+                {
+                    _lastThreadId = threadId.GetInt32();
+                }
+
+                OnStopped?.Invoke((body.ValueKind == JsonValueKind.Object ? GetStringProperty(body, "reason") : null) ?? "unknown");
+                break;
+            case "exited":
+                var exitCode = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("exitCode", out var code)
+                    ? code.GetInt32()
+                    : 0;
+                OnExited?.Invoke(exitCode);
+                break;
+            case "output":
+                if (body.ValueKind == JsonValueKind.Object && GetStringProperty(body, "output") is { } text)
+                {
+                    OnOutput?.Invoke(text.TrimEnd('\n'));
+                }
+
+                break;
+            default:
+                break;
+        }
+    }
+
+    private static async Task<string?> ReadMessageAsync(Stream input)
+    {
+        var contentLength = 0;
+        while (await ReadHeaderLineAsync(input).ConfigureAwait(false) is { } headerLine)
+        {
+            if (headerLine.Length == 0)
+            {
+                break;
+            }
+
+            if (headerLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = int.TryParse(headerLine["Content-Length:".Length..].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLength);
+            }
+        }
+
+        if (contentLength <= 0)
+        {
+            return null;
+        }
+
+        var buffer = new byte[contentLength];
+        var totalRead = 0;
+        while (totalRead < contentLength)
+        {
+            var read = await input.ReadAsync(buffer.AsMemory(totalRead, contentLength - totalRead)).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return null;
+            }
+
+            totalRead += read;
+        }
+
+        return Encoding.UTF8.GetString(buffer);
+    }
+
+    private static async Task<string?> ReadHeaderLineAsync(Stream input)
+    {
+        var sb = new StringBuilder();
+        var buf = new byte[1];
+        while (true)
+        {
+            var read = await input.ReadAsync(buf.AsMemory(0, 1)).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return null;
+            }
+
+            var c = (char)buf[0];
+            if (c == '\n')
+            {
+                if (sb.Length > 0 && sb[^1] == '\r')
+                {
+                    sb.Length--;
+                }
+
+                return sb.ToString();
+            }
+
+            sb.Append(c);
         }
     }
 
@@ -220,62 +558,9 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         }
         catch (ObjectDisposedException)
         {
-            // LLDB process was disposed
+            // lldb-dap process was disposed
         }
     }
-
-    private void ProcessMiLine(string line)
-    {
-        // Result records: <token>^done,...  or <token>^error,...  or <token>^running
-        if (TryCompleteResultRecord(line))
-        {
-            return;
-        }
-
-        if (line.StartsWith("*stopped", StringComparison.Ordinal))
-        {
-            var reason = ExtractMiField(line, "reason");
-            if (string.Equals(reason, "exited-normally", StringComparison.Ordinal) || string.Equals(reason, "exited", StringComparison.Ordinal))
-            {
-                var exitCodeStr = ExtractMiField(line, "exit-code");
-                var exitCode = exitCodeStr is not null
-                    ? int.Parse(exitCodeStr, CultureInfo.InvariantCulture)
-                    : 0;
-                OnExited?.Invoke(exitCode);
-            }
-            else
-            {
-                OnStopped?.Invoke(reason ?? "unknown");
-            }
-        }
-        else if (line.StartsWith("~", StringComparison.Ordinal))
-        {
-            // Console output
-            var content = line.Length > 2 ? line[2..^1] : "";
-            OnOutput?.Invoke(content);
-        }
-    }
-
-    private bool TryCompleteResultRecord(string line)
-    {
-        // MI result records look like: <token>^done,... or <token>^error,...
-        var match = ResultRecordRegex().Match(line);
-        if (!match.Success)
-        {
-            return false;
-        }
-
-        var token = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        if (_pendingCommands.TryRemove(token, out var tcs))
-        {
-            tcs.TrySetResult(line);
-        }
-
-        return true;
-    }
-
-    [GeneratedRegex(@"^(\d+)\^")]
-    private static partial Regex ResultRecordRegex();
 
     private static async Task<bool> ExitedDuringStartupAsync(Process process)
     {
@@ -298,7 +583,7 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         var stdout = await SafeReadToEndAsync(process.StandardOutput).ConfigureAwait(false);
         _launchError = FirstNonEmpty(stderr, stdout);
 
-        var message = $"LLDB exited immediately when started as '{BuildCommandDisplay(startInfo)}'.";
+        var message = $"lldb-dap exited immediately when started as '{startInfo.FileName}'.";
         if (!string.IsNullOrWhiteSpace(_launchError))
         {
             message += $" {NormalizeDiagnostic(_launchError)}";
@@ -307,78 +592,24 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         return new InvalidOperationException(message);
     }
 
-    private static ProcessStartInfo CreateProcessStartInfo(string debuggerPath, string program, string? cwd, bool useInterpreterMi2)
+    private static InvalidOperationException CreateStartFailure(string adapterPath, Exception? innerException)
     {
-        var psi = new ProcessStartInfo(debuggerPath)
+        var message = string.Equals(adapterPath, DefaultAdapterBinary, StringComparison.Ordinal)
+            ? "Failed to start lldb-dap. Install LLDB (which provides lldb-dap) or set debuggerPath to the lldb-dap binary."
+            : $"Failed to start lldb-dap using '{adapterPath}'.";
+        if (innerException is not null)
         {
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-
-        if (useInterpreterMi2)
-        {
-            psi.ArgumentList.Add("--interpreter=mi2");
+            message += $" {innerException.Message}";
         }
 
-        psi.ArgumentList.Add(program);
-
-        if (cwd is not null)
-        {
-            psi.WorkingDirectory = cwd;
-        }
-
-        return psi;
-    }
-
-    private static InvalidOperationException CreateStartFailure(string? debuggerPath, Exception? lastError)
-    {
-        if (!string.IsNullOrWhiteSpace(debuggerPath))
-        {
-            var message = $"Failed to start LLDB using '{debuggerPath}'.";
-            if (lastError is not null)
-            {
-                message += $" {lastError.Message}";
-            }
-
-            return new InvalidOperationException(message, lastError);
-        }
-
-        return new InvalidOperationException(
-            "Failed to start LLDB. Tried 'lldb-mi' and 'lldb --interpreter=mi2'. Install 'lldb-mi' or set debuggerPath to an MI-compatible LLDB frontend.",
-            lastError);
-    }
-
-    private static bool ShouldUseInterpreterMi2(string debuggerPath)
-    {
-        var fileName = Path.GetFileName(debuggerPath);
-        return !fileName.StartsWith("lldb-mi", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string? ExtractMiField(string miRecord, string fieldName)
-    {
-        var pattern = $"{fieldName}=\"([^\"]*)\"";
-        var match = Regex.Match(miRecord, pattern);
-        return match.Success ? match.Groups[1].Value : null;
-    }
-
-    private static string EscapeArg(string arg)
-    {
-        return "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-    }
-
-    private static string BuildBreakpointInsertCommand(string filePath, int line)
-    {
-        return $"-break-insert --source {EscapeArg(filePath)} --line {line.ToString(CultureInfo.InvariantCulture)}";
+        return new InvalidOperationException(message, innerException);
     }
 
     private InvalidOperationException CreateCommandFailure(string command, Exception innerException)
     {
-        if (_lldb is not null && _lldb.HasExited)
+        if (_adapter is not null && _adapter.HasExited)
         {
-            var message = $"LLDB exited before handling '{command}' (exit code {_lldb.ExitCode.ToString(CultureInfo.InvariantCulture)}).";
+            var message = $"lldb-dap exited before handling '{command}' (exit code {_adapter.ExitCode.ToString(CultureInfo.InvariantCulture)}).";
             if (!string.IsNullOrWhiteSpace(_launchError))
             {
                 message += $" {NormalizeDiagnostic(_launchError)}";
@@ -387,7 +618,7 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
             return new InvalidOperationException(message, innerException);
         }
 
-        return new InvalidOperationException($"Failed to send command to LLDB: {command}", innerException);
+        return new InvalidOperationException($"Failed to send request to lldb-dap: {command}", innerException);
     }
 
     private static async Task<string> SafeReadToEndAsync(StreamReader reader)
@@ -400,16 +631,6 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         {
             return string.Empty;
         }
-    }
-
-    private static string BuildCommandDisplay(ProcessStartInfo startInfo)
-    {
-        if (startInfo.ArgumentList.Count == 0)
-        {
-            return startInfo.FileName;
-        }
-
-        return string.Join(" ", new[] { startInfo.FileName }.Concat(startInfo.ArgumentList));
     }
 
     private static string NormalizeDiagnostic(string diagnostic)
@@ -430,50 +651,14 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
         return string.Empty;
     }
 
-    private async Task<DapVariable?> CreateTypedVariableAsync(string localName, string fallbackValue)
-    {
-        var varCreateResponse = await SendCommandAsync($"-var-create - * {localName}").ConfigureAwait(false);
-        var variableObject = MiResponseParser.ParseVariableObject(varCreateResponse);
-        if (variableObject is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            var formattedValue = await AshesValueFormatter.FormatAsync(
-                variableObject.Value,
-                variableObject.Type,
-                EvaluateExpressionAsync).ConfigureAwait(false);
-
-            return new DapVariable
-            {
-                Name = localName,
-                Value = string.IsNullOrWhiteSpace(formattedValue) ? fallbackValue : formattedValue,
-                Type = variableObject.Type,
-                VariablesReference = 0,
-            };
-        }
-        finally
-        {
-            _ = await SendCommandAsync($"-var-delete {variableObject.Name}").ConfigureAwait(false);
-        }
-    }
-
-    private async Task<string?> EvaluateExpressionAsync(string expression)
-    {
-        var response = await SendCommandAsync($"-data-evaluate-expression {EscapeArg(expression)}").ConfigureAwait(false);
-        return MiResponseParser.ParseEvaluateExpressionValue(response);
-    }
-
     public void Dispose()
     {
-        foreach (var (_, tcs) in _pendingCommands)
+        foreach (var (_, tcs) in _pendingRequests)
         {
-            tcs.TrySetResult("");
+            tcs.TrySetCanceled();
         }
 
-        _pendingCommands.Clear();
-        _lldb?.Dispose();
+        _pendingRequests.Clear();
+        _adapter?.Dispose();
     }
 }

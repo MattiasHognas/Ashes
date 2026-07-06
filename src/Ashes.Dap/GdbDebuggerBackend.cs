@@ -12,17 +12,22 @@ namespace Ashes.Dap;
 /// </summary>
 public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 {
+    /// <summary>Entry function emitted by the Ashes backend in every binary.</summary>
+    private const string EntryFunctionName = "_start_main";
+
     private Process? _gdb;
     private StreamWriter? _gdbIn;
     private int _tokenCounter;
+    private bool _stopOnEntry;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<string>> _pendingCommands = new();
 
     public event Action<string>? OnStopped;
     public event Action<int>? OnExited;
     public event Action<string>? OnOutput;
 
-    public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath)
+    public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath, bool stopOnEntry)
     {
+        _stopOnEntry = stopOnEntry;
         var gdbPath = debuggerPath ?? "gdb";
         var psi = new ProcessStartInfo(gdbPath)
         {
@@ -87,12 +92,18 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 
     public async Task RunAsync()
     {
+        if (_stopOnEntry)
+        {
+            await SendCommandAsync($"-break-insert -t {EntryFunctionName}").ConfigureAwait(false);
+        }
+
         await SendCommandAsync("-exec-run").ConfigureAwait(false);
     }
 
-    public async Task<string> GetStackTraceAsync()
+    public async Task<DapStackFrame[]> GetStackTraceAsync()
     {
-        return await SendCommandAsync("-stack-list-frames").ConfigureAwait(false);
+        var miResponse = await SendCommandAsync("-stack-list-frames").ConfigureAwait(false);
+        return MiResponseParser.ParseStackFrames(miResponse);
     }
 
     public async Task<DapVariable[]> GetLocalsAsync()
