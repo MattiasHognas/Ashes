@@ -496,12 +496,13 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
-        // Socket/TLS/HTTP leaves need the epoll aggregate wait, which is Linux-only for now; on Windows a
-        // socket program keeps the legacy driver. Spawn still needs per-task arena install/reap (a later
-        // phase), so any program that spawns keeps the legacy driver on every target.
+        // On Linux the run-queue scheduler covers every async program: coroutines + timer leaves, the
+        // socket/TLS/HTTP epoll aggregate wait, and spawn with per-task arena install/reap. On Windows
+        // the epoll wait is unavailable, so only async programs with neither socket leaves nor spawn use
+        // it there; the rest keep the legacy driver.
+        bool schedulerLinux = flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.LinuxArm64;
         bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program)
-            && !ProgramUsesInstruction<IrInst.SpawnTask>(program)
-            && (!usesSocketLeaves || flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.LinuxArm64);
+            && (schedulerLinux || (!usesSocketLeaves && !ProgramUsesInstruction<IrInst.SpawnTask>(program)));
         // arm64 always uses the real-ELF-TLS per-thread arena (PT_TLS + local-exec cursors), so a
         // `both` worker can be handed its own arena. This coexists with networking: a networking
         // program is dynamically linked and dlopen's rustls, whose dynamic TLS lives in the loader's

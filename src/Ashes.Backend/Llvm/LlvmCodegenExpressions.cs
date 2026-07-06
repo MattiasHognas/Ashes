@@ -1766,6 +1766,76 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Installs a task's arena for the duration of one step: if the task has an <c>ArenaOwner</c> (a
+    /// spawned task or a sub-task of one), the owner's private arena cursor/end is loaded into the
+    /// global allocation slots so allocations during the step land in that arena; the previous global
+    /// cursor/end are returned for restoration. Owner 0 (the main task and its sub-tasks) leaves the
+    /// global arena in place. Pair with <see cref="EmitRestoreTaskArena"/>.
+    /// </summary>
+    private static (LlvmValueHandle owner, LlvmValueHandle savedCursor, LlvmValueHandle savedEnd) EmitInstallTaskArena(LlvmCodegenState state, LlvmValueHandle task, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle owner = LoadMemory(state, task, TaskStructLayout.ArenaOwner, prefix + "_owner");
+        LlvmValueHandle savedCursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, prefix + "_saved_cursor");
+        LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, prefix + "_saved_end");
+        LlvmBasicBlockHandle installBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_install");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_install");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, owner, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_owner"), installBlock, afterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, installBlock);
+        LlvmApi.BuildStore(builder, LoadMemory(state, owner, TaskStructLayout.ArenaCursor, prefix + "_owner_cursor"), state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, LoadMemory(state, owner, TaskStructLayout.ArenaEnd, prefix + "_owner_end"), state.HeapEndSlot);
+        LlvmApi.BuildBr(builder, afterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterBlock);
+        return (owner, savedCursor, savedEnd);
+    }
+
+    /// <summary>
+    /// Writes the (possibly grown) arena cursor/end back to the task's <c>ArenaOwner</c> and restores
+    /// the previous global cursor/end. Counterpart to <see cref="EmitInstallTaskArena"/>.
+    /// </summary>
+    private static void EmitRestoreTaskArena(LlvmCodegenState state, LlvmValueHandle owner, LlvmValueHandle savedCursor, LlvmValueHandle savedEnd, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle wbBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_writeback");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_after_writeback");
+        // Only touch the global cursor when an owner arena was installed. For owner 0 (main task and
+        // its sub-tasks) the step allocated directly into the global arena and those allocations must
+        // persist — restoring a saved cursor here would undo them.
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, owner, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_owner_wb"), wbBlock, afterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, wbBlock);
+        StoreMemory(state, owner, TaskStructLayout.ArenaCursor, LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, prefix + "_grown_cursor"), prefix + "_wb_cursor");
+        StoreMemory(state, owner, TaskStructLayout.ArenaEnd, LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, prefix + "_grown_end"), prefix + "_wb_end");
+        LlvmApi.BuildStore(builder, savedCursor, state.HeapCursorSlot);
+        LlvmApi.BuildStore(builder, savedEnd, state.HeapEndSlot);
+        LlvmApi.BuildBr(builder, afterBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterBlock);
+    }
+
+    /// <summary>
+    /// Frees a completed spawned task's private arena chunk chain (the task struct itself lives in the
+    /// first chunk, so this must run after the last read of the task). Walks the chunks from the most
+    /// recent (<c>ArenaEnd - HeapChunkBytes</c>) back through each chunk header's previous-chunk pointer.
+    /// </summary>
+    private static void EmitReapTaskArena(LlvmCodegenState state, LlvmValueHandle task, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle freeBaseSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_free_base_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), prefix + "_last_chunk"), freeBaseSlot);
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_body");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, freeBaseSlot, prefix + "_free_base");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmApi.BuildStore(builder, LoadMemory(state, freeBase, 0, prefix + "_prev_chunk"), freeBaseSlot);
+        EmitFreeOsMemory(state, freeBase, HeapChunkBytes, prefix + "_free_chunk");
+        LlvmApi.BuildBr(builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+    }
+
+    /// <summary>
     /// Body of <c>ashes_scheduler_run(mainTask)</c>: the flat run-queue loop. Seeds the queue with the
     /// main task, then repeatedly pops a ready task and steps it once. A leaf that completes, or a
     /// coroutine that returns COMPLETED, delivers its result to its <c>Waiter</c> (clearing the waiter's
@@ -1803,6 +1873,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle suspendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_suspend");
         LlvmBasicBlockHandle completeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_complete");
         LlvmBasicBlockHandle deliverBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_deliver");
+        LlvmBasicBlockHandle noWaiterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_no_waiter");
+        LlvmBasicBlockHandle reapBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reap");
 
         LlvmApi.BuildBr(builder, loopBlock);
 
@@ -1832,7 +1904,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, "sched_is_leaf"), leafBlock, coroBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, leafBlock);
+        (LlvmValueHandle leafOwner, LlvmValueHandle leafSavedCursor, LlvmValueHandle leafSavedEnd) = EmitInstallTaskArena(state, task, "sched_leaf");
         LlvmValueHandle leafStatus = EmitStepLeafTask(state, task, "sched_leaf_step");
+        EmitRestoreTaskArena(state, leafOwner, leafSavedCursor, leafSavedEnd, "sched_leaf");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, leafStatus, zero, "sched_leaf_done"), completeBlock, parkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, parkBlock);
@@ -1842,10 +1916,12 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, coroBlock);
+        (LlvmValueHandle coroOwner, LlvmValueHandle coroSavedCursor, LlvmValueHandle coroSavedEnd) = EmitInstallTaskArena(state, task, "sched_coro");
         LlvmValueHandle coroutineFn = LoadMemory(state, task, TaskStructLayout.CoroutineFn, "sched_coro_fn");
         LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
         LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "sched_coro_ptr");
         LlvmValueHandle coroStatus = LlvmApi.BuildCall2(builder, coroutineFnType, typedFnPtr, [task, zero], "sched_coro_status");
+        EmitRestoreTaskArena(state, coroOwner, coroSavedCursor, coroSavedEnd, "sched_coro");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, coroStatus, zero, "sched_suspended"), suspendBlock, completeBlock);
 
         // Suspended on a fresh AwaitedTask: schedule it, link it back to this task, and park this task.
@@ -1860,12 +1936,23 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, completeBlock);
         LlvmValueHandle completedTask = LlvmApi.BuildLoad2(builder, state.I64, taskSlot, "sched_completed");
         LlvmValueHandle waiter = LoadMemory(state, completedTask, TaskStructLayout.Waiter, "sched_waiter");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "sched_has_waiter"), deliverBlock, loopBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "sched_has_waiter"), deliverBlock, noWaiterBlock);
 
+        // A waiter resumes with the completed task's result. (A spawned root task delivered here keeps
+        // its arena — no copy-out yet — so an awaited spawn currently leaks; fire-and-forget spawns,
+        // the server case, take the no-waiter path and are reaped.)
         LlvmApi.PositionBuilderAtEnd(builder, deliverBlock);
         StoreMemory(state, waiter, TaskStructLayout.ResultSlot, LoadMemory(state, completedTask, TaskStructLayout.ResultSlot, "sched_completed_result"), "sched_deliver_result");
         StoreMemory(state, waiter, TaskStructLayout.AwaitedTask, zero, "sched_clear_awaited");
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_enqueue_waiter");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        // No waiter: a fire-and-forget spawned root task (its own ArenaOwner) is reaped; everything else
+        // (the main task, or a sub-task whose owner is still live) just drops.
+        LlvmApi.PositionBuilderAtEnd(builder, noWaiterBlock);
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, completedTask, TaskStructLayout.ArenaOwner, "sched_completed_owner"), completedTask, "sched_is_root_spawn"), reapBlock, loopBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, reapBlock);
+        EmitReapTaskArena(state, completedTask, "sched_reap");
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, returnBlock);
@@ -2045,7 +2132,17 @@ internal static partial class LlvmCodegen
         StoreMemory(state, copyPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.BuildAdd(builder, chunkBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_arena_end"), "spawn_arena_end_store");
 
-        // Push onto the detached list.
+        if (state.UseRunQueueScheduler)
+        {
+            // Run-queue mode: the spawned task is its own arena owner (its sub-tasks inherit it), has no
+            // waiter (fire-and-forget), and goes straight onto the ready queue.
+            StoreMemory(state, copyPtr, TaskStructLayout.ArenaOwner, copyPtr, "spawn_arena_owner_self");
+            StoreMemory(state, copyPtr, TaskStructLayout.Waiter, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_no_waiter");
+            _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [copyPtr], "spawn_enqueue");
+            return LlvmApi.ConstInt(state.I64, 0, 0);
+        }
+
+        // Legacy mode: push onto the detached list.
         LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
         LlvmValueHandle head = LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "spawn_head");
         StoreMemory(state, copyPtr, TaskStructLayout.NextTask, head, "spawn_next_store");
