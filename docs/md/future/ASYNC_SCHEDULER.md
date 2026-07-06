@@ -25,30 +25,43 @@ Delivered on branch `async-run-queue` (full gate green throughout — 1342 unit 
 Benchmark (clean env): TCP echo **315k** req/s, 0 errors (≈ 2× the .NET baseline); non-networking
 async, client TCP/TLS/HTTP, and single-reactor HTTP servers all correct.
 
-### Remaining task 1: forkWorkers children outlive their parent
+### Task 1: forkWorkers child cleanup — VERIFIED WORKING
 
-`Ashes.Net.Tcp.forkWorkers` forks one reactor process per CPU (`SO_REUSEPORT`). When the parent is
-killed, the reactor children **do not die** — they keep the listening port bound. This leaks processes
-and, via `SO_REUSEPORT`, lets stale reactors steal connections from a fresh server on the same port
-(which corrupted every benchmark measurement during development). The fork sets a parent-death signal
-(`PR_SET_PDEATHSIG`) but it is evidently not taking effect for the reactor children. Audit the
-`EmitStepForkWorkersTask` fork path: confirm `PR_SET_PDEATHSIG` is issued in the child *after* the fork
-with the right signal, that the "parent" it tracks is the process the benchmark/user actually kills
-(not an intermediate), and that the children re-check the parent liveness / shutdown flag. This is the
-enabler — it must land first so task 2 can be measured in a clean environment.
+Checked directly: starting a default `Http.Server.serve` spawns one reactor per CPU (32 here), and
+killing the parent with `SIGTERM` reaps **all** of them within ~2 s (32 → 0). `PR_SET_PDEATHSIG` works.
+The "lingering reactors" seen during development were transient — graceful shutdown takes ~1–2 s and
+`bench.sh` only `sleep 0.3`s between stages, so rapid successive runs overlapped. Not a code bug; if
+the benchmark tooling needs it, lengthen `bench.sh`'s post-kill wait. No compiler change required.
 
-### Remaining task 2: multi-reactor HTTP under high concurrent load
+### Task 2: concurrent HTTP crashes the reactor — REAL BUG, not yet fixed
 
-The scheduler *core* is correct for HTTP servers — the `should_serve*` backend tests pass — but those
-run at `--parallel-workers 1` (single reactor). The **default multi-reactor** `Http.Server.serve` under
-the fast `.NET` loadgen reports "server did not come up" / near-total errors, where the equivalent TCP
-echo server is fine (315k). So the fault is in the **forkWorkers multi-reactor path interacting with
-the scheduler and the HTTP handler**, not the scheduler loop itself. Reproduce after task 1 with a
-clean environment: A/B `http_echo` compiled `--parallel-workers 1` vs default against the loadgen. Two
-suspects to check: (a) the HTTP handler not closing the connection under load (the loadgen reads until
-the server closes — a non-close hangs it, unlike a fixed-size read), and (b) each forked reactor's
-scheduler / epoll / arena state after the fork. Add a multi-reactor HTTP concurrency regression test so
-the suite exercises what the benchmark does.
+Confirmed through the harness (the reliable signal), so **not** an environment artifact: firing HTTP
+requests **concurrently** at a scheduler-driven server **segfaults the reactor** (`SEGV_MAPERR`, a wild
+pointer in the scheduler). Isolated:
+
+- **Sequential** HTTP requests work (`should_serve_http_over_the_tcp_server` passes).
+- **Concurrent TCP** works (`should_serve_connections_concurrently`, and the fairness repro, pass).
+- **Concurrent HTTP** fails — reliably, at even **4** concurrent requests, single- **or** multi-reactor.
+
+So the trigger is the HTTP handler (its recursive `connLoop` buffering + heavier allocation) under
+concurrency, not TCP and not multi-reactor per se. The core-dump stack is the same shape/region as the
+pre-fix uninitialized-field crash, so the zero-init fix (already landed) was **necessary but
+insufficient** — a second wild-pointer source remains in the scheduler's handling of concurrent,
+allocation-heavy coroutine handlers. The earlier "16×200 concurrent, 0 errors" was almost certainly a
+stale/lucky server answering (manual binds are unreliable in this sandbox), so it did not actually
+clear this.
+
+Repro is captured as a **skipped** regression test:
+`LinuxBackendCoverageTests.Linux_backend_llvm_should_serve_http_concurrently_across_workers` — un-skip
+once fixed. Next debugging steps: compile that repro with `EmitDebugInfo = true` (keeps -O2 so the
+crash still fires) to a **fixed, non-deleted** path, take the core, and `addr2line` the frames to find
+which scheduler operation dereferences the bad pointer; then audit the arena install/restore/reap and
+the parked-list/`Waiter` links across interleaved multi-chunk-arena handlers (the HTTP handler grows
+its arena across chunks where the TCP echo handler does not — a likely differentiator).
+
+**The scheduler is therefore not yet "done":** fairness, non-networking async, client I/O, TCP servers,
+and sequential HTTP are all correct and gate-green, but concurrent HTTP servers crash. This doc stays
+until task 2 is fixed; only then move the permanent notes to `internals/architecture.md` and remove it.
 
 ## Original design (for reference)
 
