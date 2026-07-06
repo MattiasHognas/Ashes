@@ -53,11 +53,32 @@ clear this.
 
 Repro is captured as a **skipped** regression test:
 `LinuxBackendCoverageTests.Linux_backend_llvm_should_serve_http_concurrently_across_workers` — un-skip
-once fixed. Next debugging steps: compile that repro with `EmitDebugInfo = true` (keeps -O2 so the
-crash still fires) to a **fixed, non-deleted** path, take the core, and `addr2line` the frames to find
-which scheduler operation dereferences the bad pointer; then audit the arena install/restore/reap and
-the parked-list/`Waiter` links across interleaved multi-chunk-arena handlers (the HTTP handler grows
-its arena across chunks where the TCP echo handler does not — a likely differentiator).
+once fixed.
+
+**Diagnosis so far** (debug build via `EmitDebugInfo = true`, core + gdb/objdump):
+
+- The faulting instruction is `cmpq $0x1,(%rcx)` in **`lambda_3`** (a `listener`-parameterized function
+  — the accept loop) called from `coroutine_2` — i.e. an **ADT tag check on a `Result`** the accept
+  loop reads. `%rcx` is `0x7f…001c0`, an arena-range address that is **unmapped**. The `Result` came
+  from a preceding `call` (`0x410fc4`, a symbol-less runtime function).
+- **Ruled out — use-after-free / reap:** disabling `EmitReapTaskArena` entirely does **not** fix it, and
+  the address is unmapped even with nothing freed. So it is a *wild* pointer (a value that was never a
+  valid allocation), not a dangling one.
+- **Ruled out — ready-queue double-enqueue:** adding a `QueuedFlag` to make `ashes_ready_enqueue`
+  idempotent did **not** fix it.
+- **So:** the accept coroutine's `ResultSlot` holds a garbage arena pointer — the accept leaf
+  (`WaitKind = accept`, `ArenaOwner = 0`, the reactor's global arena) allocated its `Ok(client)` result
+  into a **wild arena** while concurrent, allocation-heavy handlers churn. The trigger is *concurrent
+  complex handlers* (sequential HTTP and concurrent TCP are both fine), so a handler's step is leaving
+  the global allocation cursor in a bad state that a subsequent owner-0 step (the accept leaf) then
+  allocates through.
+
+**Next step:** trace the global heap cursor around the accept-leaf allocation vs. handler steps — put a
+watchpoint on the heap-cursor global (`__ashes_heap_cursor`) or instrument `EmitInstallTaskArena` /
+`EmitRestoreTaskArena` to assert the global is the reactor's before each owner-0 step. Suspect: a step
+path (leaf / composite / spawn) that does not correctly save+restore the global cursor, or a handler
+whose `ArenaOwner` resolves to 0. Option-2's spawned→reactor result copy-out (not yet implemented) may
+also be relevant if a handler result ever reaches the reactor's arena.
 
 **The scheduler is therefore not yet "done":** fairness, non-networking async, client I/O, TCP servers,
 and sequential HTTP are all correct and gate-green, but concurrent HTTP servers crash. This doc stays
