@@ -511,6 +511,7 @@ public static class IrOptimizer
             IrInst.CreateTcpReceiveTask t => t with { SocketTemp = R(t.SocketTemp), MaxBytesTemp = R(t.MaxBytesTemp) },
             IrInst.CreateTcpCloseTask t => t with { SocketTemp = R(t.SocketTemp) },
             IrInst.CreateTcpListenTask t => t with { PortTemp = R(t.PortTemp) },
+            IrInst.CreateForkWorkersTask t => t with { PortTemp = R(t.PortTemp), CountTemp = R(t.CountTemp) },
             IrInst.CreateTcpAcceptTask t => t with { SocketTemp = R(t.SocketTemp) },
             IrInst.CreateHttpGetTask t => t with { UrlTemp = R(t.UrlTemp) },
             IrInst.CreateHttpPostTask t => t with { UrlTemp = R(t.UrlTemp), BodyTemp = R(t.BodyTemp) },
@@ -1442,6 +1443,7 @@ public static class IrOptimizer
             case IrInst.CreateTcpReceiveTask t: usedTemps.Add(t.SocketTemp); usedTemps.Add(t.MaxBytesTemp); break;
             case IrInst.CreateTcpCloseTask t: usedTemps.Add(t.SocketTemp); break;
             case IrInst.CreateTcpListenTask t: usedTemps.Add(t.PortTemp); break;
+            case IrInst.CreateForkWorkersTask t: usedTemps.Add(t.PortTemp); usedTemps.Add(t.CountTemp); break;
             case IrInst.CreateTcpAcceptTask t: usedTemps.Add(t.SocketTemp); break;
             case IrInst.CreateHttpGetTask t: usedTemps.Add(t.UrlTemp); break;
             case IrInst.CreateHttpPostTask t: usedTemps.Add(t.UrlTemp); usedTemps.Add(t.BodyTemp); break;

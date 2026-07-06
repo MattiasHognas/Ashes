@@ -876,6 +876,7 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpClose
             or BuiltinRegistry.BuiltinValueKind.NetTcpListen
             or BuiltinRegistry.BuiltinValueKind.NetTcpAccept
+            or BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers
             or BuiltinRegistry.BuiltinValueKind.NetTlsConnect
             or BuiltinRegistry.BuiltinValueKind.NetTlsSend
             or BuiltinRegistry.BuiltinValueKind.NetTlsReceive
@@ -892,6 +893,7 @@ public sealed partial class Lowering
             or IntrinsicKind.NetTcpClose
             or IntrinsicKind.NetTcpListen
             or IntrinsicKind.NetTcpAccept
+            or IntrinsicKind.NetForkWorkers
             or IntrinsicKind.NetTlsConnect
             or IntrinsicKind.NetTlsSend
             or IntrinsicKind.NetTlsReceive
@@ -1025,6 +1027,53 @@ public sealed partial class Lowering
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpListenTask(taskTemp, portTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetForkWorkers(Expr portArg, Expr countArg)
+    {
+        using var portSpan = PushDiagnosticSpan(portArg);
+        var (portTemp, portType) = LowerExpr(portArg);
+        var prunedPortType = Prune(portType);
+        if (prunedPortType is TypeRef.TNever)
+        {
+            return (portTemp, prunedPortType);
+        }
+
+        if (prunedPortType is TypeRef.TVar)
+        {
+            Unify(prunedPortType, new TypeRef.TInt());
+            prunedPortType = new TypeRef.TInt();
+        }
+
+        if (prunedPortType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(portArg), $"Ashes.Net.Tcp.Server.forkWorkers() expects Int for port but got {Pretty(prunedPortType)}.");
+            return (portTemp, prunedPortType);
+        }
+
+        using var countSpan = PushDiagnosticSpan(countArg);
+        var (countTemp, countType) = LowerExpr(countArg);
+        var prunedCountType = Prune(countType);
+        if (prunedCountType is TypeRef.TNever)
+        {
+            return (countTemp, prunedCountType);
+        }
+
+        if (prunedCountType is TypeRef.TVar)
+        {
+            Unify(prunedCountType, new TypeRef.TInt());
+            prunedCountType = new TypeRef.TInt();
+        }
+
+        if (prunedCountType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(countArg), $"Ashes.Net.Tcp.Server.forkWorkers() expects Int for worker count but got {Pretty(prunedCountType)}.");
+            return (countTemp, prunedCountType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateForkWorkersTask(taskTemp, portTemp, countTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
     private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
@@ -2014,6 +2063,14 @@ public sealed partial class Lowering
         );
     }
 
+    private Binding.Intrinsic CreateNetForkWorkersBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetForkWorkers,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt()))))
+        );
+    }
+
     private Binding.Intrinsic CreateNetTlsConnectBinding()
     {
         return new Binding.Intrinsic(
@@ -2946,6 +3003,47 @@ public sealed partial class Lowering
         }
 
         return (argTemp, new TypeRef.TInt());
+    }
+
+    private Binding.Intrinsic CreateUIntFromIntBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.UIntFromInt,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(8)))
+        );
+    }
+
+    // Ashes.UInt.fromInt(x) : u8 — narrow a signed Int to an unsigned byte, wrapping modulo 256 (mask
+    // to the low 8 bits) so the value is a valid u8 regardless of the input's magnitude/sign. The
+    // inverse of Ashes.UInt.toInt; unlike toInt this needs a real mask because the internal i64 could
+    // carry bits above the byte width.
+    private (int, TypeRef) LowerUIntFromInt(Expr arg)
+    {
+        using var argDiagnosticSpan = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (argTemp, pruned);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.UInt.fromInt() expects Int but got {Pretty(pruned)}.");
+            return (argTemp, new TypeRef.TUInt(8));
+        }
+
+        var maskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(maskTemp, 0xFF));
+        var resultTemp = NewTemp();
+        Emit(new IrInst.AndInt(resultTemp, argTemp, maskTemp));
+        return (resultTemp, new TypeRef.TUInt(8));
     }
 
     // ── Ashes.Math Layer-1 numeric conversions and Float unary primitives. ──

@@ -514,6 +514,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle checkTcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_listen");
         LlvmBasicBlockHandle tcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_listen");
         LlvmBasicBlockHandle checkTcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_accept");
+        LlvmBasicBlockHandle checkForkWorkersBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_fork_workers");
+        LlvmBasicBlockHandle forkWorkersBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fork_workers");
         LlvmBasicBlockHandle tcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_accept");
         LlvmBasicBlockHandle checkTlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_connect");
         LlvmBasicBlockHandle tlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_connect");
@@ -636,11 +638,24 @@ internal static partial class LlvmCodegen
             stateIdx,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpAccept), 1),
             prefix + "_is_tcp_accept");
-        LlvmApi.BuildCondBr(builder, isTcpAccept, tcpAcceptBlock, checkTlsConnectBlock);
+        LlvmApi.BuildCondBr(builder, isTcpAccept, tcpAcceptBlock, checkForkWorkersBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, tcpAcceptBlock);
         LlvmApi.BuildStore(builder,
             EmitNetworkingRuntimeCall(state, "ashes_step_tcp_accept_task", [taskPtr], prefix + "_tcp_accept_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkForkWorkersBlock);
+        LlvmValueHandle isForkWorkers = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateForkWorkers), 1),
+            prefix + "_is_fork_workers");
+        LlvmApi.BuildCondBr(builder, isForkWorkers, forkWorkersBlock, checkTlsConnectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, forkWorkersBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_fork_workers_task", [taskPtr], prefix + "_fork_workers_status"),
             statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
@@ -1822,6 +1837,22 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle headGlobal = DetachedTasksHeadGlobal(state);
 
+        // When a detached task is itself being stepped (the guard is set), a wait inside that step
+        // must not consult the detached list: the "runnable" task the scan would find is the one
+        // currently executing (still WaitNone because it has not parked yet), which would force a
+        // non-blocking poll and spin the driver, leaking per-wait stack scratch until the stack
+        // overflows. Report "nothing pending" so the wait blocks normally on its own leaf. Mirrors
+        // the guard in ashes_run_detached.
+        LlvmBasicBlockHandle guardedReturnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_guarded_return");
+        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_scan");
+        LlvmValueHandle guard = LlvmApi.BuildLoad2(builder, state.I64, DetachedStepGuardGlobal(state), "dm_guard");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, guard, LlvmApi.ConstInt(state.I64, 0, 0), "dm_stepping"),
+            guardedReturnBlock, scanBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, guardedReturnBlock);
+        LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I64, 0, 0));
+        LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
+
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_check");
         LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_body");
         LlvmBasicBlockHandle timerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dm_timer");
@@ -1957,9 +1988,6 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle advanceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_advance");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "dr_done");
 
-        LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle eventStorage = LlvmApi.BuildAlloca(builder, epollEventType, "dr_event_storage");
-        LlvmValueHandle eventPtr = GetArrayElementPointer(state, epollEventType, eventStorage, LlvmApi.ConstInt(state.I64, 0, 0), "dr_event_ptr");
         LlvmValueHandle curSlot = LlvmApi.BuildAlloca(builder, state.I64, "dr_cur_slot");
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, headGlobal, "dr_head"), curSlot);
         LlvmApi.BuildBr(builder, checkBlock);
@@ -1983,17 +2011,9 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, registerBlock);
         LlvmValueHandle handle = LoadMemory(state, cur, TaskStructLayout.WaitHandle, "dr_handle");
         LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder, readish,
-            LlvmApi.ConstInt(state.I32, 0x001, 0), LlvmApi.ConstInt(state.I32, 0x004, 0), "dr_event_mask");
-        LlvmApi.BuildStore(builder, eventMask, LlvmApi.BuildBitCast(builder, eventPtr, state.I32Ptr, "dr_event_mask_ptr"));
-        LlvmApi.BuildStore(builder, handle, LlvmApi.BuildBitCast(builder,
-            LlvmApi.BuildGEP2(builder, state.I8, eventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], "dr_event_data_byte"),
-            state.I64Ptr, "dr_event_data_ptr"));
-        EmitLinuxSyscall4(state, SyscallEpollCtl,
-            epollFd,
-            LlvmApi.ConstInt(state.I64, 1, 0),
-            handle,
-            LlvmApi.BuildPtrToInt(builder, eventPtr, state.I64, "dr_event_arg"),
-            "dr_epoll_ctl");
+            LlvmApi.ConstInt(state.I64, 0x001, 0), LlvmApi.ConstInt(state.I64, 0x004, 0), "dr_event_mask");
+        // Incremental: registers only if the socket is new or its mask changed (per-fd mask table).
+        _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_register", [epollFd, handle, eventMask], "dr_register");
         LlvmApi.BuildBr(builder, advanceBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
@@ -2186,26 +2206,30 @@ internal static partial class LlvmCodegen
         if (IsLinuxFlavor(state.Flavor))
         {
             LlvmTypeHandle epollEventType = LlvmApi.ArrayType2(state.I8, 16);
-            LlvmValueHandle epollEventStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_epoll_event_storage");
-            LlvmValueHandle epollEventPtr = GetArrayElementPointer(state, epollEventType, epollEventStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_event_ptr");
             LlvmValueHandle epollEventOutStorage = LlvmApi.BuildAlloca(builder, epollEventType, prefix + "_epoll_event_out_storage");
             LlvmValueHandle epollEventOutPtr = GetArrayElementPointer(state, epollEventType, epollEventOutStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_event_out_ptr");
-            LlvmValueHandle epollFd = EmitLinuxSyscall(state, SyscallEpollCreate1, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_create1");
-            LlvmValueHandle readMask = LlvmApi.ConstInt(state.I32, 0x001, 0);
-            LlvmValueHandle writeMask = LlvmApi.ConstInt(state.I32, 0x004, 0);
-            LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder, readishWait, readMask, writeMask, prefix + "_event_mask");
-            LlvmApi.BuildStore(builder, eventMask, LlvmApi.BuildBitCast(builder, epollEventPtr, state.I32Ptr, prefix + "_epoll_event_mask_ptr"));
-            LlvmApi.BuildStore(builder, waitHandle, LlvmApi.BuildBitCast(builder,
-                LlvmApi.BuildGEP2(builder, state.I8, epollEventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], prefix + "_epoll_event_data_byte"),
-                state.I64Ptr,
-                prefix + "_epoll_event_data_ptr"));
 
-            EmitLinuxSyscall4(state, SyscallEpollCtl,
-                epollFd,
-                LlvmApi.ConstInt(state.I64, 1, 0),
-                waitHandle,
-                LlvmApi.BuildPtrToInt(builder, epollEventPtr, state.I64, prefix + "_epoll_event_arg"),
-                prefix + "_epoll_ctl");
+            // Persistent per-reactor epoll fd: create it once, then reuse across every wait so a park no
+            // longer pays an epoll_create1/close pair, and registrations persist between waits.
+            LlvmValueHandle epollGlobal = EpollFdGlobal(state);
+            LlvmValueHandle epollFdSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_epoll_fd_slot");
+            LlvmValueHandle existingFd = LlvmApi.BuildLoad2(builder, state.I64, epollGlobal, prefix + "_epoll_fd_existing");
+            LlvmApi.BuildStore(builder, existingFd, epollFdSlot);
+            LlvmBasicBlockHandle createEpollBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_epoll_create");
+            LlvmBasicBlockHandle haveEpollBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_epoll_have");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, existingFd, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_uncreated"),
+                createEpollBlock, haveEpollBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, createEpollBlock);
+            LlvmValueHandle newFd = EmitLinuxSyscall(state, SyscallEpollCreate1, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_create1");
+            LlvmApi.BuildStore(builder, newFd, epollGlobal);
+            LlvmApi.BuildStore(builder, newFd, epollFdSlot);
+            LlvmApi.BuildBr(builder, haveEpollBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, haveEpollBlock);
+            LlvmValueHandle epollFd = LlvmApi.BuildLoad2(builder, state.I64, epollFdSlot, prefix + "_epoll_fd");
+
+            LlvmValueHandle eventMask = LlvmApi.BuildSelect(builder, readishWait, LlvmApi.ConstInt(state.I64, 0x001, 0), LlvmApi.ConstInt(state.I64, 0x004, 0), prefix + "_event_mask");
+            _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_register", [epollFd, waitHandle, eventMask], prefix + "_epoll_register");
             if (detached)
             {
                 _ = EmitNetworkingRuntimeCall(state, "ashes_detached_register_epoll", [epollFd], prefix + "_detached_register");
@@ -2230,7 +2254,7 @@ internal static partial class LlvmCodegen
                     waitTimeout,
                     prefix + "_epoll_wait");
             }
-            EmitLinuxSyscall(state, SyscallClose, epollFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_epoll_close");
+            // The persistent fd is never closed here; sockets leave the set kernel-side on close.
         }
         else if (!detached)
         {

@@ -44,6 +44,7 @@ public static class BuiltinRegistry
         NetTcpClose,
         NetTcpListen,
         NetTcpAccept,
+        NetTcpForkWorkers,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,
@@ -77,6 +78,7 @@ public static class BuiltinRegistry
         BytesGetU32Le,
         BytesGetU64Le,
         UIntToInt,
+        UIntFromInt,
         MathToFloat,
         MathSqrt,
         MathFloor,
@@ -312,7 +314,8 @@ public static class BuiltinRegistry
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1)
+                    ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.UIntFromInt, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",
@@ -338,7 +341,8 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
-                    ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1)
+                    ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1),
+                    ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Http.Server"] = new(
                 "Ashes.Http.Server",

@@ -310,27 +310,64 @@ transport is that HTTPS falls out without a second handler model.
   single-threaded case). Ownership of resources referenced by a spawned task moves into the task.
 - `Ashes.Http.Server`: minimal HTTP/1.1 — request-line parse (`method` / `path`), response
   constructors (`text`, status reasons, `Content-Length`), synchronous handler, `Connection: close`.
+- `Ashes.Http.Server` extensions: request headers (`header(req)(name)`, case-insensitive) and body
+  (`body(req)`), `json` and custom-header (`respond`, `withHeader`) responses, and **async handlers**
+  (`handler : HttpRequest -> Task(E, HttpResponse)`, so a handler can `await`; a handler `Error`
+  becomes a `500`).
+- HTTP/1.1 **keep-alive** and **cross-read buffering**: the connection is reused for successive
+  requests; reads are buffered until a full request (headers + `Content-Length` bytes of body) is
+  available, so bodies larger than one read and slow/split requests work. Closes on
+  `Connection: close`, handler failure, or peer disconnect. Request bodies may be framed by
+  `Content-Length` or `Transfer-Encoding: chunked` (chunk extensions ignored, trailers unsupported).
+- **Persistent epoll scheduler (Linux)**: each reactor creates one epoll fd and reuses it for every
+  wait (no epoll_create1/close per park), with a per-fd mask table so a socket is registered once
+  (EPOLL_CTL_ADD), re-MOD'd only when its event mask changes, and skipped when already correct — so a
+  wait over N parked sockets costs O(newly-parked) syscalls, not O(N). Sockets leave the set
+  kernel-side on close (with a `forget` hook clearing the table for fd reuse). The Windows detached
+  WSAPoll array cap was raised 256 -> 4096.
+- **Graceful shutdown (Linux)**: the runtime installs `SIGINT`/`SIGTERM` handlers (a naked
+  `rt_sigreturn` restorer, no `SA_RESTART`) so the signal interrupts the parked `accept` (`EINTR`);
+  the accept step then completes with a shutdown sentinel and `serve` stops the loop and returns
+  `Ok(())`, so the program exits cleanly (verified single- and multi-worker on linux-x64; arm64 uses
+  the standard `rt_sigreturn` restorer). Windows serve terminates on the default disposition today; a
+  console-ctrl handler + accept wake-up is the remaining piece there.
 - Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
   combinator. Same hermetic rustls runtime and three targets as the TLS client.
+- **Multi-core multi-reactor on all three targets** (`serve` is parallel by default): one reactor
+  process per online CPU, so an endpoint scales across cores with no worker count in program code.
+  `serve(port)(handler)` uses this automatically; `serveParallel(port)(workers)(handler)` overrides
+  the count. Worker count defaults to one per online CPU, honoring the shared `--parallel-workers`
+  cap. Separate address spaces make each reactor's scheduler state independent, which purity keeps
+  sound. Two mechanisms behind one `forkWorkers` intrinsic:
+    - **Linux (x64 native + arm64 via qemu):** the parent `fork`s the workers up front; each binds the
+      port with `SO_REUSEPORT` so the kernel load-balances new connections. Children get
+      `PR_SET_PDEATHSIG` so they die with the parent.
+    - **Windows (win-x64):** no `fork` and no `SO_REUSEPORT`, so the parent creates one inheritable
+      listener, publishes it (a `__ashes_worker_listener` global + the `ASHES_WORKER_FD` env var) and
+      relaunches itself with `CreateProcessA(bInheritHandles=TRUE)`; each worker adopts the inherited
+      handle (its `listen` returns it) and all accept on the one shared listener. A Job Object with
+      `KILL_ON_JOB_CLOSE` makes workers die with the parent. Verified functionally under Wine; the
+      automated win-x64 tests cap to a single reactor because Wine's cross-process inherited-socket
+      accept is unreliable (a Wine limit, not a code issue) — the multi-process path is covered by the
+      Linux `serveParallel` test and manual runs.
+  This sidesteps the fork-join long-lived-worker problem below by using processes rather than the
+  `Parallel` worker pool.
 - Cross-target parity for all of the above (linux-x64 native, linux-arm64 via qemu, win-x64 via
-  wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`).
+  wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`): with
+  the multi-reactor, TCP echo leads the .NET baseline and HTTP roughly doubles it at conc 64.
 
 ### Remaining
-
-- Multi-core multi-reactor: one poll loop per worker over its own connections, with `SO_REUSEPORT`
-  accept distribution (Linux) / a shared listener fallback (Windows). Constraint learned from a
-  spike: `Parallel.both` is fork-join and deadlocks on never-returning reactors — this needs a
-  dedicated long-lived-worker primitive.
-- Scheduler efficiency under high concurrency: each blocking wait currently rebuilds the poll set
-  and re-steps the whole detached list (O(connections) per wake). A persistent epoll set /
-  incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
-  baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
-  Windows detached poll array is capped at 256 fds per round.
-- `Ashes.Http.Server` extensions: request headers and body, keep-alive, streaming/large bodies,
-  `json` response constructor, async handlers (the handler is synchronous today).
-- Graceful shutdown wiring (see open questions).
+- Scheduler: a **detached** handler that itself blocks in `Ashes.Async.all` / `race` cannot advance
+  peer handlers, because the cooperative scheduler steps detached tasks re-entrantly under a guard
+  (`__ashes_detached_stepping`) that a nested wait must respect to avoid re-stepping itself. So two
+  connections whose handlers both do `Async.all` serialize rather than overlap. The real fix is a
+  proper run-queue scheduler (park/enqueue/resume) rather than re-entrant stepping — a larger
+  architectural change. Also minor: the leaf wait wakes one event per `epoll_wait` (batching several
+  would cut syscalls further under very high concurrency).
+- `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
+  today, whether Content-Length- or chunked-framed).
 
 ---
 
@@ -365,9 +402,11 @@ These are genuinely unresolved and should be settled during specification, not i
 
 ### Graceful shutdown mechanism
 
-The default is expected to be OS signals (`SIGINT` / `SIGTERM`) installed by the runtime: stop
-accepting, drain in-flight connections, join workers, complete the lifecycle result with `Ok(())`.
-Open: whether to also expose an explicit programmatic stop handle (and if so, its shape as a library
+OS signals (`SIGINT` / `SIGTERM`) installed by the runtime are now the mechanism on Linux: stop
+accepting and complete the lifecycle result with `Ok(())`. Still open: draining in-flight
+connections before exit (today a worker stops accepting and exits; a multi-worker parent may cut a
+child mid-request via the death-signal), the Windows console-ctrl equivalent, and whether to expose
+an explicit programmatic stop handle (and if so, its shape as a library
 value threaded to the handler or returned alongside the server task), and the drain policy and
 timeout for in-flight work at shutdown.
 

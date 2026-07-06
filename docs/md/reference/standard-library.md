@@ -104,6 +104,9 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
   `Int`. Value-preserving for `u8`/`u16`/`u32` (and a bit-reinterpret for `u64`); it is the bridge that
   lets a byte from `Ashes.Bytes.get` be used in `Int` arithmetic, enabling byte-level integer parsing
   without routing through strings.
+- `fromInt(value)` returning `u8` — narrow an `Int` to an unsigned byte, wrapping modulo 256 (the low
+  8 bits). The inverse of `toInt`; lets a computed byte value be written with `Ashes.Bytes.appendByte`
+  / `Ashes.Bytes.singleton` (e.g. building a percent-decoded string byte by byte).
 
 ### `Ashes.Text`
 
@@ -172,13 +175,23 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
   served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
   owns its connection and runs detached — it must close the socket itself, its result is dropped, and
   its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
-  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`.
+  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`. **`serve` is
+  parallel by default**: it runs one independent reactor per online CPU (see below), so an endpoint
+  scales across cores without the program choosing a worker count.
+- `serveParallel(port)(workers)(handler)` — the same as `serve` with an explicit worker count
+  (`serve` is `serveParallel(port)(0)(handler)`; a count `<= 0` means one worker per online CPU).
 
-`serve` handles connections concurrently on a single thread (cooperative scheduling via
+`serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
+binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
+and each worker serves its connections concurrently on its own thread (cooperative scheduling via
 `Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
-stays bounded under sustained load). Multi-core serving remains future work (see
-[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
-`Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
+stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
+connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
+aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
+compile cap. Multi-core on all three targets: Linux (x64/arm64) forks the workers with a
+`SO_REUSEPORT` listener each; Windows relaunches itself with `CreateProcessA` sharing one inherited
+listener. `send` / `receive` / `close` from `Ashes.Net.Tcp` operate on the accepted client socket.
+Supported on Linux x64, Linux arm64, and
 Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
 
 ```ash
@@ -251,28 +264,50 @@ in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls(8443)("cert.pem")("key.pe
 A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
 runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 
-- `HttpRequest` — a parsed request; access it with `method(req)` / `path(req)`.
-- `HttpResponse` — a response; build one with `text(status)(body)`.
+- `HttpRequest` — a parsed request (method, path, headers, body).
+- `HttpResponse` — a response (status, headers, body).
 - `method(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`).
-- `path(req)` — `HttpRequest -> Str`, the request path (e.g. `"/health"`).
-- `text(status)(body)` — `Int -> Str -> HttpResponse`, a response with the given status code and body.
-- `serve(port)(handler)` — `Int -> (HttpRequest -> HttpResponse) -> Task(Str, Unit)`. Binds the port
-  and, per connection, reads one request, parses the request line, runs `handler`, writes the
-  response, and closes (`Connection: close`). Consumed with `Ashes.Async.run`.
+- `target(req)` — `HttpRequest -> Str`, the raw request target (`"/users?id=42"`, path plus query).
+- `path(req)` — `HttpRequest -> Str`, the path with any `?query` stripped (for routing).
+- `query(req)` — `HttpRequest -> Str`, the raw query string (after `?`), or `""`.
+- `queryParam(req)(name)` — `HttpRequest -> Str -> Maybe(Str)`, a query parameter's **percent-decoded**
+  value looked up by (decoded) name; a bare key yields `Some("")`, absent yields `None`.
+- `percentDecode(s)` — `Str -> Str`, decode `%XX` and `+` (byte-accurate); also usable on the path.
+- `body(req)` — `HttpRequest -> Str`, the request body (`Content-Length`- or chunked-framed).
+- `header(req)(name)` — `HttpRequest -> Str -> Maybe(Str)`, the value of a request header, matched
+  **case-insensitively** by name, or `None`.
+- `rawHeaders(req)` — `HttpRequest -> Str`, the raw `Name: value`-per-line header block, for callers
+  that want to scan it directly.
+- `text(status)(body)` — a response with `Content-Type: text/plain; charset=utf-8`.
+- `json(status)(body)` — a response with `Content-Type: application/json`.
+- `respond(status)(headerBlock)(body)` — a response with an explicit header block (`"Name: value\r\n"`
+  per line, or `""` for none).
+- `withHeader(name)(value)(response)` — add a response header. `Content-Length` and `Connection` are
+  always set by the server and must not be added here.
+- `serve(port)(handler)` — `Int -> (HttpRequest -> Task(E, HttpResponse)) -> Task(Str, Unit)`. Binds
+  the port and, per request, reads it, parses request line + headers + body, runs the handler (which
+  may `await` async work), and writes the response. The connection is kept alive (HTTP/1.1 default),
+  closing on `Connection: close`, on handler failure, or when the peer disconnects. A handler that
+  completes with `Error` yields a plain `500`. Consumed with `Ashes.Async.run`; serves connections
+  concurrently like the plaintext TCP server.
 
-This is intentionally small: the request line + a single `receive` per connection, and a synchronous
-handler. Streaming/large bodies, keep-alive, request headers, and async handlers are future work (see
-[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)).
+Reads are **buffered** until a full request has arrived — the header block plus the body (framed by
+`Content-Length` or `Transfer-Encoding: chunked`) — so requests larger than one read and slow/split
+requests are handled. A request is capped at **8 MiB**: a declared `Content-Length` over the cap is
+rejected with `413 Payload Too Large` on the header (before the body is buffered), and an unbounded
+chunked/no-length stream is capped by the buffered size. See
+[SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
 
 ```ash
 import Ashes.IO
 import Ashes.Http.Server
 import Ashes.Async
 let route req =
-    match Ashes.Http.Server.path(req) with
+    async(match Ashes.Http.Server.path(req) with
         | "/health" -> Ashes.Http.Server.text(200)("ok")
-        | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-        | _p -> Ashes.Http.Server.text(404)("not found")
+        | "/echo" -> Ashes.Http.Server.text(200)(Ashes.Http.Server.body(req))
+        | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
+        | _p -> Ashes.Http.Server.text(404)("not found"))
 in match Ashes.Async.run(Ashes.Http.Server.serve(8080)(route)) with
     | Ok(_u) -> Ashes.IO.print("stopped")
     | Error(e) -> Ashes.IO.print(e)
