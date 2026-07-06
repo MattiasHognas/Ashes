@@ -99,6 +99,7 @@ public sealed partial class Lowering
         NetTcpClose,
         NetTcpListen,
         NetTcpAccept,
+        NetForkWorkers,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,

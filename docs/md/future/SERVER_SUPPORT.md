@@ -322,15 +322,24 @@ transport is that HTTPS falls out without a second handler model.
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
   combinator. Same hermetic rustls runtime and three targets as the TLS client.
+- **Multi-core multi-reactor** (`serve` is parallel by default): `forkWorkers` forks one reactor
+  process per online CPU up front (a `fork`-based prefork), each binding the port with `SO_REUSEPORT`
+  so the kernel load-balances new connections; separate address spaces make each reactor's scheduler
+  state independent, which purity keeps sound. `serve(port)(handler)` uses this automatically (no
+  worker count in program code); `serveParallel(port)(workers)(handler)` overrides the count. Worker
+  count defaults to one per online CPU, honoring the shared `--parallel-workers` cap; children get
+  `PR_SET_PDEATHSIG` so they die with the parent. Linux-first (x64 native + arm64 via qemu); on
+  Windows (no `fork`) it degrades to a single reactor. Sidesteps the fork-join long-lived-worker
+  problem below by using processes rather than the `Parallel` worker pool.
 - Cross-target parity for all of the above (linux-x64 native, linux-arm64 via qemu, win-x64 via
-  wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`).
+  wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`): with
+  the multi-reactor, TCP echo leads the .NET baseline and HTTP roughly doubles it at conc 64.
 
 ### Remaining
 
-- Multi-core multi-reactor: one poll loop per worker over its own connections, with `SO_REUSEPORT`
-  accept distribution (Linux) / a shared listener fallback (Windows). Constraint learned from a
-  spike: `Parallel.both` is fork-join and deadlocks on never-returning reactors — this needs a
-  dedicated long-lived-worker primitive.
+- Windows multi-reactor: `fork` is Linux-only, so on Windows `serve` is a single reactor today. A
+  `CreateProcess`-based prefork (relaunch self, inherit/duplicate a `SO_REUSEADDR` listener) would
+  bring the same cross-core scaling to win-x64.
 - Scheduler efficiency under high concurrency: each blocking wait currently rebuilds the poll set
   and re-steps the whole detached list (O(connections) per wake). A persistent epoll set /
   incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET

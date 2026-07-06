@@ -216,8 +216,8 @@ let tryParseBuffered buffered =
                                                                     | m :: pth :: _v -> HttpParsed(HttpRequest(m)(pth)(headerBlock)(bodyText))(keepAlive)(rest)
                                                                     | _other -> HttpParsed(HttpRequest("GET")("/")(headerBlock)(bodyText))(keepAlive)(rest))
 
-let serve port handler = 
-    Ashes.Net.Tcp.Server.serve(port)(given (client) -> 
+let connectionHandler handler = 
+    given (client) -> 
         async(let recursive connLoop buffered = 
             match tryParseBuffered(buffered) with
                 | HttpNeedMore -> 
@@ -245,4 +245,8 @@ let serve port handler =
                             match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
                                 | Error(e3) -> Error(e3)
                                 | Ok(_n2) -> await Ashes.Net.Tcp.close(client)
-        in connLoop("")))
+        in connLoop(""))
+
+let serve port handler = Ashes.Net.Tcp.Server.serve(port)(connectionHandler(handler))
+
+let serveParallel port workers handler = Ashes.Net.Tcp.Server.serveParallel(port)(workers)(connectionHandler(handler))

@@ -172,13 +172,22 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
   served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
   owns its connection and runs detached — it must close the socket itself, its result is dropped, and
   its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
-  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`.
+  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`. **`serve` is
+  parallel by default**: it runs one independent reactor per online CPU (see below), so an endpoint
+  scales across cores without the program choosing a worker count.
+- `serveParallel(port)(workers)(handler)` — the same as `serve` with an explicit worker count
+  (`serve` is `serveParallel(port)(0)(handler)`; a count `<= 0` means one worker per online CPU).
 
-`serve` handles connections concurrently on a single thread (cooperative scheduling via
+`serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
+binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
+and each worker serves its connections concurrently on its own thread (cooperative scheduling via
 `Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
-stays bounded under sustained load). Multi-core serving remains future work (see
-[docs/future/SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md)). `send` / `receive` / `close` from
-`Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux arm64, and
+stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
+connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
+aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
+compile cap. Linux-only today (x64/arm64); on Windows `serve` is a single reactor. `send` / `receive`
+/ `close` from `Ashes.Net.Tcp` operate on the accepted client socket. Supported on Linux x64, Linux
+arm64, and
 Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
 
 ```ash

@@ -38,33 +38,36 @@ bash challenges/server/bench.sh 50000 1 16 128  # REQUESTS then CONCURRENCY leve
 ## Latest outcome
 
 Rerun before every change to the server path and update the numbers below (20000 requests/stage,
-concurrency 1/8/64, quiet loopback box, one connection per request). A loaded box adds variance, so
-trust the `ashes`-vs-`dotnet` comparison within one run and interleave A/B runs across Ashes builds.
+concurrency 1/8/64, one connection per request, on a 32-core loopback box). A loaded box adds
+variance, so trust the `ashes`-vs-`dotnet` comparison within one run and interleave A/B runs across
+Ashes builds. `serve` is parallel by default (one reactor per online CPU), so these reflect
+multi-core scaling out of the box.
 
 ```
 === TCP echo   127.0.0.1:18080 ===
-  ashes    conc 1     39,231 req/s   p50 0.021  p99 0.030  max 3.002 ms
-  ashes    conc 8    123,898 req/s   p50 0.052  p99 0.133  max 3.616 ms
-  ashes    conc 64   125,769 req/s   p50 0.481  p99 1.118  max 4.375 ms
-  dotnet   conc 1     40,356 req/s   p50 0.019  p99 0.031  max 3.009 ms
-  dotnet   conc 8    121,147 req/s   p50 0.058  p99 0.082  max 2.547 ms
-  dotnet   conc 64   139,818 req/s   p50 0.391  p99 0.863  max 3.451 ms
+  ashes    conc 1     40,560 req/s   p50 0.019  p99 0.030  max 2.698 ms
+  ashes    conc 8    210,412 req/s   p50 0.027  p99 0.078  max 3.097 ms
+  ashes    conc 64   316,304 req/s   p50 0.137  p99 0.544  max 4.644 ms
+  dotnet   conc 1     47,435 req/s   p50 0.015  p99 0.029  max 3.005 ms
+  dotnet   conc 8    197,285 req/s   p50 0.028  p99 0.094  max 3.426 ms
+  dotnet   conc 64   268,880 req/s   p50 0.136  p99 0.934  max 4.413 ms
 
 === HTTP 200   127.0.0.1:18081 ===
-  ashes    conc 1     28,495 req/s   p50 0.029  p99 0.044  max 1.165 ms
-  ashes    conc 8     48,396 req/s   p50 0.151  p99 0.317  max 1.828 ms
-  ashes    conc 64    51,931 req/s   p50 1.211  p99 2.534  max 3.970 ms
-  dotnet   conc 1     41,934 req/s   p50 0.018  p99 0.030  max 1.322 ms
-  dotnet   conc 8    135,946 req/s   p50 0.048  p99 0.080  max 1.814 ms
-  dotnet   conc 64   123,235 req/s   p50 0.511  p99 1.764  max 2.239 ms
+  ashes    conc 1     27,238 req/s   p50 0.032  p99 0.047  max 1.298 ms
+  ashes    conc 8    156,145 req/s   p50 0.039  p99 0.090  max 1.481 ms
+  ashes    conc 64   274,294 req/s   p50 0.160  p99 1.244  max 3.092 ms
+  dotnet   conc 1     27,507 req/s   p50 0.030  p99 0.048  max 1.188 ms
+  dotnet   conc 8    112,860 req/s   p50 0.049  p99 0.202  max 1.691 ms
+  dotnet   conc 64   133,553 req/s   p50 0.227  p99 2.292  max 3.285 ms
 ```
 
 ## Reading the results
 
-Both Ashes servers step handlers **cooperatively on one thread** today; the .NET baselines are
-concurrent across the thread pool. On **TCP echo** Ashes is competitive (~90–100% of the .NET
-throughput across the sweep) — the raw accept/receive/send/close path is tight. On **HTTP 200** the
-gap widens with concurrency: at conc 1 Ashes is ~68% of .NET, but at conc 8/64 it trails more
-(~36–42%) because the HTTP request parse is pure-Ashes string work and there is no cross-core
-parallelism yet. Closing that gap is the headroom the **multi-reactor milestone** (worker-per-core
-reactors) targets; faster in-loop parsing would help the single-thread number too.
+`serve` is parallel by default — a fork-based multi-reactor with one reactor per online CPU
+(`SO_REUSEPORT`, so the kernel load-balances connections across workers). At **conc 1** a single
+connection uses a single reactor, so Ashes and .NET are within noise on both benchmarks (the raw
+accept/receive/send/close path is tight). As concurrency rises the reactors light up: on **TCP echo**
+Ashes leads .NET (~316k vs ~269k at conc 64), and on **HTTP 200** — where the pure-Ashes request parse
+is the per-request cost — the extra cores more than absorb it, so Ashes roughly **doubles** .NET at
+conc 64 (~274k vs ~134k). Remaining single-reactor headroom (faster in-loop parsing, persistent epoll)
+would lift the conc-1 numbers further.

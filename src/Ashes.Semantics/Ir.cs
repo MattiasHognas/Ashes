@@ -570,6 +570,14 @@ public abstract record IrInst
     public sealed record CreateTcpListenTask(int Target, int PortTemp) : IrInst;
 
     /// <summary>
+    /// Creates a leaf task that forks (CountTemp - 1) child processes for the fork-based
+    /// multi-reactor (serveParallel), so CountTemp processes total each run their own reactor.
+    /// Returns this worker's index (0-based). Synchronous — never parks. Linux-only; a single
+    /// process on other targets.
+    /// </summary>
+    public sealed record CreateForkWorkersTask(int Target, int CountTemp) : IrInst;
+
+    /// <summary>
     /// Creates a leaf networking task for TCP accept (accept one connection from a listener).
     /// The task is completed by the runtime/task runner rather than a coroutine body.
     /// </summary>
@@ -737,6 +745,8 @@ public static class TaskStructLayout
     public const long StateTcpListen = -16;
     /// <summary>State index value indicating a leaf TCP accept task.</summary>
     public const long StateTcpAccept = -17;
+
+    public const long StateForkWorkers = -18;
     /// <summary>State index value indicating a leaf HTTP GET task.</summary>
     public const long StateHttpGet = -14;
     /// <summary>State index value indicating a leaf HTTP POST task.</summary>

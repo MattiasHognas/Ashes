@@ -107,13 +107,31 @@ internal static partial class LlvmCodegen
         LlvmApi.SetLinkage(counter, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(counter, LlvmApi.ConstInt(i64, 0, 0));
 
+        EmitWorkerCapInfrastructure(target, flavor, nounwindAttr);
+        EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
+    }
+
+    /// <summary>
+    /// Emits the shared worker-cap globals and detection function used by both Ashes.Parallel and the
+    /// server's fork-based multi-reactor (serveParallel): the withWorkers override slot and
+    /// <c>__ashes_parallel_cap_get()</c>. Idempotent, so a program that uses both surfaces emits them
+    /// once. This lets `serve` respect the same <c>--parallel-workers</c> cap and runtime override as
+    /// parallel CPU work without pulling in the fork/join worker trampoline.
+    /// </summary>
+    private static void EmitWorkerCapInfrastructure(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        if (LlvmApi.GetNamedFunction(target.Module, ParallelCapFnName).Ptr != 0)
+        {
+            return;
+        }
+
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         // The withWorkers override (0 = unset). Read on the same thread that set it (the one
-        // running the scoped action, which then reaches the fork gate / queued-reduce cap).
+        // running the scoped action, which then reaches the fork gate / queued-reduce cap / server).
         LlvmValueHandle overrideGlobal = LlvmApi.AddGlobal(target.Module, i64, ParallelWorkerOverrideName);
         LlvmApi.SetLinkage(overrideGlobal, LlvmLinkage.Internal);
         LlvmApi.SetInitializer(overrideGlobal, LlvmApi.ConstInt(i64, 0, 0));
 
-        EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
         EmitParallelWorkerCapFn(target, flavor, nounwindAttr);
     }
 

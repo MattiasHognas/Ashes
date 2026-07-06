@@ -514,6 +514,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle checkTcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_listen");
         LlvmBasicBlockHandle tcpListenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_listen");
         LlvmBasicBlockHandle checkTcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tcp_accept");
+        LlvmBasicBlockHandle checkForkWorkersBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_fork_workers");
+        LlvmBasicBlockHandle forkWorkersBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fork_workers");
         LlvmBasicBlockHandle tcpAcceptBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tcp_accept");
         LlvmBasicBlockHandle checkTlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check_tls_connect");
         LlvmBasicBlockHandle tlsConnectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_tls_connect");
@@ -636,11 +638,24 @@ internal static partial class LlvmCodegen
             stateIdx,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateTcpAccept), 1),
             prefix + "_is_tcp_accept");
-        LlvmApi.BuildCondBr(builder, isTcpAccept, tcpAcceptBlock, checkTlsConnectBlock);
+        LlvmApi.BuildCondBr(builder, isTcpAccept, tcpAcceptBlock, checkForkWorkersBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, tcpAcceptBlock);
         LlvmApi.BuildStore(builder,
             EmitNetworkingRuntimeCall(state, "ashes_step_tcp_accept_task", [taskPtr], prefix + "_tcp_accept_status"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkForkWorkersBlock);
+        LlvmValueHandle isForkWorkers = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            stateIdx,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateForkWorkers), 1),
+            prefix + "_is_fork_workers");
+        LlvmApi.BuildCondBr(builder, isForkWorkers, forkWorkersBlock, checkTlsConnectBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, forkWorkersBlock);
+        LlvmApi.BuildStore(builder,
+            EmitNetworkingRuntimeCall(state, "ashes_step_fork_workers_task", [taskPtr], prefix + "_fork_workers_status"),
             statusSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 

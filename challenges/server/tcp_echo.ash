@@ -1,7 +1,8 @@
-// TCP benchmark target: a minimal TCP echo server on port 18080 (Ashes.Net.Tcp.Server.serve).
+// TCP benchmark target: a minimal TCP echo server on port 18080 (Ashes.Net.Tcp.Server.serve, parallel by default).
 // One receive + echo + close per connection — the smallest handler, so the benchmark measures the
-// server path (accept/receive/send/close + scheduling) rather than handler work. challenges/ is
-// CI-excluded and not format-checked by any gate. Driven by bench.sh.
+// server path (accept/receive/send/close + scheduling). serve is parallel by default
+// (one reactor per core), so this exercises multi-core scaling. challenges/ is CI-excluded and not format-checked. Driven
+// by bench.sh.
 import Ashes.IO
 import Ashes.Net.Tcp
 import Ashes.Net.Tcp.Server

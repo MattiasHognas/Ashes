@@ -44,6 +44,7 @@ internal static partial class LlvmCodegen
     private const long SyscallClone = 56;
     private const long SyscallFutex = 202;
     private const long SyscallArchPrctl = 158;
+    private const long SyscallPrctl = 157;
     private const long SyscallSchedGetaffinity = 204;
     // ARCH_SET_GS, not ARCH_SET_FS: glibc and the Rust runtime (linked rustls) own the FS
     // base for their thread-local storage on x86-64. GS is unused by userspace on Linux, so
@@ -109,6 +110,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallKill = 129;
     private const long Arm64SyscallPipe2 = 59;
     private const long Arm64SyscallSchedGetaffinity = 123;
+    private const long Arm64SyscallPrctl = 167;
     private const uint WindowsFionBio = 0x8004667E;
     private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
     private const int WindowsWsaErrorWouldBlock = 10035;
@@ -447,6 +449,7 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpListenTask>(program)
+            || ProgramUsesInstruction<IrInst.CreateForkWorkersTask>(program)
             || ProgramUsesInstruction<IrInst.CreateTcpAcceptTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
             || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
@@ -759,6 +762,19 @@ internal static partial class LlvmCodegen
         // point and lifted closures. The current runtime ABI layer does not unwind.
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
         LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
+
+        // serve's fork-based multi-reactor (forkWorkers) resolves its worker count via the shared
+        // effective-cap function, so it honors the same --parallel-workers cap and withWorkers
+        // override as Ashes.Parallel. The fork step function is part of the always-emitted networking
+        // step table, and on Linux its body calls the cap function, so the cap globals/fn must exist
+        // for every Linux networking program (not only ones that use forkWorkers). Emit them
+        // (idempotent — the parallel runtime below reuses them) before the networking runtime. Windows
+        // needs nothing: there the fork step is a single process and never consults the cap.
+        if ((flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.LinuxArm64)
+            && usesNetworkingRuntimeAbi)
+        {
+            EmitWorkerCapInfrastructure(target, flavor, nounwindAttr);
+        }
 
         if (usesNetworkingRuntimeAbi)
         {
@@ -1493,6 +1509,8 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpClose, LoadTemp(state, tcpCloseTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_task")),
             IrInst.CreateTcpListenTask tcpListenTask => StoreTemp(state, tcpListenTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpListen, LoadTemp(state, tcpListenTask.PortTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_listen_task")),
+            IrInst.CreateForkWorkersTask forkWorkersTask => StoreTemp(state, forkWorkersTask.Target,
+                EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateForkWorkers, LoadTemp(state, forkWorkersTask.CountTemp), LlvmApi.ConstInt(state.I64, 0, 0), "fork_workers_task")),
             IrInst.CreateTcpAcceptTask tcpAcceptTask => StoreTemp(state, tcpAcceptTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpAccept, LoadTemp(state, tcpAcceptTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_accept_task")),
             IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,
@@ -2083,6 +2101,7 @@ internal static partial class LlvmCodegen
             SyscallKill => Arm64SyscallKill,
             SyscallPipe2 => Arm64SyscallPipe2,
             SyscallSchedGetaffinity => Arm64SyscallSchedGetaffinity,
+            SyscallPrctl => Arm64SyscallPrctl,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
     }

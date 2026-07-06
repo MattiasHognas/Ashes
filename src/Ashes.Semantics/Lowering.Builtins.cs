@@ -876,6 +876,7 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.NetTcpClose
             or BuiltinRegistry.BuiltinValueKind.NetTcpListen
             or BuiltinRegistry.BuiltinValueKind.NetTcpAccept
+            or BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers
             or BuiltinRegistry.BuiltinValueKind.NetTlsConnect
             or BuiltinRegistry.BuiltinValueKind.NetTlsSend
             or BuiltinRegistry.BuiltinValueKind.NetTlsReceive
@@ -892,6 +893,7 @@ public sealed partial class Lowering
             or IntrinsicKind.NetTcpClose
             or IntrinsicKind.NetTcpListen
             or IntrinsicKind.NetTcpAccept
+            or IntrinsicKind.NetForkWorkers
             or IntrinsicKind.NetTlsConnect
             or IntrinsicKind.NetTlsSend
             or IntrinsicKind.NetTlsReceive
@@ -1025,6 +1027,33 @@ public sealed partial class Lowering
         var taskTemp = NewTemp();
         Emit(new IrInst.CreateTcpListenTask(taskTemp, portTemp));
         return (taskTemp, CreateStringTaskType(_resolvedTypes["Socket"]));
+    }
+
+    private (int, TypeRef) LowerNetForkWorkers(Expr countArg)
+    {
+        using var countSpan = PushDiagnosticSpan(countArg);
+        var (countTemp, countType) = LowerExpr(countArg);
+        var prunedCountType = Prune(countType);
+        if (prunedCountType is TypeRef.TNever)
+        {
+            return (countTemp, prunedCountType);
+        }
+
+        if (prunedCountType is TypeRef.TVar)
+        {
+            Unify(prunedCountType, new TypeRef.TInt());
+            prunedCountType = new TypeRef.TInt();
+        }
+
+        if (prunedCountType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(countArg), $"Ashes.Net.Tcp.Server.forkWorkers() expects Int for worker count but got {Pretty(prunedCountType)}.");
+            return (countTemp, prunedCountType);
+        }
+
+        var taskTemp = NewTemp();
+        Emit(new IrInst.CreateForkWorkersTask(taskTemp, countTemp));
+        return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
     private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
@@ -2011,6 +2040,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.NetTcpAccept,
             new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Socket"], CreateStringTaskType(_resolvedTypes["Socket"])))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetForkWorkersBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetForkWorkers,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt())))
         );
     }
 

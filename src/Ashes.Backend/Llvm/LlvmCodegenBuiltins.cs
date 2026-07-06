@@ -1638,6 +1638,11 @@ internal static partial class LlvmCodegen
             (state, fn) => EmitStepTcpAcceptTask(state, LlvmApi.GetParam(fn, 0)));
 
         EmitRuntimeFunction(
+            "ashes_step_fork_workers_task",
+            LlvmApi.FunctionType(i64, [i64]),
+            (state, fn) => EmitStepForkWorkersTask(state, LlvmApi.GetParam(fn, 0)));
+
+        EmitRuntimeFunction(
             "ashes_step_tls_connect_task",
             LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitStepTlsConnectTask(state, LlvmApi.GetParam(fn, 0)));
@@ -3628,7 +3633,10 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, afterSocketBlock);
         if (linux)
         {
-            // SO_REUSEADDR (level SOL_SOCKET=1, optname=2, optval=1) — best effort, Linux only.
+            // SO_REUSEADDR (optname=2) and SO_REUSEPORT (optname=15), level SOL_SOCKET=1, optval=1 —
+            // best effort, Linux only. SO_REUSEPORT lets several processes each bind this port, which
+            // is what the fork-based multi-reactor (serveParallel) relies on for kernel-side accept
+            // load-balancing; it is harmless for the single-process serve path.
             LlvmValueHandle optvalSlot = LlvmApi.BuildAlloca(builder, state.I32, "step_tcp_listen_optval");
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), optvalSlot);
             _ = EmitLinuxSyscall6(
@@ -3641,6 +3649,16 @@ internal static partial class LlvmCodegen
                 LlvmApi.ConstInt(state.I64, 4, 0),
                 LlvmApi.ConstInt(state.I64, 0, 0),
                 "step_tcp_listen_setsockopt");
+            _ = EmitLinuxSyscall6(
+                state,
+                SyscallSetsockopt,
+                socketFd,
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                LlvmApi.ConstInt(state.I64, 15, 0),
+                LlvmApi.BuildPtrToInt(builder, optvalSlot, state.I64, "step_tcp_listen_optval_ptr2"),
+                LlvmApi.ConstInt(state.I64, 4, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                "step_tcp_listen_setsockopt_reuseport");
         }
         // sockaddr_in { family=AF_INET(2), port=htons(port), addr=INADDR_ANY(0) }
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
@@ -3712,6 +3730,79 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_listen_status");
+    }
+
+    /// <summary>
+    /// Leaf step for Ashes.Net.Tcp.Server.forkWorkers(count): the parent forks (count - 1) child
+    /// processes so `count` processes total each run their own reactor (the fork-based multi-reactor,
+    /// serveParallel). Completes with Ok(worker index): 0 in the parent, 1..count-1 in the children.
+    /// Separate address spaces make each reactor's scheduler state independent, so purity keeps the
+    /// connections genuinely isolated. Synchronous (fork does not block), so this never parks. Linux
+    /// only; on other targets it is a single process (Ok(0)).
+    /// </summary>
+    private static LlvmValueHandle EmitStepForkWorkersTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle requested = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_fork_workers_count");
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_fork_workers_idx");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            // A count <= 0 means "auto": the shared effective worker cap, so serve honors the same
+            // --parallel-workers compile cap and withWorkers runtime override as Ashes.Parallel (one
+            // worker per online CPU by default, narrowed by either). The cap globals/fn are emitted
+            // for programs that use forkWorkers even without Ashes.Parallel.
+            LlvmValueHandle autoCount = EmitEffectiveWorkerCap(state, "step_fork_workers");
+            LlvmValueHandle count = LlvmApi.BuildSelect(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, requested, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_auto"),
+                autoCount, requested, "step_fork_workers_effective");
+
+            LlvmValueHandle iSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_fork_workers_i");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), iSlot);
+
+            LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_loop");
+            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_body");
+            LlvmBasicBlockHandle childBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_child");
+            LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_parent");
+            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_done");
+            LlvmApi.BuildBr(builder, loopBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+            LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, iSlot, "step_fork_workers_i_val");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, i, count, "step_fork_workers_more"),
+                bodyBlock, doneBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+            // fork() on x86-64 / clone(SIGCHLD, 0, 0) on arm64 (flags=17 required on arm64, ignored on x64).
+            LlvmValueHandle pid = EmitLinuxSyscall(state, SyscallFork,
+                LlvmApi.ConstInt(state.I64, 17, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_fork");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_is_child"),
+                childBlock, parentBlock);
+
+            // Child: this process is worker `i`; stop forking and run its reactor. PR_SET_PDEATHSIG(1)
+            // = SIGTERM(15) so a worker dies with its parent instead of lingering as an orphan reactor
+            // when the main process exits or is killed.
+            LlvmApi.PositionBuilderAtEnd(builder, childBlock);
+            _ = EmitLinuxSyscall(state, SyscallPrctl,
+                LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 15, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pdeathsig");
+            LlvmApi.BuildStore(builder, i, idxSlot);
+            LlvmApi.BuildBr(builder, doneBlock);
+
+            // Parent: on success move to the next worker; on fork failure (pid < 0) stop spawning.
+            LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_next"), iSlot);
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_failed"),
+                doneBlock, loopBlock);
+
+            LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        }
+
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "step_fork_workers_idx_val");
+        return EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, idx), "step_fork_workers_complete");
     }
 
     /// <summary>
