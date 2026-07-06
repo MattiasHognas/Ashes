@@ -41,7 +41,7 @@ These types are always available without imports:
   data-parallel fold that touches different chunks faults them in **in parallel**, and the mapping is
   shared read-only across worker threads. The mapping is program-lifetime, so slices/views into it stay
   valid. On Windows this falls back to the capped `readAllBytes` read. Preferred over `readAllBytes` for
-  random-access / chunked processing (e.g. `challenges/1brc/brc_parallel.ash`).
+  random-access / chunked processing (e.g. `challenges/1brc/brc.ash`).
 - `writeText(path, text)` returning `Result(Str, Unit)`
 - `writeBytes(path, bytes)` returning `Result(Str, Unit)`
 - `exists(path)` returning `Result(Str, Bool)`
