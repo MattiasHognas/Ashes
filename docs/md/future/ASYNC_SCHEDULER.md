@@ -1,8 +1,46 @@
 # Future: Run-queue async scheduler
 
-## Status: Design (proposed rework)
+## Status: Implemented through servers; `all`/`race` fairness pending
 
-This document proposes replacing the current **recursive, synchronous** async driver with a **flat
+Delivered on branch `async-run-queue` (full gate green throughout — 1342 unit incl. arm64-via-qemu,
+467 e2e):
+
+- Task-struct fields `ReadyNext` / `Waiter` / `ArenaOwner`; the ready-queue primitives
+  (`ashes_ready_enqueue` / `ashes_ready_dequeue`); and `ashes_scheduler_run`, the flat loop.
+- `await`-as-park with `Waiter` delivery; the aggregate wait (cooperative timer sleep + persistent
+  epoll for socket/TLS/HTTP leaves, requeue-all-on-wakeup).
+- Spawn on the queue with option-2 per-task arenas: `ArenaOwner` install/restore around each step and
+  reap of fire-and-forget spawned roots on completion.
+- On Linux **every** async program — including servers (spawn + sockets) — runs on the scheduler;
+  Windows keeps the legacy driver for socket/spawn programs (the epoll wait is Linux-only).
+
+**Remaining: `all` / `race` are still inline-blocking** (`EmitAsyncAll` / `EmitAsyncRace` call the
+blocking `ashes_wait_pending_task_list` and return the result list on the C stack), so a spawned
+handler that does `Async.all` still stalls peers — the original fairness bug. The fix is below.
+
+### `all` / `race` as parking composite tasks (the fairness finish)
+
+`Async.all([...])` must create a **composite task** (new negative state, e.g. `StateAllComposite`)
+rather than run inline. The scheduler gains one branch for it, and it is poll-based so it reuses the
+generic `Waiter` delivery:
+
+- **First step:** enqueue every child with `Waiter = composite` and the composite's `ArenaOwner`; mark
+  initialized; return "pending-composite" (the scheduler does **not** park it in the leaf list — it has
+  no fd/timer — it simply drops, to be re-enqueued by a child completion).
+- **Each child completion** runs the generic completion path, which enqueues the composite (the
+  clobber of the composite's `ResultSlot` is harmless — the composite reads children directly).
+- **Re-step:** scan children; if all are complete (resp. any, for `race`), collect their results into
+  the list (reuse `EmitAsyncAll`'s existing build/reverse logic) and complete, delivering to the
+  composite's own `Waiter` (the handler coroutine); otherwise return pending-composite again.
+
+This keeps a handler's `all` from blocking the loop — it parks, peers run, and the composite resumes
+it when its children finish — without the C-stack-depth cost of nested draining. It touches the
+`all`/`race` lowering (create a composite instead of the inline wait), one new task state + its step,
+and one scheduler branch.
+
+## Original design (for reference)
+
+This document originally proposed replacing the current **recursive, synchronous** async driver with a **flat
 run-queue scheduler** (park / enqueue-on-ready / resume). It is a design, not an implementation guide:
 the implementation must be derived from the existing `StateMachineTransform`, task-struct layout, and
 the LLVM task-runner codegen, not from the sketches here.
