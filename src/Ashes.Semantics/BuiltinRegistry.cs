@@ -78,6 +78,7 @@ public static class BuiltinRegistry
         BytesGetU32Le,
         BytesGetU64Le,
         UIntToInt,
+        UIntFromInt,
         MathToFloat,
         MathSqrt,
         MathFloor,
@@ -313,7 +314,8 @@ public static class BuiltinRegistry
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1)
+                    ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.UIntFromInt, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http"] = new(
                 "Ashes.Http",

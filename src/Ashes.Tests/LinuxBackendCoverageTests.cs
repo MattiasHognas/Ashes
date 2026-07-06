@@ -1168,6 +1168,75 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_parse_query_and_reject_oversized()
+    {
+        // Query-string parsing + percent-decoding (path stripped of the query, %XX/+ decoded) and the
+        // request size limit (a declared Content-Length over the cap returns 413 on the header).
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let onReq req =
+                async(match Ashes.Http.Server.queryParam(req)("name") with
+                    | Some(v) -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " n=" + v)
+                    | None -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " none"))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_query_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (true)
+            {
+                try
+                {
+                    var reply = await HttpRequestRawWithRetryAsync(port, "GET /users?name=Ada%20Lovelace HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+                    reply.ShouldEndWith("p=/users n=Ada Lovelace");
+                    break;
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50);
+                }
+            }
+
+            // A declared Content-Length above the 8 MiB cap is rejected with 413 on the header.
+            var tooBig = await HttpRequestRawWithRetryAsync(port, "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999\r\nConnection: close\r\n\r\nabc");
+            tooBig.ShouldContain("413 Payload Too Large");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_decode_a_chunked_request_body()
     {
         // Transfer-Encoding: chunked request body — decoded and echoed. Also split across two writes so

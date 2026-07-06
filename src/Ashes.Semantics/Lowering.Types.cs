@@ -134,6 +134,7 @@ public sealed partial class Lowering
         BytesGetU32Le,
         BytesGetU64Le,
         UIntToInt,
+        UIntFromInt,
         MathToFloat,
         MathSqrt,
         MathFloor,

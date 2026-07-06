@@ -3005,6 +3005,47 @@ public sealed partial class Lowering
         return (argTemp, new TypeRef.TInt());
     }
 
+    private Binding.Intrinsic CreateUIntFromIntBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.UIntFromInt,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(8)))
+        );
+    }
+
+    // Ashes.UInt.fromInt(x) : u8 — narrow a signed Int to an unsigned byte, wrapping modulo 256 (mask
+    // to the low 8 bits) so the value is a valid u8 regardless of the input's magnitude/sign. The
+    // inverse of Ashes.UInt.toInt; unlike toInt this needs a real mask because the internal i64 could
+    // carry bits above the byte width.
+    private (int, TypeRef) LowerUIntFromInt(Expr arg)
+    {
+        using var argDiagnosticSpan = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (argTemp, pruned);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.UInt.fromInt() expects Int but got {Pretty(pruned)}.");
+            return (argTemp, new TypeRef.TUInt(8));
+        }
+
+        var maskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(maskTemp, 0xFF));
+        var resultTemp = NewTemp();
+        Emit(new IrInst.AndInt(resultTemp, argTemp, maskTemp));
+        return (resultTemp, new TypeRef.TUInt(8));
+    }
+
     // ── Ashes.Math Layer-1 numeric conversions and Float unary primitives. ──
 
     private Binding.Intrinsic CreateMathToFloatBinding() =>

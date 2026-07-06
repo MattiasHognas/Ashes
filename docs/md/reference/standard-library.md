@@ -104,6 +104,9 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
   `Int`. Value-preserving for `u8`/`u16`/`u32` (and a bit-reinterpret for `u64`); it is the bridge that
   lets a byte from `Ashes.Bytes.get` be used in `Int` arithmetic, enabling byte-level integer parsing
   without routing through strings.
+- `fromInt(value)` returning `u8` — narrow an `Int` to an unsigned byte, wrapping modulo 256 (the low
+  8 bits). The inverse of `toInt`; lets a computed byte value be written with `Ashes.Bytes.appendByte`
+  / `Ashes.Bytes.singleton` (e.g. building a percent-decoded string byte by byte).
 
 ### `Ashes.Text`
 
@@ -263,9 +266,14 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
 
 - `HttpRequest` — a parsed request (method, path, headers, body).
 - `HttpResponse` — a response (status, headers, body).
-- `method(req)` / `path(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`) and path.
-- `body(req)` — `HttpRequest -> Str`, the request body (whatever followed the blank line in the
-  single read; see the size note below).
+- `method(req)` — `HttpRequest -> Str`, the request method (e.g. `"GET"`).
+- `target(req)` — `HttpRequest -> Str`, the raw request target (`"/users?id=42"`, path plus query).
+- `path(req)` — `HttpRequest -> Str`, the path with any `?query` stripped (for routing).
+- `query(req)` — `HttpRequest -> Str`, the raw query string (after `?`), or `""`.
+- `queryParam(req)(name)` — `HttpRequest -> Str -> Maybe(Str)`, a query parameter's **percent-decoded**
+  value looked up by (decoded) name; a bare key yields `Some("")`, absent yields `None`.
+- `percentDecode(s)` — `Str -> Str`, decode `%XX` and `+` (byte-accurate); also usable on the path.
+- `body(req)` — `HttpRequest -> Str`, the request body (`Content-Length`- or chunked-framed).
 - `header(req)(name)` — `HttpRequest -> Str -> Maybe(Str)`, the value of a request header, matched
   **case-insensitively** by name, or `None`.
 - `rawHeaders(req)` — `HttpRequest -> Str`, the raw `Name: value`-per-line header block, for callers
@@ -283,9 +291,11 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
   completes with `Error` yields a plain `500`. Consumed with `Ashes.Async.run`; serves connections
   concurrently like the plaintext TCP server.
 
-Reads are **buffered** until a full request has arrived — the header block plus `Content-Length`
-bytes of body — so requests larger than one read and slow/split requests are handled. Chunked
-transfer-encoding request bodies are not supported (a body must be sized by `Content-Length`). See
+Reads are **buffered** until a full request has arrived — the header block plus the body (framed by
+`Content-Length` or `Transfer-Encoding: chunked`) — so requests larger than one read and slow/split
+requests are handled. A request is capped at **8 MiB**: a declared `Content-Length` over the cap is
+rejected with `413 Payload Too Large` on the header (before the body is buffered), and an unbounded
+chunked/no-length stream is capped by the buffered size. See
 [SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
 
 ```ash

@@ -26,6 +26,7 @@ type HttpResponse =
 
 type HttpParse =
     | HttpNeedMore
+    | HttpTooLarge
     | HttpParsed(HttpRequest, Bool, Str)
 
 type ChunkResult =
@@ -36,9 +37,18 @@ let method req =
     match req with
         | HttpRequest(m, _p, _h, _b) -> m
 
-let path req = 
+let target req = 
     match req with
         | HttpRequest(_m, p, _h, _b) -> p
+
+let path req = 
+    (let t = target(req)
+    in 
+        let q = Ashes.String.indexOf(t)("?")
+        in 
+            if q < 0
+            then t
+            else Ashes.String.take(t)(q))
 
 let rawHeaders req = 
     match req with
@@ -144,9 +154,12 @@ let reasonPhrase status =
                     if status == 404
                     then "Not Found"
                     else 
-                        if status == 500
-                        then "Internal Server Error"
-                        else "OK"
+                        if status == 413
+                        then "Payload Too Large"
+                        else 
+                            if status == 500
+                            then "Internal Server Error"
+                            else "OK"
 
 let renderConnection connectionValue resp = 
     match resp with
@@ -164,6 +177,87 @@ let keepAliveOf headerBlock version =
             if sameHeaderName(version)("HTTP/1.0")
             then false
             else true
+
+let maxRequestBytes = 8388608
+
+let hexVal b = 
+    if b >= 48
+    then 
+        if b <= 57
+        then b - 48
+        else 
+            if b >= 97
+            then 
+                if b <= 102
+                then b - 87
+                else -1
+            else 
+                if b >= 65
+                then 
+                    if b <= 70
+                    then b - 55
+                    else -1
+                else -1
+    else -1
+
+let percentDecode s = 
+    (let bytes = Ashes.Bytes.fromText(s)
+    in 
+        let recursive go i acc = 
+            if i >= Ashes.Bytes.length(bytes)
+            then acc
+            else 
+                let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i))
+                in 
+                    if b == 37
+                    then 
+                        if i + 2 < Ashes.Bytes.length(bytes)
+                        then 
+                            let h1 = hexVal(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i + 1)))
+                            in 
+                                let h2 = hexVal(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i + 2)))
+                                in 
+                                    if h1 < 0
+                                    then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
+                                    else 
+                                        if h2 < 0
+                                        then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
+                                        else go(i + 3)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(h1 * 16 + h2)))
+                        else go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
+                    else 
+                        if b == 43
+                        then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(32)))
+                        else go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.Bytes.get(bytes)(i)))
+        in 
+            let decoded = go(0)(Ashes.Bytes.fromText(""))
+            in Ashes.Bytes.subText(decoded)(0)(Ashes.Bytes.length(decoded)))
+
+let query req = 
+    (let t = target(req)
+    in 
+        let q = Ashes.String.indexOf(t)("?")
+        in 
+            if q < 0
+            then ""
+            else Ashes.String.drop(t)(q + 1))
+
+let queryParam req name = 
+    (let recursive scan pairs = 
+        match pairs with
+            | [] -> None
+            | pair :: rest -> 
+                let eq = Ashes.String.indexOf(pair)("=")
+                in 
+                    if eq < 0
+                    then 
+                        if percentDecode(pair) == name
+                        then Some("")
+                        else scan(rest)
+                    else 
+                        if percentDecode(Ashes.String.take(pair)(eq)) == name
+                        then Some(percentDecode(Ashes.String.drop(pair)(eq + 1)))
+                        else scan(rest)
+    in scan(Ashes.String.split(query(req))("&")))
 
 let recursive parseHexRange bytes pos endPos acc = 
     if pos >= endPos
@@ -277,41 +371,54 @@ let tryParseBuffered buffered =
                                                                             then 0
                                                                             else n
                                                         in 
-                                                            let availableBody = Ashes.Bytes.length(allBytes) - headBytes
-                                                            in 
-                                                                if availableBody < contentLength
-                                                                then HttpNeedMore
-                                                                else build(Ashes.Bytes.subText(allBytes)(headBytes)(contentLength))(Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
+                                                            if contentLength > maxRequestBytes
+                                                            then HttpTooLarge
+                                                            else 
+                                                                let availableBody = Ashes.Bytes.length(allBytes) - headBytes
+                                                                in 
+                                                                    if availableBody < contentLength
+                                                                    then HttpNeedMore
+                                                                    else build(Ashes.Bytes.subText(allBytes)(headBytes)(contentLength))(Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
 
 let connectionHandler handler = 
     given (client) -> 
         async(let recursive connLoop buffered = 
-            match tryParseBuffered(buffered) with
-                | HttpNeedMore -> 
-                    match await Ashes.Net.Tcp.receive(client)(65536) with
-                        | Error(e) -> Error(e)
-                        | Ok(chunk) -> 
-                            if Ashes.Text.byteLength(chunk) == 0
-                            then await Ashes.Net.Tcp.close(client)
-                            else connLoop(buffered + chunk)
-                | HttpParsed(req, keepAlive, rest) -> 
-                    match await handler(req) with
-                        | Ok(resp) -> 
-                            let wire = 
-                                renderConnection(if keepAlive
-                                then "keep-alive"
-                                else "close")(resp)
-                            in 
-                                match await Ashes.Net.Tcp.send(client)(wire) with
-                                    | Error(e2) -> Error(e2)
-                                    | Ok(_n) -> 
-                                        if keepAlive
-                                        then connLoop(rest)
-                                        else await Ashes.Net.Tcp.close(client)
-                        | Error(_he) -> 
-                            match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
-                                | Error(e3) -> Error(e3)
-                                | Ok(_n2) -> await Ashes.Net.Tcp.close(client)
+            if Ashes.Text.byteLength(buffered) >= maxRequestBytes
+            then 
+                match await Ashes.Net.Tcp.send(client)(render(text(413)("Payload Too Large"))) with
+                    | Error(e0) -> Error(e0)
+                    | Ok(_n0) -> await Ashes.Net.Tcp.close(client)
+            else 
+                match tryParseBuffered(buffered) with
+                    | HttpTooLarge -> 
+                        match await Ashes.Net.Tcp.send(client)(render(text(413)("Payload Too Large"))) with
+                            | Error(e1) -> Error(e1)
+                            | Ok(_n1) -> await Ashes.Net.Tcp.close(client)
+                    | HttpNeedMore -> 
+                        match await Ashes.Net.Tcp.receive(client)(65536) with
+                            | Error(e) -> Error(e)
+                            | Ok(chunk) -> 
+                                if Ashes.Text.byteLength(chunk) == 0
+                                then await Ashes.Net.Tcp.close(client)
+                                else connLoop(buffered + chunk)
+                    | HttpParsed(req, keepAlive, rest) -> 
+                        match await handler(req) with
+                            | Ok(resp) -> 
+                                let wire = 
+                                    renderConnection(if keepAlive
+                                    then "keep-alive"
+                                    else "close")(resp)
+                                in 
+                                    match await Ashes.Net.Tcp.send(client)(wire) with
+                                        | Error(e2) -> Error(e2)
+                                        | Ok(_n) -> 
+                                            if keepAlive
+                                            then connLoop(rest)
+                                            else await Ashes.Net.Tcp.close(client)
+                            | Error(_he) -> 
+                                match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
+                                    | Error(e3) -> Error(e3)
+                                    | Ok(_n2) -> await Ashes.Net.Tcp.close(client)
         in connLoop(""))
 
 let serve port handler = Ashes.Net.Tcp.Server.serve(port)(connectionHandler(handler))
