@@ -319,6 +319,12 @@ transport is that HTTPS falls out without a second handler model.
   available, so bodies larger than one read and slow/split requests work. Closes on
   `Connection: close`, handler failure, or peer disconnect. Request bodies may be framed by
   `Content-Length` or `Transfer-Encoding: chunked` (chunk extensions ignored, trailers unsupported).
+- **Persistent epoll scheduler (Linux)**: each reactor creates one epoll fd and reuses it for every
+  wait (no epoll_create1/close per park), with a per-fd mask table so a socket is registered once
+  (EPOLL_CTL_ADD), re-MOD'd only when its event mask changes, and skipped when already correct — so a
+  wait over N parked sockets costs O(newly-parked) syscalls, not O(N). Sockets leave the set
+  kernel-side on close (with a `forget` hook clearing the table for fd reuse). The Windows detached
+  WSAPoll array cap was raised 256 -> 4096.
 - **Graceful shutdown (Linux)**: the runtime installs `SIGINT`/`SIGTERM` handlers (a naked
   `rt_sigreturn` restorer, no `SA_RESTART`) so the signal interrupts the parked `accept` (`EINTR`);
   the accept step then completes with a shutdown sentinel and `serve` stops the loop and returns
@@ -353,11 +359,10 @@ transport is that HTTPS falls out without a second handler model.
   the multi-reactor, TCP echo leads the .NET baseline and HTTP roughly doubles it at conc 64.
 
 ### Remaining
-- Scheduler efficiency under high concurrency: each blocking wait currently rebuilds the poll set
-  and re-steps the whole detached list (O(connections) per wake). A persistent epoll set /
-  incremental registration closes most of the remaining conc-64 tail-latency gap to the .NET
-  baseline. Also: detached tasks do not advance during `Ashes.Async.all` / `race` waits, and the
-  Windows detached poll array is capped at 256 fds per round.
+- Scheduler efficiency refinements: detached tasks still do not advance during `Ashes.Async.all` /
+  `race` waits (that wait path builds its own poll set rather than sharing the persistent epoll set),
+  and the leaf wait wakes one event per epoll_wait (batching several would cut syscalls further under
+  very high concurrency).
 - `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
   today, whether Content-Length- or chunked-framed).
 

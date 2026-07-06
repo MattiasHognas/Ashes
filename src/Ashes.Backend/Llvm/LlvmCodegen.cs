@@ -126,8 +126,9 @@ internal static partial class LlvmCodegen
 
     // Max WSAPoll entries in the detached-task wait (slot 0 = the driving task; the rest are
     // detached socket waits). Overflow tasks are not polled that round — they are stepped again
-    // on the next wait — so this caps poll width, not concurrency.
-    private const int DetachedPollFdCapacity = 256;
+    // on the next wait — so this caps poll width, not concurrency. The array is a module-global
+    // scratch (WindowsPollFdSize * this bytes), so a larger cap only costs static memory.
+    private const int DetachedPollFdCapacity = 4096;
     private const int WindowsSolSocket = unchecked((int)0xFFFF);
     private const int WindowsSoUpdateConnectContext = 0x7010;
     private const int LinuxRtldNow = 2;

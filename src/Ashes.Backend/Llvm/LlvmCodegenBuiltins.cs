@@ -164,7 +164,97 @@ internal static partial class LlvmCodegen
 
     // Set to 1 by the SIGINT/SIGTERM handler; the accept step checks it and completes with
     // ServerShutdownSentinel so serve() stops accepting and returns Ok(()) (graceful shutdown).
-    private const string ServerShutdownSentinel = "__ashes_server_shutdown";
+    private const string ServerShutdownSentinel = "__ashes_server_shutdown";
+
+    private const int EpollMaskTableSize = 65536;
+
+    private static LlvmValueHandle EpollFdGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_epoll_fd", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_epoll_fd");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    // One byte per fd: 0 = not in the epoll set, else the registered event mask. Lets ashes_epoll_register
+    // skip the epoll_ctl syscall when a socket is already registered with the wanted mask.
+    private static LlvmValueHandle EpollMasksGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_epoll_masks", LlvmApi.ArrayType2(state.I8, EpollMaskTableSize));
+
+    /// <summary>
+    /// ashes_epoll_register(epollFd, handle, mask): ensures fd `handle` is in the persistent epoll set
+    /// with event mask `mask` (EPOLLIN=1 / EPOLLOUT=4). The per-fd mask table means EPOLL_CTL_ADD only
+    /// for a newly-parked socket, EPOLL_CTL_MOD only when the mask changed, nothing when already correct
+    /// — a wait over N parked sockets costs O(newly-parked) syscalls, not O(N).
+    /// </summary>
+    private static LlvmValueHandle EmitEpollRegisterBody(LlvmCodegenState state, LlvmValueHandle epollFd, LlvmValueHandle handle, LlvmValueHandle mask)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle masksBase = GetArrayElementPointer(state, LlvmApi.ArrayType2(state.I8, EpollMaskTableSize), EpollMasksGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "epr_masks_base");
+
+        LlvmTypeHandle eventType = LlvmApi.ArrayType2(state.I8, 16);
+        LlvmValueHandle eventStorage = LlvmApi.BuildAlloca(builder, eventType, "epr_event");
+        LlvmValueHandle eventPtr = GetArrayElementPointer(state, eventType, eventStorage, LlvmApi.ConstInt(state.I64, 0, 0), "epr_event_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, mask, state.I32, "epr_mask32"), LlvmApi.BuildBitCast(builder, eventPtr, state.I32Ptr, "epr_event_mask_ptr"));
+        LlvmApi.BuildStore(builder, handle, LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, eventPtr, [LlvmApi.ConstInt(state.I64, 8, 0)], "epr_event_data_byte"), state.I64Ptr, "epr_event_data_ptr"));
+        LlvmValueHandle eventArg = LlvmApi.BuildPtrToInt(builder, eventPtr, state.I64, "epr_event_arg");
+        LlvmValueHandle maskByte = LlvmApi.BuildTrunc(builder, mask, state.I8, "epr_mask_byte");
+
+        LlvmBasicBlockHandle inRangeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epr_in_range");
+        LlvmBasicBlockHandle oorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epr_oor");
+        LlvmBasicBlockHandle ctlBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epr_ctl");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epr_done");
+        LlvmValueHandle inRange = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, handle, LlvmApi.ConstInt(state.I64, 0, 0), "epr_ge0"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, handle, LlvmApi.ConstInt(state.I64, EpollMaskTableSize, 0), "epr_lt_max"),
+            "epr_in_range_cond");
+        LlvmApi.BuildCondBr(builder, inRange, inRangeBlock, oorBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, oorBlock);
+        _ = EmitLinuxSyscall4(state, SyscallEpollCtl, epollFd, LlvmApi.ConstInt(state.I64, 1, 0), handle, eventArg, "epr_oor_add");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, inRangeBlock);
+        LlvmValueHandle slot = LlvmApi.BuildGEP2(builder, state.I8, masksBase, [handle], "epr_slot");
+        LlvmValueHandle cur = LlvmApi.BuildLoad2(builder, state.I8, slot, "epr_cur");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, maskByte, "epr_same"),
+            doneBlock, ctlBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, ctlBlock);
+        LlvmValueHandle op = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cur, LlvmApi.ConstInt(state.I8, 0, 0), "epr_new"),
+            LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 3, 0), "epr_op");
+        _ = EmitLinuxSyscall4(state, SyscallEpollCtl, epollFd, op, handle, eventArg, "epr_ctl_call");
+        LlvmApi.BuildStore(builder, maskByte, slot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    /// <summary>
+    /// ashes_epoll_forget(handle): clears the per-fd mask entry when a socket is closed. Closing an fd
+    /// already removes it from the epoll set kernel-side; this just lets a reused fd number re-register.
+    /// </summary>
+    private static LlvmValueHandle EmitEpollForgetBody(LlvmCodegenState state, LlvmValueHandle handle)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle masksBase = GetArrayElementPointer(state, LlvmApi.ArrayType2(state.I8, EpollMaskTableSize), EpollMasksGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "epf_masks_base");
+        LlvmBasicBlockHandle clearBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epf_clear");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "epf_done");
+        LlvmValueHandle inRange = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, handle, LlvmApi.ConstInt(state.I64, 0, 0), "epf_ge0"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, handle, LlvmApi.ConstInt(state.I64, EpollMaskTableSize, 0), "epf_lt_max"),
+            "epf_in_range");
+        LlvmApi.BuildCondBr(builder, inRange, clearBlock, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, clearBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), LlvmApi.BuildGEP2(builder, state.I8, masksBase, [handle], "epf_slot"));
+        LlvmApi.BuildBr(builder, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
 
     private static LlvmValueHandle ShutdownFlagGlobal(LlvmCodegenState state) =>
         state.Target.GetOrAddNamedGlobal("__ashes_shutdown_requested", () =>
@@ -1647,6 +1737,8 @@ internal static partial class LlvmCodegen
         else
         {
             DeclareRuntimeFunction("ashes_detached_register_epoll", LlvmApi.FunctionType(i64, [i64]));
+            DeclareRuntimeFunction("ashes_epoll_register", LlvmApi.FunctionType(i64, [i64, i64, i64]));
+            DeclareRuntimeFunction("ashes_epoll_forget", LlvmApi.FunctionType(i64, [i64]));
         }
         DeclareRuntimeFunction("ashes_step_http_get_task", LlvmApi.FunctionType(i64, [i64]));
         DeclareRuntimeFunction("ashes_step_http_post_task", LlvmApi.FunctionType(i64, [i64]));
@@ -1804,6 +1896,14 @@ internal static partial class LlvmCodegen
                 "ashes_detached_register_epoll",
                 LlvmApi.FunctionType(i64, [i64]),
                 (state, fn) => EmitDetachedRegisterEpollBody(state, LlvmApi.GetParam(fn, 0)));
+            EmitRuntimeFunction(
+                "ashes_epoll_register",
+                LlvmApi.FunctionType(i64, [i64, i64, i64]),
+                (state, fn) => EmitEpollRegisterBody(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), LlvmApi.GetParam(fn, 2)));
+            EmitRuntimeFunction(
+                "ashes_epoll_forget",
+                LlvmApi.FunctionType(i64, [i64]),
+                (state, fn) => EmitEpollForgetBody(state, LlvmApi.GetParam(fn, 0)));
         }
 
         EmitRuntimeFunction(
@@ -7335,7 +7435,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, connectFailed, connectCloseBlock, connectSuccessBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, connectCloseBlock);
-        EmitLinuxSyscall(state, SyscallClose, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "tcp_connect_close_socket_value"), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_close_call");
+        LlvmValueHandle connectCloseSocket = LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "tcp_connect_close_socket_value");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_forget", [connectCloseSocket], "tcp_connect_close_forget");
+        EmitLinuxSyscall(state, SyscallClose, connectCloseSocket, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_close_call");
         LlvmApi.BuildBr(builder, connectFailBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, connectFailBlock);
@@ -7594,6 +7696,9 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitLinuxTcpClose(LlvmCodegenState state, LlvmValueHandle socket)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        // Clear the persistent-epoll mask entry so a reused fd number re-registers correctly (the kernel
+        // drops the fd from the epoll set on close, but our per-fd table must be cleared too).
+        _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_forget", [socket], "tcp_close_forget");
         LlvmValueHandle result = EmitLinuxSyscall(state, SyscallClose, socket, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_call");
         LlvmValueHandle success = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, result, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_close_success");
         return LlvmApi.BuildSelect(builder, success, EmitResultOk(state, EmitUnitValue(state)), EmitResultError(state, EmitHeapStringLiteral(state, TcpCloseFailedMessage)), "tcp_close_result");
