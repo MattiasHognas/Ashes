@@ -1339,7 +1339,7 @@ public sealed class Parser
     {
         var left = ParseUnary();
 
-        while (_current.Kind == TokenKind.Star || _current.Kind == TokenKind.Slash)
+        while (_current.Kind == TokenKind.Star || _current.Kind == TokenKind.Slash || _current.Kind == TokenKind.Percent)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             var op = _current.Kind;
@@ -1349,6 +1349,7 @@ public sealed class Parser
             {
                 TokenKind.Star => RegisterExpr(new Expr.Multiply(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.Slash => RegisterExpr(new Expr.Divide(left, right), start, AstSpans.GetOrDefault(right).End),
+                TokenKind.Percent => RegisterExpr(new Expr.Modulo(left, right), start, AstSpans.GetOrDefault(right).End),
                 _ => throw new InvalidOperationException()
             };
         }
@@ -1552,7 +1553,7 @@ public sealed class Parser
 
     private static bool IsWhitespaceArgStarter(TokenKind kind)
     {
-        return kind is TokenKind.Ident or TokenKind.Int or TokenKind.Float or TokenKind.String
+        return kind is TokenKind.Ident or TokenKind.Int or TokenKind.BigInt or TokenKind.Float or TokenKind.String
             or TokenKind.True or TokenKind.False or TokenKind.LBracket
             or TokenKind.Await or TokenKind.Let
             or TokenKind.If or TokenKind.Match or TokenKind.Given;
@@ -1576,6 +1577,7 @@ public sealed class Parser
         return _current.Kind switch
         {
             TokenKind.Int => ParseInt(),
+            TokenKind.BigInt => ParseBigInt(),
             TokenKind.Float => ParseFloat(),
             TokenKind.String => ParseString(),
             TokenKind.True => ParseBool(true),
@@ -1597,6 +1599,12 @@ public sealed class Parser
         }
 
         return RegisterExpr(new Expr.IntLit(t.IntValue), t.Position, t.End);
+    }
+
+    private Expr ParseBigInt()
+    {
+        var t = Consume(TokenKind.BigInt);
+        return RegisterExpr(new Expr.BigIntLit(t.Text), t.Position, t.End);
     }
 
     private static bool TryParseUnsignedLiteral(string text, out ulong value, out int bits)

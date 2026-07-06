@@ -928,6 +928,7 @@ public static partial class DocumentService
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -946,6 +947,9 @@ public static partial class DocumentService
 
             case Expr.Divide div:
                 return CollectVisibleBindingsInBinary(div.Left, div.Right, position, scope);
+
+            case Expr.Modulo modExpr:
+                return CollectVisibleBindingsInBinary(modExpr.Left, modExpr.Right, position, scope);
 
             case Expr.BitwiseAnd bitAnd:
                 return CollectVisibleBindingsInBinary(bitAnd.Left, bitAnd.Right, position, scope);
@@ -1437,6 +1441,7 @@ public static partial class DocumentService
         {
             case Expr.IntLit:
             case Expr.UIntLit:
+            case Expr.BigIntLit:
             case Expr.FloatLit:
             case Expr.StrLit:
             case Expr.BoolLit:
@@ -1471,6 +1476,9 @@ public static partial class DocumentService
 
             case Expr.Divide div:
                 return ResolveDefinitionInBinary(div.Left, div.Right, position, currentFilePath, imports, scope);
+
+            case Expr.Modulo modExpr:
+                return ResolveDefinitionInBinary(modExpr.Left, modExpr.Right, position, currentFilePath, imports, scope);
 
             case Expr.BitwiseAnd bitAnd:
                 return ResolveDefinitionInBinary(bitAnd.Left, bitAnd.Right, position, currentFilePath, imports, scope);

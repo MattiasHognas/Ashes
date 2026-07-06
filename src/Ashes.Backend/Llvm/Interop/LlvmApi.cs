@@ -176,6 +176,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMInt64TypeInContext")]
     public static partial LlvmTypeHandle Int64TypeInContext(LlvmContextHandle context);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMIntTypeInContext")]
+    public static partial LlvmTypeHandle IntTypeInContext(LlvmContextHandle context, uint numBits);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDoubleTypeInContext")]
     public static partial LlvmTypeHandle DoubleTypeInContext(LlvmContextHandle context);
 

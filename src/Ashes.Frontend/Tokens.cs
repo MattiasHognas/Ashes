@@ -32,6 +32,8 @@ public enum TokenKind
     Minus,
     Star,
     Slash,
+    Percent,
+    BigInt,
     Tilde,
     Ampersand,
     Caret,

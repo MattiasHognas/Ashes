@@ -284,6 +284,32 @@ payload uses the MinGW (`windows-gnu`) triple — its datalayout is identical to
 win-only adjustments (neuter openlibm's long-double weak-alias macro; skip the
 float/long-double/complex/gamma/bessel source variants; a few forwarding shims).
 
+### BigInt (arbitrary-precision integers)
+
+`BigInt` is a native primitive (`Ashes.BigInt`), consistent with `Int`/`Float`/`u8`–`u64` being
+native. It is an **immutable, arena-allocated heap value** — a pointer to
+`{ i64 header, i64 limb[…] }` where `header = (negFlag << 32) | limbCount`, the magnitude is
+sign-magnitude base-2^64 little-endian, and the form is normalized (no leading-zero limbs; zero is
+header `0`). Being a pointer word, it flows through slots, closures, tuples, and `match` like any
+other heap value, and every operation returns a fresh normalized result (no mutation).
+
+Unlike the openlibm math payload, the BigInt arithmetic is **emitted directly as LLVM-IR runtime
+helper functions** by the backend (`EmitBigIntRuntimeHelpers`), the same technique as the
+freestanding `memcmp`/`strlen` helpers — there is no vendored library or build step. The helpers
+(`bignum_add`/`_sub`/`_mul`/`_divmod`/`_cmp`/`_from_i64`/`_to_decimal`/`_from_decimal`) are emitted
+once per program that uses BigInt (gated by `ProgramUsesBigIntRuntimeAbi`), with internal linkage so
+unused ones are dead-stripped. They are **allocation-free**: the call-site codegen reads the operand
+limb counts, pre-sizes generous result buffers in the arena (`EmitAllocDynamic`), and passes them
+in. The IR is pure integer arithmetic (i64/i128) with no syscalls or soft-int libcalls — the
+64×64→128 multiply lowers to hardware `umulh`, and decimal conversion divides 32 bits at a time so it
+needs only i64 `udiv` — so all three targets share one implementation. Division is binary long
+division (Knuth Algorithm D is a documented performance follow-up).
+
+Because values are immutable and arena-allocated, a growing bignum in a tight loop churns the arena;
+that cost is deliberate (there is no GC or reference counting) and is what the pidigits challenge
+exercises. `Int↔BigInt` conversions live in `Ashes.BigInt` (`fromInt`/`toInt`); string conversions
+live in `Ashes.Text` (`fromBigInt`/`parseBigInt`), matching `fromInt`/`parseInt`.
+
 ---
 
 ## Intermediate Representation

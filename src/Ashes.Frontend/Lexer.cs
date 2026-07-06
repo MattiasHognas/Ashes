@@ -187,6 +187,7 @@ public sealed class Lexer
             '-' => new Token(TokenKind.Minus, "-", 0, start, 1),
             '*' => new Token(TokenKind.Star, "*", 0, start, 1),
             '/' => new Token(TokenKind.Slash, "/", 0, start, 1),
+            '%' => new Token(TokenKind.Percent, "%", 0, start, 1),
             '~' => new Token(TokenKind.Tilde, "~", 0, start, 1),
             '&' => new Token(TokenKind.Ampersand, "&", 0, start, 1),
             '^' => new Token(TokenKind.Caret, "^", 0, start, 1),
@@ -289,6 +290,11 @@ public sealed class Lexer
         }
 
         int digitsEnd = _pos;
+        if (_pos < _text.Length && _text[_pos] == 'N')
+        {
+            _pos++;
+            return new Token(TokenKind.BigInt, _text[start..digitsEnd], 0, start, _pos - start);
+        }
         int unsignedBits = TryReadUnsignedSuffix();
         var text = _text[start.._pos];
         var numberText = _text[start..digitsEnd];

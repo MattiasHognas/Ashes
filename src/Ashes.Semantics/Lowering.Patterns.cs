@@ -1418,6 +1418,7 @@ public sealed partial class Lowering
             TypeRef.TUInt { Bits: 64 } => "u64",
             TypeRef.TUInt u => $"u{u.Bits}",
             TypeRef.TFloat => "Float",
+            TypeRef.TBigInt => "BigInt",
             TypeRef.TStr => "Str",
             TypeRef.TBool => "Bool",
             TypeRef.TNever => "Never",
