@@ -20,24 +20,23 @@ calculation and the `1/distance³` force term both require a **square root**.
 
 ## What it probes (expected flaws)
 
-- **No math library — `sqrt` is missing.** There is currently no `sqrt`/trig/`pow`/`exp`
-  intrinsic in the backend or stdlib, so the distance term cannot be computed directly. The
-  benchmark is *blocked* on the math lib; writing it now would only measure a hand-rolled
-  Newton's-method `sqrt`, not the real primitive.
-- Once `sqrt` lands: float throughput in a long `N`-step loop, float formatting to fixed
-  precision (`Ashes.Text.formatFloat(value)(9)` — shipped), and arena
-  behaviour of a fold that rebuilds the small body list each step.
+- **Float throughput** in a long `N`-step loop: the distance term and the energy both use
+  `Ashes.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so the real primitive is exercised
+  rather than a hand-rolled Newton's-method approximation.
+- **Fixed-precision formatting** to 9 dp via `Ashes.Text.formatFloat(value)(9)` (shipped).
+- **Arena behaviour** of a fold that rebuilds the small body list each step.
 
 ## Dependencies / blockers
 
-**BLOCKED on the math lib (`sqrt`).** Defer until `Ashes.Math.sqrt` (or equivalent
-intrinsic) exists. Fixed-precision 9-dp formatting is covered by `Ashes.Text.formatFloat`.
+**None.** `Ashes.Math.sqrt` (hardware square root) and `Ashes.Text.formatFloat` (9-dp
+fixed-precision formatting) have both shipped — the benchmark is ready to implement.
 
 ## Status
 
-**Scaffold only.** `n-body.ash` and the `FLAWS.md` writeup are deferred — blocked on math lib.
+**Scaffold only.** `n-body.ash` and the `FLAWS.md` writeup are not written yet, but the
+benchmark is **unblocked** — nothing is missing to implement it.
 
-## Build & run (once written, after math lib)
+## Build & run (once written)
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/n-body/n-body.ash -o challenges/n-body/n-body
