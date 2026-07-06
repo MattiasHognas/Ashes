@@ -5,7 +5,9 @@ namespace Ashes.Dap;
 /// <summary>
 /// Debug Adapter Protocol server for Ashes. Communicates with the IDE
 /// (VS Code) over stdin/stdout and delegates to a native debugger
-/// (GDB or LLDB) via the Machine Interface protocol.
+/// subprocess driven over its own DAP interpreter
+/// (<c>gdb --interpreter=dap</c> or <c>lldb-dap</c>), adding Ashes-aware
+/// value formatting on top.
 /// </summary>
 public sealed class DapServer : IDisposable
 {
@@ -131,7 +133,8 @@ public sealed class DapServer : IDisposable
                 _launchArgs.Program,
                 _launchArgs.Cwd,
                 _launchArgs.Args,
-                _launchArgs.DebuggerPath).ConfigureAwait(false);
+                _launchArgs.DebuggerPath,
+                _launchArgs.StopOnEntry).ConfigureAwait(false);
 
             // Set any breakpoints that were sent before launch
             foreach (var (path, lines) in _pendingBreakpoints)
@@ -145,10 +148,9 @@ public sealed class DapServer : IDisposable
             _pendingBreakpoints.Clear();
             _transport.SendResponse(request, success: true);
 
-            // If stopOnEntry, don't auto-run (debugger will stop at entry)
-            if (!_launchArgs.StopOnEntry && _configurationDone)
+            if (_configurationDone)
             {
-                await _debugger.RunAsync().ConfigureAwait(false);
+                await RunDebuggeeAsync().ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -257,10 +259,27 @@ public sealed class DapServer : IDisposable
         _configurationDone = true;
         _transport.SendResponse(request, success: true);
 
-        // If launch was already called and not stopOnEntry, start execution
-        if (_debugger is not null && _launchArgs is not null && !_launchArgs.StopOnEntry)
+        // If launch was already called, start execution (the backend honors stopOnEntry)
+        if (_debugger is not null && _launchArgs is not null)
         {
-            await _debugger.RunAsync().ConfigureAwait(false);
+            await RunDebuggeeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task RunDebuggeeAsync()
+    {
+        try
+        {
+            await _debugger!.RunAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _transport.SendEvent("output", new
+            {
+                category = "console",
+                output = $"Failed to start the debuggee: {ex.Message}\n",
+            });
+            _transport.SendEvent("terminated", new DapTerminatedEventBody());
         }
     }
 
@@ -277,8 +296,7 @@ public sealed class DapServer : IDisposable
         DapStackFrame[] stackFrames = [];
         if (_debugger is not null)
         {
-            var miResponse = await _debugger.GetStackTraceAsync().ConfigureAwait(false);
-            stackFrames = MiResponseParser.ParseStackFrames(miResponse);
+            stackFrames = await _debugger.GetStackTraceAsync().ConfigureAwait(false);
         }
 
         _transport.SendResponse(request, success: true, body: new

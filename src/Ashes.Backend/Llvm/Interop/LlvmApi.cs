@@ -160,6 +160,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetInsertBlock")]
     public static partial LlvmBasicBlockHandle GetInsertBlock(LlvmBuilderHandle builder);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMMoveBasicBlockAfter")]
+    public static partial void MoveBasicBlockAfter(LlvmBasicBlockHandle block, LlvmBasicBlockHandle movePosition);
+
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeBuilder")]
     public static partial void DisposeBuilder(LlvmBuilderHandle builder);
 
@@ -713,6 +716,29 @@ internal static partial class LlvmApi
         LlvmDIBuilderHandle builder, string name, ulong sizeInBits, uint encoding)
     {
         return DIBuilderCreateBasicType(builder, name, (nint)name.Length, sizeInBits, encoding, 0);
+    }
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateLexicalBlockFile")]
+    public static partial LlvmMetadataHandle DIBuilderCreateLexicalBlockFile(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle scope,
+        LlvmMetadataHandle file,
+        uint discriminator);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreateTypedef", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmMetadataHandle DIBuilderCreateTypedef(
+        LlvmDIBuilderHandle builder,
+        LlvmMetadataHandle type,
+        string name, nint nameLen,
+        LlvmMetadataHandle file,
+        uint lineNo,
+        LlvmMetadataHandle scope,
+        uint alignInBits);
+
+    public static LlvmMetadataHandle DIBuilderCreateTypedef(
+        LlvmDIBuilderHandle builder, LlvmMetadataHandle type, string name, LlvmMetadataHandle file, LlvmMetadataHandle scope)
+    {
+        return DIBuilderCreateTypedef(builder, type, name, (nint)name.Length, file, 0, scope, 0);
     }
 
     [LibraryImport(Lib, EntryPoint = "LLVMDIBuilderCreatePointerType")]

@@ -131,7 +131,9 @@ internal static class AshesValueFormatter
         var bytes = new byte[byteCount];
         for (var index = 0; index < byteCount; index++)
         {
-            var byteValue = await evaluateExpressionAsync($"*((unsigned char*){addressHex} + {8 + index})").ConfigureAwait(false);
+            // Cast to long long so both GDB and LLDB print a plain integer;
+            // an unsigned char read comes back as "104 'h'" / "'h'" instead.
+            var byteValue = await evaluateExpressionAsync($"(long long)*((unsigned char*){addressHex} + {8 + index})").ConfigureAwait(false);
             if (!byte.TryParse(byteValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out bytes[index]))
             {
                 return null;
