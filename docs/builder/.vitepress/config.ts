@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { slugify } from "@mdit-vue/shared";
 import { defineConfig, type DefaultTheme } from "vitepress";
@@ -70,16 +71,25 @@ export default defineConfig({
 
   // The content lives outside the builder root (../md), so Vue imports generated
   // for each page cannot be resolved by walking up from the .md files — pin them
-  // to the builder's own node_modules.
+  // to the builder's own node_modules. The pins must target the ESM builds:
+  // require.resolve("vue") yields the CJS entry, whose conditional
+  // module.exports defeats Rollup's named-export detection and breaks the
+  // production client bundle at runtime (undefined.shallowRef).
   vite: {
     resolve: {
-      alias: [
-        { find: /^vue$/, replacement: require.resolve("vue") },
-        {
-          find: /^vue\/server-renderer$/,
-          replacement: require.resolve("vue/server-renderer"),
-        },
-      ],
+      alias: (() => {
+        const vueDir = dirname(require.resolve("vue/package.json"));
+        return [
+          {
+            find: /^vue$/,
+            replacement: join(vueDir, "dist/vue.runtime.esm-bundler.js"),
+          },
+          {
+            find: /^vue\/server-renderer$/,
+            replacement: join(vueDir, "server-renderer/index.mjs"),
+          },
+        ];
+      })(),
     },
   },
 
