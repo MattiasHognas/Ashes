@@ -9,9 +9,9 @@ namespace Ashes.Dap;
 
 /// <summary>
 /// Debugger backend that drives LLDB via the LLDB-MI (Machine Interface)
-/// protocol.  LLDB-MI is a GDB-MI–compatible front-end shipped with LLDB
-/// (<c>lldb-mi</c>) or built into <c>lldb</c> via
-/// <c>--interpreter=mi2</c> (LLDB 18+).
+/// protocol.  LLDB-MI is a GDB-MI–compatible front-end available as a
+/// standalone <c>lldb-mi</c> binary or built into <c>lldb</c> on builds
+/// that accept <c>--interpreter=mi2</c>.
 /// </summary>
 public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 {
@@ -124,8 +124,9 @@ public sealed partial class LldbDebuggerBackend : IDebuggerBackend
 
     public async Task<DapVariable[]> GetLocalsAsync()
     {
-        var localsResponse = await SendCommandAsync("-stack-list-locals 1").ConfigureAwait(false);
-        var locals = MiResponseParser.ParseLocals(localsResponse);
+        // -stack-list-variables includes function arguments; -stack-list-locals would not.
+        var localsResponse = await SendCommandAsync("-stack-list-variables 1").ConfigureAwait(false);
+        var locals = MiResponseParser.ParseVariables(localsResponse);
         var variables = new List<DapVariable>(locals.Length);
 
         foreach (var local in locals)

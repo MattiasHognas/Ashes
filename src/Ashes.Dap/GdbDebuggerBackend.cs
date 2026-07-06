@@ -97,8 +97,9 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 
     public async Task<DapVariable[]> GetLocalsAsync()
     {
-        var localsResponse = await SendCommandAsync("-stack-list-locals 1").ConfigureAwait(false);
-        var locals = MiResponseParser.ParseLocals(localsResponse);
+        // -stack-list-variables includes function arguments; -stack-list-locals would not.
+        var localsResponse = await SendCommandAsync("-stack-list-variables 1").ConfigureAwait(false);
+        var locals = MiResponseParser.ParseVariables(localsResponse);
         var variables = new List<DapVariable>(locals.Length);
 
         foreach (var local in locals)

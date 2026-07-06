@@ -56,13 +56,15 @@ public static partial class MiResponseParser
     }
 
     /// <summary>
-    /// Parses a <c>-stack-list-locals 1</c> result record into DAP variables.
+    /// Parses a <c>-stack-list-variables 1</c> (or <c>-stack-list-locals 1</c>)
+    /// result record into DAP variables. Function arguments carry an extra
+    /// <c>arg="1"</c> field between name and value.
     /// <para>
     /// Example MI output:
-    /// <c>^done,locals=[{name="x",value="42"},{name="y",value="hello"}]</c>
+    /// <c>^done,variables=[{name="n",arg="1",value="10"},{name="x",value="42"}]</c>
     /// </para>
     /// </summary>
-    public static DapVariable[] ParseLocals(string miResponse)
+    public static DapVariable[] ParseVariables(string miResponse)
     {
         var variables = new List<DapVariable>();
 
@@ -124,7 +126,7 @@ public static partial class MiResponseParser
     [GeneratedRegex(@"frame=\{([^}]+)\}")]
     private static partial Regex FrameRegex();
 
-    /// <summary>Matches each <c>{name="...",value="..."}</c> block in a locals result.</summary>
-    [GeneratedRegex(@"\{(name=""[^""]*"",value=""[^""]*"")\}")]
+    /// <summary>Matches each <c>{name="...",[arg="...",]value="..."}</c> block in a variables/locals result.</summary>
+    [GeneratedRegex(@"\{(name=""[^""]*"",(?:arg=""[^""]*"",)?value=""[^""]*"")\}")]
     private static partial Regex LocalRegex();
 }

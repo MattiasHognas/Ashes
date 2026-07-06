@@ -268,11 +268,11 @@ public sealed class DapServerTests
     }
 
     [Test]
-    public void ParseLocals_extracts_variables_from_mi_response()
+    public void ParseVariables_extracts_variables_from_mi_response()
     {
         var mi = """1^done,locals=[{name="x",value="42"},{name="msg",value="hello"}]""";
 
-        var vars = MiResponseParser.ParseLocals(mi);
+        var vars = MiResponseParser.ParseVariables(mi);
 
         vars.Length.ShouldBe(2);
         vars[0].Name.ShouldBe("x");
@@ -282,17 +282,17 @@ public sealed class DapServerTests
     }
 
     [Test]
-    public void ParseLocals_returns_empty_for_no_locals()
+    public void ParseVariables_returns_empty_for_no_locals()
     {
         var mi = """1^done,locals=[]""";
-        var vars = MiResponseParser.ParseLocals(mi);
+        var vars = MiResponseParser.ParseVariables(mi);
         vars.Length.ShouldBe(0);
     }
 
     [Test]
-    public void ParseLocals_returns_empty_for_empty_response()
+    public void ParseVariables_returns_empty_for_empty_response()
     {
-        var vars = MiResponseParser.ParseLocals("");
+        var vars = MiResponseParser.ParseVariables("");
         vars.Length.ShouldBe(0);
     }
 

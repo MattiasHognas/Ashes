@@ -101,11 +101,11 @@ public sealed class MiResponseParserTests
     }
 
     [Test]
-    public void ParseLocals_should_parse_single_variable()
+    public void ParseVariables_should_parse_single_variable()
     {
         var mi = """^done,locals=[{name="x",value="42"}]""";
 
-        var vars = MiResponseParser.ParseLocals(mi);
+        var vars = MiResponseParser.ParseVariables(mi);
 
         vars.Length.ShouldBe(1);
         vars[0].Name.ShouldBe("x");
@@ -114,11 +114,11 @@ public sealed class MiResponseParserTests
     }
 
     [Test]
-    public void ParseLocals_should_parse_multiple_variables()
+    public void ParseVariables_should_parse_multiple_variables()
     {
         var mi = """^done,locals=[{name="x",value="42"},{name="y",value="hello"}]""";
 
-        var vars = MiResponseParser.ParseLocals(mi);
+        var vars = MiResponseParser.ParseVariables(mi);
 
         vars.Length.ShouldBe(2);
         vars[0].Name.ShouldBe("x");
@@ -128,29 +128,43 @@ public sealed class MiResponseParserTests
     }
 
     [Test]
-    public void ParseLocals_should_return_empty_for_no_locals()
+    public void ParseVariables_should_return_empty_for_no_locals()
     {
-        var vars = MiResponseParser.ParseLocals("^done,locals=[]");
+        var vars = MiResponseParser.ParseVariables("^done,locals=[]");
 
         vars.ShouldBeEmpty();
     }
 
     [Test]
-    public void ParseLocals_should_return_empty_for_unrelated_response()
+    public void ParseVariables_should_return_empty_for_unrelated_response()
     {
-        var vars = MiResponseParser.ParseLocals("^running");
+        var vars = MiResponseParser.ParseVariables("^running");
 
         vars.ShouldBeEmpty();
     }
 
     [Test]
-    public void ParseLocals_should_ignore_entries_with_missing_value()
+    public void ParseVariables_should_parse_function_arguments_with_arg_field()
     {
-        // ParseLocals only matches entries with both name and value fields,
+        var mi = """^done,variables=[{name="n",arg="1",value="10"},{name="x",value="42"}]""";
+
+        var vars = MiResponseParser.ParseVariables(mi);
+
+        vars.Length.ShouldBe(2);
+        vars[0].Name.ShouldBe("n");
+        vars[0].Value.ShouldBe("10");
+        vars[1].Name.ShouldBe("x");
+        vars[1].Value.ShouldBe("42");
+    }
+
+    [Test]
+    public void ParseVariables_should_ignore_entries_with_missing_value()
+    {
+        // ParseVariables only matches entries with both name and value fields,
         // so an entry missing value is not parsed into a variable.
         var mi = """^done,locals=[{name="x"}]""";
 
-        var vars = MiResponseParser.ParseLocals(mi);
+        var vars = MiResponseParser.ParseVariables(mi);
 
         // No variable is returned because the expected
         // {name="...",value="..."} shape is not present.
