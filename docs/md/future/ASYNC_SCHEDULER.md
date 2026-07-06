@@ -73,25 +73,51 @@ once fixed.
   the global allocation cursor in a bad state that a subsequent owner-0 step (the accept leaf) then
   allocates through.
 
-**Confirmed a scheduler bug, and narrowed further** (all via the harness + debug builds):
+**ROOT CAUSE FOUND — nested scheduler runs.** `await` lowers two ways (Lowering.cs, `LowerAwait`):
+inside a coroutine body (`_inCoroutineBody`) it emits `AwaitTask` (a suspend point); anywhere else it
+emits `RunTask` (a **blocking** `ashes_scheduler_run`). The server combinators do their looping in
+`let recursive` helpers **nested inside** `async(...)` — `serveOne`'s accept loop and `Http.Server`'s
+`connLoop`. A lambda body is not run through `StateMachineTransform` (which is linear-only — it splits
+at awaits but has no back-edges/loops), so `_inCoroutineBody` is reset to `false` for it (Lowering.cs
+~1570), and every `await` in those loops becomes a **nested** `ashes_scheduler_run`. The legacy driver
+tolerated nested inline drives; the run-queue scheduler cannot — nested runs re-enter and drive the
+**shared** global ready-queue/parked-list, so under concurrent handlers they double-drive and corrupt.
+The `cmpq $1,(%rcx)` crash is in the accept loop reading a `Result` returned by such a nested run.
 
-- **It is the scheduler, definitively.** Forcing `useRunQueueScheduler = false` (legacy driver) makes
-  the *identical* concurrent-HTTP test **pass**. So it is neither a pre-existing HTTP-server bug nor the
-  forkWorkers path — the run-queue scheduler specifically corrupts the accept coroutine's result.
-- **Ruled out — arena install/restore.** Forcing `EmitInstallTaskArena` to a no-op (every task uses the
-  global arena) does **not** fix it. Combined with reap-off and idempotent-enqueue also not fixing it,
-  the wild pointer is not from per-task arena management, reaping, or ready-queue self-loops.
-- The faulting `call` (before the `cmpq $1,(%rcx)`) targets a routine that zeros the new scheduler
-  header slots and reads the TCB — a task creator / allocation path — and returns the wild `Result`.
-- The crash only appears with **concurrent, allocation-heavy** handlers (the HTTP `connLoop` parse/
-  render), never with concurrent TCP echo or sequential HTTP.
+**Confirmed by construction:** disabling the scheduler makes the identical test pass; reap-off,
+idempotent-enqueue, and no-op'ing `EmitInstallTaskArena` do **not** fix it (so it is not arena/reap/
+queue-self-loop). Ruling this in: `objdump`/`addr2line` show `lambda_3` (the accept loop) calling a
+routine that zero-inits the scheduler header slots and reads the TCB — that routine is
+`ashes_scheduler_run`, i.e. the accept loop is doing a nested run per `await accept`.
 
-So the remaining suspect is the **await suspend/resume result-delivery or task-struct integrity under
-heavy concurrent churn** — a task's `ResultSlot` / `Waiter` link, or a freshly created task, ending up
-with a garbage pointer when many handlers interleave. **Next step:** a hardware watchpoint on the accept
-coroutine's `ResultSlot` (or on the delivering `Waiter` write) in a harness-launched server under gdb, to
-catch the write that stores the garbage — the sandbox blocks manual server binds, so this must run
-through the test harness (compile the repro `EmitDebugInfo = true`, launch under gdb from the test).
+### The proper fix and why it is not a small patch
+
+The loops must stop nesting runs — their `await`s must be **suspend points on the one top-level run**.
+Two routes, both non-trivial:
+
+1. **Teach `StateMachineTransform` to compile tail-recursive async loops** (back-edges), so `serveOne`/
+   `connLoop` become looping coroutines. This is the "async loops" feature — a real addition to the
+   transform, which today is strictly linear.
+2. **Rewrite the combinators as spawn-next chains** (each iteration awaits once as a linear coroutine,
+   then `spawn`s the next iteration instead of recursing). Attempted on this branch and reverted; it
+   surfaced three further blockers:
+   - The scheduler must not exit when the main coroutine completes but spawned work is still parked —
+     needs the termination keyed on "nothing runnable and nothing parked" (with a re-entrancy depth
+     counter so genuinely-nested runs still return on their own task). Prototyped and works.
+   - **Windows/legacy driver** does not drive a spawn-next accept chain (no shared run queue), so a
+     spawn-next `serveOne` breaks every Windows server test. The combinator rewrite would have to be
+     target-aware, or the legacy driver taught the same shape.
+   - **A distinct scheduler result-delivery bug** (the real wall): a **spawned** task that awaits a
+     socket leaf (e.g. `receive`) and then awaits a **sub-coroutine** (`handler(req)`) gets the
+     sub-coroutine's result delivered as **garbage** — `render(resp)` then dereferences a string whose
+     data pointer is a tiny integer (crash: `rep`-style copy with `rdi=0`/`rsi=3`). Isolated minimal
+     repros (spawn→coroutine-await, nested-spawn, leaf+coroutine-await, handler-param-through-spawn) all
+     work; only *socket-leaf-then-coroutine-await inside a spawned task* corrupts. This needs its own
+     focused fix before spawn-next servers can work, independent of the loop question.
+
+**Next step:** fix the result-delivery bug first (it blocks any spawn-next server and is the smallest
+well-isolated defect), then choose route 1 or 2 for the loops. The `should_serve_http_concurrently…`
+regression test stays skipped until then; the branch is otherwise gate-green.
 
 **The scheduler is therefore not yet "done":** fairness, non-networking async, client I/O, TCP servers,
 and sequential HTTP are all correct and gate-green, but concurrent HTTP servers crash. This doc stays
