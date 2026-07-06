@@ -162,6 +162,76 @@ internal static partial class LlvmCodegen
             return global;
         });
 
+    // Set to 1 by the SIGINT/SIGTERM handler; the accept step checks it and completes with
+    // ServerShutdownSentinel so serve() stops accepting and returns Ok(()) (graceful shutdown).
+    private const string ServerShutdownSentinel = "__ashes_server_shutdown";
+
+    private static LlvmValueHandle ShutdownFlagGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_shutdown_requested", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_shutdown_requested");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    /// <summary>
+    /// Installs SIGINT/SIGTERM handlers (Linux) that set the shutdown flag, so a parked accept is
+    /// interrupted (EINTR — the handler does not set SA_RESTART) and re-steps into the flag check.
+    /// Emits the handler (stores 1 to the flag) and a naked restorer (rt_sigreturn) once, then
+    /// rt_sigaction's both signals. Called once per reactor process from forkWorkers.
+    /// </summary>
+    private static void EmitInstallShutdownHandlers(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle voidTy = LlvmApi.VoidTypeInContext(state.Target.Context);
+
+        LlvmValueHandle handlerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_handler");
+        LlvmValueHandle restorerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_restorer");
+        if (handlerFn.Ptr == 0)
+        {
+            LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+
+            handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_handler", LlvmApi.FunctionType(voidTy, [state.I32]));
+            LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
+            LlvmBasicBlockHandle he = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
+            LlvmApi.PositionBuilderAtEnd(builder, he);
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
+            LlvmApi.BuildRetVoid(builder);
+
+            // Naked restorer: on return from the handler the kernel jumps here, which must invoke
+            // rt_sigreturn to restore the interrupted context. No prologue may run first.
+            restorerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_restorer", LlvmApi.FunctionType(voidTy, []));
+            LlvmApi.SetLinkage(restorerFn, LlvmLinkage.Internal);
+            uint nakedKind = LlvmApi.GetEnumAttributeKindForName("naked");
+            LlvmApi.AddAttributeAtIndex(restorerFn, LlvmApi.AttributeIndexFunction, LlvmApi.CreateEnumAttribute(state.Target.Context, nakedKind, 0));
+            LlvmBasicBlockHandle re = LlvmApi.AppendBasicBlockInContext(state.Target.Context, restorerFn, "entry");
+            LlvmApi.PositionBuilderAtEnd(builder, re);
+            string restoreAsm = state.Flavor == LlvmCodegenFlavor.LinuxArm64
+                ? "mov x8, #139\n\tsvc #0"
+                : "movq $$15, %rax\n\tsyscall";
+            LlvmValueHandle asm = LlvmApi.GetInlineAsm(LlvmApi.FunctionType(voidTy, []), restoreAsm, "~{memory}", true, false);
+            LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(voidTy, []), asm, [], "");
+            LlvmApi.BuildUnreachable(builder);
+
+            LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        }
+
+        // struct kernel_sigaction { handler@0; flags@8; restorer@16; mask@24 } (32 bytes).
+        // flags = SA_RESTORER(0x04000000); NOT SA_RESTART, so syscalls return EINTR.
+        LlvmTypeHandle saType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle sa = LlvmApi.BuildAlloca(builder, saType, "shutdown_sa");
+        LlvmValueHandle saPtr = GetArrayElementPointer(state, saType, sa, LlvmApi.ConstInt(state.I64, 0, 0), "shutdown_sa_ptr");
+        StoreMemory(state, saPtr, 0, LlvmApi.BuildPtrToInt(builder, handlerFn, state.I64, "shutdown_handler_i64"), "shutdown_sa_handler");
+        StoreMemory(state, saPtr, 8, LlvmApi.ConstInt(state.I64, 0x04000000, 0), "shutdown_sa_flags");
+        StoreMemory(state, saPtr, 16, LlvmApi.BuildPtrToInt(builder, restorerFn, state.I64, "shutdown_restorer_i64"), "shutdown_sa_restorer");
+        StoreMemory(state, saPtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), "shutdown_sa_mask");
+        LlvmValueHandle saAddr = LlvmApi.BuildPtrToInt(builder, saPtr, state.I64, "shutdown_sa_addr");
+        // rt_sigaction(signum, &act, NULL, sigsetsize=8) for SIGINT(2) and SIGTERM(15).
+        _ = EmitLinuxSyscall4(state, SyscallRtSigaction, LlvmApi.ConstInt(state.I64, 2, 0), saAddr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 8, 0), "shutdown_sigint");
+        _ = EmitLinuxSyscall4(state, SyscallRtSigaction, LlvmApi.ConstInt(state.I64, 15, 0), saAddr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 8, 0), "shutdown_sigterm");
+    }
+
     // rawBytes: read the file as raw Bytes — no UTF-8 validation, and (on Linux) no size cap. Used by
     // Ashes.File.readAllBytes. readText passes rawBytes: false (UTF-8-validated, capped).
     private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
@@ -3787,6 +3857,10 @@ internal static partial class LlvmCodegen
             return EmitStepForkWorkersTaskWindows(state, taskPtr, port, requested);
         }
 
+        // Install SIGINT/SIGTERM handlers before forking so every reactor inherits them (graceful
+        // shutdown: the signal interrupts the parked accept, which then stops and returns Ok(())).
+        EmitInstallShutdownHandlers(state);
+
         if (IsLinuxFlavor(state.Flavor))
         {
             // A count <= 0 means "auto": the shared effective worker cap, so serve honors the same
@@ -4150,6 +4224,21 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_pending");
         LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_fail");
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_finish");
+
+        // Graceful shutdown: a SIGINT/SIGTERM sets the flag and interrupts the parked accept (EINTR),
+        // which re-steps here; complete with the shutdown sentinel so serve stops and returns Ok(()).
+        LlvmBasicBlockHandle shutdownBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_shutdown");
+        LlvmBasicBlockHandle acceptGoBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_go");
+        LlvmValueHandle shuttingDown = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "step_tcp_accept_shutdown_flag");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, shuttingDown, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_is_shutdown"),
+            shutdownBlock, acceptGoBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, shutdownBlock);
+        LlvmApi.BuildStore(builder,
+            EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, ServerShutdownSentinel)), "step_tcp_accept_shutdown_complete"),
+            statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, acceptGoBlock);
 
         LlvmValueHandle clientFd;
         LlvmValueHandle acceptOk;

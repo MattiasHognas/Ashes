@@ -319,6 +319,12 @@ transport is that HTTPS falls out without a second handler model.
   available, so bodies larger than one read and slow/split requests work. Closes on
   `Connection: close`, handler failure, or peer disconnect. Request bodies may be framed by
   `Content-Length` or `Transfer-Encoding: chunked` (chunk extensions ignored, trailers unsupported).
+- **Graceful shutdown (Linux)**: the runtime installs `SIGINT`/`SIGTERM` handlers (a naked
+  `rt_sigreturn` restorer, no `SA_RESTART`) so the signal interrupts the parked `accept` (`EINTR`);
+  the accept step then completes with a shutdown sentinel and `serve` stops the loop and returns
+  `Ok(())`, so the program exits cleanly (verified single- and multi-worker on linux-x64; arm64 uses
+  the standard `rt_sigreturn` restorer). Windows serve terminates on the default disposition today; a
+  console-ctrl handler + accept wake-up is the remaining piece there.
 - Server-side TLS (`Ashes.Net.Tls.Server`): `handshake(socket)(certPem)(keyPem)` (rustls server
   config built once from PEM contents and cached; server half of the handshake, reusing the
   scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking) and the `serveTls(port)(certPath)(keyPath)(handler)`
@@ -354,7 +360,6 @@ transport is that HTTPS falls out without a second handler model.
   Windows detached poll array is capped at 256 fds per round.
 - `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
   today, whether Content-Length- or chunked-framed).
-- Graceful shutdown wiring (see open questions).
 
 ---
 
@@ -389,9 +394,11 @@ These are genuinely unresolved and should be settled during specification, not i
 
 ### Graceful shutdown mechanism
 
-The default is expected to be OS signals (`SIGINT` / `SIGTERM`) installed by the runtime: stop
-accepting, drain in-flight connections, join workers, complete the lifecycle result with `Ok(())`.
-Open: whether to also expose an explicit programmatic stop handle (and if so, its shape as a library
+OS signals (`SIGINT` / `SIGTERM`) installed by the runtime are now the mechanism on Linux: stop
+accepting and complete the lifecycle result with `Ok(())`. Still open: draining in-flight
+connections before exit (today a worker stops accepting and exits; a multi-worker parent may cut a
+child mid-request via the death-signal), the Windows console-ctrl equivalent, and whether to expose
+an explicit programmatic stop handle (and if so, its shape as a library
 value threaded to the handler or returned alongside the server task), and the drain policy and
 timeout for in-flight work at shutdown.
 

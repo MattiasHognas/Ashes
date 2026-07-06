@@ -45,20 +45,20 @@ multi-core scaling out of the box.
 
 ```
 === TCP echo   127.0.0.1:18080 ===
-  ashes    conc 1     36,054 req/s   p50 0.022  p99 0.033  max 3.024 ms
-  ashes    conc 8    204,558 req/s   p50 0.028  p99 0.084  max 3.602 ms
-  ashes    conc 64   300,801 req/s   p50 0.136  p99 0.617  max 4.952 ms
-  dotnet   conc 1     44,193 req/s   p50 0.016  p99 0.031  max 2.587 ms
-  dotnet   conc 8    192,007 req/s   p50 0.028  p99 0.094  max 3.008 ms
-  dotnet   conc 64   265,980 req/s   p50 0.126  p99 0.937  max 4.109 ms
+  ashes    conc 1     37,553 req/s   p50 0.021  p99 0.032  max 3.011 ms
+  ashes    conc 8    205,642 req/s   p50 0.028  p99 0.074  max 3.338 ms
+  ashes    conc 64   314,213 req/s   p50 0.137  p99 0.604  max 4.082 ms
+  dotnet   conc 1     44,829 req/s   p50 0.015  p99 0.030  max 2.994 ms
+  dotnet   conc 8    197,676 req/s   p50 0.028  p99 0.091  max 3.376 ms
+  dotnet   conc 64   267,027 req/s   p50 0.129  p99 0.905  max 4.747 ms
 
 === HTTP 200   127.0.0.1:18081 ===
-  ashes    conc 1     29,146 req/s   p50 0.030  p99 0.044  max 1.189 ms
-  ashes    conc 8    154,350 req/s   p50 0.039  p99 0.095  max 1.675 ms
-  ashes    conc 64   268,186 req/s   p50 0.174  p99 0.850  max 3.473 ms
-  dotnet   conc 1     30,089 req/s   p50 0.026  p99 0.048  max 1.195 ms
-  dotnet   conc 8    112,717 req/s   p50 0.048  p99 0.203  max 1.607 ms
-  dotnet   conc 64   134,054 req/s   p50 0.294  p99 2.142  max 3.824 ms
+  ashes    conc 1     27,846 req/s   p50 0.029  p99 0.046  max 1.163 ms
+  ashes    conc 8    149,628 req/s   p50 0.040  p99 0.100  max 1.618 ms
+  ashes    conc 64   262,759 req/s   p50 0.175  p99 0.960  max 3.501 ms
+  dotnet   conc 1     30,677 req/s   p50 0.026  p99 0.043  max 0.867 ms
+  dotnet   conc 8    111,897 req/s   p50 0.049  p99 0.203  max 1.655 ms
+  dotnet   conc 64   133,091 req/s   p50 0.262  p99 2.143  max 3.142 ms
 ```
 
 ## Reading the results

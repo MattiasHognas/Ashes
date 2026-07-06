@@ -45,6 +45,7 @@ internal static partial class LlvmCodegen
     private const long SyscallFutex = 202;
     private const long SyscallArchPrctl = 158;
     private const long SyscallPrctl = 157;
+    private const long SyscallRtSigaction = 13;
     private const long SyscallSchedGetaffinity = 204;
     // ARCH_SET_GS, not ARCH_SET_FS: glibc and the Rust runtime (linked rustls) own the FS
     // base for their thread-local storage on x86-64. GS is unused by userspace on Linux, so
@@ -111,6 +112,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallPipe2 = 59;
     private const long Arm64SyscallSchedGetaffinity = 123;
     private const long Arm64SyscallPrctl = 167;
+    private const long Arm64SyscallRtSigaction = 134;
     private const uint WindowsFionBio = 0x8004667E;
     private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
     private const int WindowsWsaErrorWouldBlock = 10035;
@@ -2102,6 +2104,7 @@ internal static partial class LlvmCodegen
             SyscallPipe2 => Arm64SyscallPipe2,
             SyscallSchedGetaffinity => Arm64SyscallSchedGetaffinity,
             SyscallPrctl => Arm64SyscallPrctl,
+            SyscallRtSigaction => Arm64SyscallRtSigaction,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
     }

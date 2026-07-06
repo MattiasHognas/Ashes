@@ -1090,6 +1090,84 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_shut_down_gracefully_on_sigterm()
+    {
+        // Graceful shutdown: SIGTERM interrupts the parked accept, serve stops and returns Ok(()), so
+        // the program prints its clean-stop message and exits 0 (rather than being terminated).
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onConn client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(m) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+                | Ok(_u) -> Ashes.IO.print("stopped-clean")
+                | Error(e) -> Ashes.IO.print("err: " + e)
+            """;
+
+        // Single reactor keeps the signal/exit deterministic (no worker/pdeathsig race in the test).
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_shutdown_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // Wait until it accepts, then send SIGTERM and assert a clean stop.
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout);
+                    break;
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50);
+                }
+            }
+
+            using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
+            {
+                await kill.WaitForExitAsync();
+            }
+
+            var exited = await Task.Run(() => proc.WaitForExit(5000));
+            exited.ShouldBeTrue();
+            proc.ExitCode.ShouldBe(0);
+            (await proc.StandardOutput.ReadToEndAsync()).ShouldContain("stopped-clean");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_decode_a_chunked_request_body()
     {
         // Transfer-Encoding: chunked request body — decoded and echoed. Also split across two writes so

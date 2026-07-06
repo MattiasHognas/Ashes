@@ -14,7 +14,10 @@ import Ashes.Async
 let serveOne port handler = 
     async(let recursive loop listener = 
         match await Ashes.Net.Tcp.Server.accept(listener) with
-            | Error(e) -> Error(e)
+            | Error(e) -> 
+                if e == "__ashes_server_shutdown"
+                then Ok(0)
+                else Error(e)
             | Ok(client) -> 
                 let _ = Ashes.Async.spawn(handler(client))
                 in loop(listener)
