@@ -1012,6 +1012,12 @@ public sealed class LinuxBackendCoverageTests
             data.ShouldContain("Content-Type: application/json");
             data.ShouldEndWith("{\"ok\":true}");
 
+            // A body larger than one read is buffered across receives (cross-read buffering).
+            var bigBody = new string('A', 100_000);
+            var bigEcho = await HttpRequestRawWithRetryAsync(port,
+                $"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: {bigBody.Length}\r\nConnection: close\r\n\r\n{bigBody}");
+            bigEcho.ShouldEndWith("body=" + bigBody);
+
             // Keep-alive: two requests on a single TCP connection, second response still correct.
             var (first, second) = await HttpTwoRequestsOneConnectionAsync(port,
                 "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n",

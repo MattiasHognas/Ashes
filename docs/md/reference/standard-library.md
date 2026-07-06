@@ -273,8 +273,9 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
   completes with `Error` yields a plain `500`. Consumed with `Ashes.Async.run`; serves connections
   concurrently like the plaintext TCP server.
 
-Intentionally small: **one `receive` per request**, so a request (headers + body) must fit a single
-read; requests spanning multiple reads and chunked/streaming bodies are not supported. See
+Reads are **buffered** until a full request has arrived — the header block plus `Content-Length`
+bytes of body — so requests larger than one read and slow/split requests are handled. Chunked
+transfer-encoding request bodies are not supported (a body must be sized by `Content-Length`). See
 [SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
 
 ```ash
