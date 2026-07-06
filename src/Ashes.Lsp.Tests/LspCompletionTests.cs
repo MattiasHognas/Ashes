@@ -8,29 +8,39 @@ public sealed class LspCompletionTests
     public async Task Completion_should_return_root_module_members_after_Ashes_dot()
     {
         const string source = "Ashes.";
-        await using var document = TempDocument.Create("CompletionRoot.ash", source);
-        await using var harness = await LspHarness.StartAsync();
+        var document = TempDocument.Create("CompletionRoot.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
 
-        _ = await harness.DidOpenAsync(document.Uri, source);
-        var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
-
-        completions.ShouldContain("IO");
-        completions.ShouldContain("Http");
-        completions.ShouldContain("List");
+                completions.ShouldContain("IO");
+                completions.ShouldContain("Http");
+                completions.ShouldContain("List");
+            }
+        }
     }
 
     [Test]
     public async Task Completion_should_return_local_bindings_in_scope()
     {
         const string source = "let value = 1 in let next = value + 1 in ne";
-        await using var document = TempDocument.Create("CompletionLocal.ash", source);
-        await using var harness = await LspHarness.StartAsync();
+        var document = TempDocument.Create("CompletionLocal.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
 
-        _ = await harness.DidOpenAsync(document.Uri, source);
-        var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
-
-        completions.ShouldContain("value");
-        completions.ShouldContain("next");
+                completions.ShouldContain("value");
+                completions.ShouldContain("next");
+            }
+        }
     }
 
     private sealed class TempDocument : IAsyncDisposable

@@ -12,7 +12,7 @@ public sealed class ReplTests
         var result = await RunReplAsync(
             "let add = given (x) -> given (y) -> x + y in add",
             "add(1)(2)",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("add : Int -> Int -> Int");
@@ -26,7 +26,7 @@ public sealed class ReplTests
         var result = await RunReplAsync(
             "let recursive loop = given (n) -> if n <= 0 then 0 else loop(n - 1) in loop",
             "loop(2)",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("loop : Int -> Int");
@@ -39,7 +39,7 @@ public sealed class ReplTests
         var result = await RunReplAsync(
             "match [1, 2, 3] with",
             "| _ -> 1",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("1");
@@ -53,7 +53,7 @@ public sealed class ReplTests
             "let x =",
             "    let y = 2 in y",
             "in x + 1",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("3");
@@ -66,7 +66,7 @@ public sealed class ReplTests
         var result = await RunReplAsync(
             "1 + true",
             "1 + 2",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("<repl>");
@@ -80,7 +80,7 @@ public sealed class ReplTests
     {
         var result = await RunReplAsync(
             "given (x) -> x",
-            ":quit");
+            ":quit").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain(": a -> a");
@@ -88,23 +88,23 @@ public sealed class ReplTests
 
     private static async Task<ReplResult> RunReplAsync(params string[] lines)
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync("repl");
+        var startInfo = await CliTestHost.CreateStartInfoAsync("repl").ConfigureAwait(false);
         startInfo.RedirectStandardInput = true;
 
         using var process = Process.Start(startInfo)!;
         foreach (var line in lines)
         {
-            await process.StandardInput.WriteLineAsync(line);
+            await process.StandardInput.WriteLineAsync(line).ConfigureAwait(false);
         }
 
         process.StandardInput.Close();
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         return new ReplResult(process.ExitCode, stdout, stderr, stdout + stderr);
     }
     private sealed record ReplResult(int ExitCode, string Stdout, string Stderr, string Output);

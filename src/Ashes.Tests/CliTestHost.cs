@@ -9,7 +9,7 @@ internal static class CliTestHost
 
     public static async Task<ProcessStartInfo> CreateStartInfoAsync(params string[] cliArgs)
     {
-        var cliAssemblyPath = await CliAssemblyPath.Value;
+        var cliAssemblyPath = await CliAssemblyPath.Value.ConfigureAwait(false);
         var startInfo = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = GetRepoRoot(),
@@ -48,10 +48,10 @@ internal static class CliTestHost
         using var process = Process.Start(buildStartInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException($"Failed to build Ashes.Cli for tests.{Environment.NewLine}{stdout}{stderr}");

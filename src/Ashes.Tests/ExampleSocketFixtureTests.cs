@@ -19,16 +19,19 @@ public sealed class ExampleSocketFixtureTests
             "http_get.ash",
             async client =>
             {
-                await using var stream = client.GetStream();
-                var request = await ReadTextAsync(stream, 4096);
-                request.ShouldContain("GET / HTTP/1.1");
-                request.ShouldContain("Host: 127.0.0.1");
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                    request.ShouldContain("GET / HTTP/1.1");
+                    request.ShouldContain("Host: 127.0.0.1");
 
-                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from http");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                    var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from http");
+                    await stream.WriteAsync(response).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
             },
-            expectedStdout: "hello from http\n");
+            expectedStdout: "hello from http\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -38,15 +41,15 @@ public sealed class ExampleSocketFixtureTests
             "https_get.ash",
             async stream =>
             {
-                var request = await ReadTextAsync(stream, 4096);
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
                 request.ShouldContain("GET / HTTP/1.1");
                 request.ShouldContain("Host: localhost");
 
                 var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from https");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
             },
-            expectedStdout: "hello from https\n");
+            expectedStdout: "hello from https\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -70,19 +73,22 @@ Ashes.IO.print(
             expectedClientCount: 2,
             async client =>
             {
-                await using var stream = client.GetStream();
-                var request = await ReadTextAsync(stream, 4096);
-                var responseBody = request.Contains("GET /first HTTP/1.1", StringComparison.Ordinal)
-                    ? "first"
-                    : request.Contains("GET /second HTTP/1.1", StringComparison.Ordinal)
-                        ? "second"
-                        : "unexpected";
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                    var responseBody = request.Contains("GET /first HTTP/1.1", StringComparison.Ordinal)
+                        ? "first"
+                        : request.Contains("GET /second HTTP/1.1", StringComparison.Ordinal)
+                            ? "second"
+                            : "unexpected";
 
-                var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                    var response = Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{responseBody}");
+                    await stream.WriteAsync(response).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
             },
-            expectedStdout: "first,second\n");
+            expectedStdout: "first,second\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -104,37 +110,40 @@ Ashes.IO.print(
             expectedClientCount: 2,
             async client =>
             {
-                await using var stream = client.GetStream();
-                var request = await ReadTextAsync(stream, 4096);
-                var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
-
-                if (isSlow)
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
                 {
-                    // Block until /fast has actually sent its response so the client deterministically
-                    // observes /fast winning the race regardless of CI scheduling jitter.
-                    await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout);
+                    var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                    var isSlow = request.Contains("GET /slow HTTP/1.1", StringComparison.Ordinal);
 
-                    // Never send a body for /slow. Hold the connection open until the client process
-                    // exits (which closes the socket) so /fast is unambiguously the first — and only —
-                    // completed task the runtime observes. This removes any reliance on a wall-clock gap.
-                    await WaitForClientCloseAsync(stream);
-                    return;
-                }
+                    if (isSlow)
+                    {
+                        // Block until /fast has actually sent its response so the client deterministically
+                        // observes /fast winning the race regardless of CI scheduling jitter.
+                        await fastResponded.Task.WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
 
-                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nfast");
-                try
-                {
-                    await stream.WriteAsync(response);
-                    await stream.FlushAsync();
-                }
-                catch (IOException)
-                {
-                    // The race loser's connection may have been closed by the client; ignore.
-                }
+                        // Never send a body for /slow. Hold the connection open until the client process
+                        // exits (which closes the socket) so /fast is unambiguously the first — and only —
+                        // completed task the runtime observes. This removes any reliance on a wall-clock gap.
+                        await WaitForClientCloseAsync(stream).ConfigureAwait(false);
+                        return;
+                    }
 
-                fastResponded.TrySetResult();
+                    var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nfast");
+                    try
+                    {
+                        await stream.WriteAsync(response).ConfigureAwait(false);
+                        await stream.FlushAsync().ConfigureAwait(false);
+                    }
+                    catch (IOException)
+                    {
+                        // The race loser's connection may have been closed by the client; ignore.
+                    }
+
+                    fastResponded.TrySetResult();
+                }
             },
-            expectedStdout: "fast\n");
+            expectedStdout: "fast\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -155,13 +164,16 @@ Ashes.IO.print(
             expectedClientCount: 1,
             async client =>
             {
-                await using var stream = client.GetStream();
-                await Task.Delay(200);
-                var buffer = new byte[64];
-                var bytesRead = await stream.ReadAsync(buffer);
-                bytesRead.ShouldBe(0);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    await Task.Delay(200).ConfigureAwait(false);
+                    var buffer = new byte[64];
+                    var bytesRead = await stream.ReadAsync(buffer).ConfigureAwait(false);
+                    bytesRead.ShouldBe(0);
+                }
             },
-            expectedStdout: "cleanup-ok\n");
+            expectedStdout: "cleanup-ok\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -179,13 +191,16 @@ Ashes.IO.print(
             expectedClientCount: 1,
             async client =>
             {
-                await using var stream = client.GetStream();
-                _ = await ReadTextAsync(stream, 4096);
-                var response = Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\nserver exploded");
-                await stream.WriteAsync(response);
-                await stream.FlushAsync();
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                    var response = Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\nserver exploded");
+                    await stream.WriteAsync(response).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
             },
-            expectedStdout: "HTTP 500\n");
+            expectedStdout: "HTTP 500\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -195,9 +210,9 @@ Ashes.IO.print(
             "tcp_connect.ash",
             async _ =>
             {
-                await Task.Delay(200);
+                await Task.Delay(200).ConfigureAwait(false);
             },
-            expectedStdout: "connected\n");
+            expectedStdout: "connected\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -207,11 +222,14 @@ Ashes.IO.print(
             "tcp_send.ash",
             async client =>
             {
-                await using var stream = client.GetStream();
-                var sent = await ReadTextAsync(stream, 64);
-                sent.ShouldBe("hello");
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var sent = await ReadTextAsync(stream, 64).ConfigureAwait(false);
+                    sent.ShouldBe("hello");
+                }
             },
-            expectedStdout: "5\n");
+            expectedStdout: "5\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -221,12 +239,15 @@ Ashes.IO.print(
             "tcp_receive.ash",
             async client =>
             {
-                await using var stream = client.GetStream();
-                var payload = Encoding.UTF8.GetBytes("hello-from-server");
-                await stream.WriteAsync(payload);
-                await stream.FlushAsync();
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    var payload = Encoding.UTF8.GetBytes("hello-from-server");
+                    await stream.WriteAsync(payload).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                }
             },
-            expectedStdout: "hello-from-server\n");
+            expectedStdout: "hello-from-server\n").ConfigureAwait(false);
     }
 
     [Test]
@@ -236,23 +257,23 @@ Ashes.IO.print(
             "tcp_close.ash",
             async _ =>
             {
-                await Task.Delay(200);
+                await Task.Delay(200).ConfigureAwait(false);
             },
-            expectedStdout: "closed\n");
+            expectedStdout: "closed\n").ConfigureAwait(false);
     }
 
     private static async Task RunExampleWithServerAsync(string exampleName, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
     {
         var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
         File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        await RunPathWithServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout);
+        await RunPathWithServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout).ConfigureAwait(false);
     }
 
     private static async Task RunExampleWithTlsServerAsync(string exampleName, Func<SslStream, Task> handleClientAsync, string expectedStdout)
     {
         var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
         File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        await RunPathWithTlsServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout);
+        await RunPathWithTlsServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout).ConfigureAwait(false);
     }
 
     private static async Task RunSourceWithServerAsync(string source, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
@@ -262,8 +283,8 @@ Ashes.IO.print(
 
         try
         {
-            await File.WriteAllTextAsync(tempPath, source);
-            await RunPathWithServerAsync(tempPath, expectedClientCount, handleClientAsync, expectedStdout);
+            await File.WriteAllTextAsync(tempPath, source).ConfigureAwait(false);
+            await RunPathWithServerAsync(tempPath, expectedClientCount, handleClientAsync, expectedStdout).ConfigureAwait(false);
         }
         finally
         {
@@ -276,14 +297,14 @@ Ashes.IO.print(
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port);
-        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath);
+        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port).ConfigureAwait(false);
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath).ConfigureAwait(false);
 
         try
         {
             var serverTask = RunServerAsync(listener, expectedClientCount, handleClientAsync);
-            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
-            var serverException = await serverTask;
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo).ConfigureAwait(false);
+            var serverException = await serverTask.ConfigureAwait(false);
 
             var serverDiagnostic = serverException is null
                 ? null
@@ -304,16 +325,16 @@ Ashes.IO.print(
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port);
-        using var tlsHost = await TlsLoopbackTestHost.CreateAsync("localhost");
-        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath);
+        var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port).ConfigureAwait(false);
+        using var tlsHost = await TlsLoopbackTestHost.CreateAsync("localhost").ConfigureAwait(false);
+        var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath).ConfigureAwait(false);
         tlsHost.Configure(startInfo);
 
         try
         {
             var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync);
-            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
-            var serverException = await serverTask.WaitAsync(SocketTestConstants.SocketTimeout);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo).ConfigureAwait(false);
+            var serverException = await serverTask.WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
 
             var serverDiagnostic = serverException is null
                 ? null
@@ -340,13 +361,13 @@ Ashes.IO.print(
                 for (var index = 0; index < expectedClientCount; index++)
                 {
                     using var acceptCts = new CancellationTokenSource(SocketTestConstants.AcceptTimeout);
-                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token);
+                    var client = await listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
                     client.ReceiveTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     client.SendTimeout = (int)SocketTestConstants.SocketTimeout.TotalMilliseconds;
                     clients.Add(client);
                 }
 
-                await Task.WhenAll(clients.Select(handleClientAsync));
+                await Task.WhenAll(clients.Select(handleClientAsync)).ConfigureAwait(false);
             }
             finally
             {
@@ -375,7 +396,7 @@ Ashes.IO.print(
         var stderrTask = process.StandardError.ReadToEndAsync();
         try
         {
-            await process.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout);
+            await process.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -389,14 +410,14 @@ Ashes.IO.print(
 
             try
             {
-                await process.WaitForExitAsync();
+                await process.WaitForExitAsync().ConfigureAwait(false);
             }
             catch (InvalidOperationException)
             {
             }
 
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+            var stdout = await stdoutTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
             throw new TimeoutException($"Compiled CLI process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
 
         }
@@ -412,7 +433,7 @@ Ashes.IO.print(
             using var readCts = new CancellationTokenSource(SocketTestConstants.SocketTimeout);
             while (true)
             {
-                var count = await stream.ReadAsync(buffer, readCts.Token);
+                var count = await stream.ReadAsync(buffer, readCts.Token).ConfigureAwait(false);
                 if (count == 0)
                 {
                     // The client closed its end of the connection (it exited after observing /fast win).
@@ -441,7 +462,7 @@ Ashes.IO.print(
             try
             {
                 using var readCts = new CancellationTokenSource(SocketTestConstants.ReadChunkTimeout);
-                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token);
+                var count = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), readCts.Token).ConfigureAwait(false);
                 if (count == 0)
                 {
                     break;
@@ -481,8 +502,8 @@ Ashes.IO.print(
     {
         var tempPath = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N") + ".ash");
         Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-        var source = await File.ReadAllTextAsync(examplePath);
-        await File.WriteAllTextAsync(tempPath, source.Replace("8080", port.ToString(), StringComparison.Ordinal));
+        var source = await File.ReadAllTextAsync(examplePath).ConfigureAwait(false);
+        await File.WriteAllTextAsync(tempPath, source.Replace("8080", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)).ConfigureAwait(false);
         return tempPath;
     }
 

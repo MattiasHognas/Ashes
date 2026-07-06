@@ -184,7 +184,7 @@ public static class Runner
             var exp = expected.TrimEnd();
             var passed = exit == expectedExitCode && (isCompileError
                 ? actual.Contains(exp, StringComparison.Ordinal)
-                : actual == exp);
+                : string.Equals(actual, exp, StringComparison.Ordinal));
 
             // If stderr present, append for diagnostics in 'Actual' when the test fails
             if (!string.IsNullOrWhiteSpace(stderr) && !passed)
@@ -324,7 +324,7 @@ public static class Runner
 
         try
         {
-            return (File.GetAttributes(path) & FileAttributes.Hidden) != 0;
+            return (File.GetAttributes(path) & FileAttributes.Hidden) != FileAttributes.None;
         }
         catch
         {
@@ -389,7 +389,7 @@ public static class Runner
             }
 
             if (commentText.StartsWith("exit:", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(commentText.Substring("exit:".Length).Trim(), out var parsedExitCode))
+                && int.TryParse(commentText.Substring("exit:".Length).Trim(), System.Globalization.CultureInfo.InvariantCulture, out var parsedExitCode))
             {
                 expectedExitCode = parsedExitCode;
                 continue;
@@ -829,7 +829,7 @@ public static class Runner
                 MaterializeTestFixtures(workDir, fileFixtures);
             }
 
-            var exeName = targetId == TargetIds.WindowsX64 ? "program.exe" : "program";
+            var exeName = string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? "program.exe" : "program";
             var exePath = Path.Combine(workDir, exeName);
             using (var fs = new FileStream(exePath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
@@ -876,7 +876,7 @@ public static class Runner
             // Win-x64 PE images run via Wine (binfmt_misc) on Linux. Ashes binaries are standalone
             // native PE — they never load the .NET (mscoree) or Gecko (mshtml) runtimes — so suppress
             // Wine's first-run installer dialogs, which would otherwise block the run on a GUI popup.
-            if (targetId == TargetIds.WindowsX64 && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
+            if (string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
             {
                 psi.Environment["WINEDEBUG"] = "-all";
                 psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
@@ -1080,7 +1080,7 @@ public static class Runner
                 try
                 {
                     using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = client.GetStream();
@@ -1092,7 +1092,7 @@ public static class Runner
                         var read = 0;
                         while (read < expectedBytes.Length)
                         {
-                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
+                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read)).ConfigureAwait(false);
                             if (n == 0)
                             {
                                 return $"tcp fixture expected '{_fixture.ExpectedText}' but connection closed early";
@@ -1110,8 +1110,8 @@ public static class Runner
                     if (_fixture.SendText is not null)
                     {
                         var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
-                        await stream.WriteAsync(sendBytes);
-                        await stream.FlushAsync();
+                        await stream.WriteAsync(sendBytes).ConfigureAwait(false);
+                        await stream.FlushAsync().ConfigureAwait(false);
                     }
 
                     return null;
@@ -1189,13 +1189,13 @@ public static class Runner
                 try
                 {
                     using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token);
+                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
                     try
                     {
-                        await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false);
+                        await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false).ConfigureAwait(false);
                     }
                     catch (AuthenticationException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                     {
@@ -1218,7 +1218,7 @@ public static class Runner
                         var read = 0;
                         while (read < expectedBytes.Length)
                         {
-                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read));
+                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read)).ConfigureAwait(false);
                             if (n == 0)
                             {
                                 return $"tls fixture expected '{_fixture.ExpectedText}' but connection closed early";
@@ -1236,9 +1236,9 @@ public static class Runner
                     if (_fixture.SendText is not null)
                     {
                         var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
-                        await stream.WriteAsync(sendBytes);
-                        await stream.FlushAsync();
-                        await stream.ShutdownAsync();
+                        await stream.WriteAsync(sendBytes).ConfigureAwait(false);
+                        await stream.FlushAsync().ConfigureAwait(false);
+                        await stream.ShutdownAsync().ConfigureAwait(false);
                     }
 
                     return null;

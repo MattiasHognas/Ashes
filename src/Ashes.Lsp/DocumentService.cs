@@ -1183,12 +1183,12 @@ public static partial class DocumentService
             }
         }
 
-        if (qualifier == "Ashes")
+        if (string.Equals(qualifier, "Ashes", StringComparison.Ordinal))
         {
             return "Ashes";
         }
 
-        if (qualifier == "Ashes.Net")
+        if (string.Equals(qualifier, "Ashes.Net", StringComparison.Ordinal))
         {
             return qualifier;
         }

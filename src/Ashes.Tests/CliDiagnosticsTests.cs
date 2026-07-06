@@ -15,9 +15,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "parse_error.ash");
-            await File.WriteAllTextAsync(filePath, "let x =\n");
+            await File.WriteAllTextAsync(filePath, "let x =\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath);
+            var result = await RunCliAsync("compile", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBeEmpty();
@@ -39,9 +39,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "type_error.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(1 + true)\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(1 + true)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath);
+            var result = await RunCliAsync("compile", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBeEmpty();
@@ -66,10 +66,10 @@ public sealed class CliDiagnosticsTests
             var projectPath = Path.Combine(tempDir, "ashes.json");
             var mainPath = Path.Combine(tempDir, "Main.ash");
 
-            await File.WriteAllTextAsync(projectPath, "{\n  \"entry\": \"Main.ash\"\n}\n");
-            await File.WriteAllTextAsync(mainPath, "import Missing\nAshes.IO.print(1)\n");
+            await File.WriteAllTextAsync(projectPath, "{\n  \"entry\": \"Main.ash\"\n}\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(mainPath, "import Missing\nAshes.IO.print(1)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", "--project", projectPath);
+            var result = await RunCliAsync("compile", "--project", projectPath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBeEmpty();
@@ -90,9 +90,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "panic.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.panic(\"boom\")\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.panic(\"boom\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("run", filePath);
+            var result = await RunCliAsync("run", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldContain("boom");
@@ -111,9 +111,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "stdin.ash");
-            await File.WriteAllTextAsync(filePath, "match Ashes.IO.readLine() with | None -> Ashes.IO.print(\"none\") | Some(text) -> Ashes.IO.print(text)\n");
+            await File.WriteAllTextAsync(filePath, "match Ashes.IO.readLine() with | None -> Ashes.IO.print(\"none\") | Some(text) -> Ashes.IO.print(text)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["run", filePath], stdin: "hello\n");
+            var result = await RunCliAsync(["run", filePath], stdin: "hello\n").ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldContain("hello");
@@ -131,9 +131,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "stdout.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.writeLine(\"hello\")\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.writeLine(\"hello\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("run", filePath);
+            var result = await RunCliAsync("run", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldBe("hello\n");
@@ -152,9 +152,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "panic_clean.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.panic(\"boom\")\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.panic(\"boom\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("run", filePath);
+            var result = await RunCliAsync("run", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBe("boom\n");
@@ -173,9 +173,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "args.ash");
-            await File.WriteAllTextAsync(filePath, "match Ashes.IO.args with | x :: y :: [] -> Ashes.IO.writeLine(x + \":\" + y) | _ -> Ashes.IO.writeLine(\"bad\")\n");
+            await File.WriteAllTextAsync(filePath, "match Ashes.IO.args with | x :: y :: [] -> Ashes.IO.writeLine(x + \":\" + y) | _ -> Ashes.IO.writeLine(\"bad\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("run", filePath, "--", "first", "second");
+            var result = await RunCliAsync("run", filePath, "--", "first", "second").ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldBe("first:second\n");
@@ -194,9 +194,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "quiet.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.writeLine(\"ok\")\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.writeLine(\"ok\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("run", filePath);
+            var result = await RunCliAsync("run", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldBe("ok\n");
@@ -217,9 +217,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "mismatch.ash");
-            await File.WriteAllTextAsync(filePath, "// expect: 2\nAshes.IO.print(1)\n");
+            await File.WriteAllTextAsync(filePath, "// expect: 2\nAshes.IO.print(1)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("test", filePath);
+            var result = await RunCliAsync("test", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Output.ShouldContain("FAIL");
@@ -241,9 +241,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "runtime_expected.ash");
-            await File.WriteAllTextAsync(filePath, "// exit: 1\n// expect: boom\nAshes.IO.panic(\"boom\")\n");
+            await File.WriteAllTextAsync(filePath, "// exit: 1\n// expect: boom\nAshes.IO.panic(\"boom\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("test", filePath);
+            var result = await RunCliAsync("test", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("PASS");
@@ -263,12 +263,12 @@ public sealed class CliDiagnosticsTests
         {
             Directory.CreateDirectory(Path.Combine(tempDir, "src"));
             Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Math.ash"), "let add = given (x) -> given (y) -> x + y in add\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "math.ash"), "// expect: 3\nimport Math\nAshes.IO.print(Math.add(1)(2))\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Math.ash"), "let add = given (x) -> given (y) -> x + y in add\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "math.ash"), "// expect: 3\nimport Math\nAshes.IO.print(Math.add(1)(2))\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("math.ash");
@@ -289,12 +289,12 @@ public sealed class CliDiagnosticsTests
             Directory.CreateDirectory(Path.Combine(tempDir, "src"));
             Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
             var projectPath = Path.Combine(tempDir, "ashes.json");
-            await File.WriteAllTextAsync(projectPath, """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Value.ash"), "let value = 42 in value\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "value.ash"), "// expect: 42\nimport Value\nAshes.IO.print(Value.value)\n");
+            await File.WriteAllTextAsync(projectPath, """{"entry":"src/Main.ash","sourceRoots":["src"]}""").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Main.ash"), "Ashes.IO.print(0)\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "src", "Value.ash"), "let value = 42 in value\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "value.ash"), "// expect: 42\nimport Value\nAshes.IO.print(Value.value)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath());
+            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath()).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("value.ash");
@@ -313,10 +313,10 @@ public sealed class CliDiagnosticsTests
         try
         {
             var projectPath = Path.Combine(tempDir, "ashes.json");
-            await File.WriteAllTextAsync(projectPath, """{"entry":"Main.ash","sourceRoots":["."]}""");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "Main.ash"), "// expect: 42\nAshes.IO.print(42)\n");
+            await File.WriteAllTextAsync(projectPath, """{"entry":"Main.ash","sourceRoots":["."]}""").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "Main.ash"), "// expect: 42\nAshes.IO.print(42)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath());
+            var result = await RunCliAsync(["test", "--project", projectPath], workingDirectory: Path.GetTempPath()).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Main.ash");
@@ -337,10 +337,10 @@ public sealed class CliDiagnosticsTests
         {
             Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
             Directory.CreateDirectory(Path.Combine(tempDir, "tests", ".hidden"));
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "visible.ash"), "// expect: ok\nAshes.IO.print(\"ok\")\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", ".hidden", "skip.ash"), "// expect: bad\nAshes.IO.print(\"bad\")\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "visible.ash"), "// expect: ok\nAshes.IO.print(\"ok\")\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", ".hidden", "skip.ash"), "// expect: bad\nAshes.IO.print(\"bad\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("visible.ash");
@@ -360,10 +360,10 @@ public sealed class CliDiagnosticsTests
         try
         {
             Directory.CreateDirectory(Path.Combine(tempDir, "tests"));
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "b.ash"), "// expect: b\nAshes.IO.print(\"b\")\n");
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "a.ash"), "// expect: a\nAshes.IO.print(\"a\")\n");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "b.ash"), "// expect: b\nAshes.IO.print(\"b\")\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "tests", "a.ash"), "// expect: a\nAshes.IO.print(\"a\")\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["test"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["test"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.IndexOf("a.ash", StringComparison.Ordinal).ShouldBeLessThan(
@@ -383,9 +383,9 @@ public sealed class CliDiagnosticsTests
         {
             var filePath = Path.Combine(tempDir, "unknown_identifier.ash");
             var source = "Ashes.IO.print(value)\n";
-            await File.WriteAllTextAsync(filePath, source);
+            await File.WriteAllTextAsync(filePath, source).ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath);
+            var result = await RunCliAsync("compile", filePath).ConfigureAwait(false);
             var lspDiagnostic = DocumentService.Analyze(source, filePath).ShouldHaveSingleItem();
             var location = GetLocation(source, lspDiagnostic.Start);
             var expectedUnderline = Math.Max(lspDiagnostic.End - lspDiagnostic.Start, 1);
@@ -411,7 +411,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Cli_with_no_arguments_should_print_help_and_exit_2()
     {
-        var result = await RunCliAsync(Array.Empty<string>());
+        var result = await RunCliAsync(Array.Empty<string>()).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Output.ShouldContain("Commands:");
@@ -423,7 +423,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Cli_with_unknown_command_should_print_help_and_exit_2()
     {
-        var result = await RunCliAsync("unknown-command");
+        var result = await RunCliAsync("unknown-command").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Output.ShouldContain("Commands:");
@@ -433,7 +433,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Compile_with_missing_input_should_exit_1_and_write_error_to_stderr()
     {
-        var result = await RunCliAsync("compile");
+        var result = await RunCliAsync("compile").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(1);
         result.Stdout.ShouldBeEmpty();
@@ -443,7 +443,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Command_with_unknown_argument_should_exit_2_and_write_error_to_stderr()
     {
-        var result = await RunCliAsync("compile", "--wat");
+        var result = await RunCliAsync("compile", "--wat").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Stdout.ShouldBeEmpty();
@@ -453,7 +453,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Cli_with_help_should_print_help_and_exit_0()
     {
-        var result = await RunCliAsync("--help");
+        var result = await RunCliAsync("--help").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands:");
@@ -463,8 +463,8 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Command_help_should_print_help_and_exit_0()
     {
-        var compile = await RunCliAsync("compile", "--help");
-        var fmt = await RunCliAsync("fmt", "--help");
+        var compile = await RunCliAsync("compile", "--help").ConfigureAwait(false);
+        var fmt = await RunCliAsync("fmt", "--help").ConfigureAwait(false);
 
         compile.ExitCode.ShouldBe(0);
         compile.Output.ShouldContain("Commands:");
@@ -479,9 +479,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "hello.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath, "--target", "nope-x64");
+            var result = await RunCliAsync("compile", filePath, "--target", "nope-x64").ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBeEmpty();
@@ -500,9 +500,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "hello.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath);
+            var result = await RunCliAsync("compile", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Wrote");
@@ -522,9 +522,9 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "hello.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(42)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync("compile", filePath);
+            var result = await RunCliAsync("compile", filePath).ConfigureAwait(false);
             var expectedOutput = Path.Combine(tempDir, OperatingSystem.IsWindows() ? "hello.exe" : "hello");
 
             result.ExitCode.ShouldBe(0);
@@ -539,7 +539,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Version_should_print_version_and_exit_0()
     {
-        var result = await RunCliAsync("--version");
+        var result = await RunCliAsync("--version").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Stdout.ShouldNotBeEmpty();
@@ -549,7 +549,7 @@ public sealed class CliDiagnosticsTests
     [Test]
     public async Task Repl_with_unknown_argument_should_exit_2_and_write_error_to_stderr()
     {
-        var result = await RunCliAsync("repl", "--wat");
+        var result = await RunCliAsync("repl", "--wat").ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Stdout.ShouldBeEmpty();
@@ -563,14 +563,14 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "format.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)").ConfigureAwait(false);
 
-            var result = await RunCliAsync("fmt", filePath);
+            var result = await RunCliAsync("fmt", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldContain("Ashes.IO.print(40 + 2)");
             result.Stderr.ShouldBeEmpty();
-            (await File.ReadAllTextAsync(filePath)).ShouldBe("Ashes.IO.print(40+2)");
+            (await File.ReadAllTextAsync(filePath).ConfigureAwait(false)).ShouldBe("Ashes.IO.print(40+2)");
         }
         finally
         {
@@ -585,13 +585,13 @@ public sealed class CliDiagnosticsTests
         try
         {
             var filePath = Path.Combine(tempDir, "format_write.ash");
-            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)");
+            await File.WriteAllTextAsync(filePath, "Ashes.IO.print(40+2)").ConfigureAwait(false);
 
-            var result = await RunCliAsync("fmt", filePath, "-w");
+            var result = await RunCliAsync("fmt", filePath, "-w").ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Formatted 1 file(s)");
-            (await File.ReadAllTextAsync(filePath)).ShouldContain("Ashes.IO.print(40 + 2)");
+            (await File.ReadAllTextAsync(filePath).ConfigureAwait(false)).ShouldContain("Ashes.IO.print(40 + 2)");
         }
         finally
         {
@@ -607,7 +607,7 @@ public sealed class CliDiagnosticsTests
         {
             var missingPath = Path.Combine(tempDir, "missing.ash");
 
-            var result = await RunCliAsync("fmt", missingPath);
+            var result = await RunCliAsync("fmt", missingPath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stdout.ShouldBeEmpty();
@@ -630,9 +630,9 @@ public sealed class CliDiagnosticsTests
                 "import Ashes.IO.print\n" +
                 "import Ashes.IO.print as p\n" +
                 "p(\"hello\")\n";
-            await File.WriteAllTextAsync(filePath, source);
+            await File.WriteAllTextAsync(filePath, source).ConfigureAwait(false);
 
-            var result = await RunCliAsync("fmt", filePath);
+            var result = await RunCliAsync("fmt", filePath).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Stderr.ShouldBeEmpty();
@@ -641,8 +641,8 @@ public sealed class CliDiagnosticsTests
             result.Stdout.ShouldNotContain("import Ashes.IO as");
 
             // Idempotent: formatting the formatted output is a no-op (zero diff).
-            await File.WriteAllTextAsync(filePath, result.Stdout);
-            var second = await RunCliAsync("fmt", filePath);
+            await File.WriteAllTextAsync(filePath, result.Stdout).ConfigureAwait(false);
+            var second = await RunCliAsync("fmt", filePath).ConfigureAwait(false);
             second.ExitCode.ShouldBe(0);
             second.Stdout.ShouldBe(result.Stdout);
         }
@@ -699,7 +699,7 @@ public sealed class CliDiagnosticsTests
             }
 
             return new RenderedSnippet(
-                int.Parse(sourceMatch.Groups[1].Value),
+                int.Parse(sourceMatch.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture),
                 sourceMatch.Groups[2].Value,
                 underlineMatch.Groups[1].Value.Length + 1,
                 underlineMatch.Groups[2].Value.Length);
@@ -712,7 +712,7 @@ public sealed class CliDiagnosticsTests
 
     private static async Task<CliCommandResult> RunCliAsync(string[] args, string? stdin = null, string? workingDirectory = null)
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync(args);
+        var startInfo = await CliTestHost.CreateStartInfoAsync(args).ConfigureAwait(false);
         startInfo.RedirectStandardInput = stdin is not null;
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -722,15 +722,15 @@ public sealed class CliDiagnosticsTests
         using var process = Process.Start(startInfo)!;
         if (stdin is not null)
         {
-            await process.StandardInput.WriteAsync(stdin);
+            await process.StandardInput.WriteAsync(stdin).ConfigureAwait(false);
             process.StandardInput.Close();
         }
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         return new CliCommandResult(process.ExitCode, stdout, stderr, stdout + stderr);
     }
 

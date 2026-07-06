@@ -13,7 +13,7 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["init"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Created");
@@ -22,7 +22,7 @@ public sealed class PackageManagementCliTests
             var projectPath = Path.Combine(tempDir, "ashes.json");
             File.Exists(projectPath).ShouldBeTrue("ashes.json should be created");
 
-            var json = await File.ReadAllTextAsync(projectPath);
+            var json = await File.ReadAllTextAsync(projectPath).ConfigureAwait(false);
             json.ShouldContain("\"entry\"");
             json.ShouldContain("src/Main.ash");
             json.ShouldContain("\"sourceRoots\"");
@@ -42,9 +42,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), "{}");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), "{}").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["init"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("ashes.json already exists");
@@ -61,12 +61,12 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["init"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
 
             var projectPath = Path.Combine(tempDir, "ashes.json");
-            var json = await File.ReadAllTextAsync(projectPath);
+            var json = await File.ReadAllTextAsync(projectPath).ConfigureAwait(false);
             var dirName = new DirectoryInfo(tempDir).Name;
             json.ShouldContain($"\"{dirName}\"");
         }
@@ -84,13 +84,13 @@ public sealed class PackageManagementCliTests
         {
             var srcDir = Path.Combine(tempDir, "src");
             Directory.CreateDirectory(srcDir);
-            await File.WriteAllTextAsync(Path.Combine(srcDir, "Main.ash"), "Ashes.IO.print(42)\n");
+            await File.WriteAllTextAsync(Path.Combine(srcDir, "Main.ash"), "Ashes.IO.print(42)\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["init"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
 
-            var mainContent = await File.ReadAllTextAsync(Path.Combine(srcDir, "Main.ash"));
+            var mainContent = await File.ReadAllTextAsync(Path.Combine(srcDir, "Main.ash")).ConfigureAwait(false);
             mainContent.ShouldContain("42");
         }
         finally
@@ -107,15 +107,15 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Added");
             result.Output.ShouldContain("json-parser");
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldContain("\"dependencies\"");
             json.ShouldContain("\"json-parser\"");
         }
@@ -131,9 +131,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["add"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["add"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("Missing package name");
@@ -150,7 +150,7 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["add", "some-pkg"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["add", "some-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("No ashes.json found");
@@ -167,11 +167,11 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldContain("\"pkg-a\"");
             json.ShouldContain("\"pkg-b\"");
         }
@@ -187,10 +187,10 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldContain("\"entry\"");
             json.ShouldContain("\"sourceRoots\"");
             json.ShouldContain("src/Main.ash");
@@ -209,16 +209,16 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["remove", "json-parser"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["remove", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Removed");
             result.Output.ShouldContain("json-parser");
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldNotContain("json-parser");
         }
         finally
@@ -233,9 +233,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["remove"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["remove"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("Missing package name");
@@ -252,7 +252,7 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["remove", "some-pkg"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["remove", "some-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("No ashes.json found");
@@ -269,9 +269,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["remove", "nonexistent-pkg"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["remove", "nonexistent-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("not in dependencies");
@@ -288,11 +288,11 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "only-pkg"], workingDirectory: tempDir);
-            await RunCliAsync(["remove", "only-pkg"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "only-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["remove", "only-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldNotContain("dependencies");
         }
         finally
@@ -307,12 +307,12 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir);
-            await RunCliAsync(["remove", "pkg-a"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["remove", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldNotContain("pkg-a");
             json.ShouldContain("pkg-b");
         }
@@ -330,10 +330,10 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Dependencies");
@@ -352,9 +352,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("No dependencies");
@@ -371,7 +371,7 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("No ashes.json found");
@@ -388,12 +388,12 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir);
-            await RunCliAsync(["add", "pkg-c"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "pkg-c"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("3");
@@ -412,7 +412,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Init_help_should_show_usage()
     {
-        var result = await RunCliAsync(["init", "--help"]);
+        var result = await RunCliAsync(["init", "--help"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands");
@@ -421,7 +421,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Init_unexpected_arg_should_fail()
     {
-        var result = await RunCliAsync(["init", "--unknown"]);
+        var result = await RunCliAsync(["init", "--unknown"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Stderr.ShouldContain("Unknown argument");
@@ -430,7 +430,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Add_help_should_show_usage()
     {
-        var result = await RunCliAsync(["add", "--help"]);
+        var result = await RunCliAsync(["add", "--help"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands");
@@ -439,7 +439,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Remove_help_should_show_usage()
     {
-        var result = await RunCliAsync(["remove", "--help"]);
+        var result = await RunCliAsync(["remove", "--help"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands");
@@ -448,7 +448,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Install_help_should_show_usage()
     {
-        var result = await RunCliAsync(["install", "--help"]);
+        var result = await RunCliAsync(["install", "--help"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands");
@@ -457,7 +457,7 @@ public sealed class PackageManagementCliTests
     [Test]
     public async Task Install_unexpected_arg_should_fail()
     {
-        var result = await RunCliAsync(["install", "--unknown"]);
+        var result = await RunCliAsync(["install", "--unknown"]).ConfigureAwait(false);
 
         result.ExitCode.ShouldBe(2);
         result.Stderr.ShouldContain("Unknown argument");
@@ -469,14 +469,14 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["add", "-h"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["add", "-h"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Commands");
 
-            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json"));
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
             json.ShouldNotContain("-h");
         }
         finally
@@ -491,9 +491,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir);
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["remove", "-h"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["remove", "-h"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
             result.Output.ShouldContain("Commands");
@@ -510,9 +510,9 @@ public sealed class PackageManagementCliTests
         var tempDir = CreateTempDir();
         try
         {
-            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), "not valid json!!!");
+            await File.WriteAllTextAsync(Path.Combine(tempDir, "ashes.json"), "not valid json!!!").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["add", "some-pkg"], workingDirectory: tempDir);
+            var result = await RunCliAsync(["add", "some-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("Invalid ashes.json");
@@ -527,7 +527,7 @@ public sealed class PackageManagementCliTests
 
     private static async Task<CliCommandResult> RunCliAsync(string[] args, string? workingDirectory = null)
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync(args);
+        var startInfo = await CliTestHost.CreateStartInfoAsync(args).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
             startInfo.WorkingDirectory = workingDirectory;
@@ -536,10 +536,10 @@ public sealed class PackageManagementCliTests
         using var process = Process.Start(startInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         return new CliCommandResult(process.ExitCode, stdout, stderr, stdout + stderr);
     }
 

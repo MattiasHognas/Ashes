@@ -8,45 +8,55 @@ public sealed class LspDefinitionTests
     public async Task Definition_should_return_local_binding_location()
     {
         const string source = "let x = 1 in x";
-        await using var document = TempProjectDocument.Create(
+        var document = TempProjectDocument.Create(
             "DefinitionLocal",
             ("Main.ash", source));
-        await using var harness = await LspHarness.StartAsync();
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.MainUri, source);
+                var definition = await harness.DefinitionAsync(document.MainUri, 0, source.LastIndexOf('x'));
 
-        _ = await harness.DidOpenAsync(document.MainUri, source);
-        var definition = await harness.DefinitionAsync(document.MainUri, 0, source.LastIndexOf('x'));
+                definition.ShouldNotBeNull();
+                definition.Value.GetProperty("uri").GetString().ShouldBe(document.MainUri);
 
-        definition.ShouldNotBeNull();
-        definition.Value.GetProperty("uri").GetString().ShouldBe(document.MainUri);
-
-        var range = definition.Value.GetProperty("range");
-        range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("x", StringComparison.Ordinal));
-        range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("x", StringComparison.Ordinal) + 1);
+                var range = definition.Value.GetProperty("range");
+                range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("x", StringComparison.Ordinal));
+                range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("x", StringComparison.Ordinal) + 1);
+            }
+        }
     }
 
     [Test]
     public async Task Definition_should_return_imported_module_binding_location()
     {
         const string source = "import Math\nAshes.IO.print(Math.add(1))";
-        await using var document = TempProjectDocument.Create(
+        var document = TempProjectDocument.Create(
             "DefinitionImported",
             ("Main.ash", source),
             ("Math.ash", "let add = given (x) -> x + 1 in add"));
-        await using var harness = await LspHarness.StartAsync();
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.MainUri, source);
+                var definition = await harness.DefinitionAsync(document.MainUri, 1, "Ashes.IO.print(".Length + "Math.".Length);
 
-        _ = await harness.DidOpenAsync(document.MainUri, source);
-        var definition = await harness.DefinitionAsync(document.MainUri, 1, "Ashes.IO.print(".Length + "Math.".Length);
+                definition.ShouldNotBeNull();
+                definition.Value.GetProperty("uri").GetString().ShouldBe(document.GetUri("Math.ash"));
 
-        definition.ShouldNotBeNull();
-        definition.Value.GetProperty("uri").GetString().ShouldBe(document.GetUri("Math.ash"));
-
-        var range = definition.Value.GetProperty("range");
-        range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(4);
-        range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(7);
+                var range = definition.Value.GetProperty("range");
+                range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(4);
+                range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(7);
+            }
+        }
     }
 
     [Test]
@@ -54,23 +64,28 @@ public sealed class LspDefinitionTests
     {
         const string source = "type Result(E, A) = | Ok(A) | Error(E)\nlet x =\n    let? value = Ok(1)\n    in Ok(value)\nin x";
         var lines = source.Split('\n');
-        await using var document = TempProjectDocument.Create(
+        var document = TempProjectDocument.Create(
             "DefinitionLetResult",
             ("Main.ash", source));
-        await using var harness = await LspHarness.StartAsync();
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.MainUri, source);
+                var definition = await harness.DefinitionAsync(document.MainUri, 3, lines[3].LastIndexOf("value", StringComparison.Ordinal));
 
-        _ = await harness.DidOpenAsync(document.MainUri, source);
-        var definition = await harness.DefinitionAsync(document.MainUri, 3, lines[3].LastIndexOf("value", StringComparison.Ordinal));
+                definition.ShouldNotBeNull();
+                definition.Value.GetProperty("uri").GetString().ShouldBe(document.MainUri);
 
-        definition.ShouldNotBeNull();
-        definition.Value.GetProperty("uri").GetString().ShouldBe(document.MainUri);
-
-        var expectedStart = lines[2].IndexOf("value", StringComparison.Ordinal);
-        var range = definition.Value.GetProperty("range");
-        range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(2);
-        range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(expectedStart);
-        range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(2);
-        range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(expectedStart + "value".Length);
+                var expectedStart = lines[2].IndexOf("value", StringComparison.Ordinal);
+                var range = definition.Value.GetProperty("range");
+                range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(2);
+                range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(expectedStart);
+                range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(2);
+                range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(expectedStart + "value".Length);
+            }
+        }
     }
 
     private sealed class TempProjectDocument : IAsyncDisposable

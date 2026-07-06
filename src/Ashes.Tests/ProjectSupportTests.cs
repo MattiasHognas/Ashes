@@ -142,11 +142,11 @@ public sealed class ProjectSupportTests
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.List");
-            plan.OrderedModules.Single(x => x.ModuleName == "Ashes.List").FilePath.ShouldBe("<std:Ashes.List>");
+            plan.OrderedModules.Single(x => string.Equals(x.ModuleName, "Ashes.List", StringComparison.Ordinal)).FilePath.ShouldBe("<std:Ashes.List>");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("4\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("4\n");
         }
         finally
         {
@@ -217,7 +217,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource)).ShouldBe("1\n2\n");
+            (await CompileRunCaptureAsync(combinedSource).ConfigureAwait(false)).ShouldBe("1\n2\n");
         }
         finally
         {
@@ -240,7 +240,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource)).ShouldBe("42\n");
+            (await CompileRunCaptureAsync(combinedSource).ConfigureAwait(false)).ShouldBe("42\n");
         }
         finally
         {
@@ -284,7 +284,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("42\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("42\n");
         }
         finally
         {
@@ -306,7 +306,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("3\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("3\n");
         }
         finally
         {
@@ -328,7 +328,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("7\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("7\n");
         }
         finally
         {
@@ -351,7 +351,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("3\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("3\n");
         }
         finally
         {
@@ -420,7 +420,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("3\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("3\n");
         }
         finally
         {
@@ -443,7 +443,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("4\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("4\n");
         }
         finally
         {
@@ -471,7 +471,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("6\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("6\n");
         }
         finally
         {
@@ -499,7 +499,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("10\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("10\n");
         }
         finally
         {
@@ -522,7 +522,7 @@ public sealed class ProjectSupportTests
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("41\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("41\n");
         }
         finally
         {
@@ -546,7 +546,7 @@ public sealed class ProjectSupportTests
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("42\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("42\n");
         }
         finally
         {
@@ -570,7 +570,7 @@ public sealed class ProjectSupportTests
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("ok\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("ok\n");
         }
         finally
         {
@@ -594,7 +594,7 @@ public sealed class ProjectSupportTests
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
-            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules)).ShouldBe("0\n");
+            (await CompileRunCaptureAsync(combinedSource, plan.ImportedStdModules).ConfigureAwait(false)).ShouldBe("0\n");
         }
         finally
         {
@@ -696,10 +696,10 @@ public sealed class ProjectSupportTests
                 UseShellExecute = false
             };
 
-            using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+            var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await proc.WaitForExitAsync().ConfigureAwait(false);
             proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
             return stdout;
         }

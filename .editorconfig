@@ -13,6 +13,69 @@ tab_width = 4
 end_of_line = lf
 insert_final_newline = true
 
+# ── Third-party analyzer severities ──────────────────────────────────────────
+# These must live under [*.cs] to apply. (NOTE: the dotnet_style_*/csharp_style_*
+# and MA-severity block further down is mis-scoped under [*.{csproj,props,targets}]
+# and has never applied to C# — a separate pre-existing fix.)
+# File-name-must-match-type: repo intentionally uses topic partial-class files
+# (e.g. LlvmCodegenBuiltins.Async.cs holding `partial class LlvmCodegen`).
+dotnet_diagnostic.MA0048.severity = none
+# Method length owned by MA0051 at its default threshold; enforced as `warning`
+# in a follow-up once the over-long methods are split — `suggestion` for now.
+dotnet_diagnostic.MA0051.severity = suggestion
+# Defer to Meziantou on the method-length overlap (S138 is Sonar's version).
+dotnet_diagnostic.S138.severity = none
+
+# ── Rules disabled as inappropriate for a performance-sensitive compiler ──────
+# Loop -> LINQ: LINQ allocates; hot-path loops are deliberate.
+dotnet_diagnostic.S3267.severity = none
+# `unsafe` is intentional (LLVM / P-Invoke interop), not a defect to review.
+dotnet_diagnostic.S6640.severity = none
+# Type name matching its namespace's last segment is idiomatic here
+# (namespace Ashes.Formatter + class Formatter); renaming is disruptive.
+dotnet_diagnostic.MA0049.severity = none
+
+# ── Deferred (visible as suggestions; ratchet to warning over time) ───────────
+dotnet_diagnostic.S1871.severity = suggestion  # identical branches (often intentional match arms)
+dotnet_diagnostic.S2325.severity = suggestion  # make method static
+dotnet_diagnostic.S1481.severity = suggestion  # unused local
+dotnet_diagnostic.S1144.severity = suggestion  # unused private member
+dotnet_diagnostic.S125.severity = suggestion   # commented-out code
+dotnet_diagnostic.S1172.severity = suggestion  # unused parameter
+dotnet_diagnostic.MA0016.severity = suggestion # prefer collection abstraction in return
+dotnet_diagnostic.MA0008.severity = suggestion # add StructLayoutAttribute
+dotnet_diagnostic.S3241.severity = suggestion  # return value never used
+dotnet_diagnostic.S2365.severity = suggestion  # property makes a collection copy
+dotnet_diagnostic.S4136.severity = suggestion  # group method overloads
+dotnet_diagnostic.S3358.severity = suggestion  # nested ternary
+dotnet_diagnostic.S1199.severity = suggestion  # nested code block
+dotnet_diagnostic.S6966.severity = suggestion  # prefer async overload
+dotnet_diagnostic.S5443.severity = suggestion  # shared temp directory
+dotnet_diagnostic.S4200.severity = suggestion  # wrap native call
+dotnet_diagnostic.S1066.severity = suggestion  # merge collapsible if
+dotnet_diagnostic.S4144.severity = suggestion  # identical method bodies
+dotnet_diagnostic.S1643.severity = suggestion  # use StringBuilder
+dotnet_diagnostic.S127.severity = suggestion   # for-loop stop condition
+dotnet_diagnostic.MA0158.severity = suggestion
+dotnet_diagnostic.MA0023.severity = suggestion
+dotnet_diagnostic.MA0046.severity = suggestion
+dotnet_diagnostic.MA0004.severity = suggestion  # ConfigureAwait: low value for a non-UI CLI/LSP; ratchet later
+dotnet_diagnostic.S108.severity = suggestion    # empty block (often intentional)
+dotnet_diagnostic.S5034.severity = suggestion   # ValueTask consumed once (needs case review)
+dotnet_diagnostic.S2486.severity = suggestion   # swallowed exception (needs case-by-case review)
+dotnet_diagnostic.S1905.severity = suggestion   # redundant cast (risky to strip in generic type code)
+dotnet_diagnostic.S1854.severity = suggestion   # dead store (side-effecting lexer/codegen calls)
+dotnet_diagnostic.MA0047.severity = suggestion  # top-level type not in a namespace (CLI app)
+dotnet_diagnostic.S3903.severity = suggestion   # move type into named namespace (CLI app)
+dotnet_diagnostic.S3871.severity = suggestion   # exception should be public (internal CLI exceptions)
+dotnet_diagnostic.S2094.severity = suggestion   # empty record (intentional DAP marker bodies)
+dotnet_diagnostic.S2234.severity = suggestion   # parameter order (review case-by-case)
+dotnet_diagnostic.MA0009.severity = suggestion  # regex timeout: inputs are trusted (source/protocol/tests), not adversarial
+dotnet_diagnostic.S1994.severity = suggestion   # for-loop condition
+dotnet_diagnostic.S3881.severity = suggestion   # IDisposable pattern
+dotnet_diagnostic.S6608.severity = suggestion   # indexing over First/Last (test code)
+dotnet_diagnostic.MA0084.severity = suggestion  # local hides outer symbol
+
 [*.txt]
 insert_final_newline = false
 

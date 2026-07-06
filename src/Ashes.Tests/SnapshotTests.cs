@@ -20,8 +20,8 @@ public sealed class SnapshotTests
         var source = "let x = 40 + 2 in Ashes.IO.print(x + 1)";
         var snapshot = CompileToSnapshot(source);
 
-        await Verifier.Verify(snapshot, _settings)
-            .UseMethodName(nameof(Snapshot_pipeline_for_int_program));
+        await Verify(snapshot, _settings)
+            .UseMethodName(nameof(Snapshot_pipeline_for_int_program)).ConfigureAwait(false);
     }
 
     [Test]
@@ -30,8 +30,8 @@ public sealed class SnapshotTests
         var source = "Ashes.IO.print(\"hello \" + \"world\")";
         var snapshot = CompileToSnapshot(source);
 
-        await Verifier.Verify(snapshot, _settings)
-            .UseMethodName(nameof(Snapshot_pipeline_for_string_program));
+        await Verify(snapshot, _settings)
+            .UseMethodName(nameof(Snapshot_pipeline_for_string_program)).ConfigureAwait(false);
     }
 
     [Test]
@@ -40,8 +40,8 @@ public sealed class SnapshotTests
         var source = "let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))";
         var snapshot = CompileToSnapshot(source);
 
-        await Verifier.Verify(snapshot, _settings)
-            .UseMethodName(nameof(Snapshot_pipeline_for_lambda_program));
+        await Verify(snapshot, _settings)
+            .UseMethodName(nameof(Snapshot_pipeline_for_lambda_program)).ConfigureAwait(false);
     }
 
     private static Snapshot CompileToSnapshot(string source)

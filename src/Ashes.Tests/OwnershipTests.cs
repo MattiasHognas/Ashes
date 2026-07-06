@@ -148,7 +148,7 @@ public sealed class OwnershipTests
             """);
         var insts = ir.EntryFunction.Instructions;
         // Both s1 and s2 should get Drop("String")
-        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(2, "Each owned String binding should get its own Drop.");
     }
 
@@ -164,7 +164,7 @@ public sealed class OwnershipTests
         var insts = ir.EntryFunction.Instructions;
         HasDropInstruction(insts, "String").ShouldBeTrue("String binding should be dropped.");
         // Int binding should not produce a Drop
-        var intDropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "Int");
+        var intDropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "Int", StringComparison.Ordinal));
         intDropCount.ShouldBe(0, "Int (copy type) should not produce Drop.");
     }
 
@@ -180,7 +180,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(a)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(1, "Aliasing an owned value should produce exactly one Drop (on the original owner).");
     }
 
@@ -195,7 +195,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(b)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(1, "Chained aliases should still produce exactly one Drop.");
     }
 
@@ -209,7 +209,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(s1)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && d.TypeName == "String");
+        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(2, "Non-alias fresh values should each get their own Drop.");
     }
 
@@ -299,7 +299,7 @@ public sealed class OwnershipTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && drop.TypeName == typeName)
+            if (inst is IrInst.Drop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
                 return true;
         }
         return false;

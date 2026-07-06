@@ -459,7 +459,7 @@ internal static class Program
             if (headerLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
             {
                 var value = headerLine["Content-Length:".Length..].Trim();
-                if (int.TryParse(value, out var parsed))
+                if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
                 {
                     contentLength = parsed;
                 }

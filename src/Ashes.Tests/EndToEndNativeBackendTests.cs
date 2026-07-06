@@ -15,7 +15,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var stdout = await CompileRunCaptureAsync("Ashes.IO.print(40 + 2)");
+        var stdout = await CompileRunCaptureAsync("Ashes.IO.print(40 + 2)").ConfigureAwait(false);
         stdout.ShouldBe("42\n");
     }
 
@@ -27,7 +27,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var stdout = await CompileRunCaptureAsync("Ashes.IO.print(\"hello \" + \"world\")");
+        var stdout = await CompileRunCaptureAsync("Ashes.IO.print(\"hello \" + \"world\")").ConfigureAwait(false);
         stdout.ShouldBe("hello world\n");
     }
 
@@ -39,7 +39,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var stdout = await CompileRunCaptureAsync("if (\"he\" + \"llo\") == \"hello\" then if \"hello\" != \"world\" then Ashes.IO.print(\"ok\") else Ashes.IO.print(\"bad\") else Ashes.IO.print(\"bad\")");
+        var stdout = await CompileRunCaptureAsync("if (\"he\" + \"llo\") == \"hello\" then if \"hello\" != \"world\" then Ashes.IO.print(\"ok\") else Ashes.IO.print(\"bad\") else Ashes.IO.print(\"bad\")").ConfigureAwait(false);
         stdout.ShouldBe("ok\n");
     }
 
@@ -55,7 +55,7 @@ public sealed class EndToEndNativeBackendTests
             external strlen(Str) -> Int
             Ashes.IO.print(strlen("ashes"))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("5\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("5\n");
     }
 
     [Test]
@@ -72,7 +72,7 @@ public sealed class EndToEndNativeBackendTests
             let _ = srand(1)
             in Ashes.IO.print(strlen("ashes"))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("5\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("5\n");
     }
 
     [Test]
@@ -88,7 +88,7 @@ public sealed class EndToEndNativeBackendTests
             in let b = 255u8
             in Ashes.IO.print(a + b)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("254\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("254\n");
     }
 
     [Test]
@@ -99,7 +99,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var stdout = await CompileRunCaptureAsync("let _ = Ashes.IO.write(\"he\") in Ashes.IO.write(\"llo\")");
+        var stdout = await CompileRunCaptureAsync("let _ = Ashes.IO.write(\"he\") in Ashes.IO.write(\"llo\")").ConfigureAwait(false);
         stdout.ShouldBe("hello");
     }
 
@@ -111,7 +111,7 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        var stdout = await CompileRunCaptureAsync("Ashes.IO.writeLine(\"hello\")");
+        var stdout = await CompileRunCaptureAsync("Ashes.IO.writeLine(\"hello\")").ConfigureAwait(false);
         stdout.ShouldBe("hello\n");
     }
 
@@ -124,7 +124,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var source = "match Ashes.IO.readLine() with | None -> Ashes.IO.print(\"none\") | Some(text) -> Ashes.IO.print(text)";
-        (await CompileRunCaptureAsync(source, stdin: "hello\n")).ShouldBe("hello\n");
+        (await CompileRunCaptureAsync(source, stdin: "hello\n").ConfigureAwait(false)).ShouldBe("hello\n");
     }
 
     [Test]
@@ -136,7 +136,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var source = "match Ashes.IO.readLine() with | None -> Ashes.IO.print(\"none\") | Some(text) -> Ashes.IO.print(text)";
-        (await CompileRunCaptureAsync(source, stdin: "")).ShouldBe("none\n");
+        (await CompileRunCaptureAsync(source, stdin: "").ConfigureAwait(false)).ShouldBe("none\n");
     }
 
     [Test]
@@ -147,8 +147,8 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        (await CompileRunCaptureAsync("Ashes.IO.print(true)")).ShouldBe("true\n");
-        (await CompileRunCaptureAsync("Ashes.IO.print(false)")).ShouldBe("false\n");
+        (await CompileRunCaptureAsync("Ashes.IO.print(true)").ConfigureAwait(false)).ShouldBe("true\n");
+        (await CompileRunCaptureAsync("Ashes.IO.print(false)").ConfigureAwait(false)).ShouldBe("false\n");
     }
 
     [Test]
@@ -159,8 +159,8 @@ public sealed class EndToEndNativeBackendTests
             return;
         }
 
-        (await CompileRunCaptureAsync("if true then Ashes.IO.print(\"yes\") else Ashes.IO.print(\"no\")")).ShouldBe("yes\n");
-        (await CompileRunCaptureAsync("if false then Ashes.IO.print(\"yes\") else Ashes.IO.print(\"no\")")).ShouldBe("no\n");
+        (await CompileRunCaptureAsync("if true then Ashes.IO.print(\"yes\") else Ashes.IO.print(\"no\")").ConfigureAwait(false)).ShouldBe("yes\n");
+        (await CompileRunCaptureAsync("if false then Ashes.IO.print(\"yes\") else Ashes.IO.print(\"no\")").ConfigureAwait(false)).ShouldBe("no\n");
     }
 
     [Test]
@@ -172,7 +172,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let inc = given (x) -> x + 1 in Ashes.IO.print(inc(41))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -184,7 +184,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let z = 20 in let f = given (x) -> x + z in Ashes.IO.print(f(22))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -196,7 +196,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let add = given (x) -> given (y) -> x + y in let add10 = add(10) in Ashes.IO.print(add10(32))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -208,7 +208,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let recursive loop = given (i) -> if i >= 10 then i else loop(i + 1) in Ashes.IO.print(loop(0))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("10\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("10\n");
     }
 
     [Test]
@@ -220,7 +220,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let recursive loop = given (i) -> if i <= 10 then loop(i + 1) else i in Ashes.IO.print(loop(0))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("11\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("11\n");
     }
 
     [Test]
@@ -232,7 +232,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "Ashes.IO.print((10 - 3) * 2 / 7)";
-        (await CompileRunCaptureAsync(src)).ShouldBe("2\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("2\n");
     }
 
     [Test]
@@ -244,7 +244,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "if ((1.5 + 2.5) * 2.0 / 2.0) == 4.0 then if 4.0 >= 4.0 then if 3.0 <= 4.0 then if 3.0 != 4.0 then Ashes.IO.print(42) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0) else Ashes.IO.print(0)";
-        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -256,7 +256,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let recursive sum = given (xs) -> match xs with | [] -> 0 | x :: rest -> x + sum(rest) in Ashes.IO.print(sum([1, 2, 3]))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("6\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("6\n");
     }
 
     [Test]
@@ -268,7 +268,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let recursive len = given (xs) -> match xs with | [] -> 0 | _ :: rest -> 1 + len(rest) in Ashes.IO.print(len(1 :: 2 :: []))";
-        (await CompileRunCaptureAsync(src)).ShouldBe("2\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("2\n");
     }
 
     [Test]
@@ -280,7 +280,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "match Ashes.IO.args with | a :: b :: [] -> Ashes.IO.print(a + \":\" + b) | _ -> Ashes.IO.print(\"bad\")";
-        (await CompileRunCaptureAsync(src, ["first", "second"])).ShouldBe("first:second\n");
+        (await CompileRunCaptureAsync(src, ["first", "second"]).ConfigureAwait(false)).ShouldBe("first:second\n");
     }
 
     [Test]
@@ -292,7 +292,7 @@ public sealed class EndToEndNativeBackendTests
         }
 
         var src = "let p = (1, 2) in match p with | (a, b) -> Ashes.IO.print(a + b)";
-        (await CompileRunCaptureAsync(src)).ShouldBe("3\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("3\n");
     }
 
     [Test]
@@ -311,7 +311,7 @@ public sealed class EndToEndNativeBackendTests
             | Green -> Ashes.IO.print(2)
             | Blue -> Ashes.IO.print(3)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("2\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("2\n");
     }
 
     [Test]
@@ -330,7 +330,7 @@ public sealed class EndToEndNativeBackendTests
             | Some(x) -> x
             in Ashes.IO.print(unwrapOr(Some(42), 0))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -349,7 +349,7 @@ public sealed class EndToEndNativeBackendTests
                 | Right(x) -> 2
             in Ashes.IO.print(tag(Left(0)) + tag(Right(0)))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("3\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3\n");
     }
 
     [Test]
@@ -366,7 +366,7 @@ public sealed class EndToEndNativeBackendTests
             in match value with
             | Pair(a, b) -> Ashes.IO.print(a + b)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     // --- TCO arena reset end-to-end tests ---
@@ -387,7 +387,7 @@ public sealed class EndToEndNativeBackendTests
                 else sum (n - 1) (acc + n)
             in Ashes.IO.print(sum 10000 0)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("50005000\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("50005000\n");
     }
 
     [Test]
@@ -408,7 +408,7 @@ public sealed class EndToEndNativeBackendTests
                     count (n - 1) (acc + 1)
             in Ashes.IO.print(count 1000 0)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1000\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("1000\n");
     }
 
     // --- Per-call arena watermark end-to-end tests ---
@@ -427,7 +427,7 @@ public sealed class EndToEndNativeBackendTests
             let add = given (x) -> given (y) -> x + y
             in Ashes.IO.print(add(10)(32))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -444,7 +444,7 @@ public sealed class EndToEndNativeBackendTests
             in let inc = given (x) -> x + 1
             in Ashes.IO.print(double(inc(20)))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -460,7 +460,7 @@ public sealed class EndToEndNativeBackendTests
             let greet = given (name) -> "hello " + name
             in Ashes.IO.print(greet("world"))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("hello world\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("hello world\n");
     }
 
     [Test]
@@ -479,7 +479,7 @@ public sealed class EndToEndNativeBackendTests
                 | hd :: _ -> Ashes.IO.print(hd)
                 | [] -> Ashes.IO.print(0)
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("1\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("1\n");
     }
 
     [Test]
@@ -496,7 +496,7 @@ public sealed class EndToEndNativeBackendTests
             in let g = given (y) -> y * 3
             in Ashes.IO.print(f(7) + g(7))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("35\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("35\n");
     }
 
     [Test]
@@ -514,7 +514,7 @@ public sealed class EndToEndNativeBackendTests
                 in shifted >> 1
             in Ashes.IO.print(calc(5))
             """;
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("12\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("12\n");
     }
 
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
@@ -526,7 +526,7 @@ public sealed class EndToEndNativeBackendTests
         var ir = new Lowering(diag).Lower(ast);
         diag.ThrowIfAny();
 
-        return await RunElfAsync(ir, programArgs, stdin);
+        return await RunElfAsync(ir, programArgs, stdin).ConfigureAwait(false);
     }
 
     private static async Task<string> CompileRunCaptureProgramAsync(string source, string[]? programArgs = null, string? stdin = null)
@@ -538,7 +538,7 @@ public sealed class EndToEndNativeBackendTests
         var ir = new Lowering(diag).Lower(program);
         diag.ThrowIfAny();
 
-        return await RunElfAsync(ir, programArgs, stdin);
+        return await RunElfAsync(ir, programArgs, stdin).ConfigureAwait(false);
     }
 
     private static async Task<string> RunElfAsync(IrProgram ir, string[]? programArgs, string? stdin)
@@ -563,15 +563,15 @@ public sealed class EndToEndNativeBackendTests
             psi.ArgumentList.Add(arg);
         }
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi); ;
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
         if (stdin is not null)
         {
-            await proc.StandardInput.WriteAsync(stdin);
+            await proc.StandardInput.WriteAsync(stdin).ConfigureAwait(false);
             proc.StandardInput.Close();
         }
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
 
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;

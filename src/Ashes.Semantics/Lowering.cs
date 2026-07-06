@@ -1502,7 +1502,7 @@ public sealed partial class Lowering
         // scope (should not happen if earlier checks).
         var captures = recursiveGroup is not null
             ? recursiveGroup.SharedCaptures
-            : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct().ToList();
+            : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct(StringComparer.Ordinal).ToList();
 
         // At lambda creation site: allocate env if needed
         int envPtrTemp;
@@ -1617,7 +1617,7 @@ public sealed partial class Lowering
         scope[lam.ParamName] = new Binding.Local(argSlot, paramTy, paramSpan);
         // Reuse specialization: treat this parameter as a linear reuse root so a match-then-rebuild
         // on it overwrites the node in place. Consume the request so nested lambdas don't inherit it.
-        if (_specializingLinearParam == lam.ParamName)
+        if (string.Equals(_specializingLinearParam, lam.ParamName, StringComparison.Ordinal))
         {
             _linearReuseNames.Add(lam.ParamName);
             _specializingReuseLabel = label;
@@ -3540,7 +3540,7 @@ public sealed partial class Lowering
         // A binder shadows a renamed name within its scope: drop it from the rename set for the subtree.
         T WithShadowed<T>(IEnumerable<string> bound, Func<Dictionary<string, string>, T> build)
         {
-            var sub = renames.Where(kv => !bound.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            var sub = renames.Where(kv => !bound.Contains(kv.Key, StringComparer.Ordinal)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
             return build(sub);
         }
 

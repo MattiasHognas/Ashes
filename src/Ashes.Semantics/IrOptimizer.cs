@@ -564,9 +564,9 @@ public static class IrOptimizer
 
         // Saved constant state for single-predecessor labels reached by a
         // JumpIfFalse or Jump from elsewhere (not by fall-through).
-        var savedIntStates = new Dictionary<string, Dictionary<int, long>>();
-        var savedFloatStates = new Dictionary<string, Dictionary<int, double>>();
-        var savedBoolStates = new Dictionary<string, Dictionary<int, bool>>();
+        var savedIntStates = new Dictionary<string, Dictionary<int, long>>(StringComparer.Ordinal);
+        var savedFloatStates = new Dictionary<string, Dictionary<int, double>>(StringComparer.Ordinal);
+        var savedBoolStates = new Dictionary<string, Dictionary<int, bool>>(StringComparer.Ordinal);
 
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
@@ -870,7 +870,7 @@ public static class IrOptimizer
     {
         var knownInts = new Dictionary<int, long>();
         var branchRefs = CountBranchRefsToLabels(instructions);
-        var savedIntStates = new Dictionary<string, Dictionary<int, long>>();
+        var savedIntStates = new Dictionary<string, Dictionary<int, long>>(StringComparer.Ordinal);
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
         bool prevIsTerminator = false;
@@ -1249,7 +1249,7 @@ public static class IrOptimizer
             // Never elide closure drops: a closure may carry a resource dropper at closure+24 (set
             // when it captured-and-escaped a resource). The drop is a
             // cheap runtime no-op when there is no dropper, but eliding it would leak the resource.
-            if (drop.TypeName == "Function") continue;
+            if (string.Equals(drop.TypeName, "Function", StringComparison.Ordinal)) continue;
 
             // Non-resource drop → safe to elide (no-op in codegen).
             toRemove.Add(i);

@@ -50,60 +50,60 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         _ = Task.Run(() => DrainStreamAsync(_gdb.StandardError));
 
         // Wait for initial GDB prompt
-        await Task.Delay(200);
+        await Task.Delay(200).ConfigureAwait(false);
 
         // Set program arguments if provided
         if (args is not null && args.Length > 0)
         {
             var escapedArgs = string.Join(" ", args.Select(EscapeGdbArg));
-            await SendCommandAsync($"-exec-arguments {escapedArgs}");
+            await SendCommandAsync($"-exec-arguments {escapedArgs}").ConfigureAwait(false);
         }
     }
 
     public async Task SetBreakpointAsync(string filePath, int line)
     {
-        await SendCommandAsync(BuildBreakpointInsertCommand(filePath, line));
+        await SendCommandAsync(BuildBreakpointInsertCommand(filePath, line)).ConfigureAwait(false);
     }
 
     public async Task ContinueAsync()
     {
-        await SendCommandAsync("-exec-continue");
+        await SendCommandAsync("-exec-continue").ConfigureAwait(false);
     }
 
     public async Task StepOverAsync()
     {
-        await SendCommandAsync("-exec-next");
+        await SendCommandAsync("-exec-next").ConfigureAwait(false);
     }
 
     public async Task StepInAsync()
     {
-        await SendCommandAsync("-exec-step");
+        await SendCommandAsync("-exec-step").ConfigureAwait(false);
     }
 
     public async Task StepOutAsync()
     {
-        await SendCommandAsync("-exec-finish");
+        await SendCommandAsync("-exec-finish").ConfigureAwait(false);
     }
 
     public async Task RunAsync()
     {
-        await SendCommandAsync("-exec-run");
+        await SendCommandAsync("-exec-run").ConfigureAwait(false);
     }
 
     public async Task<string> GetStackTraceAsync()
     {
-        return await SendCommandAsync("-stack-list-frames");
+        return await SendCommandAsync("-stack-list-frames").ConfigureAwait(false);
     }
 
     public async Task<DapVariable[]> GetLocalsAsync()
     {
-        var localsResponse = await SendCommandAsync("-stack-list-locals 1");
+        var localsResponse = await SendCommandAsync("-stack-list-locals 1").ConfigureAwait(false);
         var locals = MiResponseParser.ParseLocals(localsResponse);
         var variables = new List<DapVariable>(locals.Length);
 
         foreach (var local in locals)
         {
-            var typedVariable = await CreateTypedVariableAsync(local.Name, local.Value);
+            var typedVariable = await CreateTypedVariableAsync(local.Name, local.Value).ConfigureAwait(false);
             variables.Add(typedVariable ?? local);
         }
 
@@ -116,8 +116,8 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         {
             try
             {
-                await SendCommandAsync("-gdb-exit");
-                await _gdb.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                await SendCommandAsync("-gdb-exit").ConfigureAwait(false);
+                await _gdb.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
             }
             catch
             {
@@ -139,13 +139,13 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingCommands[token] = tcs;
 
-        await _gdbIn.WriteLineAsync($"{token}{command}");
+        await _gdbIn.WriteLineAsync($"{token}{command}").ConfigureAwait(false);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
             cts.Token.Register(() => tcs.TrySetResult(""));
-            var result = await tcs.Task;
+            var result = await tcs.Task.ConfigureAwait(false);
             if (result.Contains("^error", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(ExtractGdbField(result, "msg") ?? result);
@@ -167,7 +167,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
     {
         try
         {
-            while (await reader.ReadLineAsync() is { } line)
+            while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
             {
                 ProcessGdbLine(line);
             }
@@ -183,7 +183,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         try
         {
             var buffer = new char[1024];
-            while (await reader.ReadAsync(buffer, 0, buffer.Length) > 0) { }
+            while (await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false) > 0) { }
         }
         catch (ObjectDisposedException)
         {
@@ -202,7 +202,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         if (line.StartsWith("*stopped", StringComparison.Ordinal))
         {
             var reason = ExtractGdbField(line, "reason");
-            if (reason == "exited-normally" || reason == "exited")
+            if (string.Equals(reason, "exited-normally", StringComparison.Ordinal) || string.Equals(reason, "exited", StringComparison.Ordinal))
             {
                 var exitCodeStr = ExtractGdbField(line, "exit-code");
                 var exitCode = exitCodeStr is not null
@@ -263,7 +263,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
 
     private async Task<DapVariable?> CreateTypedVariableAsync(string localName, string fallbackValue)
     {
-        var varCreateResponse = await SendCommandAsync($"-var-create - * {localName}");
+        var varCreateResponse = await SendCommandAsync($"-var-create - * {localName}").ConfigureAwait(false);
         var variableObject = MiResponseParser.ParseVariableObject(varCreateResponse);
         if (variableObject is null)
         {
@@ -275,7 +275,7 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
             var formattedValue = await AshesValueFormatter.FormatAsync(
                 variableObject.Value,
                 variableObject.Type,
-                EvaluateExpressionAsync);
+                EvaluateExpressionAsync).ConfigureAwait(false);
 
             return new DapVariable
             {
@@ -287,13 +287,13 @@ public sealed partial class GdbDebuggerBackend : IDebuggerBackend
         }
         finally
         {
-            _ = await SendCommandAsync($"-var-delete {variableObject.Name}");
+            _ = await SendCommandAsync($"-var-delete {variableObject.Name}").ConfigureAwait(false);
         }
     }
 
     private async Task<string?> EvaluateExpressionAsync(string expression)
     {
-        var response = await SendCommandAsync($"-data-evaluate-expression {EscapeGdbArg(expression)}");
+        var response = await SendCommandAsync($"-data-evaluate-expression {EscapeGdbArg(expression)}").ConfigureAwait(false);
         return MiResponseParser.ParseEvaluateExpressionValue(response);
     }
 

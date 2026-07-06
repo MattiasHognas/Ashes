@@ -181,7 +181,7 @@ public sealed class LiteralPatternTests
                     | _ -> "other"
             in Ashes.IO.print(classify(0))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("zero\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("zero\n");
     }
 
     [Test]
@@ -197,7 +197,7 @@ public sealed class LiteralPatternTests
                     | _ -> "other"
             in Ashes.IO.print(classify(1))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("one\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("one\n");
     }
 
     [Test]
@@ -213,7 +213,7 @@ public sealed class LiteralPatternTests
                     | _ -> "other"
             in Ashes.IO.print(classify(42))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("other\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("other\n");
     }
 
     [Test]
@@ -228,7 +228,7 @@ public sealed class LiteralPatternTests
                     | _ -> "nonzero"
             in Ashes.IO.print(sign(-5))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("nonzero\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("nonzero\n");
     }
 
     [Test]
@@ -244,7 +244,7 @@ public sealed class LiteralPatternTests
                     | _ -> "?"
             in Ashes.IO.print(greet("es"))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("hola\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("hola\n");
     }
 
     [Test]
@@ -260,7 +260,7 @@ public sealed class LiteralPatternTests
                     | _ -> "unknown"
             in Ashes.IO.print(greet("fr"))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("unknown\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("unknown\n");
     }
 
     [Test]
@@ -275,7 +275,7 @@ public sealed class LiteralPatternTests
                     | false -> "no"
             in Ashes.IO.print(yesno(true))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("yes\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("yes\n");
     }
 
     [Test]
@@ -290,7 +290,7 @@ public sealed class LiteralPatternTests
                     | false -> "no"
             in Ashes.IO.print(yesno(false))
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("no\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("no\n");
     }
 
     [Test]
@@ -302,7 +302,7 @@ public sealed class LiteralPatternTests
             let (a, b) = (10, 32)
             in Ashes.IO.print(a + b)
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -314,7 +314,7 @@ public sealed class LiteralPatternTests
             let (greeting, name) = ("hello", "world")
             in Ashes.IO.print(greeting + " " + name)
             """;
-        (await CompileRunCaptureAsync(src)).ShouldBe("hello world\n");
+        (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("hello world\n");
     }
 
     // ────── Helpers ──────
@@ -351,10 +351,10 @@ public sealed class LiteralPatternTests
             UseShellExecute = false
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;
     }

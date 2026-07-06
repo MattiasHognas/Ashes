@@ -8,40 +8,50 @@ public sealed class LspHoverTests
     public async Task Hover_should_return_inferred_type_for_binding_name()
     {
         const string source = "let id = given (x) -> x in id(1)";
-        await using var document = TempDocument.Create("HoverBinding.ash", source);
-        await using var harness = await LspHarness.StartAsync();
+        var document = TempDocument.Create("HoverBinding.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var hover = await harness.HoverAsync(document.Uri, line: 0, character: source.IndexOf("id", StringComparison.Ordinal));
 
-        _ = await harness.DidOpenAsync(document.Uri, source);
-        var hover = await harness.HoverAsync(document.Uri, line: 0, character: source.IndexOf("id", StringComparison.Ordinal));
+                hover.ShouldNotBeNull();
+                hover.Value.GetProperty("contents").GetString().ShouldBe("id : a -> a");
 
-        hover.ShouldNotBeNull();
-        hover.Value.GetProperty("contents").GetString().ShouldBe("id : a -> a");
-
-        var range = hover.Value.GetProperty("range");
-        range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("id", StringComparison.Ordinal));
-        range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("id", StringComparison.Ordinal) + 2);
+                var range = hover.Value.GetProperty("range");
+                range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("id", StringComparison.Ordinal));
+                range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.IndexOf("id", StringComparison.Ordinal) + 2);
+            }
+        }
     }
 
     [Test]
     public async Task Hover_should_return_expression_type_for_call_result()
     {
         const string source = "let id = given (x) -> x in id(1)";
-        await using var document = TempDocument.Create("HoverExpression.ash", source);
-        await using var harness = await LspHarness.StartAsync();
+        var document = TempDocument.Create("HoverExpression.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var hover = await harness.HoverAsync(document.Uri, line: 0, character: source.LastIndexOf(')'));
 
-        _ = await harness.DidOpenAsync(document.Uri, source);
-        var hover = await harness.HoverAsync(document.Uri, line: 0, character: source.LastIndexOf(')'));
+                hover.ShouldNotBeNull();
+                hover.Value.GetProperty("contents").GetString().ShouldBe("Int");
 
-        hover.ShouldNotBeNull();
-        hover.Value.GetProperty("contents").GetString().ShouldBe("Int");
-
-        var range = hover.Value.GetProperty("range");
-        range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.LastIndexOf("id(1)", StringComparison.Ordinal));
-        range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
-        range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.LastIndexOf("id(1)", StringComparison.Ordinal) + "id(1)".Length);
+                var range = hover.Value.GetProperty("range");
+                range.GetProperty("start").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(source.LastIndexOf("id(1)", StringComparison.Ordinal));
+                range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
+                range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(source.LastIndexOf("id(1)", StringComparison.Ordinal) + "id(1)".Length);
+            }
+        }
     }
 
     private sealed class TempDocument : IAsyncDisposable

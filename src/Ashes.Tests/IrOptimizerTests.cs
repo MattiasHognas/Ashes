@@ -689,7 +689,7 @@ public sealed class IrOptimizerTests
             return;
         }
 
-        var stdout = await CompileOptimizedAndRunAsync("Ashes.IO.print(10 + 32)");
+        var stdout = await CompileOptimizedAndRunAsync("Ashes.IO.print(10 + 32)").ConfigureAwait(false);
         stdout.ShouldBe("42\n");
     }
 
@@ -701,7 +701,7 @@ public sealed class IrOptimizerTests
             return;
         }
 
-        var stdout = await CompileOptimizedAndRunAsync("Ashes.IO.print(\"hello \" + \"world\")");
+        var stdout = await CompileOptimizedAndRunAsync("Ashes.IO.print(\"hello \" + \"world\")").ConfigureAwait(false);
         stdout.ShouldBe("hello world\n");
     }
 
@@ -713,7 +713,7 @@ public sealed class IrOptimizerTests
             return;
         }
 
-        var stdout = await CompileOptimizedAndRunAsync("let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))");
+        var stdout = await CompileOptimizedAndRunAsync("let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))").ConfigureAwait(false);
         stdout.ShouldBe("42\n");
     }
 
@@ -731,7 +731,7 @@ public sealed class IrOptimizerTests
                 else sum(n - 1)(acc + n)
             in Ashes.IO.print(sum(100)(0))
             """;
-        var stdout = await CompileOptimizedAndRunAsync(source);
+        var stdout = await CompileOptimizedAndRunAsync(source).ConfigureAwait(false);
         stdout.ShouldBe("5050\n");
     }
 
@@ -748,7 +748,7 @@ public sealed class IrOptimizerTests
                 | Ok(result) -> if result then Ashes.IO.print("yes") else Ashes.IO.print("no")
                 | Error(msg) -> Ashes.IO.print(msg)
             """;
-        var stdout = await CompileOptimizedAndRunAsync(source);
+        var stdout = await CompileOptimizedAndRunAsync(source).ConfigureAwait(false);
         stdout.ShouldBe("no\n");
     }
 
@@ -772,7 +772,7 @@ public sealed class IrOptimizerTests
                     else Ashes.IO.print("head")
             """;
 
-        var stdout = await CompileOptimizedAndRunAsync(source);
+        var stdout = await CompileOptimizedAndRunAsync(source).ConfigureAwait(false);
         stdout.ShouldBe("ok\n");
     }
 
@@ -898,9 +898,9 @@ public sealed class IrOptimizerTests
             UseShellExecute = false
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        string stdout = await proc.StandardOutput.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        string stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
         return stdout;
     }
 }

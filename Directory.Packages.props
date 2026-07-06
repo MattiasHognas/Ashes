@@ -1,6 +1,0 @@
-<Project>
-  <ItemGroup>
-    <!-- Analyzer for correctness, performance, and reliability -->
-    <PackageVersion Include="Meziantou.Analyzer" Version="2.*" />
-  </ItemGroup>
-</Project>

@@ -17,7 +17,7 @@ public sealed class ImportSelectorTests
     {
         var dir = Path.Combine(Path.GetTempPath(), "ashes-import-selectors", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        foreach (var (name, src) in modules ?? new Dictionary<string, string>())
+        foreach (var (name, src) in modules ?? new Dictionary<string, string>(StringComparer.Ordinal))
         {
             var path = Path.Combine(dir, name.Replace('.', Path.DirectorySeparatorChar) + ".ash");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -42,14 +42,14 @@ public sealed class ImportSelectorTests
         var project = WriteProject(mainSource, modules);
         var plan = ProjectSupport.BuildCompilationPlan(project);
         var source = ProjectSupport.BuildCompilationSource(plan);
-        return await CompileRunCaptureAsync(source, plan.ImportedStdModules, plan.MergedAliases);
+        return await CompileRunCaptureAsync(source, plan.ImportedStdModules, plan.MergedAliases).ConfigureAwait(false);
     }
 
     [Test]
     public async Task BuiltinBindingSelector_resolves_identically_to_qualified()
     {
-        var viaSelector = await RunAsync("import Ashes.IO.print\nprint(\"hi\")\n");
-        var viaQualified = await RunAsync("Ashes.IO.print(\"hi\")\n");
+        var viaSelector = await RunAsync("import Ashes.IO.print\nprint(\"hi\")\n").ConfigureAwait(false);
+        var viaQualified = await RunAsync("Ashes.IO.print(\"hi\")\n").ConfigureAwait(false);
         viaSelector.TrimEnd().ShouldBe("hi");
         viaSelector.ShouldBe(viaQualified);
     }
@@ -57,7 +57,7 @@ public sealed class ImportSelectorTests
     [Test]
     public async Task BuiltinBindingSelector_with_alias_resolves()
     {
-        var stdout = await RunAsync("import Ashes.IO.print as p\np(\"hi\")\n");
+        var stdout = await RunAsync("import Ashes.IO.print as p\np(\"hi\")\n").ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("hi");
     }
 
@@ -66,7 +66,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -75,11 +75,11 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double as d\nAshes.IO.print(d(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
-    private static readonly Dictionary<string, string> ShapesModule = new()
+    private static readonly Dictionary<string, string> ShapesModule = new(StringComparer.Ordinal)
     {
         ["Shapes"] =
             "type Color = | Red | Green\n" +
@@ -95,7 +95,7 @@ public sealed class ImportSelectorTests
         var stdout = await RunAsync(
             "import Shapes.Color as C\nimport Shapes.name\n" +
             "let c : C = Green in Ashes.IO.print(name(c))\n",
-            ShapesModule);
+            ShapesModule).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("green");
     }
 
@@ -107,7 +107,7 @@ public sealed class ImportSelectorTests
         // (global type hoisting alone never introduces the alias name `C`).
         var ex = await Should.ThrowAsync<Exception>(() => RunAsync(
             "import Shapes.name\nlet c : C = Green in Ashes.IO.print(name(c))\n",
-            ShapesModule));
+            ShapesModule)).ConfigureAwait(false);
         ex.Message.ShouldContain("Unknown type name 'C'");
     }
 
@@ -117,7 +117,7 @@ public sealed class ImportSelectorTests
         var stdout = await RunAsync(
             "import Shapes.Color\nimport Shapes.name\n" +
             "let red : Color = Red in Ashes.IO.print(name(red))\n",
-            ShapesModule);
+            ShapesModule).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("red");
     }
 
@@ -142,7 +142,7 @@ public sealed class ImportSelectorTests
     {
         var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationPlan(WriteProject(
             "import A.x\nimport B.x\nAshes.IO.print(0)\n",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["A"] = "let x = 1\n",
                 ["B"] = "let x = 2\n",
@@ -155,7 +155,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nimport Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" });
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -164,11 +164,11 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import A.x as a\nimport B.x as b\nAshes.IO.print(a + b)\n",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["A"] = "let x = 40\n",
                 ["B"] = "let x = 2\n",
-            });
+            }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -179,7 +179,7 @@ public sealed class ImportSelectorTests
         {
             var plan = ProjectSupport.BuildCompilationPlan(WriteProject(
                 "import Util.missing\nAshes.IO.print(0)\n",
-                new Dictionary<string, string> { ["Util"] = "let double = given (x) -> x + x\n" }));
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }));
             ProjectSupport.BuildCompilationSource(plan);
         });
         ex.Message.ShouldContain("does not export 'missing'");
@@ -190,17 +190,17 @@ public sealed class ImportSelectorTests
     {
         // A selector-imports B.secret and uses it; Main selector-imports A.helper. Main must see
         // helper but never B's `secret`, which A pulled in only for its own use.
-        var modules = new Dictionary<string, string>
+        var modules = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["B"] = "let secret = 40\n",
             ["A"] = "import B.secret\nlet helper = given (x) -> secret + x\n",
         };
 
-        var stdout = await RunAsync("import A.helper\nAshes.IO.print(helper(2))\n", modules);
+        var stdout = await RunAsync("import A.helper\nAshes.IO.print(helper(2))\n", modules).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
 
         await Should.ThrowAsync<Exception>(() =>
-            RunAsync("import A.helper\nAshes.IO.print(secret)\n", modules));
+            RunAsync("import A.helper\nAshes.IO.print(secret)\n", modules)).ConfigureAwait(false);
     }
 
     [Test]
@@ -215,7 +215,7 @@ public sealed class ImportSelectorTests
         layout.Source.ShouldContain("Ashes.IO.print");
         layout.Source.ShouldNotContain("p(");
 
-        var stdout = await CompileRunCaptureAsync(layout.Source, parsed.ImportNames.ToHashSet(), null);
+        var stdout = await CompileRunCaptureAsync(layout.Source, parsed.ImportNames.ToHashSet(StringComparer.Ordinal), null).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("hi");
     }
 
@@ -224,7 +224,7 @@ public sealed class ImportSelectorTests
     {
         var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationPlan(WriteProject(
             "import A.x\nAshes.IO.print(x)\n",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["A"] = "import B.y\nlet x = y\n",
                 ["B"] = "import A.x\nlet y = x\n",
@@ -268,10 +268,10 @@ public sealed class ImportSelectorTests
             UseShellExecute = false,
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
 
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;

@@ -16,4 +16,10 @@
     <!-- Respect .editorconfig -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Analyzers applied to every project (PrivateAssets=all: analyzer-only, not a runtime dep). -->
+    <PackageReference Include="Meziantou.Analyzer" Version="3.*" PrivateAssets="all" />
+    <PackageReference Include="SonarAnalyzer.CSharp" Version="10.*" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

@@ -30,7 +30,7 @@ internal static class TestProcessHelper
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == textFileBusyError && attempt < maxAttempts - 1)
             {
-                await Task.Delay(20 * (attempt + 1));
+                await Task.Delay(20 * (attempt + 1)).ConfigureAwait(false);
             }
         }
 

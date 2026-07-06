@@ -188,7 +188,7 @@ public sealed partial class Lowering
     /// <summary>Whether any provider is registered for the capability of the given name (any instance).</summary>
     private bool HasAnyProvider(string capabilityName)
     {
-        return _providers.Keys.Any(k => k == capabilityName || k.StartsWith($"{capabilityName}(", StringComparison.Ordinal));
+        return _providers.Keys.Any(k => string.Equals(k, capabilityName, StringComparison.Ordinal) || k.StartsWith($"{capabilityName}(", StringComparison.Ordinal));
     }
 
     /// <summary>

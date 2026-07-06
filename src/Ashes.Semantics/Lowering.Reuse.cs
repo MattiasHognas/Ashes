@@ -548,7 +548,7 @@ public sealed partial class Lowering
         _specializationParamCursor = savedCursor;
         _specFreshInputNames = savedFreshInputs;
 
-        var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => f.Label == reuseLabel) : null;
+        var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => string.Equals(f.Label, reuseLabel, StringComparison.Ordinal)) : null;
         bool fullyReusing = recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!);
         if (fullyReusing)
         {

@@ -66,7 +66,7 @@ public static class Formatter
         {
             sb.Append('\n');
         }
-        return formattingOptions.NewLine == "\n" ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
     }
 
     public static string Format(Expr expr)
@@ -89,7 +89,7 @@ public static class Formatter
             sb.Append('\n');
         }
 
-        return formattingOptions.NewLine == "\n" ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
     }
 
     private static void WriteTypeDecl(StringBuilder sb, TypeDecl decl, FormattingOptions options)
@@ -478,7 +478,7 @@ public static class Formatter
 
     private static bool EndsWithNewLine(StringBuilder sb, string newLine)
     {
-        if (newLine == "\n")
+        if (string.Equals(newLine, "\n", StringComparison.Ordinal))
         {
             return sb.Length > 0 && sb[^1] == '\n';
         }

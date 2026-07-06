@@ -168,7 +168,7 @@ public static class EditorConfigFormattingOptionsResolver
                         indentSize = width;
                     }
                 }
-                else if (int.TryParse(value, out var parsedIndent) && parsedIndent > 0)
+                else if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedIndent) && parsedIndent > 0)
                 {
                     hasIndentSize = true;
                     indentSizeUsesTabWidth = false;
@@ -180,7 +180,7 @@ public static class EditorConfigFormattingOptionsResolver
 
             if (key.Equals("tab_width", StringComparison.OrdinalIgnoreCase))
             {
-                if (int.TryParse(value, out var parsedTabWidth) && parsedTabWidth > 0)
+                if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedTabWidth) && parsedTabWidth > 0)
                 {
                     tabWidth = parsedTabWidth;
                     if (indentSizeUsesTabWidth)

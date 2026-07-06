@@ -37,7 +37,7 @@ public sealed class MutualRecursionTests
             let answer = if isEven(8) then (if isOdd(8) then 0 else 42) else 0 in Ashes.IO.print(answer)
             """;
 
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("42\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("42\n");
     }
 
     [Test]
@@ -58,7 +58,7 @@ public sealed class MutualRecursionTests
             """;
 
         // classify(4) = 100 (4 is even); isOdd(3) = true => +1; total 101.
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("101\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("101\n");
     }
 
     [Test]
@@ -87,7 +87,7 @@ public sealed class MutualRecursionTests
 
         // foo(4): foo->bar->foo->bar->foo(0)=lo=100. bar(4): bar->foo->bar->foo->bar(0)=hi=7.
         // r = 100 * 1000 + 7 = 100007.
-        (await CompileRunCaptureProgramAsync(src)).ShouldBe("100007\n");
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("100007\n");
     }
 
     [Test]
@@ -111,7 +111,7 @@ public sealed class MutualRecursionTests
         var singletonGroup = new TopLevelItem.RecursiveGroup(new[] { (letDecl.Name, letDecl.Value) });
         var program = new Program(new TopLevelItem[] { singletonGroup }, trailing);
 
-        (await RunProgramAsync(program)).ShouldBe("120\n");
+        (await RunProgramAsync(program).ConfigureAwait(false)).ShouldBe("120\n");
     }
 
     [Test]
@@ -135,7 +135,7 @@ public sealed class MutualRecursionTests
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         diag.ThrowIfAny();
-        return await RunProgramAsync(program);
+        return await RunProgramAsync(program).ConfigureAwait(false);
     }
 
     private static async Task<string> RunProgramAsync(Program program)
@@ -159,10 +159,10 @@ public sealed class MutualRecursionTests
             UseShellExecute = false
         };
 
-        using var proc = await TestProcessHelper.StartProcessAsync(psi);
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        using var proc = await TestProcessHelper.StartProcessAsync(psi).ConfigureAwait(false);
+        var stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        var stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await proc.WaitForExitAsync().ConfigureAwait(false);
 
         proc.ExitCode.ShouldBe(0, $"stderr: {stderr}");
         return stdout;

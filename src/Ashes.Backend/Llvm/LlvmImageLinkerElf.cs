@@ -426,11 +426,11 @@ internal static partial class LlvmImageLinker
         for (int i = 0; i < sections.Length; i++)
         {
             string name = ReadElfString(sectionNames, sections[i].NameOffset);
-            if (name == ".text")
+            if (string.Equals(name, ".text", StringComparison.Ordinal))
             {
                 textSectionIndex = i;
             }
-            else if (name == ".symtab")
+            else if (string.Equals(name, ".symtab", StringComparison.Ordinal))
             {
                 symtab = sections[i];
             }
@@ -1002,7 +1002,7 @@ internal static partial class LlvmImageLinker
             ushort sectionIndex = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 6, 2));
             ulong value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 8, 8));
             string name = ReadElfString(symbolStrings, nameOffset);
-            if (name == entrySymbolName)
+            if (string.Equals(name, entrySymbolName, StringComparison.Ordinal))
             {
                 if (sectionIndex != textSectionIndex)
                 {

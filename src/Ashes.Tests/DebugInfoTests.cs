@@ -240,14 +240,14 @@ public sealed class DebugInfoTests
     [Test]
     public async Task Compile_accepts_debug_flag()
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", "--expr", "42");
+        var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", "--expr", "42").ConfigureAwait(false);
         startInfo.ShouldNotBeNull();
     }
 
     [Test]
     public async Task Compile_accepts_g_flag()
     {
-        var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "-g", "--expr", "42");
+        var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "-g", "--expr", "42").ConfigureAwait(false);
         startInfo.ShouldNotBeNull();
     }
 
@@ -258,13 +258,13 @@ public sealed class DebugInfoTests
         Directory.CreateDirectory(tempRoot);
 
         var sourcePath = Path.Combine(tempRoot, "main.ash");
-        var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "main.exe" : "main");
-        await File.WriteAllTextAsync(sourcePath, "42");
+        var outputPath = Path.Combine(tempRoot, string.Equals(BackendFactory.DefaultForCurrentOS(), TargetIds.WindowsX64, StringComparison.Ordinal) ? "main.exe" : "main");
+        await File.WriteAllTextAsync(sourcePath, "42").ConfigureAwait(false);
 
         try
         {
-            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath);
-            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath).ConfigureAwait(false);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo).ConfigureAwait(false);
 
             exitCode.ShouldBe(0, stderr);
             File.Exists(outputPath).ShouldBeTrue($"Expected compiled output at '{outputPath}'. Stdout: {stdout}{Environment.NewLine}Stderr: {stderr}");
@@ -292,13 +292,13 @@ public sealed class DebugInfoTests
         Directory.CreateDirectory(tempRoot);
 
         var sourcePath = Path.Combine(tempRoot, "lambda.ash");
-        var outputPath = Path.Combine(tempRoot, BackendFactory.DefaultForCurrentOS() == TargetIds.WindowsX64 ? "lambda.exe" : "lambda");
-        await File.WriteAllTextAsync(sourcePath, "let f = given (x) -> x + 1 in f(41)");
+        var outputPath = Path.Combine(tempRoot, string.Equals(BackendFactory.DefaultForCurrentOS(), TargetIds.WindowsX64, StringComparison.Ordinal) ? "lambda.exe" : "lambda");
+        await File.WriteAllTextAsync(sourcePath, "let f = given (x) -> x + 1 in f(41)").ConfigureAwait(false);
 
         try
         {
-            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath);
-            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo);
+            var startInfo = await CliTestHost.CreateStartInfoAsync("compile", "--debug", sourcePath, "-o", outputPath).ConfigureAwait(false);
+            var (exitCode, stdout, stderr) = await RunCliAsync(startInfo).ConfigureAwait(false);
 
             exitCode.ShouldBe(0, stderr);
             File.Exists(outputPath).ShouldBeTrue($"Expected compiled output at '{outputPath}'. Stdout: {stdout}{Environment.NewLine}Stderr: {stderr}");
@@ -324,7 +324,7 @@ public sealed class DebugInfoTests
         using var process = Process.Start(startInfo)!;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
 
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
