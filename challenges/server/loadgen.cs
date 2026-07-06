@@ -1,10 +1,13 @@
-// Single-file .NET load generator for the server benchmark. The SAME driver is used against both
-// servers (echo.ash and dotnet-echo.cs) so the comparison isolates the server — same functionality
-// (echo), same client — rather than mixing an Ashes client with a .NET server. It is fast (does the
-// concurrency and timing itself), so the server is the bottleneck, not the driver.
+// Single-file .NET load generator for the server benchmarks. The SAME driver is used against both
+// the Ashes server and its .NET baseline in each benchmark, so the comparison isolates the server
+// (same functionality, same client) rather than mixing an Ashes client with a .NET server. It is fast
+// (does the concurrency and timing itself), so the server is the bottleneck, not the driver.
 //
-// Each request = one connection: connect -> send -> read echo back -> close.
-// Usage: dotnet run loadgen.cs [requests] [concurrency] [port]
+// Two modes, selected by the 4th argument:
+//   tcp  (default) — one connection per request: connect -> send "ping" -> read the echo back -> close
+//   http           — one connection per request: connect -> send a GET -> read the full response -> close
+//
+// Usage: dotnet run loadgen.cs [requests] [concurrency] [port] [tcp|http]
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -14,7 +17,11 @@ using System.Text;
 int requests = args.Length > 0 ? int.Parse(args[0]) : 20000;
 int concurrency = args.Length > 1 ? int.Parse(args[1]) : 1;
 int port = args.Length > 2 ? int.Parse(args[2]) : 18080;
-byte[] payload = Encoding.UTF8.GetBytes("ping");
+string mode = args.Length > 3 ? args[3].ToLowerInvariant() : "tcp";
+bool http = mode == "http";
+byte[] payload = http
+    ? Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    : Encoding.UTF8.GetBytes("ping");
 
 // Wait for the server to accept, then warm up.
 var upDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
@@ -64,15 +71,31 @@ async Task<double?> OneRequest()
         await c.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromSeconds(5));
         using var s = c.GetStream();
         await s.WriteAsync(payload);
-        var buf = new byte[payload.Length];
-        int got = 0;
-        while (got < buf.Length)
+        if (http)
         {
-            int r = await s.ReadAsync(buf.AsMemory(got)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            if (r == 0) break;
-            got += r;
+            // Read the whole response until the server closes the connection (Connection: close).
+            var buf = new byte[4096];
+            int gotTotal = 0;
+            while (true)
+            {
+                int r = await s.ReadAsync(buf).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                if (r == 0) break;
+                gotTotal += r;
+            }
+            return gotTotal > 0 ? Stopwatch.GetElapsedTime(t0).TotalMilliseconds : null;
         }
-        return Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+        else
+        {
+            var buf = new byte[payload.Length];
+            int got = 0;
+            while (got < buf.Length)
+            {
+                int r = await s.ReadAsync(buf.AsMemory(got)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                if (r == 0) break;
+                got += r;
+            }
+            return Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+        }
     }
     catch
     {

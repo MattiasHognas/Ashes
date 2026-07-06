@@ -1,7 +1,7 @@
-// Benchmark target: a minimal TCP echo server on port 18080 built with the serve combinator.
+// TCP benchmark target: a minimal TCP echo server on port 18080 (Ashes.Net.Tcp.Server.serve).
 // One receive + echo + close per connection — the smallest handler, so the benchmark measures the
 // server path (accept/receive/send/close + scheduling) rather than handler work. challenges/ is
-// CI-excluded and not format-checked by any gate. Driven by bench.py.
+// CI-excluded and not format-checked by any gate. Driven by bench.sh.
 import Ashes.IO
 import Ashes.Net.Tcp
 import Ashes.Net.Tcp.Server

@@ -1,5 +1,5 @@
 // Single-file .NET TCP echo server — a baseline to compare the Ashes server against.
-// Run via .NET 10 file-based apps:  dotnet run challenges/server/dotnet-echo.cs [port]
+// Run via .NET 10 file-based apps:  dotnet run challenges/server/dotnet-tcp.cs [port]
 // Concurrent async accept loop (one receive + echo + close per connection) — the natural .NET idiom,
 // so it shows the ceiling. Note: the current Ashes serve() is sequential, so this baseline is
 // deliberately more concurrent; the gap is the headroom the multi-reactor milestone targets.
