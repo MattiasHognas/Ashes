@@ -185,3 +185,27 @@ once, rather than mutating the recursive driver in place.
 Risk is concentrated in step 3 (every `async` program depends on it); it must land with the full
 suite (compiler unit + LSP + e2e `.ash` + all three targets) green, and be validated against the
 server benchmark for no throughput regression.
+
+### Confirmed integration points (so the cutover needs no re-investigation)
+
+- **Where the scheduler lives.** `usesNetworkingRuntimeAbi` (`LlvmCodegen.cs`, the big disjunction
+  ending ~line 470) is already true for *any* async program — it includes `RunTask`, `SpawnTask`,
+  `AsyncSleep`, `AsyncAll`, `AsyncRace`. So the shared task-runtime functions
+  (`ashes_step_task_until_wait_or_done`, `ashes_run_detached`, the leaf steppers) are emitted for every
+  async program. Add `ashes_scheduler_run(mainTask)`, `ashes_ready_enqueue(task)`,
+  `ashes_ready_dequeue()` in that same ABI block (`LlvmCodegenBuiltins.Net.cs`, alongside the
+  `EmitRuntimeFunction("ashes_run_detached", …)` registrations ~line 320).
+- **Reusable primitives.** `EmitStepLeafTask` (returns 1 = completed / 0 = pending, setting
+  `WaitKind`/`WaitHandle` on park) is the per-leaf step. The coroutine call is a plain
+  `call i64 CoroutineFn(task, 0)` returning 1 = COMPLETED / 0 = SUSPENDED (with a fresh `AwaitedTask`
+  stored). The persistent epoll set + `ashes_epoll_register` / `EmitWaitForPendingLeafTask` are the
+  parked-leaf registry and aggregate wait.
+- **Call sites to reroute to `ashes_scheduler_run`.** `RunTask` at `LlvmCodegen.cs:1477`
+  (`EmitRunTask`); the three Net-ABI drive sites at `LlvmCodegenBuiltins.Net.cs:583/593/603`; and
+  `SpawnTask` (`EmitSpawnTask`, `LlvmCodegenExpressions.cs:1686`) becomes `ashes_ready_enqueue`.
+- **`all`/`race`.** Today lowered inline as blocking `ashes_wait_pending_task_list`
+  (`EmitAsyncAll`/`EmitAsyncRace` → `EmitWaitForPendingTaskList`). Under the run queue they become
+  composite tasks whose children are enqueued and whose completion re-enqueues the awaiter — this is
+  also exactly the smaller **option (B)** fix, so it can land first and be reused by (A).
+- **To delete at cleanup.** `EmitRunTask`, `EmitRunTaskRecursive`, `EmitRunDetachedBody` /
+  `ashes_run_detached`, and the `__ashes_detached_stepping` guard.
