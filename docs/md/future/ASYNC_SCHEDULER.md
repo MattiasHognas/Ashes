@@ -53,21 +53,45 @@ So `await X` **runs X to completion on the current C stack**. Concurrency is bol
 
 ---
 
-## The problem
+## The problem — pinpointed
 
-Because a detached task is advanced by *stepping it to its next park* under the guard, and because
-`await` drives awaited work recursively, a detached handler that awaits a composite parks nothing — it
-blocks:
+An important nuance, verified by reading the code: a plain `await X` on a spawned handler does **not**
+block. The detached stepper `EmitStepTaskUntilPendingOrDone` resolves the awaited sub-task by stepping
+it once and, if it is still pending, **mirrors its wait onto the parent and returns** (park), so the
+reactor can advance peers. General `await` is already cooperative.
+
+The block is specifically **`Ashes.Async.all` / `race`**. These are lowered *inline* into the
+coroutine body (`EmitAsyncAll` / `EmitAsyncRace`), and they call `ashes_wait_pending_task_list`
+(`EmitWaitForPendingTaskList`) which **blocks** on `epoll_wait` / cooperative sleep until the children
+finish, then collects results. There is no suspend point — the coroutine cannot yield across an
+`all`/`race`. So:
 
 - Handler A (detached) is stepped by `ashes_run_detached` → guard is set.
-- A's coroutine does `await Ashes.Async.all([...])` → the driver recursively runs the `all` task to
-  completion on the stack. Its waits call `ashes_run_detached` again → guard is set → no-op.
-- So while A is inside its `all`, peers B/C/D never advance. Two connections whose handlers both use
-  `Async.all` **serialize** instead of overlapping.
+- A's coroutine reaches `Async.all([...])` → `ashes_wait_pending_task_list` **blocks** the reactor
+  until A's children complete. Its internal `ashes_run_detached` is a guarded no-op, so peers B/C/D
+  never advance while A is inside its `all`.
 
-Measured: four connections each doing `await all([sleep 250, sleep 250])` complete in ~1000 ms (4×),
-not ~250 ms. The re-entrant guard is doing its job (preventing double-stepping); the design is the
-issue — recursive synchronous driving cannot yield to peers mid-await.
+Measured (this branch): four connections each doing `await all([sleep 250, sleep 250])` complete in
+~1000 ms (4×), not ~250 ms.
+
+So the minimal cause is not "recursive driving everywhere" — it is that **`all`/`race` are inline
+blocking calls rather than parking suspend points.**
+
+## Two ways to fix
+
+**(A) Full run-queue** (below) — the clean long-term architecture; replaces the whole driver. Largest
+change, touches every `async` program.
+
+**(B) Targeted: make `all`/`race` parking composite tasks** — turn `Async.all`/`race` into a suspend
+point backed by a small composite task that the existing scheduler drives incrementally (children
+parked individually; the reactor's existing aggregate wait advances them; the composite completes and
+resumes its awaiter when all / the first child finishes). This reuses the park/mirror machinery in
+`EmitStepTaskUntilPendingOrDone` and the persistent epoll set, and is confined to the `all`/`race`
+lowering plus one composite step function — it does **not** touch the non-networking inline driver. It
+achieves the stated server-fairness goal at a fraction of the risk of (A).
+
+The rest of this document specifies (A). (B) is the recommended near-term step; (A) remains the
+eventual target if a single unified scheduler is wanted.
 
 ---
 
