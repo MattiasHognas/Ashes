@@ -330,6 +330,20 @@ internal static partial class LlvmCodegen
     // ── Async / Task support ──────────────────────────────────────────
 
     /// <summary>
+    /// Zero the run-queue scheduler header slots (<c>ReadyNext</c> / <c>Waiter</c> / <c>ArenaOwner</c>)
+    /// of a freshly allocated task. These are not part of the legacy layout, so without this a newly
+    /// created task carries garbage in them — harmless at -O0 (stack incidentally zero) but a wild
+    /// pointer at -O2, where the scheduler reads a bogus Waiter/ArenaOwner and crashes.
+    /// </summary>
+    private static void EmitZeroSchedulerFields(LlvmCodegenState state, LlvmValueHandle taskPtr)
+    {
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        StoreMemory(state, taskPtr, TaskStructLayout.ReadyNext, zero, "task_ready_next_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.Waiter, zero, "task_waiter_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.ArenaOwner, zero, "task_arena_owner_zero");
+    }
+
+    /// <summary>
     /// CreateTask: allocate a task/state struct and initialize it.
     /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), next_task(0), sleep_duration_ms(0), captures...]
     /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures starting at <see cref="TaskStructLayout.HeaderSize"/>.
@@ -387,6 +401,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "task_arena_cursor_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.ConstInt(state.I64, 0, 0), "task_arena_end_zero");
+        EmitZeroSchedulerFields(state, taskPtr);
         if (captureCount > 0)
         {
             LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "task_env_ptr");
@@ -448,6 +463,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_arena_cursor_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.ConstInt(state.I64, 0, 0), "ctask_arena_end_zero");
+        EmitZeroSchedulerFields(state, taskPtr);
 
         return taskPtr;
     }
@@ -489,6 +505,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_arena_cursor");
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_arena_end");
+        EmitZeroSchedulerFields(state, taskPtr);
 
         return taskPtr;
     }
