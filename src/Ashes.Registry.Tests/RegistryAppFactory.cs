@@ -16,6 +16,8 @@ internal sealed class RegistryAppFactory : WebApplicationFactory<Program>
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.UseSetting("Registry:DataDir", DataDir);
+        // Override the appsettings connection string so each test's DB lives in its own temp dir.
+        builder.UseSetting("ConnectionStrings:Registry", $"Data Source={Path.Combine(DataDir, "registry.db")}");
         builder.UseEnvironment("Testing");
     }
 

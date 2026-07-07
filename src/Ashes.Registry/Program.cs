@@ -17,8 +17,12 @@ Directory.CreateDirectory(dataDir);
 builder.Services.Configure<RegistryOptions>(builder.Configuration.GetSection("Registry"));
 builder.Services.PostConfigure<RegistryOptions>(o => o.DataDir = dataDir);
 
-builder.Services.AddDbContext<RegistryDbContext>(o =>
-    o.UseSqlite($"Data Source={Path.Combine(dataDir, "registry.db")}"));
+// The database is configured by ConnectionStrings:Registry (appsettings / env / args); the --data dir
+// governs blob storage and supplies the fallback DB path so a bare `--data <dir>` still self-contains.
+var connectionString = builder.Configuration.GetConnectionString("Registry")
+    ?? $"Data Source={Path.Combine(dataDir, "registry.db")}";
+
+builder.Services.AddDbContext<RegistryDbContext>(o => o.UseSqlite(connectionString));
 
 builder.Services.AddScoped<IMetadataStore, EfMetadataStore>();
 builder.Services.AddScoped<ISearchIndex, EfSearchIndex>();
