@@ -383,9 +383,10 @@ transport is that HTTPS falls out without a second handler model.
   shutdown (a multi-worker parent may cut a child mid-request via the death signal / job object).
   Drain policy and a programmatic stop handle are open questions below.
 - `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
-  today, whether Content-Length- or chunked-framed). Related: request buffering re-parses the
-  accumulated bytes on every read, O(n^2) across reads for large bodies — the 8 MiB early reject
-  caps the common abuse, but streaming should remove the re-parse.
+  today, whether Content-Length- or chunked-framed). A Content-Length body buffers incrementally
+  (chunks accumulate as a list and are joined once when complete, O(total) across reads); chunked
+  bodies still re-decode the accumulated buffer per read — incremental chunked decoding belongs to
+  the streaming work.
 - Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
   (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
 
