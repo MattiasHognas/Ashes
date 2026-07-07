@@ -79,7 +79,7 @@ lifecycle match wraps `Async.run`, not a bare top-level `await`. `serve` returns
 
 ---
 
-## Concurrency model (decided: multi-threaded; single-threaded cooperative DELIVERED)
+## Concurrency model (decided and DELIVERED: multi-process reactors, cooperative loop per reactor)
 
 **Delivered (2026-07-05):** single-threaded cooperative concurrency via `Ashes.Async.spawn`.
 `serve` spawns each handler as a detached task with a private arena (freed on completion, so memory
@@ -89,20 +89,22 @@ targets in lockstep). Measured on the echo benchmark: connections genuinely over
 handlers complete in ~300 ms wall), 64-way tail latency roughly halves versus the sequential serve,
 throughput lands within ~10-15% of a concurrent .NET echo server — on one core.
 
-The multi-threaded multi-reactor below remains the target for CPU-bound handlers and multi-core
-scaling; a single-threaded loop still serializes CPU-bound work. Note from a first spike:
-`Parallel.both` cannot host reactors (it is fork-join; a never-returning reactor deadlocks the
-join), so the multi-reactor needs a dedicated long-lived-worker primitive.
+**Delivered (2026-07-06):** the multi-core multi-reactor, shipped as **processes** rather than
+threads (see Work status for the mechanism per target). A first spike showed `Parallel.both`
+cannot host reactors (it is fork-join; a never-returning reactor deadlocks the join), so instead
+of a dedicated long-lived-worker thread primitive the reactors are forked/relaunched processes —
+separate address spaces keep each reactor's scheduler state independent, which purity keeps sound.
+The bullets below describe the design as shipped.
 
-- **Worker-per-core, independent reactors.** Each worker thread runs its own poll loop and handles
-  its own connections. There is no shared connection state and no cross-thread scheduler — this is
+- **Worker-per-core, independent reactors.** Each worker process runs its own poll loop and handles
+  its own connections. There is no shared connection state and no cross-worker scheduler — this is
   the multi-reactor (prefork) shape, not a single acceptor feeding a thread pool.
 - **Accept distribution.** The preferred mechanism is `SO_REUSEPORT`: each worker binds the same
   address independently and the kernel load-balances new connections across them, avoiding a shared
   accept queue and thundering-herd wakeups. A single shared bound descriptor that all workers
-  `accept()` on is the fallback where `SO_REUSEPORT` is unavailable. This is a Linux-first mechanism;
-  the Windows and arm64 equivalents ride on the same cross-target parallelism work that the
-  structured-parallelism runtime already tracks.
+  `accept()` on is the fallback where `SO_REUSEPORT` is unavailable — this is what Windows uses
+  (an inherited listener shared by relaunched worker processes); Linux x64 and arm64 use
+  `SO_REUSEPORT`.
 - **Worker count** defaults to the detected core count (the same cap the parallel runtime uses) and
   is overridable, mirroring the existing `--parallel-workers` / worker-override surface.
 - **Purity is an asset here.** Because there is no mutation, connections are genuinely independent;
@@ -300,7 +302,7 @@ transport is that HTTPS falls out without a second handler model.
 
 ## Work status
 
-### Delivered (2026-07-05, all three targets, tested per target)
+### Delivered (all three targets, tested per target; exceptions noted)
 
 - `Ashes.Net.Tcp.Server`: `listen` / `accept` primitives (non-blocking; `accept` parks on
   `WaitSocketRead`) and the `serve(port)(handler)` combinator.
@@ -357,17 +359,41 @@ transport is that HTTPS falls out without a second handler model.
 - Cross-target parity for all of the above (linux-x64 native, linux-arm64 via qemu, win-x64 via
   wine/WSAPoll) plus a load/latency benchmark against a .NET baseline (`challenges/server/`): with
   the multi-reactor, TCP echo leads the .NET baseline and HTTP roughly doubles it at conc 64.
+- **Run-queue scheduler with fair composites** (2026-07-07): the cooperative runtime is a flat
+  run-queue (park / enqueue / resume with waiter delivery) instead of re-entrant detached stepping,
+  so a detached handler blocked in `Ashes.Async.all` / `race` advances its peers — two connections
+  whose handlers both aggregate sub-tasks now overlap instead of serializing. Async tail-recursive
+  loops (the serve and connection loops) compile to a single looping coroutine with a restart
+  back-edge (no C-stack recursion), which also fixed concurrent-HTTP corruption under load. On Linux
+  every async program runs on the scheduler; on Windows, programs that use socket leaves or
+  `Async.spawn` remain on the legacy driver because the aggregate wait is epoll-based (see
+  Remaining).
+- **Per-iteration arena reset at the async-loop restart back-edge** (2026-07-07): a long-lived loop
+  such as an HTTP keep-alive connection reclaims each request's allocations instead of growing its
+  arena per request. The reset is gated statically (no `Async.spawn` in the loop body) and at
+  runtime (a task-header flag cleared when an `all` / `race` composite ancestor shares the arena).
+  Validated by an RSS regression test (3000 keep-alive requests of a 16 KB body: bounded, versus
+  +68 MB with the reset disabled) and a benchmark rerun showing no throughput cost. This closes the
+  memory-lifetime acceptance criterion (steady-state resident set) for the scheduler targets; the
+  reset compiles to nothing under the legacy driver, so Windows socket/spawn programs do not get it
+  until scheduler parity lands.
 
 ### Remaining
-- Scheduler: a **detached** handler that itself blocks in `Ashes.Async.all` / `race` cannot advance
-  peer handlers, because the cooperative scheduler steps detached tasks re-entrantly under a guard
-  (`__ashes_detached_stepping`) that a nested wait must respect to avoid re-stepping itself. So two
-  connections whose handlers both do `Async.all` serialize rather than overlap. The real fix is a
-  proper run-queue scheduler (park/enqueue/resume) rather than re-entrant stepping — a larger
-  architectural change. Also minor: the leaf wait wakes one event per `epoll_wait` (batching several
-  would cut syscalls further under very high concurrency).
+- **Windows run-queue scheduler parity.** Programs using socket leaves or `Async.spawn` still run
+  on the legacy re-entrant driver on win-x64 because the scheduler's aggregate wait is epoll-based;
+  porting the aggregate wait to WSAPoll would move them onto the run queue. Until then win-x64
+  lacks both the fair `all` / `race` composites and the keep-alive arena reset above. The largest
+  open item.
+- **Graceful shutdown completion:** the Windows console-ctrl handler plus an accept wake-up
+  (Windows terminates on the default disposition today), and draining in-flight connections at
+  shutdown (a multi-worker parent may cut a child mid-request via the death signal / job object).
+  Drain policy and a programmatic stop handle are open questions below.
 - `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
-  today, whether Content-Length- or chunked-framed).
+  today, whether Content-Length- or chunked-framed). Related: request buffering re-parses the
+  accumulated bytes on every read, O(n^2) across reads for large bodies — the 8 MiB early reject
+  caps the common abuse, but streaming should remove the re-parse.
+- Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
+  (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
 
 ---
 
@@ -412,8 +438,11 @@ timeout for in-flight work at shutdown.
 
 ### HTTP semantics scope for v1
 
-Keep-alive versus connection-close, `Transfer-Encoding: chunked` on the server side (the client side
-currently rejects it), request size limits, and header/body accessor surface all need pinning down.
+Largely settled by the delivered work: keep-alive with cross-read buffering, chunked request
+bodies, a request size limit (8 MiB, rejected with 413 on the declared `Content-Length` before
+buffering), and the header/body accessor surface have all shipped. Still open: chunked/streaming
+on the **response** side, whether the size limit is configurable per server, and finer request
+limits (header count / line length) beyond the total-size cap.
 
 ### TLS server surface
 
@@ -429,7 +458,8 @@ choices to pin down.
 One `Net` capability versus separate listen/connect capabilities, and how the capability threads
 through `serve` and the handler.
 
-### Cross-target accept distribution
+### Cross-target accept distribution (resolved)
 
-The `SO_REUSEPORT` equivalent (or shared-accept behavior) on Windows and arm64, and whether v1 ships
-multi-target or Linux-x64 first with the others following the parallelism cross-target work.
+Delivered on all three targets: `SO_REUSEPORT` per-worker binds on Linux (x64 and arm64), and an
+inherited shared listener on Windows (the parent creates one inheritable listener and relaunches
+itself; workers accept on the shared handle). See Work status.
