@@ -2316,6 +2316,14 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, hasSocket, zero, "saw_do_epoll"), socketWaitBlock, timerWaitBlock);
             LlvmApi.PositionBuilderAtEnd(builder, socketWaitBlock);
             LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_epoll_no_timer"), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), minRem, "saw_epoll_timeout");
+            // If graceful shutdown was requested while a handler ran (Stop.stop, or a signal that
+            // arrived between epoll waits), the flag is set but no fd wakes epoll. Cap the wait to 0
+            // so the loop re-steps the parked accept leaf, which then arms the drain (a 50 ms timer
+            // from there on). Without this a single reactor's self-requested stop would block here.
+            LlvmValueHandle shutdownRequested = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "saw_shutdown_flag");
+            timeout = LlvmApi.BuildSelect(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, shutdownRequested, zero, "saw_shutdown_set"),
+                zero, timeout, "saw_epoll_timeout_eff");
             LlvmValueHandle startMs = EmitMonotonicNowMs(state, "saw_wait_start");
             LlvmValueHandle eventArg = LlvmApi.BuildPtrToInt(builder, eventOut, state.I64, "saw_event_arg");
             if (IsLinuxArm64Flavor(state.Flavor))

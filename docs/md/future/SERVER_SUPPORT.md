@@ -378,17 +378,23 @@ transport is that HTTPS falls out without a second handler model.
   the reset is active on all three targets.
 
 ### Remaining (specifications in Decisions below; implement in this order)
-1. **Graceful shutdown completion:** drain with timeout (default 10 s, second signal forces),
-   the Windows console-ctrl handler plus a wake socket in the WSAPoll set, and the multi-worker
-   parent forwarding the signal and waiting instead of cutting children via the death signal.
-2. **Stop capability:** programmatic stop as a one-shot capability sharing the signal-shutdown
-   runtime path (LANGUAGE_SPEC addition first).
+1. **Graceful shutdown completion:** DELIVERED — drain with timeout (default 10 s, second signal
+   forces, `serveWithDrainTimeout`), the Windows console-ctrl handler, and the multi-worker parent
+   forwarding the signal and reaping workers instead of cutting them via the death signal.
+2. **Stop capability:** DELIVERED — `Stop.stop(Unit)` built-in performable capability requests
+   graceful whole-server shutdown through the signal/drain path (a worker signals the parent);
+   `needs {Stop}` visible in handler types (LANGUAGE_SPEC section 20.8). Landed with a prerequisite
+   fix: capability rows now thread through higher-order library combinators and recursive helpers
+   (previously a recursive helper's self-type had a closed `{}` row, which rejected passing any
+   capability-performing function to `serve`, `List.map`, etc. — this also un-blocks a handler that
+   dials out with `NetConnect`).
 3. **`NetListen` / `NetConnect` capabilities**: DELIVERED — built-in marker capabilities on the
    endpoint-creating operations (LANGUAGE_SPEC section 20.8); closed rows reject undeclared
    endpoint creation (ASH018), the runtime is their implicit provider at top level.
 4. **HTTP streaming bodies:** incremental chunked-request decode is DELIVERED (each read decodes
    only the undecoded tail; the 8 MiB cap applies mid-stream). Next: response streaming
-   (`Transfer-Encoding: chunked` from a pull-based producer), then the request-side body reader.
+   (`Transfer-Encoding: chunked` from a pull-based producer, which needs function-typed ADT fields
+   first), then the request-side body reader (after the affine-ownership work).
 5. Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
    (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
 

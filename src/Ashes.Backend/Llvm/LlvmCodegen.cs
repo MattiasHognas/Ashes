@@ -41,6 +41,8 @@ internal static partial class LlvmCodegen
     private const long SyscallPipe2 = 293;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
+    private const long SyscallGetpid = 39;
+    private const long SyscallGetppid = 110;
     private const long SyscallClone = 56;
     private const long SyscallFutex = 202;
     private const long SyscallArchPrctl = 158;
@@ -91,6 +93,8 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallRead = 63;
     private const long Arm64SyscallWrite = 64;
     private const long Arm64SyscallExit = 93;
+    private const long Arm64SyscallGetpid = 172;
+    private const long Arm64SyscallGetppid = 173;
     private const long Arm64SyscallSocket = 198;
     private const long Arm64SyscallConnect = 203;
     private const long Arm64SyscallBind = 200;
@@ -1558,6 +1562,9 @@ internal static partial class LlvmCodegen
             // Synchronous setter: store the drain bound (ms) for this process; yields unit.
             IrInst.SetDrainTimeout setDrainTimeout => StoreTemp(state, setDrainTimeout.Target,
                 EmitSetDrainTimeout(state, LoadTemp(state, setDrainTimeout.MsTemp))),
+            // Stop.stop: request graceful whole-server shutdown; yields unit.
+            IrInst.RequestServerStop requestServerStop => StoreTemp(state, requestServerStop.Target,
+                EmitRequestServerStop(state)),
             IrInst.CreateTcpAcceptTask tcpAcceptTask => StoreTemp(state, tcpAcceptTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpAccept, LoadTemp(state, tcpAcceptTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_accept_task")),
             IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,
@@ -2145,6 +2152,8 @@ internal static partial class LlvmCodegen
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,
+            SyscallGetpid => Arm64SyscallGetpid,
+            SyscallGetppid => Arm64SyscallGetppid,
             SyscallFutex => Arm64SyscallFutex,
             SyscallDup2 => Arm64SyscallDup3,
             SyscallFork => Arm64SyscallClone,

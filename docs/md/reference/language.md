@@ -2525,9 +2525,9 @@ its fully-implicit twin must produce the same inferred types and the same output
 (`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
 production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
-## 20.8 Built-in Network Capabilities (`NetListen`, `NetConnect`)
+## 20.8 Built-in Capabilities (`NetListen`, `NetConnect`, `Stop`)
 
-Two capabilities are built into the compiler and require no declaration:
+Three capabilities are built into the compiler and require no declaration:
 
 - **`NetListen`** — creating a listening endpoint. Carried by `Ashes.Net.Tcp.Server.listen` and
   `forkWorkers`, and therefore (by row inference) by every `serve` combinator
@@ -2535,11 +2535,13 @@ Two capabilities are built into the compiler and require no declaration:
   `Ashes.Http.Server.serve` / `serveParallel`, `Ashes.Net.Tls.Server.serveTls`).
 - **`NetConnect`** — dialing out. Carried by `Ashes.Net.Tcp.connect`, `Ashes.Http.get` / `post`,
   and `Ashes.Net.Tls.connect`.
+- **`Stop`** — requesting graceful shutdown of the running server. Unlike the two network
+  capabilities it is **performable**: it has one operation, `Stop.stop : Unit -> Unit`.
 
-They are **marker capabilities**: they declare no operations, so there is nothing to `perform`
-and nothing a `handle` arm can intercept — the runtime itself is their implicit provider, and
-they are excluded from the top-level unsatisfied-capability check (`ASH017`). Their value is
-purely in typing:
+`NetListen` and `NetConnect` are **marker capabilities**: they declare no operations, so there is
+nothing to `perform` and nothing a `handle` arm can intercept — the runtime itself is their
+implicit provider, and they are excluded from the top-level unsatisfied-capability check
+(`ASH017`). Their value is purely in typing:
 
 - Every function that (transitively) creates a network endpoint carries the capability in its
   inferred row, so "this program is a server" (or "dials out") is visible in its type.
@@ -2548,10 +2550,27 @@ purely in typing:
 - They can be named in `needs` rows like declared capabilities:
   `let opener : Int -> Task(Str, Socket) needs {NetListen} = given (p) -> tcp.listen(p)`.
 
+`Stop.stop(Unit)` requests graceful shutdown from inside the program (an admin route, a health
+check, a test): the server stops accepting, drains in-flight handlers, and completes its lifecycle
+result with `Ok(())` — the same path as the first `SIGINT`/`SIGTERM`. On a multi-reactor server a
+worker's `Stop.stop` shuts down the whole server (it signals the parent, which forwards to every
+worker). It is idempotent (further calls are no-ops). Like the markers it is discharged by the
+runtime (excluded from `ASH017`) and cannot be user-handled, but because it is performed inside
+handler code its `needs {Stop}` row propagates through `serve` and is visible in the handler's
+type, so stop authority is trackable:
+`let handle : Request -> Task(E, Response) needs {Stop} = ...`.
+
 Operations on an **established** connection — `send`, `receive`, `close`, `accept` on an accepted
 or connected socket — carry no capability: possession of the connection resource is the
-authority; the capabilities govern creating endpoints, not using them. The capability names are
-reserved: a user `capability NetListen = ...` declaration is a compile-time error.
+authority; the capabilities govern creating endpoints, not using them. All three names are
+reserved: a user `capability NetListen = ...` (or `NetConnect`, `Stop`) declaration is a
+compile-time error.
+
+Because a handler's `needs {Stop}` (or `{NetConnect}`, for a handler that dials out) must thread
+through `serve`, capability rows propagate correctly through higher-order library combinators and
+recursive helpers: a recursive function that performs a capability — or that applies an effectful
+parameter, as `Ashes.List.map` applies its mapping function — carries an open latent row, so
+passing a capability-performing function to it is accepted.
 
 ## 20.9 Design Notes
 

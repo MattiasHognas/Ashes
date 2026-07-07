@@ -623,6 +623,11 @@ public abstract record IrInst
     /// <summary>Sets the graceful-shutdown drain bound (ms) for this process; yields unit.</summary>
     public sealed record SetDrainTimeout(int Target, int MsTemp) : IrInst;
 
+    /// <summary>Requests graceful whole-server shutdown (Stop.stop): rides the signal path on
+    /// Linux (worker signals the parent, which forwards); sets the shutdown flag on Windows.
+    /// No source temps; side-effectful. Yields unit.</summary>
+    public sealed record RequestServerStop(int Target) : IrInst;
+
     /// <summary>
     /// Creates a leaf networking task for TCP accept (accept one connection from a listener).
     /// The task is completed by the runtime/task runner rather than a coroutine body.

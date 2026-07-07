@@ -42,6 +42,14 @@ public sealed partial class Lowering
     private const string NetListenCapabilityName = "NetListen";
     private const string NetConnectCapabilityName = "NetConnect";
 
+    // Stop is the third built-in capability, and unlike the markers it is performable: it has one
+    // operation, `Stop.stop(Unit)`, which requests graceful shutdown of the whole server through
+    // the same path as the first SIGINT/SIGTERM (stop accepting, drain, lifecycle Ok(())). The
+    // call is intercepted before handler/evidence dispatch — the runtime is the only provider, a
+    // user handler cannot intercept it, and the operation must be called directly (it is not a
+    // first-class operation value in v1).
+    private const string StopCapabilityName = "Stop";
+
     // Deliberately NOT in _capabilitySymbols: CapabilityGlobalCount (evidence globals, the
     // live-posts guards around arena resets) keys off that dictionary, and marker capabilities
     // have no operations, handlers, or evidence — they exist purely in rows.
@@ -65,7 +73,27 @@ public sealed partial class Lowering
 
     private static bool IsBuiltinNetworkCapability(string name) =>
         string.Equals(name, NetListenCapabilityName, StringComparison.Ordinal)
-        || string.Equals(name, NetConnectCapabilityName, StringComparison.Ordinal);
+        || string.Equals(name, NetConnectCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, StopCapabilityName, StringComparison.Ordinal);
+
+    private (int, TypeRef) LowerBuiltinStopCall(List<Expr> args, TextSpan span)
+    {
+        if (args.Count != 1)
+        {
+            ReportDiagnostic(span, "Stop.stop expects exactly one Unit argument.", UnknownCapabilityCode);
+        }
+
+        foreach (var arg in args)
+        {
+            var (_, argType) = LowerExpr(arg);
+            Unify(argType, _resolvedTypes["Unit"]);
+        }
+
+        RequireBuiltinCapability(StopCapabilityName, span);
+        int target = NewTemp();
+        Emit(new IrInst.RequestServerStop(target));
+        return (target, _resolvedTypes["Unit"]);
+    }
 
     /// <summary>Requires a built-in marker capability in the ambient row at an intrinsic call site.</summary>
     private void RequireBuiltinCapability(string name, TextSpan span)
@@ -725,6 +753,14 @@ public sealed partial class Lowering
         // `perform` is an optional no-op marker; it must wrap a capability operation call.
         var collectedArgs = new List<Expr>();
         var rootExpr = CollectCallArgs(perform.Operation, collectedArgs);
+        if (rootExpr is Expr.QualifiedVar stopQv
+            && string.Equals(stopQv.Module, StopCapabilityName, StringComparison.Ordinal)
+            && string.Equals(stopQv.Name, "stop", StringComparison.Ordinal)
+            && collectedArgs.Count > 0)
+        {
+            return LowerBuiltinStopCall(collectedArgs, GetSpan(stopQv));
+        }
+
         if (rootExpr is Expr.QualifiedVar qv
             && _capabilitySymbols.TryGetValue(qv.Module, out var effectSym)
             && collectedArgs.Count > 0)
