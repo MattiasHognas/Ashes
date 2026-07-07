@@ -440,8 +440,6 @@ public sealed class Lexer
             "provide" => TokenKind.Provide,
             "perform" => TokenKind.Perform,
             "handle" => TokenKind.Handle,
-            "effect" => TokenKind.RenamedEffect,
-            "uses" => TokenKind.RenamedUses,
             _ => TokenKind.Ident
         };
     }

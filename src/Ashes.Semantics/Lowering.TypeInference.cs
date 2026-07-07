@@ -31,9 +31,9 @@ public sealed partial class Lowering
 
                 break;
             case TypeRef.TRow row:
-                foreach (var effect in row.Capabilities)
+                foreach (var capability in row.Capabilities)
                 {
-                    FtvType(effect, result);
+                    FtvType(capability, result);
                 }
 
                 if (row.Tail is not null)
@@ -42,8 +42,8 @@ public sealed partial class Lowering
                 }
 
                 break;
-            case TypeRef.TCapability effect:
-                foreach (var arg in effect.Args)
+            case TypeRef.TCapability capability:
+                foreach (var arg in capability.Args)
                 {
                     FtvType(arg, result);
                 }
@@ -74,8 +74,8 @@ public sealed partial class Lowering
     // Collect the IDs of all free (non-quantified) type variables across all bindings in the current scope.
     private void FtvEnv(HashSet<int> result)
     {
-        // The ambient effect row is part of the environment: a row variable unified with it must
-        // stay monomorphic (generalizing it would detach the binding from the effects its context
+        // The ambient capability row is part of the environment: a row variable unified with it must
+        // stay monomorphic (generalizing it would detach the binding from the capabilities its context
         // actually performs — the row analog of the value restriction).
         if (_ambientRow is not null)
         {
@@ -205,7 +205,7 @@ public sealed partial class Lowering
             TypeRef.TRow row => new TypeRef.TRow(
                 row.Capabilities.Select(e => (TypeRef.TCapability)ApplyInstSubst(e, subst)).ToList(),
                 row.Tail is null ? null : ApplyInstSubst(row.Tail, subst)),
-            TypeRef.TCapability effect => new TypeRef.TCapability(effect.Symbol, effect.Args.Select(a => ApplyInstSubst(a, subst)).ToList()),
+            TypeRef.TCapability capability => new TypeRef.TCapability(capability.Symbol, capability.Args.Select(a => ApplyInstSubst(a, subst)).ToList()),
             TypeRef.TPtr p => new TypeRef.TPtr(ApplyInstSubst(p.Pointee, subst)),
             TypeRef.TList l => new TypeRef.TList(ApplyInstSubst(l.Element, subst)),
             TypeRef.TTuple tuple => new TypeRef.TTuple(tuple.Elements.Select(e => ApplyInstSubst(e, subst)).ToList()),
@@ -351,7 +351,7 @@ public sealed partial class Lowering
             TypeRef.TVar v => v.Id == id,
             TypeRef.TFun f => Occurs(id, f.Arg) || Occurs(id, f.Ret) || (f.Row is not null && Occurs(id, f.Row)),
             TypeRef.TRow row => row.Capabilities.Any(e => Occurs(id, e)) || (row.Tail is not null && Occurs(id, row.Tail)),
-            TypeRef.TCapability effect => effect.Args.Any(arg => Occurs(id, arg)),
+            TypeRef.TCapability capability => capability.Args.Any(arg => Occurs(id, arg)),
             TypeRef.TPtr p => Occurs(id, p.Pointee),
             TypeRef.TList l => Occurs(id, l.Element),
             TypeRef.TTuple tuple => tuple.Elements.Any(e => Occurs(id, e)),
@@ -395,7 +395,7 @@ public sealed partial class Lowering
                 precArrow
             ),
             TypeRef.TRow row => (PrettyRow(row, typeVarNames), precAtom),
-            TypeRef.TCapability effect => (PrettyEffect(effect), precAtom),
+            TypeRef.TCapability capability => (PrettyCapability(capability), precAtom),
             TypeRef.TPtr p => ($"*{Pretty(p.Pointee, typeVarNames, parentPrecedence: precAtom)}", precAtom),
             TypeRef.TNamedType n => n.TypeArgs.Count == 0
                 ? (n.Symbol.Name, precAtom)
@@ -409,7 +409,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Renders an arrow's effect-row suffix. Rows with no concrete effect (pure, or a bare row
+    /// Renders an arrow's capability-row suffix. Rows with no concrete capability (pure, or a bare row
     /// variable) render as nothing, keeping ordinary function types unchanged in diagnostics.
     /// </summary>
     private string PrettyRowSuffix(TypeRef? row, Dictionary<int, string> typeVarNames)
@@ -419,21 +419,21 @@ public sealed partial class Lowering
             return "";
         }
 
-        var (effects, tail) = NormalizeRow(row);
-        if (effects.Count == 0)
+        var (capabilities, tail) = NormalizeRow(row);
+        if (capabilities.Count == 0)
         {
             return "";
         }
 
-        return " " + PrettyRow(new TypeRef.TRow(effects, tail), typeVarNames, includeUsesKeyword: true);
+        return " " + PrettyRow(new TypeRef.TRow(capabilities, tail), typeVarNames, includeUsesKeyword: true);
     }
 
     private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeUsesKeyword = false)
     {
-        var (effects, tail) = NormalizeRow(row);
+        var (capabilities, tail) = NormalizeRow(row);
         var items = string.Join(
             ", ",
-            effects
+            capabilities
                 .Select(e => e.Args.Count == 0
                     ? e.Symbol.Name
                     : $"{e.Symbol.Name}({string.Join(", ", e.Args.Select(a => Pretty(a, typeVarNames, parentPrecedence: 0)))})")

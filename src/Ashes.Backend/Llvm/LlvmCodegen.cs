@@ -595,14 +595,14 @@ internal static partial class LlvmCodegen
                 }
             }
         }
-        // Dynamically-scoped handler-evidence slots: one module global per declared effect, holding
+        // Dynamically-scoped handler-evidence slots: one module global per declared capability, holding
         // the innermost installed handler frame pointer (0 = none). Plain globals on every flavor —
-        // effects interacting with structured parallelism is out of scope for the current stage.
-        for (int effectIndex = 0; effectIndex < program.CapabilityHandlerGlobals; effectIndex++)
+        // capabilities interacting with structured parallelism is out of scope for the current stage.
+        for (int capabilityIndex = 0; capabilityIndex < program.CapabilityHandlerGlobals; capabilityIndex++)
         {
-            LlvmValueHandle effectGlobal = LlvmApi.AddGlobal(target.Module, i64, $"__ashes_capability_handler_{effectIndex}");
-            LlvmApi.SetLinkage(effectGlobal, LlvmLinkage.Internal);
-            LlvmApi.SetInitializer(effectGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            LlvmValueHandle capabilityGlobal = LlvmApi.AddGlobal(target.Module, i64, $"__ashes_capability_handler_{capabilityIndex}");
+            LlvmApi.SetLinkage(capabilityGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(capabilityGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
 
         if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
@@ -1639,11 +1639,11 @@ internal static partial class LlvmCodegen
             // The actual save/restore is done by StoreMemOffset/LoadMemOffset around them.
             IrInst.Suspend => false,
             IrInst.Resume => false,
-            // Effects: dynamically-scoped handler evidence in per-effect module globals.
-            IrInst.LoadCapabilityHandler loadEffectHandler => StoreTemp(state, loadEffectHandler.Target,
-                LlvmApi.BuildLoad2(builder, state.I64, GetEffectHandlerGlobal(state, loadEffectHandler.EffectIndex), $"load_effect_{loadEffectHandler.EffectIndex}")),
-            IrInst.StoreCapabilityHandler storeEffectHandler =>
-                StoreEffectHandlerGlobal(state, storeEffectHandler.EffectIndex, LoadTemp(state, storeEffectHandler.Source)),
+            // Capabilities: dynamically-scoped handler evidence in per-capability module globals.
+            IrInst.LoadCapabilityHandler loadCapabilityHandler => StoreTemp(state, loadCapabilityHandler.Target,
+                LlvmApi.BuildLoad2(builder, state.I64, GetCapabilityHandlerGlobal(state, loadCapabilityHandler.CapabilityIndex), $"load_capability_{loadCapabilityHandler.CapabilityIndex}")),
+            IrInst.StoreCapabilityHandler storeCapabilityHandler =>
+                StoreCapabilityHandlerGlobal(state, storeCapabilityHandler.CapabilityIndex, LoadTemp(state, storeCapabilityHandler.Source)),
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
@@ -1735,14 +1735,14 @@ internal static partial class LlvmCodegen
         };
     }
 
-    private static LlvmValueHandle GetEffectHandlerGlobal(LlvmCodegenState state, int effectIndex)
+    private static LlvmValueHandle GetCapabilityHandlerGlobal(LlvmCodegenState state, int capabilityIndex)
     {
-        return LlvmApi.GetNamedGlobal(state.Target.Module, $"__ashes_capability_handler_{effectIndex}");
+        return LlvmApi.GetNamedGlobal(state.Target.Module, $"__ashes_capability_handler_{capabilityIndex}");
     }
 
-    private static bool StoreEffectHandlerGlobal(LlvmCodegenState state, int effectIndex, LlvmValueHandle value)
+    private static bool StoreCapabilityHandlerGlobal(LlvmCodegenState state, int capabilityIndex, LlvmValueHandle value)
     {
-        LlvmApi.BuildStore(state.Target.Builder, value, GetEffectHandlerGlobal(state, effectIndex));
+        LlvmApi.BuildStore(state.Target.Builder, value, GetCapabilityHandlerGlobal(state, capabilityIndex));
         return false;
     }
 

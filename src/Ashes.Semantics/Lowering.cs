@@ -489,7 +489,7 @@ public sealed partial class Lowering
 
     public IrProgram Lower(Program program)
     {
-        // Type, external, and effect declarations are registered upfront; their relative order among
+        // Type, external, and capability declarations are registered upfront; their relative order among
         // value bindings does not affect visibility under Model-A scoping.
         RegisterTypeDeclarations(program.TypeDecls);
         RegisterExternalDeclarations(program.ExternalDecls);
@@ -659,9 +659,9 @@ public sealed partial class Lowering
         ResolveDeferredAdds();
         ResolveDeferredEqs();
 
-        // Any concrete effect left in the entry expression's row after inference has no handler
+        // Any concrete capability left in the entry expression's row after inference has no handler
         // discharging it — a compile-time error, not a runtime failure.
-        CheckUnhandledEffects();
+        CheckUnhandledCapabilities();
 
         // After ResolveDeferredAdds, an unresolved '+' operand var has been defaulted to Int, so the
         // reported result type (e.g. the REPL's `add : Int -> Int -> Int`) is concrete.
@@ -691,7 +691,7 @@ public sealed partial class Lowering
             UsesAsync: _usesAsync
         )
         {
-            // Per-effect evidence slots plus the pending-post register and the live-posts counter.
+            // Per-capability evidence slots plus the pending-post register and the live-posts counter.
             CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
         };
     }
@@ -858,7 +858,7 @@ public sealed partial class Lowering
             Expr.RecordUpdate ru => LowerRecordUpdate(ru),
             Expr.Perform perform => LowerPerform(perform),
             Expr.Handle handle => LowerHandle(handle),
-            CapabilityPostExpr effectPost => LowerEffectPost(effectPost),
+            CapabilityPostExpr capabilityPost => LowerCapabilityPost(capabilityPost),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
 
@@ -1346,7 +1346,7 @@ public sealed partial class Lowering
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
         var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
         // The self-type's arrow must carry an OPEN row variable, not a null (pure) row: a recursive
-        // helper that performs a capability — or captures an effectful parameter it applies, as
+        // helper that performs a capability — or captures a capability-performing parameter it applies, as
         // `List.map`'s `mapGo` applies `f` — has an open latent row, and unifying the real open row
         // against a null one would force it closed (`{}`), which then rejects passing any
         // capability-performing function to that helper (or to a combinator like `serve` built on
@@ -1621,10 +1621,10 @@ public sealed partial class Lowering
     {
         _usesClosures = true;
 
-        // Create type variables for param, return, and the arrow's effect row. The row variable
-        // becomes the body's ambient row: every operation performed and effectful call made while
-        // lowering the body inserts its effects there, so the arrow ends up carrying exactly the
-        // effects the body performs (open, generalized at the enclosing let).
+        // Create type variables for param, return, and the arrow's capability row. The row variable
+        // becomes the body's ambient row: every operation performed and capability-performing call made while
+        // lowering the body inserts its capabilities there, so the arrow ends up carrying exactly the
+        // capabilities the body performs (open, generalized at the enclosing let).
         var paramTy = NewTypeVar();
         var retTy = NewTypeVar();
         var rowTy = NewTypeVar();
@@ -2350,7 +2350,7 @@ public sealed partial class Lowering
             return LowerConstructorApplication(ctorSym, collectedArgs);
         }
 
-        // Effect operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
+        // Capability operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
         if (rootExpr is Expr.QualifiedVar stopQv
             && string.Equals(stopQv.Module, "Stop", StringComparison.Ordinal)
             && string.Equals(stopQv.Name, "stop", StringComparison.Ordinal)
@@ -2359,9 +2359,9 @@ public sealed partial class Lowering
             return LowerBuiltinStopCall(collectedArgs, GetSpan(stopQv));
         }
 
-        if (rootExpr is Expr.QualifiedVar effectQv && _capabilitySymbols.TryGetValue(effectQv.Module, out var effectSym))
+        if (rootExpr is Expr.QualifiedVar capabilityQv && _capabilitySymbols.TryGetValue(capabilityQv.Module, out var capabilitySym))
         {
-            return LowerCapabilityOperationCall(effectSym, effectQv, collectedArgs);
+            return LowerCapabilityOperationCall(capabilitySym, capabilityQv, collectedArgs);
         }
 
         // Call to a generic function compiled to dictionary-passing form: supply its leading operation
@@ -2563,7 +2563,7 @@ public sealed partial class Lowering
                 if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
                 {
                     // All copy types and/or in-place-reused accumulators: plain reset. Skipped
-                    // while a one-shot effect post pushed this iteration is still pending — the
+                    // while a one-shot capability post pushed this iteration is still pending — the
                     // post (and its captures) lives in the iteration's allocations.
                     var tcoResetSkipLabel = BeginLivePostsGuard();
                     Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
@@ -2602,7 +2602,7 @@ public sealed partial class Lowering
                         // The destination block [W, …) lies entirely below every up-copy
                         // source (which sits above the pre-reset cursor), so these copies
                         // are also disjoint and order-independent.
-                        // Skipped entirely while a one-shot effect post pushed this iteration is
+                        // Skipped entirely while a one-shot capability post pushed this iteration is
                         // still pending: the param slots already hold the (unrelocated) new
                         // values, and nothing is reclaimed, so they stay valid.
                         var tcoCopySkipLabel = BeginLivePostsGuard();
@@ -2991,7 +2991,7 @@ public sealed partial class Lowering
                 // Callee type is an unresolved type variable: constrain it to a function type
                 // so that the occurs check can fire if the argument is the same variable. The
                 // constructed arrow shares the caller's ambient row, so a higher-order parameter
-                // applied here (`given f -> given x -> f(x)`) carries its effects to the caller.
+                // applied here (`given f -> given x -> f(x)`) carries its capabilities to the caller.
                 Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = AmbientRow });
                 currentType = Prune(currentType);
             }
@@ -3010,7 +3010,7 @@ public sealed partial class Lowering
                 Unify(funType.Arg, argType);
             }
 
-            // The applied arrow's effects happen here: record them in the ambient row.
+            // The applied arrow's capabilities happen here: record them in the ambient row.
             using (PushDiagnosticSpan(GetSpan(call)))
             {
                 SubsumeCalleeRow(funType.Row, GetSpan(call));
@@ -3052,7 +3052,7 @@ public sealed partial class Lowering
             var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
             if (callCopyOutKind != CopyOutKind.None)
             {
-                // With effects in the program the copy-out is conditional on no post being
+                // With capabilities in the program the copy-out is conditional on no post being
                 // pending, so the result is routed through a local slot that the skipped path
                 // leaves holding the original pointer.
                 int callGuardResultSlot = -1;
@@ -3731,9 +3731,9 @@ public sealed partial class Lowering
                 case Expr.Perform perform:
                     Visit(perform.Operation, bnd);
                     return;
-                case CapabilityPostExpr effectPost:
-                    Visit(effectPost.Value, bnd);
-                    Visit(effectPost.PostLambda, bnd);
+                case CapabilityPostExpr capabilityPost:
+                    Visit(capabilityPost.Value, bnd);
+                    Visit(capabilityPost.PostLambda, bnd);
                     return;
                 case Expr.Handle handleExpr:
                     Visit(handleExpr.Body, bnd);

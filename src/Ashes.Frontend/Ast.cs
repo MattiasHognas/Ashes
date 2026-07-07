@@ -75,7 +75,7 @@ public abstract record Expr
     public sealed record RecordUpdate(Expr Target, IReadOnlyList<(string Name, Expr Value)> Updates) : Expr;
 
     /// <summary>
-    /// Explicit effect-operation marker: <c>perform Clock.now(x)</c>. The keyword is optional and
+    /// Explicit capability-operation marker: <c>perform Clock.now(x)</c>. The keyword is optional and
     /// changes nothing about the program — <see cref="Operation"/> is the operation call itself
     /// (typically a <see cref="Call"/> rooted at a <see cref="QualifiedVar"/>); the node exists so
     /// the formatter can preserve the written form.
@@ -83,7 +83,7 @@ public abstract record Expr
     public sealed record Perform(Expr Operation) : Expr;
 
     /// <summary>
-    /// Handler installation: <c>handle body with | Effect.op(args) -> arm | return(r) -> arm</c>.
+    /// Handler installation: <c>handle body with | Capability.op(args) -> arm | return(r) -> arm</c>.
     /// </summary>
     public sealed record Handle(Expr Body, IReadOnlyList<HandlerArm> Arms) : Expr;
 }
@@ -139,12 +139,12 @@ public sealed record ProvideBinding(string OperationName, Expr Implementation);
 /// </summary>
 public sealed record ProvideDecl(string CapabilityName, IReadOnlyList<TypeExpr> TypeArgs, IReadOnlyList<ProvideBinding> Bindings);
 
-/// <summary>A single effect reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
+/// <summary>A single capability reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
 public sealed record CapabilityRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
 
 /// <summary>
 /// A written <c>uses</c> row: <c>uses {A, B}</c> (closed), <c>uses {A, B | e}</c> (open), or
-/// <c>uses e</c> (open, no required effects). The row is closed exactly when <see cref="TailVar"/>
+/// <c>uses e</c> (open, no required capabilities). The row is closed exactly when <see cref="TailVar"/>
 /// is null.
 /// </summary>
 public sealed record NeedsRowSyntax(IReadOnlyList<CapabilityRefSyntax> Capabilities, string? TailVar);
@@ -162,7 +162,7 @@ public abstract record TypeExpr
     public sealed record Named(string Name) : TypeExpr;
     /// <summary>A parameterised type application: <c>List(Int)</c>, <c>Result(Str, Int)</c>.</summary>
     public sealed record Applied(string Name, IReadOnlyList<TypeExpr> Args) : TypeExpr;
-    /// <summary>A function type: <c>Int -> Str</c>, optionally carrying an effect row: <c>Str -> Int uses {Prices}</c>.</summary>
+    /// <summary>A function type: <c>Int -> Str</c>, optionally carrying a capability row: <c>Str -> Int uses {Prices}</c>.</summary>
     public sealed record Arrow(TypeExpr From, TypeExpr To) : TypeExpr
     {
         /// <summary>The written <c>uses</c> row, or null when the arrow carries none (pure).</summary>
@@ -213,7 +213,7 @@ public abstract record TopLevelItem
     /// <summary>A top-level <c>external</c> declaration.</summary>
     public sealed record External(ExternalDecl Decl) : TopLevelItem;
 
-    /// <summary>A top-level <c>effect</c> declaration.</summary>
+    /// <summary>A top-level <c>capability</c> declaration.</summary>
     public sealed record Capability(CapabilityDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level <c>provide</c> declaration (static capability satisfaction).</summary>

@@ -783,7 +783,7 @@ The capability surface and typing rules are specified in
 Typing threads an **ambient capability row** through lowering. Each lambda's arrow carries a row
 variable that becomes the body's ambient row; operation calls insert their capability into it. At an
 application, an *open* (inferred) callee row unifies with the caller's ambient row, while a
-written *closed* row only subsumes into it — calling a `uses {Prices}` function from a
+written *closed* row only subsumes into it — calling a `needs {Prices}` function from a
 `{Prices, Clock}` context is fine. A `handle` lowers its body under `{handled capabilities | t}` with
 `t` unified into the enclosing row, which is what makes handlers transparent to capabilities they do
 not list. Rows generalize with let-polymorphism; the ambient row's variables count as part of the
