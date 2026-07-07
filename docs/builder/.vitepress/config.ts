@@ -172,7 +172,6 @@ export default defineConfig({
         collapsed: true,
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
-          page("Package Manager", "/future/PACKAGE_MANAGER"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
         ],
       },

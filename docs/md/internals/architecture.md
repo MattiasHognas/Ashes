@@ -110,6 +110,67 @@ already-compiled binaries and their debug information.
 
 ---
 
+## Package manager
+
+Ashes has **no separate compilation and no binary artifacts**: `ProjectSupport.BuildCompilationPlan`
+resolves imports across directories and stitches every module into one source string that is
+type-inferred, monomorphized, and lowered as a unit. Three consequences shape the whole package model:
+
+- **A package is a source tree** — nothing to build or version by ABI. The global cache is
+  content-addressed *source*; "installing" a cached package makes its roots visible to resolution rather
+  than compiling it (so a cached `ashes add` is instant).
+- **One version per package per build** — two versions would stitch into the same namespace and collide,
+  so a version conflict is an error, not duplicate-and-isolate. This removes npm-style diamond
+  duplication by construction.
+- **The compiler is never the solver** — resolution happens in the CLI at `restore` time and produces a
+  deterministic set of source roots that the compiler, LSP, and test runner all consume through
+  `LoadProject`. `ResolveImport` never learns about registries, versions, or archives.
+
+Dependencies are declared in `ashes.json` (see the projects guide) and imported under a namespace (the
+`namespace` field, else the PascalCase of the package name). A **path** dependency resolves live from
+disk; a **registry** dependency resolves through the registry into the lock and cache. Both are
+transitive — a dependency's own dependencies are pulled, diamond-deduplicated, and a cycle is `ASH035` —
+and the namespace discipline (`ASH028` / `ASH029`) is enforced across the whole resolved set.
+
+**Resolution** is the Cargo model: SemVer constraints, the highest version satisfying all constraints
+across the transitive graph, unified to one version per package, pinned in `ashes.lock`. A first resolve
+pins the newest compatible version; later publishes do not change the build until an explicit update. An
+empty intersection is a typed conflict (`ASH032`). The single-version world makes this simpler than
+npm/Cargo (no multi-version isolation to attempt); unlike Go's MVS it selects newest-compatible rather
+than lowest.
+
+**Lock file** (`ashes.lock`) — a generated, committed file holding the resolved graph so every front end
+consumes an identical root set. `restore` writes it; `build` / `run` / `test` read it (auto-restoring a
+missing or stale lock); `restore --frozen` fails if resolution would change it, and `--offline` trusts it
+and only verifies the cache. Each entry records the package's namespace, version, source
+(`registry+<url>` or `git+<url>`), and `ash1:` hash.
+
+**Cache** — content-addressed source under `$XDG_CACHE_HOME/ashes` (`cache/pkg/<ns>/<version>/<hash>/…`),
+shared across projects, deduplicated, and safe under concurrent CI. The compiler and the CLI compute cache
+paths the same way (`ProjectSupport.CachePathFor`), so the compiler reads exactly what `restore` wrote;
+cached content is verified against the lock's hash (`ASH034`) before use.
+
+### The `ash1:` content hash
+
+The integrity value is a hash of the **source tree**, not of any archive, so it is identical however the
+source was fetched. Over the set of packaged files:
+
+1. Each file is a `(path, bytes)` pair, `path` package-root-relative with `/` separators (no leading
+   `./`, no backslashes).
+2. Emit the line `"<sha256-hex-of-bytes>  <path>\n"` (two spaces, LF) per file.
+3. Sort the lines by `path` (ordinal).
+4. Concatenate, SHA-256 the result, hex-encode it lowercase, and prefix `ash1:`.
+
+Directory entries, symlinks, and file modes are excluded — only paths and contents contribute. The
+registry recomputes this at publish and rejects a mismatch against the client's declared value; the client
+re-verifies every download and cache read. The CLI (`SourceHasher`) and server (`ContentHash`) implement
+it independently, locked to agreement by a pinned test vector.
+
+The command surface (`add` / `remove` / `restore` / `tree` / `why`, and the registry verbs) is in the CLI
+reference; the manifest shape and namespace discipline are in the projects guide.
+
+---
+
 ## Package registry
 
 `Ashes.Registry` is the reference package registry: a standalone ASP.NET Core (.NET 10) minimal-API server
