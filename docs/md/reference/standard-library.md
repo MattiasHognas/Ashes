@@ -190,6 +190,11 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
 - `setDrainTimeout(ms)` returning `Unit` — sets the drain bound for this process (the primitive
   under `serveWithDrainTimeout`; call before `serve` so forked workers inherit it).
 
+Programmatic shutdown is the built-in `Stop.stop(Unit)` capability operation (not a
+`Ashes.Net.Tcp.Server` function): performing it from inside a handler requests graceful shutdown
+of the whole server through the same drain path as a signal, and the server's `serve` lifecycle
+completes with `Ok(())`. See the language reference, section 20.8.
+
 `serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
 binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
 and each worker serves its connections concurrently on its own thread (cooperative scheduling via

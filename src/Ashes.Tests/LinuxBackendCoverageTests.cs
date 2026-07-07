@@ -1341,6 +1341,73 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_stop_capability_should_stop_the_server()
+    {
+        // Programmatic stop: a handler performs Stop.stop(Unit) after replying; the server stops
+        // accepting, drains, and returns Ok(()) so the program prints its clean-stop message and
+        // exits 0 — the capability's requirement threads out of the handler through serve (the
+        // recursive-helper row fix), and Stop.stop rides the signal/drain path.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onConn client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)("bye: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) ->
+                                let _s = Stop.stop(Unit)
+                                in await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+                | Ok(_u) -> Ashes.IO.print("stopped-by-request")
+                | Error(e) -> Ashes.IO.print("err: " + e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_stop_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // One client connects and sends; the handler replies, then requests stop.
+            var reply = await ConnectSendReceiveWithRetryAsync(port, "now").ConfigureAwait(false);
+            reply.ShouldBe("bye: now");
+
+            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
+            exited.ShouldBeTrue();
+            proc.ExitCode.ShouldBe(0);
+            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-by-request");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_shutdown_should_drain_inflight_handlers()
     {
         // Drain-with-timeout: SIGTERM while a handler is mid-request stops accepting but lets the

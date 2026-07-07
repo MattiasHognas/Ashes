@@ -917,6 +917,7 @@ internal static partial class LlvmCodegen
             // A child inherits the pids of earlier siblings recorded by the parent's copy of the
             // count; it has no children of its own to forward to or reap, so zero it.
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), ChildCountGlobal(state));
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
             LlvmApi.BuildStore(builder, i, idxSlot);
             LlvmApi.BuildBr(builder, doneBlock);
 
@@ -957,6 +958,45 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitSetDrainTimeout(LlvmCodegenState state, LlvmValueHandle ms)
     {
         LlvmApi.BuildStore(state.Target.Builder, ms, DrainTimeoutGlobal(state));
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    // 1 in a multi-reactor worker process (set on the fork/relaunch worker path), 0 in the parent
+    // and in single-reactor processes. Stop.stop uses it to signal the right process.
+    private static LlvmValueHandle IsWorkerGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_is_worker", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_is_worker");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    /// <summary>
+    /// Body of <c>Stop.stop(Unit)</c>: request graceful whole-server shutdown. Linux: send SIGTERM
+    /// to the parent when this is a multi-reactor worker (the parent's drain forwards to every
+    /// worker), else to this process itself — so programmatic stop rides exactly the signal path
+    /// (handler, EINTR accept wake, drain, second-signal force). Windows: set this reactor's
+    /// shutdown flag directly (observed within the 200 ms poll cap); the parent cannot forward to
+    /// workers on Windows — same parity as signal shutdown there. Returns unit (0).
+    /// </summary>
+    private static LlvmValueHandle EmitRequestServerStop(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
+            return LlvmApi.ConstInt(state.I64, 0, 0);
+        }
+
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isWorker = LlvmApi.BuildLoad2(builder, state.I64, IsWorkerGlobal(state), "stop_is_worker");
+        LlvmValueHandle selfPid = EmitLinuxSyscall(state, SyscallGetpid, zero, zero, zero, "stop_getpid");
+        LlvmValueHandle parentPid = EmitLinuxSyscall(state, SyscallGetppid, zero, zero, zero, "stop_getppid");
+        LlvmValueHandle targetPid = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, isWorker, zero, "stop_worker_cmp"),
+            parentPid, selfPid, "stop_target_pid");
+        _ = EmitLinuxSyscall(state, SyscallKill, targetPid, LlvmApi.ConstInt(state.I64, 15, 0), zero, "stop_kill");
         return LlvmApi.ConstInt(state.I64, 0, 0);
     }
 
@@ -1055,6 +1095,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, workerBlock);
         LlvmValueHandle inherited = EmitCStringToI64(state, envBufPtr, p + "_parse");
         LlvmApi.BuildStore(builder, inherited, WorkerListenerGlobal(state));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 1, 0)), p + "_worker_complete"), resultSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 

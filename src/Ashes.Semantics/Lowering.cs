@@ -1254,8 +1254,14 @@ public sealed partial class Lowering
         // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
         var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
+        // The self-type's arrow must carry an OPEN row variable, not a null (pure) row: a recursive
+        // helper that performs a capability — or captures an effectful parameter it applies, as
+        // `List.map`'s `mapGo` applies `f` — has an open latent row, and unifying the real open row
+        // against a null one would force it closed (`{}`), which then rejects passing any
+        // capability-performing function to that helper (or to a combinator like `serve` built on
+        // one). The inner arrows of a curried function carry their own rows via the return var.
         var recursiveType = innerLambda is not null
-            ? (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar())
+            ? (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() }
             : NewTypeVar();
         RecordLocalDebugInfo(slot, letRecursive.Name, recursiveType);
 
@@ -2254,6 +2260,14 @@ public sealed partial class Lowering
         }
 
         // Effect operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
+        if (rootExpr is Expr.QualifiedVar stopQv
+            && string.Equals(stopQv.Module, "Stop", StringComparison.Ordinal)
+            && string.Equals(stopQv.Name, "stop", StringComparison.Ordinal)
+            && collectedArgs.Count > 0)
+        {
+            return LowerBuiltinStopCall(collectedArgs, GetSpan(stopQv));
+        }
+
         if (rootExpr is Expr.QualifiedVar effectQv && _capabilitySymbols.TryGetValue(effectQv.Module, out var effectSym))
         {
             return LowerCapabilityOperationCall(effectSym, effectQv, collectedArgs);
