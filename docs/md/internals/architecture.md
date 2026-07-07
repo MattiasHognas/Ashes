@@ -301,12 +301,54 @@ not serialized into the state struct; the transform asserts this.
 TLS/HTTPS ride a **hermetic `rustls` runtime embedded per executable**: the vendored
 payload (`librustls.so` / `rustls.dll`, under `runtimes/`) is linked only into
 programs that use `https://` or `Ashes.Net.Tls`; the program writes and `dlopen`s
-(`LoadLibraryA`) it on first TLS use and resolves the `rustls_*` ABI. Certificate and
+(`LoadLibraryA`) it on first TLS use and resolves the `rustls_*` ABI. Both the client
+(config + certificate-verifier) and the **server** (server-config + acceptor half of
+the handshake, from a PEM chain and key) surfaces are wired. Client certificate and
 hostname validation are **mandatory** — the platform verifier against system trust by
 default, with `SSL_CERT_FILE` as an explicit PEM-root override (used by loopback TLS
 tests). Payload-load or verifier-init failures return `Error(...)` rather than
 crashing. Deferred TLS scope: mutual TLS / client certs, custom trust (per-call CA
-bundles, pinning), server-side accept/listen, ALPN, HTTP/2, HTTP/3.
+bundles, pinning), SNI / multiple certificates, ALPN, HTTP/2, HTTP/3.
+
+#### Server runtime: multi-reactor and graceful shutdown
+
+A server is not a new runtime — it is the composition already described: the run-queue
+scheduler (one cooperative poll loop per process), `Ashes.Async.spawn` (each accepted
+connection's handler is a detached task with a private arena reaped on completion, so
+resident memory is bounded under sustained load), and the async tail-recursive loop
+transform (the accept loop and each connection's keep-alive loop are single suspending
+coroutines with the per-iteration arena reset). `Ashes.Net.Tcp.Server.serve` /
+`Ashes.Http.Server.serve` / `serveTls` return the lifecycle `Task(E, ())`: `Ok(())`
+is a clean stop, `Error(...)` a bind/listener failure.
+
+`serve` is a **multi-reactor prefork** — one independent reactor process per online CPU,
+no shared connection state and no cross-worker scheduler. The two per-target mechanisms
+sit behind one `forkWorkers` intrinsic:
+
+- **Linux (x64 / arm64):** the parent `fork`s the workers up front; each binds the port
+  with `SO_REUSEPORT` so the kernel load-balances new connections. Children set
+  `PR_SET_PDEATHSIG` so they die with the parent (the crash backstop).
+- **Windows:** no `fork` / `SO_REUSEPORT`, so the parent creates one inheritable listener,
+  publishes it (a `__ashes_worker_listener` global + `ASHES_WORKER_FD` env var) and
+  relaunches itself with `CreateProcessA(bInheritHandles=TRUE)`; each worker accepts on
+  the shared inherited handle, and a Job Object with `KILL_ON_JOB_CLOSE` ties their
+  lifetime to the parent.
+
+Separate address spaces keep each reactor's scheduler state independent, which purity
+keeps sound; worker count defaults to the online-CPU count under the `--parallel-workers`
+cap (`serveParallel` overrides it).
+
+**Graceful shutdown** drains rather than cuts. The first `SIGINT`/`SIGTERM` (Linux) or
+console-ctrl event (Windows, via `SetConsoleCtrlHandler`) sets a shutdown flag; the accept
+step stops accepting and holds the shutdown sentinel until the live spawned-handler count
+reaches zero or a drain bound (default 10 s, configurable through `serveWithDrainTimeout`)
+elapses, then `serve` returns `Ok(())`. A second signal exits immediately. A multi-reactor
+parent forwards the signal to its workers and reaps them (`wait4(WNOHANG)`) before exiting,
+so no worker is cut mid-request. The signal interrupts the parked `epoll_wait` via `EINTR`
+on Linux; on Windows another thread cannot interrupt a parked `WSAPoll`, so the aggregate
+wait's socket timeout is capped at 200 ms to observe the flag promptly. `Stop.stop(Unit)`
+(a built-in capability, see [Capabilities Lowering](#capabilities-lowering)) requests the
+same drain from inside a handler — a worker signals the parent, so it stops the whole server.
 
 ### Math runtime model
 
