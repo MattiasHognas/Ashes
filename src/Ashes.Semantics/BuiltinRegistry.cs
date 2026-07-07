@@ -55,6 +55,7 @@ public static class BuiltinRegistry
         NetTcpListen,
         NetTcpAccept,
         NetTcpForkWorkers,
+        NetTcpSetDrainTimeout,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,
@@ -368,7 +369,8 @@ public static class BuiltinRegistry
                 {
                     ["listen"] = new("listen", BuiltinValueKind.NetTcpListen, IsCallable: true, Arity: 1),
                     ["accept"] = new("accept", BuiltinValueKind.NetTcpAccept, IsCallable: true, Arity: 1),
-                    ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 2)
+                    ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 2),
+                    ["setDrainTimeout"] = new("setDrainTimeout", BuiltinValueKind.NetTcpSetDrainTimeout, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Http.Server"] = new(
                 "Ashes.Http.Server",

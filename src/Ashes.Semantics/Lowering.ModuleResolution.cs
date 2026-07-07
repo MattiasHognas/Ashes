@@ -164,6 +164,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpListenBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers => LowerQualifiedBuiltinFunctionReference(name, CreateNetForkWorkersBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.NetTcpSetDrainTimeout => LowerQualifiedBuiltinFunctionReference(name, CreateNetSetDrainTimeoutBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpAcceptBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsConnectBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsSendBinding().S.Body),

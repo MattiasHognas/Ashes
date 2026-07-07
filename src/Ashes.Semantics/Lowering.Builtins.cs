@@ -1087,6 +1087,33 @@ public sealed partial class Lowering
         return (taskTemp, CreateStringTaskType(new TypeRef.TInt()));
     }
 
+    private (int, TypeRef) LowerNetSetDrainTimeout(Expr msArg)
+    {
+        using var msSpan = PushDiagnosticSpan(msArg);
+        var (msTemp, msType) = LowerExpr(msArg);
+        var prunedMsType = Prune(msType);
+        if (prunedMsType is TypeRef.TNever)
+        {
+            return (msTemp, prunedMsType);
+        }
+
+        if (prunedMsType is TypeRef.TVar)
+        {
+            Unify(prunedMsType, new TypeRef.TInt());
+            prunedMsType = new TypeRef.TInt();
+        }
+
+        if (prunedMsType is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(msArg), $"Ashes.Net.Tcp.Server.setDrainTimeout() expects Int (milliseconds) but got {Pretty(prunedMsType)}.");
+            return (msTemp, prunedMsType);
+        }
+
+        var unitTemp = NewTemp();
+        Emit(new IrInst.SetDrainTimeout(unitTemp, msTemp));
+        return (unitTemp, _resolvedTypes["Unit"]);
+    }
+
     private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
     {
         using var socketSpan = PushDiagnosticSpan(socketArg);
@@ -2537,6 +2564,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.NetForkWorkers,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt()))))
+        );
+    }
+
+    private Binding.Intrinsic CreateNetSetDrainTimeoutBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.NetSetDrainTimeout,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), _resolvedTypes["Unit"]))
         );
     }
 

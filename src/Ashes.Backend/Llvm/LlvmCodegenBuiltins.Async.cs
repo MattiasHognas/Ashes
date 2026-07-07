@@ -953,6 +953,13 @@ internal static partial class LlvmCodegen
         return EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, idx), "step_fork_workers_complete");
     }
 
+    /// <summary>Stores the graceful-shutdown drain bound for this process; returns unit (0).</summary>
+    private static LlvmValueHandle EmitSetDrainTimeout(LlvmCodegenState state, LlvmValueHandle ms)
+    {
+        LlvmApi.BuildStore(state.Target.Builder, ms, DrainTimeoutGlobal(state));
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
     // The Windows console-ctrl handler runs on a separate thread: first event sets the shutdown
     // flag (the accept step's drain observes it within the capped WSAPoll timeout); a second event
     // during the drain calls ExitProcess(0) via the pointer stashed at install time. Returns TRUE
