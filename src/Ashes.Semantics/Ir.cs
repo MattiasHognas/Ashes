@@ -144,6 +144,19 @@ public abstract record IrInst
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
 
+    // Ashes.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
+    // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
+    // internally. A compiled pattern (pcre2_code*) lives in a persistent mmap-backed region that the
+    // arena never relocates, so a Regex value is a stable i64 handle to it. Per-match scratch is
+    // bracketed by a region save/restore inside the match/substitute emitters, keeping streaming
+    // matches memory-bounded. PCRE2's malloc/free route to that region; memcpy/memset are the
+    // module's own builtins.
+    public sealed record RegexCompile(int Target, int Pattern) : IrInst;          // Str -> Int (pcre2_code*, 0 on error)
+    public sealed record RegexCompileError(int Target, int Pattern) : IrInst;     // Str -> Str ("" if valid, else message)
+    public sealed record RegexFind(int Target, int Code, int Subject, int Start) : IrInst;      // -> Option((Int, Int))
+    public sealed record RegexCaptures(int Target, int Code, int Subject, int Start) : IrInst;  // -> Option(List(Option(Str)))
+    public sealed record RegexSubstitute(int Target, int Code, int Subject, int Replacement) : IrInst; // -> Str
+
     public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
     public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
 

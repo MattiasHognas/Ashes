@@ -422,10 +422,12 @@ Comparison operators evaluate to `Bool`.
 | `==`     | `Float == Float`    | Equal (floats)                     |
 | `==`     | `uN == uN`          | Equal (unsigned integers)          |
 | `==`     | `Str == Str`        | Equal (strings, byte-for-byte)     |
+| `==`     | `Bool == Bool`      | Equal (booleans)                   |
 | `!=`     | `Int != Int`        | Not equal (integers)               |
 | `!=`     | `Float != Float`    | Not equal (floats)                 |
 | `!=`     | `uN != uN`          | Not equal (unsigned integers)      |
 | `!=`     | `Str != Str`        | Not equal (strings, byte-for-byte) |
+| `!=`     | `Bool != Bool`      | Not equal (booleans)               |
 
 Examples:
 
@@ -435,10 +437,29 @@ Examples:
 1 != 2          // => true
 "hi" == "hi"    // => true
 "hi" != "bye"   // => true
+true == false   // => false
 
 Both operands of `==` and `!=` must have the same type. Mixing `Int` and `Str` is a type error.
 
-## 3.3 Bitwise
+## 3.3 Overloaded operators across types
+
+`+`, `==`, and `!=` are overloaded (they pick a concrete operation from the operand type). A
+function that applies one of them directly to two of its own parameters is **overload-generic**: it
+can be used at `Int`, `Float`, `Str`, and (for `==`/`!=`) `Bool` at different call sites **within one
+program**. Each concrete call site gets a copy specialized to its operand type.
+
+```ash
+let eq = given (a) -> given (b) -> a == b
+let x = eq(3)(3)          // Int
+let y = eq("hi")("hi")    // Str
+let z = eq(true)(true)    // Bool
+```
+
+This is what lets `Ashes.Test.assertEqual` be used at several basic types in the same test. The
+function must be applied to arguments (called), not used as an unapplied first-class value at more
+than one type.
+
+## 3.4 Bitwise
 
 Bitwise operators operate on integer values (`Int`, `u8`, `u16`, `u32`,
 `u64`) and return the same type as the left operand.
@@ -456,7 +477,7 @@ Where `T` is `Int` or one unsigned integer type (`u8`, `u16`, `u32`, `u64`).
 Shift counts are masked to the low 6 bits for the 64-bit `Int`
 representation.
 
-## 3.4 Cons
+## 3.5 Cons
 
 `::` constructs a new list by prepending a head value to a tail list.
 
@@ -464,7 +485,7 @@ Example:
 
 1 :: [2,3]  // => [1,2,3]
 
-## 3.5 Pipes
+## 3.6 Pipes
 
 Ashes supports three left-to-right pipeline operators.
 
@@ -525,7 +546,7 @@ let bumpIfOk2 result =
     in
     Ok(n + 1)
 
-## 3.6 Precedence and Associativity
+## 3.7 Precedence and Associativity
 
 From lowest precedence to highest:
 

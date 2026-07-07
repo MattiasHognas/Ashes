@@ -614,18 +614,43 @@ Stdio JSON-RPC 2.0 Content-Length framing for LSP/DAP transports.
 
 ### `Ashes.Regex`
 
-Backtracking regular-expression engine with a combinator API.
+Regular expressions backed by [PCRE2](https://www.pcre.org/) (Perl-compatible syntax). The 8-bit
+PCRE2 library is compiled to LLVM bitcode and linked directly into the executable when a program
+uses this module — everything unreachable from the exposed API is stripped, and there is no runtime
+dependency, exactly like the rest of Ashes. Pattern and subject are treated as **UTF-8 with Unicode
+property support** (`\d`, `\w`, `\p{L}`, Unicode-aware case handling). Offsets are **byte offsets**
+into the subject.
 
-- **Type**: `Regex` — opaque pattern value
-- Pattern builders: `literal(s)`, `anyChar`, `anyOf(chars)`, `noneOf(chars)`, `digit`, `letter`, `whitespace`, `seq(a)(b)`, `alt(a)(b)`, `star(r)`, `plus(r)`, `optional(r)`, `capture(r)`
-- `matches(pattern)(text)` returning `Bool` — true if the pattern matches anywhere in `text`
-- `find(pattern)(text)` returning `Maybe(Str)` — return the first matching substring
-- `findAll(pattern)(text)` returning `List(Str)` — return all non-overlapping matches
-- `replace(pattern)(replacement)(text)` returning `Str` — replace all matches
+- **Type**: `Regex` — an opaque compiled pattern.
+- `compile(pattern)` returning `Result(Str, Regex)` — compile a pattern once. `Error` carries the
+  PCRE2 diagnostic for an invalid pattern; `Ok` wraps a reusable compiled `Regex`.
+- `isMatch(regex)(text)` returning `Bool` — true if the pattern matches anywhere in `text`.
+- `find(regex)(text)` returning `Maybe((Int, Int))` — the first match as `Some((start, end))` byte
+  offsets, or `None`.
+- `findAll(regex)(text)` returning `List((Int, Int))` — every non-overlapping match as `(start, end)`
+  byte offsets.
+- `captures(regex)(text)` returning `Maybe(List(Maybe(Str)))` — the first match's capture groups.
+  Group 0 is the whole match; each group is `Some(text)` or `None` if it did not participate.
+- `replace(regex)(text)(replacement)` returning `Str` — replace every match. The replacement string
+  uses PCRE2 substitution syntax (`$1`, `${name}` group references).
+
+```ash
+import Ashes.Regex
+
+match Ashes.Regex.compile("([a-z]+)=([0-9]+)") with
+    | Error(message) -> Ashes.IO.print("bad pattern: " + message)
+    | Ok(re) ->
+        match Ashes.Regex.captures(re)("port=8080") with
+            | None -> Ashes.IO.print("no match")
+            | Some(_groups) -> Ashes.IO.print("matched")
+```
+
+Compile a pattern once and reuse the `Regex` across many subjects; compilation is the expensive
+step. Matching is memory-bounded even in a tight recursion over many subjects.
 
 ### `Ashes.Test`
 
-- `assertEqual(expected, actual)` returning `Unit` — panic with an assertion failure unless `expected == actual`
+- `assertEqual(expected, actual)` returning `Unit` — panic with an assertion failure unless `expected == actual`. Works at `Str`, `Int`, `Float`, and `Bool`, and different types may be asserted within the same program.
 - `fail(message)` returning `a` — abort with `message`; never returns, so it is usable at any type
 
 `assertEqual(expected, actual)` is the preferred surface form. Like other

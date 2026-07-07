@@ -532,6 +532,88 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 
+    // ── Ashes.Regex.Native (PCRE2) primitives. ──
+    // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Regex (Regex.ash) wraps
+    // it in a Regex ADT and composes the ergonomic Result/Option API from these.
+
+    private int LowerRegexScalarArg(Expr arg, TypeRef expected, string label)
+    {
+        var (temp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return temp;
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, expected);
+        }
+        else
+        {
+            bool ok = (expected, pruned) switch
+            {
+                (TypeRef.TStr, TypeRef.TStr) => true,
+                (TypeRef.TInt, TypeRef.TInt) => true,
+                _ => false,
+            };
+            if (!ok)
+            {
+                ReportDiagnostic(GetSpan(arg), $"{label} expects {Pretty(expected)} but got {Pretty(pruned)}.");
+            }
+        }
+
+        return temp;
+    }
+
+    private (int, TypeRef) LowerRegexCompile(Expr patternArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(patternArg);
+        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Regex.Native.compile()");
+        var target = NewTemp();
+        Emit(new IrInst.RegexCompile(target, patternTemp));
+        return (target, new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerRegexCompileError(Expr patternArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(patternArg);
+        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Regex.Native.compileError()");
+        var target = NewTemp();
+        Emit(new IrInst.RegexCompileError(target, patternTemp));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerRegexFind(Expr codeArg, Expr subjectArg, Expr startArg)
+    {
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.find()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.find()");
+        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Regex.Native.find()");
+        var target = NewTemp();
+        Emit(new IrInst.RegexFind(target, codeTemp, subjectTemp, startTemp));
+        return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()])));
+    }
+
+    private (int, TypeRef) LowerRegexCaptures(Expr codeArg, Expr subjectArg, Expr startArg)
+    {
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.captures()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.captures()");
+        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Regex.Native.captures()");
+        var target = NewTemp();
+        Emit(new IrInst.RegexCaptures(target, codeTemp, subjectTemp, startTemp));
+        return (target, CreateMaybeType(new TypeRef.TList(CreateMaybeType(new TypeRef.TStr()))));
+    }
+
+    private (int, TypeRef) LowerRegexSubstitute(Expr codeArg, Expr subjectArg, Expr replacementArg)
+    {
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.substitute()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.substitute()");
+        int replacementTemp = LowerRegexScalarArg(replacementArg, new TypeRef.TStr(), "Ashes.Regex.Native.substitute()");
+        var target = NewTemp();
+        Emit(new IrInst.RegexSubstitute(target, codeTemp, subjectTemp, replacementTemp));
+        return (target, new TypeRef.TStr());
+    }
+
     private (int, TypeRef) LowerTextParseInt(Expr textArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
@@ -2150,6 +2232,46 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.TextParseInt,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TInt())))
+        );
+    }
+
+    private Binding.Intrinsic CreateRegexCompileBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.RegexCompile,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TInt()))
+        );
+    }
+
+    private Binding.Intrinsic CreateRegexCompileErrorBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.RegexCompileError,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TStr()))
+        );
+    }
+
+    private Binding.Intrinsic CreateRegexFindBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.RegexFind,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()]))))))
+        );
+    }
+
+    private Binding.Intrinsic CreateRegexCapturesBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.RegexCaptures,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TList(CreateMaybeType(new TypeRef.TStr())))))))
+        );
+    }
+
+    private Binding.Intrinsic CreateRegexSubstituteBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.RegexSubstitute,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TStr()))))
         );
     }
 

@@ -263,6 +263,23 @@ public sealed partial class Lowering
     // function called at `Ord(Int)` gets a copy where `Ord.compare` resolves statically).
     private readonly HashSet<string> _capabilityGenericInline = new(StringComparer.Ordinal);
 
+    // Non-recursive let-bound functions whose body compares (`==`/`!=`) or adds (`+`) two of their
+    // own parameters directly, so the operand type is a generalizable type variable rather than a
+    // concrete one. `==`/`+` pick a type-specific IR op (CmpIntEq vs CmpStrEq, AddInt vs ConcatStr)
+    // that a single shared function can't be polymorphic over, so — exactly like the capability-
+    // generic functions above — each concrete call site inlines a fresh copy of the body that
+    // resolves the operator at that call's type. This is what lets `assertEqual` (and similar
+    // helpers) be used at Str, Int, Bool, and Float within one program. Must be called saturated
+    // (a first-class/partial use has no concrete type to specialize at and keeps the shared,
+    // Int-defaulted body).
+    private readonly HashSet<string> _overloadGenericInline = new(StringComparer.Ordinal);
+
+    // Unqualified alias → stitched canonical name for overload-generic stdlib functions, so a call
+    // to `assertEqual` resolves the registration under `Ashes_Test_assertEqual`. Ambiguous short
+    // names (two modules exporting the same overload-generic name) are dropped (mapped to null),
+    // falling back to today's monomorphic behavior rather than inlining the wrong body.
+    private readonly Dictionary<string, string?> _overloadGenericAlias = new(StringComparer.Ordinal);
+
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
     //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
     //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
@@ -2421,15 +2438,27 @@ public sealed partial class Lowering
         // the body lowers with the call's concrete argument types, letting a parameterized capability
         // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
         // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
-        if (rootExpr is Expr.Var capGenVar
-            && _capabilityGenericInline.Contains(capGenVar.Name)
-            && !_shadowedInlinables.ContainsKey(capGenVar.Name)
-            && !_inliningInProgress.Contains(capGenVar.Name)
-            && Lookup(capGenVar.Name) is not (Binding.Local or Binding.Env or Binding.EnvScheme)
-            && _inlinableFunctions.TryGetValue(capGenVar.Name, out var capGenInlinable)
-            && capGenInlinable.Params.Count == collectedArgs.Count)
+        // Capability-generic and overload-generic (==/+ on two params) functions inline a fresh,
+        // type-resolved copy of their body at each concrete call site. For an overload-generic stdlib
+        // function called by its imported short name, resolve the alias to the stitched name first.
+        if (rootExpr is Expr.Var capGenVar)
         {
-            return InlineCall(capGenVar.Name, capGenInlinable.Params, capGenInlinable.Body, collectedArgs);
+            string capGenName = capGenVar.Name;
+            if (!_capabilityGenericInline.Contains(capGenName) && !_overloadGenericInline.Contains(capGenName)
+                && _overloadGenericAlias.TryGetValue(capGenName, out var aliasTarget) && aliasTarget is not null)
+            {
+                capGenName = aliasTarget;
+            }
+
+            if ((_capabilityGenericInline.Contains(capGenName) || _overloadGenericInline.Contains(capGenName))
+                && !_shadowedInlinables.ContainsKey(capGenVar.Name)
+                && !_inliningInProgress.Contains(capGenName)
+                && Lookup(capGenVar.Name) is not (Binding.Local or Binding.Env or Binding.EnvScheme)
+                && _inlinableFunctions.TryGetValue(capGenName, out var capGenInlinable)
+                && capGenInlinable.Params.Count == collectedArgs.Count)
+            {
+                return InlineCall(capGenName, capGenInlinable.Params, capGenInlinable.Body, collectedArgs);
+            }
         }
 
         // The callee may be a plain Var (module code, where the stitcher already rewrote member
@@ -2692,6 +2721,11 @@ public sealed partial class Lowering
                 IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
                 IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+                IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+                IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+                IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                 IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
                 IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
                 IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
@@ -2819,6 +2853,11 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                    BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+                    BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
                     BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),

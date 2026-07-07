@@ -52,7 +52,14 @@ The openlibm bitcode payloads (used by `Ashes.Math` transcendentals) are likewis
 bash scripts/download-openlibm.sh --all       # builds libopenlibm.bc for all targets on one host (needs clang, llvm-link, opt)
 ```
 
-All three scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
+The PCRE2 bitcode payloads (used by `Ashes.Regex`) are likewise vendored under `runtimes/` and
+normally don't need fetching. Refresh them only when `<Pcre2Version>` changes:
+
+```bash
+bash scripts/download-pcre2.sh --all          # builds libpcre2.bc (8-bit, Unicode, JIT off) for all targets on one host (needs clang, llvm-link, opt, llvm-nm)
+```
+
+All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
 `--all`. linux-arm64 rustls has no upstream prebuilt, so it's cross-compiled (needs cargo, rustup,
 and an aarch64 GNU linker; the script auto-installs the cross-linker on apt/pacman systems). openlibm
 is compiled to LLVM bitcode by the clang frontend, so every target builds on one host with no cross

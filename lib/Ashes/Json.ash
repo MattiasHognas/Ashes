@@ -75,12 +75,34 @@ let recursive parseStrBody acc text =
                                                         else Error("unknown escape: \\" + esc)
                 else parseStrBody(acc + h)(t)
 
+let noEscapeString text = 
+    (let tb = Ashes.Bytes.fromText(text)
+    in 
+        let tlen = Ashes.Bytes.length(tb)
+        in 
+            let q = Ashes.Bytes.indexOf(tb)(34)(0)
+            in 
+                if q < 0
+                then None
+                else 
+                    let bs = Ashes.Bytes.indexOf(tb)(92)(0)
+                    in 
+                        if bs >= 0
+                        then 
+                            if bs < q
+                            then None
+                            else Some((Ashes.Bytes.subText(tb)(0)(q), Ashes.Bytes.subView(tb)(q + 1)(tlen - q - 1)))
+                        else Some((Ashes.Bytes.subText(tb)(0)(q), Ashes.Bytes.subView(tb)(q + 1)(tlen - q - 1))))
+
 let parseQuotedStr text = 
     match Ashes.Text.uncons(text) with
         | None -> Error("expected '\"'")
         | Some((h, t)) -> 
             if h == "\""
-            then parseStrBody("")(t)
+            then 
+                match noEscapeString(t) with
+                    | Some(result) -> Ok(result)
+                    | None -> parseStrBody("")(t)
             else Error("expected '\"' to open string")
 
 let recursive takeNum acc text = 

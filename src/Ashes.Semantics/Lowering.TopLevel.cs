@@ -6,6 +6,110 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
 
+    // True when the body compares (`==`/`!=`) or adds (`+`) two of the function's own parameters
+    // directly — the shape whose operand type is a generalizable variable that `==`/`+` cannot pick a
+    // single IR op for. Such functions are inlined per concrete call site (see _overloadGenericInline).
+    private static bool BodyComparesOrAddsParameters(Expr expr, IReadOnlyList<string> paramNames)
+    {
+        var parameters = new HashSet<string>(paramNames, StringComparer.Ordinal);
+        var found = false;
+
+        bool IsParam(Expr e) => e is Expr.Var v && parameters.Contains(v.Name);
+
+        void Visit(object? node)
+        {
+            if (found || node is null or string)
+            {
+                return;
+            }
+
+            if ((node is Expr.Equal eq && IsParam(eq.Left) && IsParam(eq.Right))
+                || (node is Expr.NotEqual ne && IsParam(ne.Left) && IsParam(ne.Right))
+                || (node is Expr.Add add && IsParam(add.Left) && IsParam(add.Right)))
+            {
+                found = true;
+                return;
+            }
+
+            if (node is System.Runtime.CompilerServices.ITuple tuple)
+            {
+                for (int i = 0; i < tuple.Length && !found; i++)
+                {
+                    Visit(tuple[i]);
+                }
+
+                return;
+            }
+
+            if (node is System.Collections.IEnumerable seq)
+            {
+                foreach (var item in seq)
+                {
+                    Visit(item);
+                    if (found)
+                    {
+                        return;
+                    }
+                }
+
+                return;
+            }
+
+            if (node is not (Expr or Pattern or MatchCase or HandlerArm))
+            {
+                return;
+            }
+
+            foreach (var prop in node.GetType().GetProperties())
+            {
+                if (found)
+                {
+                    return;
+                }
+
+                if (prop.GetIndexParameters().Length > 0)
+                {
+                    continue;
+                }
+
+                var t = prop.PropertyType;
+                if (typeof(Expr).IsAssignableFrom(t)
+                    || typeof(Pattern).IsAssignableFrom(t)
+                    || typeof(MatchCase).IsAssignableFrom(t)
+                    || typeof(HandlerArm).IsAssignableFrom(t)
+                    || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+                {
+                    Visit(prop.GetValue(node));
+                }
+            }
+        }
+
+        Visit(expr);
+        return found;
+    }
+
+    // Maps the unqualified export name of a stitched overload-generic stdlib function to its canonical
+    // stitched name (Ashes_Test_assertEqual → alias "assertEqual"), so a call by the imported short
+    // name still finds the registration. Collisions are recorded as null (ambiguous → not inlined).
+    private void RegisterOverloadGenericAlias(string canonicalName)
+    {
+        foreach (var moduleName in BuiltinRegistry.StandardModuleNames)
+        {
+            string prefix = ProjectSupport.SanitizeModuleBindingName(moduleName) + "_";
+            if (canonicalName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                string shortName = canonicalName.Substring(prefix.Length);
+                if (shortName.Length == 0)
+                {
+                    continue;
+                }
+
+                // Ambiguous if another module already claimed this short name.
+                _overloadGenericAlias[shortName] = _overloadGenericAlias.ContainsKey(shortName) ? null : canonicalName;
+            }
+        }
+    }
+
     private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
     {
         // Strip the import stitcher's intra-module alias prefix (let helper = Ashes_Mod_helper in ...)
@@ -65,6 +169,16 @@ public sealed partial class Lowering
                     _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
                     _inlinableDefiningValues.TryAdd(let.Name, let.Value);
                     _capabilityGenericInline.Add(let.Name);
+                }
+
+                // Overload-generic: compares/adds two parameters, so it can be used at Int/Str/Bool/
+                // Float across one program by inlining a type-resolved copy per concrete call site.
+                if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
+                {
+                    _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(let.Name, let.Value);
+                    _overloadGenericInline.Add(let.Name);
+                    RegisterOverloadGenericAlias(let.Name);
                 }
             }
 
@@ -195,6 +309,15 @@ public sealed partial class Lowering
                     _inlinableFunctions.TryAdd(name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
                     _inlinableDefiningValues.TryAdd(name, lam);
                     _capabilityGenericInline.Add(name);
+                }
+
+                // Overload-generic (see RegisterInlinableFunctions): a user helper that compares/adds
+                // two of its parameters is inlined per concrete call site so it works across types.
+                if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
+                {
+                    _inlinableFunctions.TryAdd(name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+                    _inlinableDefiningValues.TryAdd(name, lam);
+                    _overloadGenericInline.Add(name);
                 }
             }
             else if (lam.Body is not Expr.Lambda)

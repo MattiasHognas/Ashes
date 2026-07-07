@@ -285,6 +285,7 @@ the target ID.
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
 | rustls-ffi (native) | Vendored under `runtimes/` (refreshed via `scripts/download-rustls-ffi.sh`) | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
 | openlibm (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-openlibm.sh`) | Transcendental math for `Ashes.Math` Layer 2 (`libopenlibm.bc`), linked into programs that use it |
+| PCRE2 (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-pcre2.sh`) | Regular-expression engine for `Ashes.Regex` (`libpcre2.bc`, 8-bit + Unicode, JIT off), linked into programs that use it |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
@@ -300,6 +301,7 @@ and are provisioned for build/publish with the following scripts:
 | libLLVM | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) | `./scripts/download-llvm-native.sh --all [LLVM_VERSION]` |
 | rustls-ffi | `./scripts/download-rustls-ffi.sh` (native Linux), `./scripts/download-rustls-ffi.sh --linux-arm64`, or `./scripts/download-rustls-ffi.sh --all` | `./scripts/download-rustls-ffi.sh --win-x64` or `./scripts/download-rustls-ffi.sh --all` |
 | openlibm | `./scripts/download-openlibm.sh` (host arch) or `./scripts/download-openlibm.sh --all` | `./scripts/download-openlibm.sh --all` (all targets build on one host with clang) |
+| PCRE2 | `./scripts/download-pcre2.sh` (host arch) or `./scripts/download-pcre2.sh --all` | `./scripts/download-pcre2.sh --all` (all targets build on one host with clang) |
 
 `Ashes.Backend.csproj` validates that the expected LLVM library and
 rustls-ffi payload exist for the active RID. LLVM is copied into the
@@ -316,6 +318,20 @@ The openlibm `libopenlibm.bc` payloads are likewise committed. Re-run
 `Directory.Build.props` or refreshing the vendored bitcode. Because bitcode is
 produced by the clang frontend, every target's payload builds on one host with
 clang alone (no cross toolchain). See *Math runtime model* below.
+
+The PCRE2 `libpcre2.bc` payloads (backing `Ashes.Regex`) are committed and provisioned the same
+way. Re-run `scripts/download-pcre2.sh` only when updating `Pcre2Version` in
+`Directory.Build.props`. The script compiles the 8-bit PCRE2 library (Unicode on, JIT off) from
+source to per-target bitcode, then `internalize` + `globaldce` strips everything unreachable from
+the exposed API down to a minimal external surface: `malloc`/`free` (routed to an emitted bump
+region) and `memcpy`/`memset`/`memcmp`/`strlen` (backend builtins), plus `memchr` (a libc import on
+Linux). The Windows payload is compiled with the `windows-gnu` triple — PCRE2's exposed functions
+pass more than four arguments, so it needs the Microsoft x64 calling convention — using vendored
+declaration-only stub headers plus a small `memchr`/`strchr`/ctype shim, so no MinGW sysroot is
+required. A compiled pattern (`pcre2_code*`) lives in the bump region, which the arena never
+relocates, so a `Regex` value is a stable handle; per-match scratch is reclaimed by a region cursor
+save/restore around each match. The payload is linked into a program only when it uses `Ashes.Regex`
+(gated on the regex IR intrinsics), after the program's own optimization passes.
 
 To bump the LLVM version, pass the new version to the download script —
 no source changes are needed because the LLVM C API is stable across
