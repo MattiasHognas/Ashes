@@ -214,10 +214,9 @@ a smoke test.
 ## Capabilities
 
 Server entry points perform network I/O, so they carry a network capability under the unified
-capabilities system (for example `needs Net`). This is consistent with how effectful operations are
-tracked elsewhere and makes "this program is a server" visible in its type rather than hidden. The
-exact capability name and granularity (one `Net` capability versus split listen/connect) is deferred
-to when `serve` is specified against the shipped capabilities surface.
+capabilities system. This is consistent with how effectful operations are tracked elsewhere and
+makes "this program is a server" visible in its type rather than hidden. Granularity is decided:
+split `NetListen` / `NetConnect` — see Decisions below.
 
 ---
 
@@ -377,18 +376,18 @@ transport is that HTTPS falls out without a second handler model.
   memory-lifetime acceptance criterion (steady-state resident set); with win-x64 scheduler parity
   the reset is active on all three targets.
 
-### Remaining
-- **Graceful shutdown completion:** the Windows console-ctrl handler plus an accept wake-up
-  (Windows terminates on the default disposition today), and draining in-flight connections at
-  shutdown (a multi-worker parent may cut a child mid-request via the death signal / job object).
-  Drain policy and a programmatic stop handle are open questions below.
-- `Ashes.Http.Server` streaming/incremental request or response bodies (a body is fully buffered
-  today, whether Content-Length- or chunked-framed). A Content-Length body buffers incrementally
-  (chunks accumulate as a list and are joined once when complete, O(total) across reads); chunked
-  bodies still re-decode the accumulated buffer per read — incremental chunked decoding belongs to
-  the streaming work.
-- Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
-  (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
+### Remaining (specifications in Decisions below; implement in this order)
+1. **Graceful shutdown completion:** drain with timeout (default 10 s, second signal forces),
+   the Windows console-ctrl handler plus a wake socket in the WSAPoll set, and the multi-worker
+   parent forwarding the signal and waiting instead of cutting children via the death signal.
+2. **Stop capability:** programmatic stop as a one-shot capability sharing the signal-shutdown
+   runtime path (LANGUAGE_SPEC addition first).
+3. **`NetListen` / `NetConnect` capabilities** on the endpoint-creating operations.
+4. **HTTP streaming bodies:** incremental chunked-request decode first (no API change; chunked
+   bodies still re-decode the accumulated buffer per read today), then response streaming
+   (`Transfer-Encoding: chunked` from a pull-based producer), then the request-side body reader.
+5. Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
+   (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
 
 ---
 
@@ -417,43 +416,86 @@ Only shutdown produces the value of the overall program.
 
 ---
 
-## Open questions
+## Decisions (settled 2026-07-07)
 
-These are genuinely unresolved and should be settled during specification, not invented ahead of it.
+The former open questions are now decided as follows. These are specifications to implement
+against, in the listed order; the `.ash` shapes bend to what the compiler actually infers.
 
-### Graceful shutdown mechanism
+### Graceful shutdown: drain with timeout, second signal forces
 
-OS signals (`SIGINT` / `SIGTERM`) installed by the runtime are now the mechanism on Linux: stop
-accepting and complete the lifecycle result with `Ok(())`. Still open: draining in-flight
-connections before exit (today a worker stops accepting and exits; a multi-worker parent may cut a
-child mid-request via the death-signal), the Windows console-ctrl equivalent, and whether to expose
-an explicit programmatic stop handle (and if so, its shape as a library
-value threaded to the handler or returned alongside the server task), and the drain policy and
-timeout for in-flight work at shutdown.
+The first `SIGINT` / `SIGTERM` (or console-ctrl event on Windows) stops accepting and begins a
+**drain**: in-flight handlers may run to completion for up to a bound (default **10 s**), after
+which the server exits with the lifecycle result `Ok(())`. A **second** signal during the drain
+exits immediately. A multi-worker parent forwards the signal to its workers and waits out the same
+bound rather than cutting them via the death signal / job object (those remain as the crash
+backstop, not the shutdown path). Draining means: the accept task completes with the shutdown
+sentinel as today, and the reactor keeps running until its live spawned handler count reaches zero
+or the bound elapses. The bound is a `serve` variant parameter (`withDrainTimeout`-shaped), not a
+global.
 
-### HTTP semantics scope for v1
+Windows mechanism: `SetConsoleCtrlHandler` (the handler runs on a separate thread) sets the
+shutdown flag and writes one byte to a per-reactor loopback **wake socket** whose read end sits
+permanently in every WSAPoll set, waking the parked aggregate wait; from there the sentinel path is
+identical to Linux.
 
-Largely settled by the delivered work: keep-alive with cross-read buffering, chunked request
-bodies, a request size limit (8 MiB, rejected with 413 on the declared `Content-Length` before
-buffering), and the header/body accessor surface have all shipped. Still open: chunked/streaming
-on the **response** side, whether the size limit is configurable per server, and finer request
-limits (header count / line length) beyond the total-size cap.
+### Programmatic stop: a Stop capability
 
-### TLS server surface
+Beyond signals, a server can be stopped from inside the program through a **capability**, designed
+under the unified capabilities system: a `serve` variant runs the handler with a `Stop` capability
+in scope; invoking its operation (once) triggers exactly the signal path above — stop accepting,
+drain, lifecycle `Ok(())`. One-shot semantics: further invocations are no-ops. This is the first
+effectful one-shot capability, so its precise typing (operation shape, interaction with handler
+purity) must be specified in LANGUAGE_SPEC before implementation; it deliberately shares every
+runtime mechanism with signal shutdown so the capability is thin.
 
-Certificate and key provisioning (PEM file paths first; ACME / auto-renewal out of scope), the exact
-`http.tls` config shape, ALPN and whether HTTP/2 is negotiated (the server framing is HTTP/1.1 only
-to begin with), SNI and multiple certificates for virtual hosting, TLS-version and cipher policy
-(rustls defaults, TLS 1.2 / 1.3), and whether mutual TLS / client-certificate authentication is in
-scope. The transport plumbing is settled by reusing rustls; these are the server-config policy
-choices to pin down.
+### HTTP streaming: full request + response design
 
-### Capability granularity
+Both directions are in scope, sharing one concept: a body is a **stream of byte chunks** rather
+than a `Str`.
 
-One `Net` capability versus separate listen/connect capabilities, and how the capability threads
-through `serve` and the handler.
+- **Request side.** A streaming handler variant receives the request with headers parsed but the
+  body unread, plus a **body reader** — a resource (like a socket; auto-dropped with the
+  connection, non-escaping) pulled with `await http.readChunk(reader)` returning
+  `Ok(Some(bytes))` / `Ok(None)` at end-of-body / `Error(e)` on transport failure. Framing
+  (Content-Length or chunked) is decoded incrementally under the reader, which also removes the
+  remaining per-read chunked re-decode. The buffered `body(req)` handler stays the default surface;
+  the 8 MiB cap applies only to the buffered form.
+- **Response side.** A streamed response is built from a **pull-based chunk producer** (the same
+  recursion-instead-of-loops shape as everything else: a function returning
+  `Task(E, Option((chunk, next)))`-morally, exact shape to be pinned against what lowering
+  supports); the server sends `Transfer-Encoding: chunked` framing, one chunk per pull.
+- **Implementation order:** incremental chunked-request decode under the existing buffered surface
+  first (no API change), then response streaming, then the request-side reader (it leans on the
+  resource-safety machinery for the reader's non-escape guarantee).
 
-### Cross-target accept distribution (resolved)
+Still open within HTTP, deliberately minor: per-server configurability of the 8 MiB cap and finer
+header limits (count / line length) — revisit when a concrete need appears.
+
+### TLS server policy for v1: rustls defaults, single certificate
+
+Certificate and key provisioning stays PEM file paths (ACME / auto-renewal out of scope). One
+certificate chain per listener — no SNI map / virtual hosting in v1. TLS version and cipher policy
+are the rustls defaults (TLS 1.2 / 1.3) with no knobs. No mutual TLS / client-certificate
+authentication in v1. No ALPN until HTTP/2 framing exists. Each of these widens only when a
+concrete use case arrives; the rustls server-config plumbing already shipped.
+
+### Network capability: split listen / connect
+
+Two distinct capabilities under the unified capabilities system, not one `Net`:
+
+- **`NetListen`** — required to open a listening endpoint: `tcp.serve` / `http.serve` /
+  `serveTls` (and the underlying `listen`).
+- **`NetConnect`** — required to dial out: `tcp.connect`, `Http.get` / `post`, TLS client
+  connects.
+
+Operations on an **established** connection (send / receive / close on an accepted or connected
+socket, and the handler's work generally) require no capability: possession of the connection
+resource is the authority, and the capability governs creating endpoints, not using them. A
+program that both serves and calls out carries both. The split is the security-meaningful boundary
+("this program opens a listener"), and deciding it now avoids a breaking re-split of a coarse
+`Net` later.
+
+### Cross-target accept distribution (resolved earlier)
 
 Delivered on all three targets: `SO_REUSEPORT` per-worker binds on Linux (x64 and arm64), and an
 inherited shared listener on Windows (the parent creates one inheritable listener and relaunches
