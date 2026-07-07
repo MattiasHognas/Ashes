@@ -123,6 +123,19 @@ public sealed class WriteEndpointTests
         v!.Capabilities.ShouldContain("Log");
     }
 
+    [Test]
+    public async Task Token_minting_is_forbidden_when_open_registration_is_disabled()
+    {
+        using var factory = new RegistryAppFactory();
+        using var client = factory
+            .WithWebHostBuilder(b => b.UseSetting("Registry:AllowOpenRegistration", "false"))
+            .CreateClient();
+
+        var response = await client.PostAsJsonAsync(new Uri("/api/v1/tokens", UriKind.Relative), new { name = "alice" });
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
     private static async Task<string> MintTokenAsync(HttpClient client, string name)
     {
         var response = await client.PostAsJsonAsync(new Uri("/api/v1/tokens", UriKind.Relative), new { name });

@@ -161,7 +161,9 @@ so the reference filesystem/SQLite implementation can be swapped for object stor
 - **Search** is a SQLite FTS5 index over namespace/description/keywords, kept in sync by triggers; queries
   select candidates by prefix-token match and rank name-first (exact > prefix > description, downloads tie-break).
 
-Token secrets are random 256-bit values, shown once and stored only as SHA-256 hashes. The client verbs
+Token secrets are random 256-bit values, shown once and stored only as SHA-256 hashes. `POST
+/api/v1/tokens` open self-registration is a self-host convenience gated by `Registry:AllowOpenRegistration`
+(default on); a public instance turns it off and provisions tokens out of band. The client verbs
 (`login`, `publish`, `yank`, `search`, `info`) are covered in the CLI reference.
 
 ---

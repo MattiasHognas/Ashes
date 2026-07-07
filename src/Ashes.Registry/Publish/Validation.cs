@@ -1,3 +1,7 @@
+using System.Text;
+using System.Text.Json;
+using Ashes.Semantics;
+
 namespace Ashes.Registry.Publish;
 
 /// <summary>Outcome of the namespace lint: valid, or invalid with a reason.</summary>
@@ -24,42 +28,121 @@ public interface ICapabilityExtractor
 }
 
 /// <summary>
-/// Structural namespace lint over file paths: every <c>.ash</c> module (ignoring a leading <c>src/</c>
-/// source root) must be <c>&lt;Namespace&gt;.ash</c> or live under <c>&lt;Namespace&gt;/</c>. Non-source
-/// metadata (ashes.json, README, LICENSE) is exempt. This catches the path-level violations without the
-/// type checker; the semantic lint over *exported* modules arrives with capability extraction.
+/// Namespace lint over the uploaded source. It reads the package's declared <c>sourceRoots</c> (not a
+/// hardcoded <c>src/</c>) to derive each <c>.ash</c> file's module name, and requires every module to be
+/// <c>&lt;Namespace&gt;</c> or live under <c>&lt;Namespace&gt;.…</c>. It also inspects inline
+/// <c>module X = …</c> declarations via the compiler front end — a file's inline modules compose under
+/// its own module name, so checking the declarations is belt-and-suspenders over the file-path check.
+/// Non-source metadata (ashes.json, README, LICENSE) and files outside the source roots are exempt.
 /// </summary>
-public sealed class StructuralManifestValidator : IManifestValidator
+public sealed class SemanticManifestValidator : IManifestValidator
 {
     public ValidationResult Validate(IReadOnlyList<SourceFile> files, string ns)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentException.ThrowIfNullOrWhiteSpace(ns);
 
+        var sourceRoots = ReadSourceRoots(files);
+
         foreach (var file in files)
         {
-            var path = StripSourceRoot(file.Path.Replace('\\', '/'));
+            var path = file.Path.Replace('\\', '/').TrimStart('/');
             if (!path.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            var underNamespace = string.Equals(path, ns + ".ash", StringComparison.Ordinal)
-                || path.StartsWith(ns + "/", StringComparison.Ordinal);
-            if (!underNamespace)
+            var moduleName = ModuleName(path, sourceRoots);
+            if (moduleName is null)
+            {
+                continue; // not under a source root — not an exported module
+            }
+
+            if (!IsUnderNamespace(moduleName, ns))
             {
                 return ValidationResult.Invalid(
-                    $"Module '{file.Path}' is outside the '{ns}' namespace; a library's modules must live under it.");
+                    $"Module '{moduleName}' ({file.Path}) is outside the '{ns}' namespace; a library's modules must live under it.");
+            }
+
+            foreach (var inlineModule in InlineModuleNames(file, moduleName))
+            {
+                if (!IsUnderNamespace(inlineModule, ns))
+                {
+                    return ValidationResult.Invalid(
+                        $"Inline module '{inlineModule}' ({file.Path}) is outside the '{ns}' namespace.");
+                }
             }
         }
 
         return ValidationResult.Valid;
     }
 
-    private static string StripSourceRoot(string path)
+    private static bool IsUnderNamespace(string module, string ns) =>
+        string.Equals(module, ns, StringComparison.Ordinal) || module.StartsWith(ns + ".", StringComparison.Ordinal);
+
+    private static string? ModuleName(string path, IReadOnlyList<string> sourceRoots)
     {
-        const string root = "src/";
-        return path.StartsWith(root, StringComparison.Ordinal) ? path[root.Length..] : path;
+        foreach (var root in sourceRoots)
+        {
+            var prefix = root is "" or "." ? "" : root.TrimEnd('/') + "/";
+            if (prefix.Length == 0 || path.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return path[prefix.Length..][..^".ash".Length].Replace('/', '.');
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<string> ReadSourceRoots(IReadOnlyList<SourceFile> files)
+    {
+        var manifest = files.FirstOrDefault(f =>
+            string.Equals(f.Path.Replace('\\', '/').TrimStart('/'), "ashes.json", StringComparison.OrdinalIgnoreCase));
+        if (manifest is not null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(manifest.Bytes);
+                if (doc.RootElement.TryGetProperty("sourceRoots", out var roots) && roots.ValueKind == JsonValueKind.Array)
+                {
+                    var list = roots.EnumerateArray()
+                        .Where(e => e.ValueKind == JsonValueKind.String)
+                        .Select(e => e.GetString()!.Replace('\\', '/'))
+                        .ToList();
+                    if (list.Count > 0)
+                    {
+                        return list;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // A malformed manifest is caught elsewhere; fall back to the default layout.
+            }
+        }
+
+        return ["src"];
+    }
+
+    private static IEnumerable<string> InlineModuleNames(SourceFile file, string moduleName)
+    {
+        var source = Encoding.UTF8.GetString(file.Bytes);
+        if (!ProjectSupport.ContainsInlineModule(source))
+        {
+            return [];
+        }
+
+        try
+        {
+            var parsed = ProjectSupport.ParseImportHeader(source, file.Path);
+            var (_, inlineModules) = ProjectSupport.ExpandInlineModules(parsed.SourceWithoutImports, moduleName, file.Path);
+            return inlineModules.Select(m => m.ModuleName).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            // Malformed inline modules (e.g. ASH023/ASH024) are reported by the compile step.
+            return [];
+        }
     }
 }
 

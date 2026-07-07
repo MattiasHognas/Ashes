@@ -126,7 +126,7 @@ public sealed class PublishPipelineTests
         new(
             store.Metadata,
             blobs,
-            validator ?? new StructuralManifestValidator(),
+            validator ?? new SemanticManifestValidator(),
             new EmptyCapabilityExtractor(),
             Options.Create(new RegistryOptions { Limits = limits ?? new RegistryLimits() }));
 

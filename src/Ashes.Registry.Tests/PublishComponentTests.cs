@@ -89,7 +89,7 @@ public sealed class PublishComponentTests
     [Test]
     public void Namespace_lint_passes_modules_under_the_namespace()
     {
-        var validator = new StructuralManifestValidator();
+        var validator = new SemanticManifestValidator();
         var files = new[]
         {
             new SourceFile("src/Json.ash", Encoding.UTF8.GetBytes("x")),
@@ -103,12 +103,38 @@ public sealed class PublishComponentTests
     [Test]
     public void Namespace_lint_fails_a_module_outside_the_namespace()
     {
-        var validator = new StructuralManifestValidator();
+        var validator = new SemanticManifestValidator();
         var files = new[] { new SourceFile("src/Other/Mod.ash", Encoding.UTF8.GetBytes("x")) };
 
         var result = validator.Validate(files, "Json");
 
         result.Ok.ShouldBeFalse();
         result.Message!.ShouldContain("Json");
+    }
+
+    [Test]
+    public void Namespace_lint_reads_the_declared_source_roots()
+    {
+        var validator = new SemanticManifestValidator();
+        var manifest = new SourceFile("ashes.json", """{ "name": "json", "sourceRoots": ["lib"] }"""u8.ToArray());
+
+        // Under a non-`src` source root, the module is `Json` (not `lib.Json`).
+        validator.Validate([manifest, new SourceFile("lib/Json.ash", "let x = 1\n"u8.ToArray())], "Json").Ok.ShouldBeTrue();
+
+        // A module outside the namespace is still caught with a custom source root.
+        validator.Validate([manifest, new SourceFile("lib/Widget.ash", "let x = 1\n"u8.ToArray())], "Json").Ok.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Namespace_lint_accepts_inline_modules_under_the_namespace()
+    {
+        var validator = new SemanticManifestValidator();
+        var files = new[]
+        {
+            new SourceFile("src/Json.ash", "module Helpers =\n    let helper = given (n) -> n\n"u8.ToArray()),
+        };
+
+        // The inline module composes as `Json.Helpers`, under the namespace.
+        validator.Validate(files, "Json").Ok.ShouldBeTrue();
     }
 }

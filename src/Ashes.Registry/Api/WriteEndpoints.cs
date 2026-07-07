@@ -29,8 +29,18 @@ public static class WriteEndpoints
 
         // MVP bootstrap: create-or-get an account by name and mint a token. Production deployments front
         // this with the server CLI / disable it.
-        api.MapPost("/tokens", async (TokenRequest body, IAccountStore accounts, CancellationToken ct) =>
+        api.MapPost("/tokens", async (
+            TokenRequest body,
+            IAccountStore accounts,
+            Microsoft.Extensions.Options.IOptions<RegistryOptions> options,
+            CancellationToken ct) =>
         {
+            if (!options.Value.AllowOpenRegistration)
+            {
+                return RegistryResults.Error(StatusCodes.Status403Forbidden, ErrorCodes.Unauthorized,
+                    "Open registration is disabled on this registry; tokens are provisioned by the operator.");
+            }
+
             if (string.IsNullOrWhiteSpace(body.Name))
             {
                 return RegistryResults.Error(StatusCodes.Status400BadRequest, ErrorCodes.Unauthorized, "An account name is required.");
