@@ -31,11 +31,63 @@ public sealed partial class Lowering
 
     private TypeRef AmbientRow => _ambientRow ??= NewTypeVar();
 
+    // Built-in marker capabilities for network endpoint creation: NetListen (open a listening
+    // endpoint) and NetConnect (dial out). They have no operations — nothing to perform or handle;
+    // the runtime is their implicit provider, so they are excluded from the ASH017 residual check.
+    // Their value is typing: every function that (transitively) creates a network endpoint carries
+    // the capability in its inferred row, a written closed row without it rejects such calls
+    // (ASH018), and `needs {NetListen}` annotations resolve like any declared capability.
+    // Operations on an ESTABLISHED connection (send/receive/close/accept) carry no capability:
+    // possession of the socket resource is the authority.
+    private const string NetListenCapabilityName = "NetListen";
+    private const string NetConnectCapabilityName = "NetConnect";
+
+    // Deliberately NOT in _capabilitySymbols: CapabilityGlobalCount (evidence globals, the
+    // live-posts guards around arena resets) keys off that dictionary, and marker capabilities
+    // have no operations, handlers, or evidence — they exist purely in rows.
+    private readonly Dictionary<string, CapabilitySymbol> _builtinNetworkCapabilities = new(StringComparer.Ordinal);
+
+    private CapabilitySymbol BuiltinNetworkCapability(string name)
+    {
+        if (_builtinNetworkCapabilities.TryGetValue(name, out var existing))
+        {
+            return existing;
+        }
+
+        var symbol = new CapabilitySymbol(
+            name,
+            [],
+            new Dictionary<string, CapabilityOperationSymbol>(StringComparer.Ordinal),
+            new CapabilityDecl(name, [], []));
+        _builtinNetworkCapabilities[name] = symbol;
+        return symbol;
+    }
+
+    private static bool IsBuiltinNetworkCapability(string name) =>
+        string.Equals(name, NetListenCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, NetConnectCapabilityName, StringComparison.Ordinal);
+
+    /// <summary>Requires a built-in marker capability in the ambient row at an intrinsic call site.</summary>
+    private void RequireBuiltinCapability(string name, TextSpan span)
+    {
+        var capability = new TypeRef.TCapability(BuiltinNetworkCapability(name), []);
+        SubsumeCalleeRow(new TypeRef.TRow([capability], null), span);
+    }
+
+    private TypeRef BuiltinCapabilityRow(string name) =>
+        new TypeRef.TRow([new TypeRef.TCapability(BuiltinNetworkCapability(name), [])], null);
+
     private void RegisterCapabilityDeclarations(IReadOnlyList<TopLevelItem> items)
     {
         foreach (var item in items.OfType<TopLevelItem.Capability>())
         {
             var decl = item.Decl;
+            if (IsBuiltinNetworkCapability(decl.Name))
+            {
+                ReportDiagnostic(GetSpan(decl), $"Capability name '{decl.Name}' is reserved for the built-in network capability.");
+                continue;
+            }
+
             if (_capabilitySymbols.ContainsKey(decl.Name))
             {
                 ReportDiagnostic(GetSpan(decl), $"Duplicate capability name '{decl.Name}'.");
@@ -641,6 +693,13 @@ public sealed partial class Lowering
         var (capabilities, _) = NormalizeRow(_ambientRow);
         foreach (var capability in capabilities.OrderBy(e => e.Symbol.Name, StringComparer.Ordinal))
         {
+            // Built-in network marker capabilities are satisfied by the runtime itself: they exist
+            // to make endpoint creation visible in rows, not to be handled.
+            if (IsBuiltinNetworkCapability(capability.Symbol.Name))
+            {
+                continue;
+            }
+
             var span = _firstPerformSites.TryGetValue(capability.Symbol.Name, out var performSite)
                 ? performSite
                 : default;
@@ -1495,8 +1554,15 @@ public sealed partial class Lowering
         {
             if (!_capabilitySymbols.TryGetValue(effectRef.Name, out var symbol))
             {
-                ReportDiagnostic(0, $"Unknown capability '{effectRef.Name}' in needs row.", UnknownCapabilityCode);
-                continue;
+                if (IsBuiltinNetworkCapability(effectRef.Name))
+                {
+                    symbol = BuiltinNetworkCapability(effectRef.Name);
+                }
+                else
+                {
+                    ReportDiagnostic(0, $"Unknown capability '{effectRef.Name}' in needs row.", UnknownCapabilityCode);
+                    continue;
+                }
             }
 
             if (effectRef.Args.Count != symbol.TypeParameters.Count)

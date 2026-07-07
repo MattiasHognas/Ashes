@@ -2525,7 +2525,35 @@ its fully-implicit twin must produce the same inferred types and the same output
 (`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
 production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
-## 20.8 Design Notes
+## 20.8 Built-in Network Capabilities (`NetListen`, `NetConnect`)
+
+Two capabilities are built into the compiler and require no declaration:
+
+- **`NetListen`** — creating a listening endpoint. Carried by `Ashes.Net.Tcp.Server.listen` and
+  `forkWorkers`, and therefore (by row inference) by every `serve` combinator
+  (`Ashes.Net.Tcp.Server.serve` / `serveParallel` / `serveWithDrainTimeout`,
+  `Ashes.Http.Server.serve` / `serveParallel`, `Ashes.Net.Tls.Server.serveTls`).
+- **`NetConnect`** — dialing out. Carried by `Ashes.Net.Tcp.connect`, `Ashes.Http.get` / `post`,
+  and `Ashes.Net.Tls.connect`.
+
+They are **marker capabilities**: they declare no operations, so there is nothing to `perform`
+and nothing a `handle` arm can intercept — the runtime itself is their implicit provider, and
+they are excluded from the top-level unsatisfied-capability check (`ASH017`). Their value is
+purely in typing:
+
+- Every function that (transitively) creates a network endpoint carries the capability in its
+  inferred row, so "this program is a server" (or "dials out") is visible in its type.
+- A written **closed** row that omits them rejects such calls (`ASH018`), exactly like any other
+  capability: `let f : Str -> Int needs {Prices} = ...` cannot call `Ashes.Http.get`.
+- They can be named in `needs` rows like declared capabilities:
+  `let opener : Int -> Task(Str, Socket) needs {NetListen} = given (p) -> tcp.listen(p)`.
+
+Operations on an **established** connection — `send`, `receive`, `close`, `accept` on an accepted
+or connected socket — carry no capability: possession of the connection resource is the
+authority; the capabilities govern creating endpoints, not using them. The capability names are
+reserved: a user `capability NetListen = ...` declaration is a compile-time error.
+
+## 20.9 Design Notes
 
 Ashes uses **lexical handler injection** (the OCaml 5 / Koka / Eff / Frank / Unison family):
 the nearest enclosing handler interprets an operation. The two other ML/FP injection routes are
@@ -2540,7 +2568,7 @@ model and affine ownership (double-resume is double-use/double-drop of owned val
 Consequently capability-based generators, backtracking, and nondeterminism are out of scope —
 documented limitation, not a TODO.
 
-## 20.9 Diagnostics
+## 20.10 Diagnostics
 
 `ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row, and the
 generic-provider limitation), `ASH019` (unknown capability or operation), `ASH020` (invalid
