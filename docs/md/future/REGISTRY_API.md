@@ -236,18 +236,26 @@ if discovery ever becomes a product surface — with no API or client change.
 
 The namespace lint (stage 6) and capability extraction (stage 8) require real compiler logic, so the
 registry **reuses the compiler front end as a library** — the same way the LSP consumes compiler logic
-rather than reimplementing it. This is exposed to the pipeline behind two interfaces so it is mockable in
-handler tests and swappable in deployment:
+rather than reimplementing it. Both are exposed to the pipeline behind interfaces so they are mockable in
+tests and swappable in deployment:
 
 ```csharp
-public interface IManifestValidator   { ValidationResult Validate(SourceTree tree, string ns); }
-public interface ICapabilityExtractor { IReadOnlyList<string> PublicCapabilities(SourceTree tree); }
+public interface IManifestValidator   { ValidationResult Validate(IReadOnlyList<SourceFile> files, string ns); }
+public interface ICapabilityExtractor { IReadOnlyList<string> PublicCapabilities(IReadOnlyList<SourceFile> files, string ns); }
 ```
 
-The default implementation takes a plain in-solution `ProjectReference` on `Ashes.Frontend`/
-`Ashes.Semantics` (the one-way consumer edge of PACKAGE_MANAGER §12.1). An alternative for looser
-coupling is to shell out to the `ashes` CLI (a metadata-extraction subcommand) so the deployable only
-bundles the compiler binary — the interface makes either choice invisible to the rest of the server.
+The shipped implementations take a plain in-solution `ProjectReference` on `Ashes.Frontend`/
+`Ashes.Semantics` (the one-way consumer edge of PACKAGE_MANAGER §12.1):
+
+- `StructuralManifestValidator` enforces the path-level namespace rule (§2); the semantic lint over
+  *exported* modules lands with the multi-module capability path below.
+- `CompilerCapabilityExtractor` parses and lowers the uploaded source, then reads the inferred
+  capabilities off the exported bindings via the compiler's `Lowering.PublicApiCapabilities()` accessor —
+  the same inference the compiler runs, so the audit cannot be evaded. It is best-effort (any compiler
+  failure yields no capabilities rather than blocking a publish) and currently covers **single-module
+  packages**; multi-module stitching arrives with the project-loader integration (shared with the client
+  work). An alternative for looser coupling is to shell out to the `ashes` CLI so the deployable bundles
+  only the compiler binary — the interface makes either choice invisible to the rest of the server.
 
 Because these run over the *uploaded* source server-side, the capability audit and namespace guarantee
 are authoritative, not client-trusted.

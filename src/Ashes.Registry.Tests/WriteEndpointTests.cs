@@ -16,13 +16,25 @@ public sealed class WriteEndpointTests
 
     private static readonly (string Path, byte[] Bytes)[] Source = [("src/Json.ash", "module Json"u8.ToArray())];
 
+    // A valid single-module package whose exported `emit` needs the user-declared `Log` capability.
+    private static readonly (string Path, byte[] Bytes)[] CapabilitySource =
+    [
+        ("src/Logger.ash", """
+            capability Log =
+                | write : Str -> Unit
+
+            let emit : Str -> Unit needs {Log} =
+                given (m) -> Log.write(m)
+            """u8.ToArray()),
+    ];
+
     [Test]
     public async Task Publishing_without_a_token_is_unauthorized()
     {
         using var factory = new RegistryAppFactory();
         using var client = factory.CreateClient();
 
-        using var content = PublishBody(Hash(Source));
+        using var content = PublishBody(Source);
         var response = await client.PutAsync(new Uri("/api/v1/packages/Json/1.0.0", UriKind.Relative), content);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
@@ -35,7 +47,7 @@ public sealed class WriteEndpointTests
         using var client = factory.CreateClient();
         var token = await MintTokenAsync(client, "alice");
 
-        var publish = await PublishAsync(client, token, "Json", "1.0.0", Hash(Source));
+        var publish = await PublishAsync(client, token, "Json", "1.0.0", Source);
         publish.StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var pkg = await client.GetFromJsonAsync<PackageResponse>(new Uri("/api/v1/packages/Json", UriKind.Relative));
@@ -49,10 +61,10 @@ public sealed class WriteEndpointTests
         using var factory = new RegistryAppFactory();
         using var client = factory.CreateClient();
         var alice = await MintTokenAsync(client, "alice");
-        (await PublishAsync(client, alice, "Json", "1.0.0", Hash(Source))).StatusCode.ShouldBe(HttpStatusCode.Created);
+        (await PublishAsync(client, alice, "Json", "1.0.0", Source)).StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var bob = await MintTokenAsync(client, "bob");
-        var response = await PublishAsync(client, bob, "Json", "2.0.0", Hash(Source));
+        var response = await PublishAsync(client, bob, "Json", "2.0.0", Source);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         var body = await response.Content.ReadFromJsonAsync<ErrorEnvelope>();
@@ -65,7 +77,7 @@ public sealed class WriteEndpointTests
         using var factory = new RegistryAppFactory();
         using var client = factory.CreateClient();
         var token = await MintTokenAsync(client, "alice");
-        await PublishAsync(client, token, "Json", "1.0.0", Hash(Source));
+        await PublishAsync(client, token, "Json", "1.0.0", Source);
 
         using var yank = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/v1/packages/Json/1.0.0/yank", UriKind.Relative));
         yank.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -82,7 +94,7 @@ public sealed class WriteEndpointTests
         using var client = factory.CreateClient();
         var alice = await MintTokenAsync(client, "alice");
         await MintTokenAsync(client, "bob"); // creates bob's account
-        await PublishAsync(client, alice, "Json", "1.0.0", Hash(Source));
+        await PublishAsync(client, alice, "Json", "1.0.0", Source);
 
         using var add = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/v1/packages/Json/owners", UriKind.Relative))
         {
@@ -96,6 +108,21 @@ public sealed class WriteEndpointTests
         owners!.Owners.ShouldBe(["alice", "bob"]);
     }
 
+    [Test]
+    public async Task A_published_package_records_its_inferred_capabilities()
+    {
+        using var factory = new RegistryAppFactory();
+        using var client = factory.CreateClient();
+        var token = await MintTokenAsync(client, "alice");
+
+        (await PublishAsync(client, token, "Logger", "1.0.0", CapabilitySource))
+            .StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        var v = await client.GetFromJsonAsync<VersionResponse>(
+            new Uri("/api/v1/packages/Logger/1.0.0", UriKind.Relative));
+        v!.Capabilities.ShouldContain("Log");
+    }
+
     private static async Task<string> MintTokenAsync(HttpClient client, string name)
     {
         var response = await client.PostAsJsonAsync(new Uri("/api/v1/tokens", UriKind.Relative), new { name });
@@ -104,25 +131,25 @@ public sealed class WriteEndpointTests
     }
 
     private static async Task<HttpResponseMessage> PublishAsync(
-        HttpClient client, string token, string ns, string version, string hash)
+        HttpClient client, string token, string ns, string version, (string Path, byte[] Bytes)[] files)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put, new Uri($"/api/v1/packages/{ns}/{version}", UriKind.Relative))
         {
-            Content = PublishBody(hash),
+            Content = PublishBody(files),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await client.SendAsync(request);
     }
 
-    private static MultipartFormDataContent PublishBody(string hash)
+    private static MultipartFormDataContent PublishBody((string Path, byte[] Bytes)[] files)
     {
-        var meta = new PublishMetadataDto("A JSON parser.", ["json"], [], hash);
+        var meta = new PublishMetadataDto("A package.", ["json"], [], Hash(files));
         var content = new MultipartFormDataContent
         {
             { new StringContent(JsonSerializer.Serialize(meta, Web), Encoding.UTF8), "metadata" },
         };
-        var file = new ByteArrayContent(TestArchives.Tarball(Source));
+        var file = new ByteArrayContent(TestArchives.Tarball(files));
         file.Headers.ContentType = new MediaTypeHeaderValue("application/gzip");
         content.Add(file, "source", "source.tar.gz");
         return content;

@@ -12,6 +12,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Consumed as a library for publish-time validation (namespace lint, capability extraction);
+         strictly one-way — no compiler phase depends on the registry (PACKAGE_MANAGER 12.1). -->
+    <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
+    <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.10" />

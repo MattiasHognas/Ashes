@@ -26,7 +26,7 @@ builder.Services.AddScoped<IAccountStore, EfAccountStore>();
 builder.Services.AddSingleton<IBlobStore, FileSystemBlobStore>();
 
 builder.Services.AddSingleton<IManifestValidator, StructuralManifestValidator>();
-builder.Services.AddSingleton<ICapabilityExtractor, EmptyCapabilityExtractor>();
+builder.Services.AddSingleton<ICapabilityExtractor, CompilerCapabilityExtractor>();
 builder.Services.AddScoped<PublishPipeline>();
 
 builder.Services.AddOpenApi();
