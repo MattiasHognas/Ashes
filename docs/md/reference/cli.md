@@ -35,7 +35,9 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes init`      | Create a new Ashes project in the current directory     |
 | `ashes add`       | Add a dependency to the project manifest (`--path`, `--dev`) |
 | `ashes remove`    | Remove a dependency from the project manifest           |
-| `ashes restore`   | Resolve and validate dependencies (path deps today)     |
+| `ashes restore`   | Resolve dependencies (path + registry); `--frozen`, `--offline` |
+| `ashes tree`      | Render the resolved dependency tree                     |
+| `ashes why`       | Show why a package is in the dependency graph           |
 | `ashes login`     | Store an API token for a registry                       |
 | `ashes publish`   | Package the current project and publish it to a registry |
 | `ashes yank`      | Yank (or `--undo`) a published version                  |
@@ -625,40 +627,61 @@ ashes remove json-parser
 
 ### `ashes restore`
 
-Resolve and validate a project's dependencies from the nearest `ashes.json`. (`ashes install` is retired.)
+Resolve and materialize a project's dependencies from the nearest `ashes.json`. (`ashes install` is retired.)
 
 #### Synopsis
 
 ```sh
-ashes restore
+ashes restore [--registry <name-or-url>] [--frozen] [--offline]
 ```
 
-#### Arguments
+#### Options
 
-None.
+| Name | Description |
+|------|-------------|
+| `--registry <r>` | Registry to resolve registry dependencies against (name or URL; default from config). |
+| `--frozen` | Fail (`ASH032`/`ASH033`) if a fresh resolution would differ from the committed `ashes.lock`; never rewrite it. For CI. |
+| `--offline` | Never touch the network; trust `ashes.lock` and only verify its packages are in the cache. |
 
 #### Behaviour
 
-1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
-2. If no `ashes.json` is found, the command fails with exit code **1**.
-3. Resolves and validates **path dependencies** — a missing path or a non-project path fails with
-   `ASH030` / `ASH031` — and lists each with its namespace.
-4. Registry/git dependencies require a lock file and cache (not yet available); they are reported but not
-   fetched.
-
-#### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0`  | Dependencies resolved (or none present). |
-| `1`  | No `ashes.json` found, an invalid dependency, or I/O error. |
+1. Discovers `ashes.json` by walking upward from the current directory.
+2. Fetches and caches **registry dependencies** (resolving SemVer constraints across the transitive
+   graph) and writes `ashes.lock`; then validates **path dependencies** (a missing path or non-project
+   fails with `ASH030` / `ASH031`) and lists every resolved dependency with its namespace.
+3. `build` / `run` / `test` read the resulting lock, so once restored the project compiles against its
+   dependencies.
 
 #### Examples
 
 ```bash
-ashes restore
-# Restored 1 path dependency:
-#   greet -> Greet (/path/to/dep)
+ashes restore --registry https://pkg.ashes-lang.org
+# Resolved 2 dependencies into ashes.lock.
+```
+
+---
+
+### `ashes tree`
+
+Render the resolved dependency tree (project root → direct dependencies → their transitive dependencies,
+from `ashes.lock`). Path dependencies are shown as leaves.
+
+```sh
+ashes tree
+# app
+# └── Json 1.2.0
+#     └── Utf8 0.4.3
+```
+
+---
+
+### `ashes why`
+
+Show a path from a project root dependency to the named package, explaining why it is in the graph.
+
+```sh
+ashes why Utf8
+# Json -> Utf8
 ```
 
 ---
