@@ -1434,6 +1434,97 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_shutdown_should_forward_to_workers_and_reap_them()
+    {
+        // Multi-reactor graceful shutdown: SIGTERM to the PARENT forwards to the forked workers and
+        // the parent reaps them before exiting, so no worker is cut mid-drain by the death signal
+        // and no orphan keeps the port open after the parent reports a clean stop.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onConn client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(m) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
+                | Ok(_u) -> Ashes.IO.print("stopped-clean")
+                | Error(e) -> Ashes.IO.print("err: " + e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_mwdrain_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            // Wait for a worker to accept, then SIGTERM the parent only.
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (true)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50).ConfigureAwait(false);
+                }
+            }
+            using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
+            {
+                await kill.WaitForExitAsync().ConfigureAwait(false);
+            }
+
+            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
+            exited.ShouldBeTrue();
+            proc.ExitCode.ShouldBe(0);
+            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-clean");
+
+            // All workers must be gone with the parent: the port must refuse new connections.
+            await Task.Delay(200).ConfigureAwait(false);
+            var refused = false;
+            try
+            {
+                using var probe = new TcpClient();
+                await probe.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                refused = true;
+            }
+            refused.ShouldBeTrue("workers should have drained and exited with the parent");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_shutdown_second_signal_should_force_exit()
     {
         // A second SIGTERM during the drain forces an immediate clean exit even though a handler

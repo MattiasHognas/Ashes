@@ -2342,7 +2342,13 @@ internal static partial class LlvmCodegen
             LlvmBasicBlockHandle afterWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_after_wait");
             LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, hasSocket, zero, "saw_do_wsapoll"), socketWaitBlock, timerWaitBlock);
             LlvmApi.PositionBuilderAtEnd(builder, socketWaitBlock);
-            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_wsapoll_no_timer"), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), minRem, "saw_wsapoll_timeout");
+            // Cap the wait at 200 ms: the console-ctrl handler runs on another thread and cannot
+            // interrupt a parked WSAPoll the way a signal EINTRs epoll_wait, so the loop must
+            // re-observe the shutdown flag on a short bound (the accept step's drain re-checks on
+            // every re-step). An idle server wakes 5x/s; the cost is negligible.
+            LlvmValueHandle uncapped = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_wsapoll_no_timer"), LlvmApi.ConstInt(state.I64, 200, 0), minRem, "saw_wsapoll_timeout_raw");
+            LlvmValueHandle cap = LlvmApi.ConstInt(state.I64, 200, 0);
+            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, uncapped, cap, "saw_wsapoll_over_cap"), cap, uncapped, "saw_wsapoll_timeout");
             LlvmValueHandle startMs = EmitMonotonicNowMs(state, "saw_wait_start");
             LlvmValueHandle pollCount = LlvmApi.BuildLoad2(builder, state.I64, pollCountSlot, "saw_poll_count");
             _ = EmitWindowsWsaPoll(state, pollArrayPtr, pollCount, timeout, "saw_wsapoll_wait");
