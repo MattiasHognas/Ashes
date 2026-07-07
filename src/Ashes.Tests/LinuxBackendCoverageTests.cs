@@ -1045,6 +1045,15 @@ public sealed class LinuxBackendCoverageTests
             first.ShouldEndWith("ok");
             second.ShouldContain("Content-Type: application/json");
             second.ShouldEndWith("{\"ok\":true}");
+
+            // Pipelining across a split body: the tail of a POST body arrives in the same read as
+            // the NEXT request. The incremental body path must hand the handler exactly
+            // Content-Length bytes and carry the overshoot over as the next request's buffer.
+            var combined = await HttpTwoSegmentsOneConnectionAsync(port,
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhello-",
+                "tail" + "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
+            combined.ShouldContain("body=hello-tail");
+            combined.ShouldContain("{\"ok\":true}");
         }
         finally
         {
@@ -1215,6 +1224,33 @@ public sealed class LinuxBackendCoverageTests
                 await using (stream.ConfigureAwait(false))
                 {
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                }
+            }
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task<string> HttpTwoSegmentsOneConnectionAsync(int port, string firstSegment, string secondSegment)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(firstSegment)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    // Let the server consume the first segment and park mid-body before the rest arrives.
+                    await Task.Delay(150).ConfigureAwait(false);
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(secondSegment)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
                     using var reader = new StreamReader(stream, Encoding.UTF8);
                     return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
                 }

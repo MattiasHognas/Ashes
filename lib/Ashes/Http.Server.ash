@@ -5,8 +5,11 @@
 // when the peer disconnects). Pure Ashes over the TCP layer, so it works on every target the TCP
 // server does. Reads are buffered until a full request has arrived (headers complete and
 // Content-Length bytes of body), so requests larger than one read and slow/split requests work.
-// Request bodies may be sized by Content-Length or Transfer-Encoding: chunked (chunk
-// extensions ignored, trailers not supported). See docs/md/future/SERVER_SUPPORT.md for what remains.
+// A Content-Length body buffers incrementally: once the headers are parsed the loop only counts
+// received bytes (chunks accumulate as a list, joined once when complete), so a body arriving in
+// k reads costs O(total) work, not k re-parses of a growing accumulator. Chunked bodies
+// (Transfer-Encoding: chunked; chunk extensions ignored, trailers not supported) still re-decode
+// the accumulated buffer per read.
 //
 // ADT field types must be simple type names, so a request keeps its headers as the raw header block
 // (a Str) and a response keeps its extra headers as a pre-rendered "Name: value\r\n..." block; the
@@ -17,6 +20,7 @@ import Ashes.String
 import Ashes.Text
 import Ashes.Bytes
 import Ashes.UInt
+import Ashes.List
 import Ashes.Async
 type HttpRequest =
     | HttpRequest(Str, Str, Str, Str)
@@ -28,6 +32,12 @@ type HttpParse =
     | HttpNeedMore
     | HttpTooLarge
     | HttpParsed(HttpRequest, Bool, Str)
+    | HttpNeedBody(Str, Str, Bool, Str, Int)
+
+type BodyRead =
+    | BodyDone(HttpRequest, Bool, Str)
+    | BodyPeerClosed
+    | BodyFailed(Str)
 
 type ChunkResult =
     | ChunkNeedMore
@@ -108,6 +118,11 @@ let json status bodyText = HttpResponse(status)("Content-Type: application/json\
 let withHeader name value resp = 
     match resp with
         | HttpResponse(status, headerBlock, bodyText) -> HttpResponse(status)(name + ": " + value + "\r\n" + headerBlock)(bodyText)
+
+let requestFromLine requestLine headerBlock bodyText = 
+    match Ashes.String.split(requestLine)(" ") with
+        | m :: pth :: _v -> HttpRequest(m)(pth)(headerBlock)(bodyText)
+        | _other -> HttpRequest("GET")("/")(headerBlock)(bodyText)
 
 let parseRequest raw = 
     (let sections = Ashes.String.split(raw)("\r\n\r\n")
@@ -344,10 +359,7 @@ let tryParseBuffered buffered =
                                         in 
                                             let build = 
                                                 given (body) -> 
-                                                    given (rest) -> 
-                                                        match Ashes.String.split(requestLine)(" ") with
-                                                            | m :: pth :: _v -> HttpParsed(HttpRequest(m)(pth)(headerBlock)(body))(keepAlive)(rest)
-                                                            | _other -> HttpParsed(HttpRequest("GET")("/")(headerBlock)(body))(keepAlive)(rest)
+                                                    given (rest) -> HttpParsed(requestFromLine(requestLine)(headerBlock)(body))(keepAlive)(rest)
                                             in 
                                                 let isChunked = 
                                                     match headerInBlock(headerBlock)("transfer-encoding") with
@@ -377,7 +389,7 @@ let tryParseBuffered buffered =
                                                                 let availableBody = Ashes.Bytes.length(allBytes) - headBytes
                                                                 in 
                                                                     if availableBody < contentLength
-                                                                    then HttpNeedMore
+                                                                    then HttpNeedBody(requestLine)(headerBlock)(keepAlive)(Ashes.Bytes.subText(allBytes)(headBytes)(availableBody))(contentLength)
                                                                     else build(Ashes.Bytes.subText(allBytes)(headBytes)(contentLength))(Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
 
 let connectionHandler handler = 
@@ -401,6 +413,43 @@ let connectionHandler handler =
                                 if Ashes.Text.byteLength(chunk) == 0
                                 then await Ashes.Net.Tcp.close(client)
                                 else connLoop(buffered + chunk)
+                    | HttpNeedBody(requestLine, headerBlock, keepAlive, fragment, need) -> 
+                        let recursive bodyLoop chunks got = 
+                            if got >= need
+                            then 
+                                let joined = Ashes.String.join("")(Ashes.List.reverse(chunks))
+                                in 
+                                    let allBytes = Ashes.Bytes.fromText(joined)
+                                    in BodyDone(requestFromLine(requestLine)(headerBlock)(Ashes.Bytes.subText(allBytes)(0)(need)))(keepAlive)(Ashes.Bytes.subText(allBytes)(need)(got - need))
+                            else 
+                                match await Ashes.Net.Tcp.receive(client)(65536) with
+                                    | Error(e4) -> BodyFailed(e4)
+                                    | Ok(chunk) -> 
+                                        if Ashes.Text.byteLength(chunk) == 0
+                                        then BodyPeerClosed
+                                        else bodyLoop(chunk :: chunks)(got + Ashes.Text.byteLength(chunk))
+                        in 
+                            match bodyLoop(fragment :: [])(Ashes.Text.byteLength(fragment)) with
+                                | BodyFailed(e5) -> Error(e5)
+                                | BodyPeerClosed -> await Ashes.Net.Tcp.close(client)
+                                | BodyDone(req, bodyKeepAlive, rest) -> 
+                                    match await handler(req) with
+                                        | Ok(resp) -> 
+                                            let wire = 
+                                                renderConnection(if bodyKeepAlive
+                                                then "keep-alive"
+                                                else "close")(resp)
+                                            in 
+                                                match await Ashes.Net.Tcp.send(client)(wire) with
+                                                    | Error(e6) -> Error(e6)
+                                                    | Ok(_n3) -> 
+                                                        if bodyKeepAlive
+                                                        then connLoop(rest)
+                                                        else await Ashes.Net.Tcp.close(client)
+                                        | Error(_he2) -> 
+                                            match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
+                                                | Error(e7) -> Error(e7)
+                                                | Ok(_n4) -> await Ashes.Net.Tcp.close(client)
                     | HttpParsed(req, keepAlive, rest) -> 
                         match await handler(req) with
                             | Ok(resp) -> 
