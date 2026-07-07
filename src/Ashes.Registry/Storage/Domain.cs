@@ -3,12 +3,12 @@ namespace Ashes.Registry.Storage;
 /// <summary>A dependency edge as recorded in a published version's metadata.</summary>
 public sealed record Dependency(string Namespace, string Req);
 
-/// <summary>Package-level metadata (one per namespace); the searchable/browsable unit.</summary>
+/// <summary>Package-level metadata (one per namespace); the searchable/browsable unit. Owners are held
+/// relationally and fetched via <see cref="IMetadataStore.GetOwnersAsync"/>, not carried here.</summary>
 public sealed record PackageInfo(
     string Namespace,
     string Description,
     IReadOnlyList<string> Keywords,
-    IReadOnlyList<string> Owners,
     long Downloads,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

@@ -11,9 +11,8 @@ internal static class TestData
         string ns,
         string description = "",
         IReadOnlyList<string>? keywords = null,
-        IReadOnlyList<string>? owners = null,
         long downloads = 0) =>
-        new(ns, description, keywords ?? [], owners ?? [], downloads, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        new(ns, description, keywords ?? [], downloads, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
 
     public static VersionInfo Version(
         string ns,
@@ -47,18 +46,28 @@ internal static class TestData
         return new StoreHandle(dir, db, ownsDir);
     }
 
-    /// <summary>Seed a package plus one version and its source blob through the running app's stores.</summary>
+    /// <summary>Seed a package plus one version and its source blob through the running app's stores;
+    /// any named owners are created as accounts and linked.</summary>
     public static async Task SeedAsync(
         RegistryAppFactory factory,
         PackageInfo package,
         VersionInfo version,
-        byte[] source)
+        byte[] source,
+        IReadOnlyList<string>? owners = null)
     {
         using var scope = factory.Services.CreateScope();
         var meta = scope.ServiceProvider.GetRequiredService<IMetadataStore>();
         var blobs = scope.ServiceProvider.GetRequiredService<IBlobStore>();
+        var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
 
         await meta.UpsertPackageAsync(package, CancellationToken.None);
+        foreach (var owner in owners ?? [])
+        {
+            var account = await accounts.GetByNameAsync(owner, CancellationToken.None)
+                ?? await accounts.CreateAccountAsync(owner, CancellationToken.None);
+            await meta.AddOwnerAsync(package.Namespace, account.Id, CancellationToken.None);
+        }
+
         await meta.AddVersionAsync(version, CancellationToken.None);
         using var ms = new MemoryStream(source);
         await blobs.PutAsync(version.Hash, ms, CancellationToken.None);

@@ -47,7 +47,8 @@ public static class ReadEndpoints
             }
 
             var versions = await store.GetVersionsAsync(ns, ct);
-            return Results.Ok(Responses.ToResponse(pkg, versions));
+            var owners = await store.GetOwnersAsync(ns, ct);
+            return Results.Ok(Responses.ToResponse(pkg, versions, owners));
         });
 
         api.MapGet("/packages/{ns}/{version}", async (

@@ -33,6 +33,33 @@ public interface IMetadataStore
     Task AddVersionAsync(VersionInfo v, CancellationToken ct);
 
     Task SetYankedAsync(string ns, string version, bool yanked, CancellationToken ct);
+
+    /// <summary>Account names owning the namespace (empty if unclaimed).</summary>
+    Task<IReadOnlyList<string>> GetOwnersAsync(string ns, CancellationToken ct);
+
+    Task<bool> IsOwnerAsync(string ns, string accountId, CancellationToken ct);
+
+    Task AddOwnerAsync(string ns, string accountId, CancellationToken ct);
+
+    Task RemoveOwnerAsync(string ns, string accountId, CancellationToken ct);
+}
+
+/// <summary>An identity that can own namespaces and hold API tokens.</summary>
+public sealed record Account(string Id, string Name, DateTimeOffset CreatedAt);
+
+/// <summary>Accounts and their API tokens. Token secrets are stored only as hashes; the plaintext is
+/// returned once, at mint time, and never again.</summary>
+public interface IAccountStore
+{
+    Task<Account> CreateAccountAsync(string name, CancellationToken ct);
+
+    Task<Account?> GetByNameAsync(string name, CancellationToken ct);
+
+    /// <summary>Mint a token for an account, returning the one-time plaintext secret alongside it.</summary>
+    Task<(Account Account, string Secret)> CreateTokenAsync(string accountId, CancellationToken ct);
+
+    /// <summary>Resolve a presented bearer secret to its account, or null if unknown.</summary>
+    Task<Account?> ResolveTokenAsync(string presentedSecret, CancellationToken ct);
 }
 
 /// <summary>List + search over the package set (§7). Lexical, name-first ranking; no semantic search.</summary>

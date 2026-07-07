@@ -1,4 +1,5 @@
 using Ashes.Registry.Api;
+using Ashes.Registry.Publish;
 using Ashes.Registry.Storage;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -21,7 +22,12 @@ builder.Services.AddDbContext<RegistryDbContext>(o =>
 
 builder.Services.AddScoped<IMetadataStore, EfMetadataStore>();
 builder.Services.AddScoped<ISearchIndex, EfSearchIndex>();
+builder.Services.AddScoped<IAccountStore, EfAccountStore>();
 builder.Services.AddSingleton<IBlobStore, FileSystemBlobStore>();
+
+builder.Services.AddSingleton<IManifestValidator, StructuralManifestValidator>();
+builder.Services.AddSingleton<ICapabilityExtractor, EmptyCapabilityExtractor>();
+builder.Services.AddScoped<PublishPipeline>();
 
 builder.Services.AddOpenApi();
 
@@ -41,6 +47,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapReadEndpoints();
+app.MapWriteEndpoints();
 
 await app.RunAsync();
 

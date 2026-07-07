@@ -48,8 +48,9 @@ internal static class Responses
         v.Dependencies.Select(d => new DependencyResponse(d.Namespace, d.Req)).ToList(),
         v.Capabilities, v.Size, v.PublishedAt);
 
-    public static PackageResponse ToResponse(PackageInfo p, IReadOnlyList<VersionInfo> versions) => new(
-        p.Namespace, p.Description, p.Keywords, p.Owners, versions.Select(ToResponse).ToList());
+    public static PackageResponse ToResponse(
+        PackageInfo p, IReadOnlyList<VersionInfo> versions, IReadOnlyList<string> owners) => new(
+        p.Namespace, p.Description, p.Keywords, owners, versions.Select(ToResponse).ToList());
 
     public static SearchResponse ToSearch(ResultPage page) => new(
         page.Results.Select(r => new SearchResultResponse(r.Namespace, r.Description, r.Latest, r.Downloads, r.Score)).ToList(),

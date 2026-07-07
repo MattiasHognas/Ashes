@@ -16,6 +16,8 @@ public static class ErrorCodes
     public const string VersionYanked = "version_yanked";
     public const string LimitExceeded = "limit_exceeded";
     public const string NamespaceLint = "namespace_lint";
+    public const string InvalidVersion = "invalid_version";
+    public const string HashMismatch = "hash_mismatch";
 }
 
 /// <summary>Helpers producing the error envelope with the right status code.</summary>

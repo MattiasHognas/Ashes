@@ -53,9 +53,10 @@ public sealed class ReadEndpointTests
         using var factory = new RegistryAppFactory();
         await TestData.SeedAsync(
             factory,
-            TestData.Package("Json", "A JSON parser.", keywords: ["json"], owners: ["alice"]),
+            TestData.Package("Json", "A JSON parser.", keywords: ["json"]),
             TestData.Version("Json", "1.2.0", "ash1:aaa", size: 20),
-            Encoding.UTF8.GetBytes("source"));
+            Encoding.UTF8.GetBytes("source"),
+            owners: ["alice"]);
         using var client = factory.CreateClient();
 
         var pkg = await client.GetFromJsonAsync<PackageResponse>(new Uri("/api/v1/packages/Json", UriKind.Relative));

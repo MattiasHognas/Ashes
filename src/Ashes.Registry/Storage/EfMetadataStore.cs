@@ -37,7 +37,6 @@ internal sealed class EfMetadataStore(RegistryDbContext db) : IMetadataStore
         {
             e.Description = pkg.Description;
             e.KeywordsJson = Map.ToJson(pkg.Keywords);
-            e.OwnersJson = Map.ToJson(pkg.Owners);
             e.Downloads = pkg.Downloads;
             e.UpdatedAt = pkg.UpdatedAt;
         }
@@ -75,14 +74,48 @@ internal sealed class EfMetadataStore(RegistryDbContext db) : IMetadataStore
         e.Yanked = yanked;
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<IReadOnlyList<string>> GetOwnersAsync(string ns, CancellationToken ct)
+    {
+        return await db.Owners.AsNoTracking()
+            .Where(o => o.PackageNamespace == ns)
+            .Join(db.Accounts.AsNoTracking(), o => o.AccountId, a => a.Id, (_, a) => a.Name)
+            .OrderBy(name => name)
+            .ToListAsync(ct);
+    }
+
+    public async Task<bool> IsOwnerAsync(string ns, string accountId, CancellationToken ct) =>
+        await db.Owners.AsNoTracking().AnyAsync(o => o.PackageNamespace == ns && o.AccountId == accountId, ct);
+
+    public async Task AddOwnerAsync(string ns, string accountId, CancellationToken ct)
+    {
+        if (await db.Owners.AnyAsync(o => o.PackageNamespace == ns && o.AccountId == accountId, ct))
+        {
+            return;
+        }
+
+        db.Owners.Add(new PackageOwnerEntity { PackageNamespace = ns, AccountId = accountId });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task RemoveOwnerAsync(string ns, string accountId, CancellationToken ct)
+    {
+        var e = await db.Owners.FirstOrDefaultAsync(o => o.PackageNamespace == ns && o.AccountId == accountId, ct);
+        if (e is null)
+        {
+            return;
+        }
+
+        db.Owners.Remove(e);
+        await db.SaveChangesAsync(ct);
+    }
 }
 
 /// <summary>Entity ↔ domain-record mapping and the JSON column codec.</summary>
 internal static class Map
 {
     public static PackageInfo ToPackage(PackageEntity e) => new(
-        e.Namespace, e.Description, FromJson(e.KeywordsJson), FromJson(e.OwnersJson),
-        e.Downloads, e.CreatedAt, e.UpdatedAt);
+        e.Namespace, e.Description, FromJson(e.KeywordsJson), e.Downloads, e.CreatedAt, e.UpdatedAt);
 
     public static VersionInfo ToVersion(PackageVersionEntity e) => new(
         e.Namespace, e.Version, e.Hash, DepsFromJson(e.DependenciesJson), FromJson(e.CapabilitiesJson),
@@ -93,7 +126,6 @@ internal static class Map
         Namespace = p.Namespace,
         Description = p.Description,
         KeywordsJson = ToJson(p.Keywords),
-        OwnersJson = ToJson(p.Owners),
         Downloads = p.Downloads,
         CreatedAt = p.CreatedAt,
         UpdatedAt = p.UpdatedAt,
