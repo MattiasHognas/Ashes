@@ -15,7 +15,29 @@ public sealed record AshesProject(
     IReadOnlyList<string> Include,
     string OutDir,
     string? Target
-);
+)
+{
+    /// <summary>
+    /// Resolved dependencies whose source roots are appended to the compilation search roots. Path
+    /// dependencies resolve directly from disk; registry/git dependencies are materialized by the CLI
+    /// (lock + cache) and surfaced here through the same list. Kept as an init property with an empty
+    /// default so existing constructor call sites are unaffected.
+    /// </summary>
+    public IReadOnlyList<ResolvedDependency> Dependencies { get; init; } = [];
+}
+
+/// <summary>A dependency resolved to concrete source roots on disk, imported under its namespace.</summary>
+public sealed record ResolvedDependency(
+    string Name,
+    string Namespace,
+    IReadOnlyList<string> SourceRoots,
+    string ProjectDirectory,
+    bool IsDev)
+{
+    /// <summary>The dependency's own entry file, if any — exempt from the namespace lint because a
+    /// project's entry is never one of its exports.</summary>
+    public string? EntryFile { get; init; }
+}
 
 public sealed record ProjectModule(
     string ModuleName,
@@ -210,6 +232,9 @@ public static class ProjectSupport
         var name = ReadString(root, "name");
         var target = ReadString(root, "target");
 
+        var dependencies = ResolveDependencies(root, projectDirectory);
+        ValidateDependencyNamespaces(dependencies);
+
         return new AshesProject(
             ProjectFilePath: fullProjectPath,
             ProjectDirectory: projectDirectory,
@@ -220,7 +245,247 @@ public static class ProjectSupport
             Include: include.Select(x => ResolvePath(projectDirectory, x)).ToList(),
             OutDir: outDir,
             Target: target
-        );
+        )
+        {
+            Dependencies = dependencies,
+        };
+    }
+
+    /// <summary>
+    /// Resolve the manifest's <c>dependencies</c> and <c>devDependencies</c>. Only path dependencies
+    /// resolve locally here (deterministic, from disk); registry/git dependencies are materialized by the
+    /// CLI restore step into the lock and cache. The compiler is never the dependency solver.
+    /// </summary>
+    private static IReadOnlyList<ResolvedDependency> ResolveDependencies(JsonElement root, string projectDirectory)
+    {
+        var result = new List<ResolvedDependency>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // A dependency's own `dependencies` are pulled transitively; its `devDependencies` are not
+        // (they build/test that package only). So the root follows both maps, recursion follows only
+        // `dependencies`, and dev-ness is inherited down each chain.
+        CollectPathDependencies(root, projectDirectory, "dependencies", isDev: false, result, visited, []);
+        CollectPathDependencies(root, projectDirectory, "devDependencies", isDev: true, result, visited, []);
+        AddLockedDependencies(projectDirectory, result);
+        return result;
+    }
+
+    private static void CollectPathDependencies(
+        JsonElement manifest, string manifestDir, string field, bool isDev,
+        List<ResolvedDependency> accumulator, HashSet<string> visited, HashSet<string> chain)
+    {
+        if (!manifest.TryGetProperty(field, out var deps) || deps.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var entry in deps.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object ||
+                !entry.Value.TryGetProperty("path", out var pathEl) ||
+                pathEl.ValueKind != JsonValueKind.String)
+            {
+                // Non-path (registry/git) dependencies are resolved by the CLI via the lock/cache.
+                continue;
+            }
+
+            var depDir = Path.GetFullPath(ResolvePath(manifestDir, pathEl.GetString()!));
+            var depManifest = Path.Combine(depDir, "ashes.json");
+            if (!Directory.Exists(depDir))
+            {
+                throw new InvalidOperationException(
+                    $"ASH030: dependency '{entry.Name}' path not found: {pathEl.GetString()}");
+            }
+
+            if (!File.Exists(depManifest))
+            {
+                throw new InvalidOperationException(
+                    $"ASH031: dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
+            }
+
+            if (chain.Contains(depDir))
+            {
+                throw new InvalidOperationException(
+                    $"ASH035: dependency cycle through '{entry.Name}' ({depDir}).");
+            }
+
+            if (!visited.Add(depDir))
+            {
+                continue; // already resolved via another route (diamond) — resolve once
+            }
+
+            var nsOverride = entry.Value.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
+                ? entryNs.GetString()
+                : null;
+            var (ns, roots, entryFile) = ReadDependencyManifest(depManifest, depDir, nsOverride, entry.Name);
+            accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev) { EntryFile = entryFile });
+
+            using var depDoc = JsonDocument.Parse(File.ReadAllText(depManifest));
+            chain.Add(depDir);
+            CollectPathDependencies(depDoc.RootElement, depDir, "dependencies", isDev, accumulator, visited, chain);
+            chain.Remove(depDir);
+        }
+    }
+
+    /// <summary>
+    /// Add registry/git dependencies recorded in <c>ashes.lock</c>: each is materialized in the shared
+    /// content-addressed cache and consumed exactly like a path dependency (its cached tree is the source
+    /// root). A locked package missing from the cache means the project has not been restored.
+    /// </summary>
+    private static void AddLockedDependencies(string projectDirectory, List<ResolvedDependency> accumulator)
+    {
+        var lockPath = Path.Combine(projectDirectory, "ashes.lock");
+        if (!File.Exists(lockPath))
+        {
+            return;
+        }
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(lockPath));
+        if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("package", out var packages) ||
+            packages.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var package in packages.EnumerateArray())
+        {
+            var ns = ReadString(package, "namespace");
+            var version = ReadString(package, "version");
+            var hash = ReadString(package, "hash");
+            if (ns is null || version is null || hash is null)
+            {
+                continue;
+            }
+
+            var cacheDir = CachePathFor(ns, version, hash);
+            var manifest = Path.Combine(cacheDir, "ashes.json");
+            if (!File.Exists(manifest))
+            {
+                throw new InvalidOperationException(
+                    $"ASH033: locked package '{ns}@{version}' is not in the cache. Run 'ashes restore'.");
+            }
+
+            var (_, roots, entryFile) = ReadDependencyManifest(manifest, cacheDir, ns, ns);
+            accumulator.Add(new ResolvedDependency(ns, ns, roots, cacheDir, IsDev: false) { EntryFile = entryFile });
+        }
+    }
+
+    private static (string Namespace, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(
+        string manifestPath, string depDir, string? namespaceOverride, string depKey)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var manifest = doc.RootElement;
+
+        var sourceRoots = ReadStringArray(manifest, "sourceRoots");
+        if (sourceRoots.Count == 0)
+        {
+            sourceRoots.Add(".");
+        }
+
+        var ns = namespaceOverride
+                 ?? ReadString(manifest, "namespace")
+                 ?? PascalCase(ReadString(manifest, "name") ?? depKey);
+
+        var entryValue = ReadString(manifest, "entry");
+        var entryFile = entryValue is null ? null : ResolvePath(depDir, entryValue);
+
+        return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList(), entryFile);
+    }
+
+    /// <summary>Root of the shared content-addressed package cache (<c>$XDG_CACHE_HOME/ashes</c>, else
+    /// <c>~/.cache/ashes</c>). Both the CLI (writing) and the compiler (reading) compute paths the same way.</summary>
+    public static string PackageCacheRoot()
+    {
+        var xdg = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        var baseDir = string.IsNullOrEmpty(xdg)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache")
+            : xdg;
+        return Path.Combine(baseDir, "ashes");
+    }
+
+    /// <summary>The cache directory for a specific package version: <c>cache/pkg/&lt;ns&gt;/&lt;version&gt;/&lt;hashkey&gt;</c>.</summary>
+    public static string CachePathFor(string ns, string version, string hash)
+    {
+        var colon = hash.IndexOf(':', StringComparison.Ordinal);
+        var key = colon >= 0 ? hash[(colon + 1)..] : hash;
+        return Path.Combine(PackageCacheRoot(), "pkg", ns, version, key);
+    }
+
+    /// <summary>Map a package name to its default namespace (e.g. <c>json-parser</c> → <c>JsonParser</c>).</summary>
+    public static string PascalCase(string name)
+    {
+        var builder = new System.Text.StringBuilder(name.Length);
+        var capitalize = true;
+        foreach (var c in name)
+        {
+            if (!char.IsLetterOrDigit(c))
+            {
+                capitalize = true;
+                continue;
+            }
+
+            builder.Append(capitalize ? char.ToUpperInvariant(c) : c);
+            capitalize = false;
+        }
+
+        return builder.Length == 0 ? name : builder.ToString();
+    }
+
+    /// <summary>
+    /// Enforce the namespace discipline over resolved dependencies: no two dependencies may claim the
+    /// same namespace (ASH009), and every module a dependency exports must live under its namespace —
+    /// its own entry file excepted, since an entry is never an export (ASH008).
+    /// </summary>
+    private static void ValidateDependencyNamespaces(IReadOnlyList<ResolvedDependency> dependencies)
+    {
+        foreach (var group in dependencies.GroupBy(d => d.Namespace, StringComparer.Ordinal))
+        {
+            var owners = group.ToList();
+            if (owners.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"ASH029: dependencies '{string.Join("', '", owners.Select(d => d.Name))}' both declare " +
+                    $"namespace '{group.Key}'. A namespace may be owned by only one dependency.");
+            }
+        }
+
+        foreach (var dep in dependencies)
+        {
+            foreach (var root in dep.SourceRoots)
+            {
+                if (!Directory.Exists(root))
+                {
+                    continue;
+                }
+
+                foreach (var file in Directory.EnumerateFiles(root, "*.ash", SearchOption.AllDirectories))
+                {
+                    if (dep.EntryFile is not null &&
+                        string.Equals(Path.GetFullPath(file), Path.GetFullPath(dep.EntryFile), StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var module = ModuleNameFromPath(root, file);
+                    var underNamespace = string.Equals(module, dep.Namespace, StringComparison.Ordinal)
+                        || module.StartsWith(dep.Namespace + ".", StringComparison.Ordinal);
+                    if (!underNamespace)
+                    {
+                        throw new InvalidOperationException(
+                            $"ASH028: dependency '{dep.Name}' exports module '{module}' outside its namespace " +
+                            $"'{dep.Namespace}'. A library's modules must live under its namespace directory.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static string ModuleNameFromPath(string root, string file)
+    {
+        var relative = Path.GetRelativePath(root, file);
+        var withoutExtension = relative[..^".ash".Length];
+        return withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace('/', '.');
     }
 
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)
@@ -362,7 +627,10 @@ public static class ProjectSupport
                 "Module name 'Ashes' is reserved for the standard library.");
         }
 
-        var searchRoots = project.SourceRoots.Concat(project.Include).ToArray();
+        var searchRoots = project.SourceRoots
+            .Concat(project.Include)
+            .Concat(project.Dependencies.SelectMany(d => d.SourceRoots))
+            .ToArray();
         var resolvedByModuleName = new Dictionary<string, ProjectModule>(StringComparer.Ordinal);
         var resolvedByPath = new Dictionary<string, ProjectModule>(StringComparer.OrdinalIgnoreCase);
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

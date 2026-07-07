@@ -110,6 +110,125 @@ already-compiled binaries and their debug information.
 
 ---
 
+## Package manager
+
+Ashes has **no separate compilation and no binary artifacts**: `ProjectSupport.BuildCompilationPlan`
+resolves imports across directories and stitches every module into one source string that is
+type-inferred, monomorphized, and lowered as a unit. Three consequences shape the whole package model:
+
+- **A package is a source tree** — nothing to build or version by ABI. The global cache is
+  content-addressed *source*; "installing" a cached package makes its roots visible to resolution rather
+  than compiling it (so a cached `ashes add` is instant).
+- **One version per package per build** — two versions would stitch into the same namespace and collide,
+  so a version conflict is an error, not duplicate-and-isolate. This removes npm-style diamond
+  duplication by construction.
+- **The compiler is never the solver** — resolution happens in the CLI at `restore` time and produces a
+  deterministic set of source roots that the compiler, LSP, and test runner all consume through
+  `LoadProject`. `ResolveImport` never learns about registries, versions, or archives.
+
+Dependencies are declared in `ashes.json` (see the projects guide) and imported under a namespace (the
+`namespace` field, else the PascalCase of the package name). A **path** dependency resolves live from
+disk; a **registry** dependency resolves through the registry into the lock and cache. Both are
+transitive — a dependency's own dependencies are pulled, diamond-deduplicated, and a cycle is `ASH035` —
+and the namespace discipline (`ASH028` / `ASH029`) is enforced across the whole resolved set.
+
+**Resolution** is the Cargo model: SemVer constraints, the highest version satisfying all constraints
+across the transitive graph, unified to one version per package, pinned in `ashes.lock`. A first resolve
+pins the newest compatible version; later publishes do not change the build until an explicit update. An
+empty intersection is a typed conflict (`ASH032`). The single-version world makes this simpler than
+npm/Cargo (no multi-version isolation to attempt); unlike Go's MVS it selects newest-compatible rather
+than lowest.
+
+**Lock file** (`ashes.lock`) — a generated, committed file holding the resolved graph so every front end
+consumes an identical root set. `restore` writes it; `build` / `run` / `test` read it (auto-restoring a
+missing or stale lock); `restore --frozen` fails if resolution would change it, and `--offline` trusts it
+and only verifies the cache. Each entry records the package's namespace, version, source
+(`registry+<url>` or `git+<url>`), and `ash1:` hash.
+
+**Cache** — content-addressed source under `$XDG_CACHE_HOME/ashes` (`cache/pkg/<ns>/<version>/<hash>/…`),
+shared across projects, deduplicated, and safe under concurrent CI. The compiler and the CLI compute cache
+paths the same way (`ProjectSupport.CachePathFor`), so the compiler reads exactly what `restore` wrote;
+cached content is verified against the lock's hash (`ASH034`) before use.
+
+### The `ash1:` content hash
+
+The integrity value is a hash of the **source tree**, not of any archive, so it is identical however the
+source was fetched. Over the set of packaged files:
+
+1. Each file is a `(path, bytes)` pair, `path` package-root-relative with `/` separators (no leading
+   `./`, no backslashes).
+2. Emit the line `"<sha256-hex-of-bytes>  <path>\n"` (two spaces, LF) per file.
+3. Sort the lines by `path` (ordinal).
+4. Concatenate, SHA-256 the result, hex-encode it lowercase, and prefix `ash1:`.
+
+Directory entries, symlinks, and file modes are excluded — only paths and contents contribute. The
+registry recomputes this at publish and rejects a mismatch against the client's declared value; the client
+re-verifies every download and cache read. The CLI (`SourceHasher`) and server (`ContentHash`) implement
+it independently, locked to agreement by a pinned test vector.
+
+The command surface (`add` / `remove` / `restore` / `tree` / `why`, and the registry verbs) is in the CLI
+reference; the manifest shape and namespace discipline are in the projects guide.
+
+---
+
+## Package registry
+
+`Ashes.Registry` is the reference package registry: a standalone ASP.NET Core (.NET 10) minimal-API server
+that stores and serves Ashes packages. It lives in the compiler solution for build/test/format but deploys
+on its own lifecycle, and is a strict downstream consumer of `Ashes.Frontend`/`Ashes.Semantics` for
+publish-time validation — no compiler phase depends on it. Packages are **source**: a published version's
+blob is the gzip source tarball, content-addressed by the `ash1:` hash of its uncompressed file tree, so
+identical trees deduplicate and a download verifies by re-hashing regardless of transport.
+
+**HTTP API (`/api/v1`).** Read endpoints are unauthenticated and cacheable; writes take a bearer token.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/healthz`, `/api/v1/index` | Liveness; registry info + effective limits |
+| GET | `/api/v1/packages`, `/api/v1/search?q=` | Browse (paginated); search (FTS5-ranked) |
+| GET | `/api/v1/packages/{ns}`, `/api/v1/packages/{ns}/{version}` | Package metadata + versions; one version |
+| GET | `/api/v1/packages/{ns}/{version}/source` | Download the source tarball (`application/gzip`) |
+| POST | `/api/v1/tokens` | Mint an API token |
+| PUT | `/api/v1/packages/{ns}/{version}` | Publish (multipart: `metadata` JSON + `source` tarball) |
+| POST | `/api/v1/packages/{ns}/{version}/yank`, `/unyank` | Yank / reverse a yank (owner-only) |
+| GET/POST/DELETE | `/api/v1/packages/{ns}/owners` | List / add / remove co-owners (owner-only) |
+
+Errors use a uniform envelope `{ "error": { "code", "message" } }` with stable codes: `not_found`,
+`unauthorized`, `namespace_owned_by_another`, `version_exists`, `version_yanked`, `limit_exceeded`,
+`namespace_lint`, `invalid_version`, `hash_mismatch`. The generated OpenAPI document and its Scalar
+reference are mapped in the Development environment only.
+
+**Publish pipeline.** `PUT` runs an ordered pipeline that writes nothing until every stage passes:
+authenticate → unpack the tarball under the per-file/total/count and decompressed-ceiling limits and the
+source-only content allowlist → authorize the namespace (the first publish claims it, later versions
+require ownership) → validate SemVer and immutability (a differing hash for an existing version is
+`version_exists`; an identical re-publish is an idempotent no-op) → namespace lint → compute the `ash1:`
+hash server-side and verify it against the client's declared value → extract the public capability rows →
+store the blob, then the package (owner claim), then the version.
+
+**Capability audit.** The namespace lint and capability extraction reuse the compiler front end behind
+`IManifestValidator` / `ICapabilityExtractor`. The default extractor parses and lowers the uploaded source
+— stitching multi-module packages through the project loader when an `ashes.json` is present — and reads
+the inferred `needs {...}` rows off the exported bindings via `Lowering.PublicApiCapabilities()`, so the
+audit reflects real inference rather than a heuristic scan. It is best-effort: a compiler failure yields
+no capabilities instead of blocking the publish.
+
+**Storage** sits behind narrow interfaces (`IBlobStore`, `IMetadataStore`, `ISearchIndex`, `IAccountStore`)
+so the reference filesystem/SQLite implementation can be swapped for object storage / PostgreSQL at scale:
+
+- Content-addressed **blobs** on the filesystem (`data/blobs/<kk>/<hash>`), written atomically and deduplicated.
+- **Metadata, accounts, and tokens** in SQLite via EF Core migrations. The database is configured by
+  `ConnectionStrings:Registry` (defaulting under the `--data` directory) and swaps to PostgreSQL by provider.
+- **Search** is a SQLite FTS5 index over namespace/description/keywords, kept in sync by triggers; queries
+  select candidates by prefix-token match and rank name-first (exact > prefix > description, downloads tie-break).
+
+Token secrets are random 256-bit values, shown once and stored only as SHA-256 hashes. `POST
+/api/v1/tokens` open self-registration is a self-host convenience gated by `Registry:AllowOpenRegistration`
+(default on); a public instance turns it off and provisions tokens out of band. The client verbs
+(`login`, `publish`, `yank`, `search`, `info`) are covered in the CLI reference.
+
+---
+
 ## Backend Architecture
 
 The backend converts IR into a native executable through LLVM:

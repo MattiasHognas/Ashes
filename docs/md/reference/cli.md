@@ -33,9 +33,36 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes test`      | Run `.ash` test files and compare against `// expect:` comments |
 | `ashes fmt`       | Format `.ash` source files                             |
 | `ashes init`      | Create a new Ashes project in the current directory     |
-| `ashes add`       | Add a dependency to the project manifest                |
+| `ashes add`       | Add a dependency to the project manifest (`--path`, `--dev`) |
 | `ashes remove`    | Remove a dependency from the project manifest           |
-| `ashes install`   | List project dependencies (registry not yet available)  |
+| `ashes restore`   | Resolve dependencies (path + registry); `--frozen`, `--offline` |
+| `ashes tree`      | Render the resolved dependency tree                     |
+| `ashes why`       | Show why a package is in the dependency graph           |
+| `ashes login`     | Store an API token for a registry                       |
+| `ashes publish`   | Package the current project and publish it to a registry |
+| `ashes yank`      | Yank (or `--undo`) a published version                  |
+| `ashes search`    | Search a registry for packages                          |
+| `ashes info`      | Show a package's versions, owners, and capabilities     |
+
+---
+
+## Registry commands
+
+These talk to an Ashes package registry (see the registry API reference). Each accepts
+`--registry <name-or-url>`, resolving a name from `~/.ashes/config.json` (the `default` entry falls back
+to the canonical public instance) or using a literal `http(s)://` URL as-is. Credentials are stored per
+registry base URL in `~/.ashes/credentials.json`.
+
+| Command | Synopsis | Notes |
+|---|---|---|
+| `ashes login`   | `ashes login [--registry <r>] (--as <account> \| --token <t>)` | `--as` mints a token via the registry; `--token` stores a provided one. |
+| `ashes publish` | `ashes publish [--registry <r>] [--project <ashes.json>] [--version <v>]` | Packages the project's `.ash` sources (plus `ashes.json`/README/LICENSE), computes the `ash1:` content hash, and uploads. Namespace derives from `namespace` or the PascalCase package name; version from `--version` or the manifest. Requires a prior `login`. |
+| `ashes yank`    | `ashes yank <namespace> <version> [--undo] [--registry <r>]` | Marks a version un-resolvable for new builds (existing locks still resolve); `--undo` reverses it. Owner-only. |
+| `ashes search`  | `ashes search <query> [--registry <r>]` | Prints a ranked list (namespace, latest, description). |
+| `ashes info`    | `ashes info <namespace>[@<version>] [--registry <r>]` | Shows owners and, for the selected (or latest) version, its capability row and dependencies. |
+
+The capability row shown by `ashes info` is the registry's server-computed audit — the capabilities the
+package's public API needs, inferred by the compiler at publish time, not a heuristic scan.
 
 ---
 
@@ -514,25 +541,29 @@ Add a dependency to the nearest `ashes.json` project manifest.
 #### Synopsis
 
 ```sh
-ashes add <package>
+ashes add <package> [--path <dir>] [--dev]
 ```
 
 #### Arguments
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `<package>` | string | **Yes** | The package name to add. |
+| `<package>` | string | **Yes** | The dependency name to add. |
 
 #### Options
 
-None.
+| Name | Description |
+|------|-------------|
+| `--path <dir>` | Record a path dependency `{ "path": "<dir>" }` instead of a registry version. |
+| `--dev` | Write to `devDependencies` instead of `dependencies`. |
 
 #### Behaviour
 
 1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
 2. If no `ashes.json` is found, the command fails with exit code **1**.
-3. Reads the existing JSON, adds the package to the `dependencies` object with version `"*"`, and writes the file back.
-4. If the package already exists in `dependencies`, it is overwritten with `"*"`.
+3. Adds the dependency to `dependencies` (or `devDependencies` with `--dev`): `{ "path": "<dir>" }` when
+   `--path` is given, otherwise the SemVer string `"*"`. Existing entries are overwritten; other
+   dependencies are preserved.
 
 #### Exit Codes
 
@@ -594,46 +625,65 @@ ashes remove json-parser
 
 ---
 
-### `ashes install`
+### `ashes restore`
 
-List project dependencies from the nearest `ashes.json` project manifest. In v0.x the package registry is not yet available, so dependencies are listed but not fetched.
+Resolve and materialize a project's dependencies from the nearest `ashes.json`. (`ashes install` is retired.)
 
 #### Synopsis
 
 ```sh
-ashes install
+ashes restore [--registry <name-or-url>] [--frozen] [--offline]
 ```
-
-#### Arguments
-
-None.
 
 #### Options
 
-None.
+| Name | Description |
+|------|-------------|
+| `--registry <r>` | Registry to resolve registry dependencies against (name or URL; default from config). |
+| `--frozen` | Fail (`ASH032`/`ASH033`) if a fresh resolution would differ from the committed `ashes.lock`; never rewrite it. For CI. |
+| `--offline` | Never touch the network; trust `ashes.lock` and only verify its packages are in the cache. |
 
 #### Behaviour
 
-1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
-2. If no `ashes.json` is found, the command fails with exit code **1**.
-3. Lists all entries in the `dependencies` object with their version constraints.
-4. If there are no dependencies, prints a message and exits successfully.
-
-#### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0`  | Dependencies listed (or none present). |
-| `1`  | No `ashes.json` found or I/O error. |
+1. Discovers `ashes.json` by walking upward from the current directory.
+2. Fetches and caches **registry dependencies** (resolving SemVer constraints across the transitive
+   graph) and writes `ashes.lock`; then validates **path dependencies** (a missing path or non-project
+   fails with `ASH030` / `ASH031`) and lists every resolved dependency with its namespace.
+3. Each cached package's content is verified against the lock's `ash1:` hash (`ASH034` on mismatch).
+4. `build` / `run` / `test` **auto-restore** when a project's lock is missing or a locked package is not
+   cached (against the default registry). Use `ashes restore` explicitly to target a specific registry,
+   or with `--frozen` / `--offline`.
 
 #### Examples
 
 ```bash
-ashes install
-# Dependencies (2):
-#   json-parser *
-#   http-utils  *
-# Package registry not yet available. Dependencies are recorded but not fetched.
+ashes restore --registry https://pkg.ashes-lang.org
+# Resolved 2 dependencies into ashes.lock.
+```
+
+---
+
+### `ashes tree`
+
+Render the resolved dependency tree (project root → direct dependencies → their transitive dependencies,
+from `ashes.lock`). Path dependencies are shown as leaves.
+
+```sh
+ashes tree
+# app
+# └── Json 1.2.0
+#     └── Utf8 0.4.3
+```
+
+---
+
+### `ashes why`
+
+Show a path from a project root dependency to the named package, explaining why it is in the graph.
+
+```sh
+ashes why Utf8
+# Json -> Utf8
 ```
 
 ---
@@ -717,8 +767,8 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | `ashes add` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 | `ashes remove` without package argument | `Missing package name.` | `1` |
 | `ashes remove` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
-| `ashes remove` when package not in dependencies | `Package '<name>' is not in dependencies.` | `1` |
-| `ashes install` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
+| `ashes remove` when package not a dependency | `Package '<name>' is not a dependency.` | `1` |
+| `ashes restore` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 
 ---
 

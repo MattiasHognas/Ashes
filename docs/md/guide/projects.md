@@ -100,19 +100,35 @@ Default backend target.
 
 If omitted, the CLI may choose a reasonable default based on the host OS.
 
-### 3.7 `dependencies` (optional)
-A map of package names to version strings. Each key is a package identifier and each value is a SemVer-compatible version constraint.
+### 3.7 `dependencies` / `devDependencies` (optional)
 
-- Default: `{}`
-- Example:
+A map of dependency names to a version constraint (string) or an object. `devDependencies` has the same
+shape but is only needed to build and test the project — never part of a published library's surface.
+
+- **String value** — a registry SemVer constraint (e.g. `"^1.2.0"`, `"*"`). Registry dependencies are
+  resolved by `ashes restore` into a lock file and cache once a registry is configured.
+- **Object value** — carries a source plus optional fields:
+  - `{ "path": "../local-lib" }` — a **path dependency**, resolved live from disk. This is the form
+    supported today: the dependency's source roots are added to the build and its modules are imported
+    under its namespace.
+  - `{ "git": "https://…", "rev" | "tag" | "branch": "…" }` — a git dependency, checked out into the cache.
+  - `"namespace"` — overrides the dependency's default namespace.
+
+Example:
 ```json
 "dependencies": {
-  "json-parser": "1.0.0",
-  "http-utils": "2.3.1"
+  "json":      "^1.2.0",
+  "local-lib": { "path": "../local-lib" }
+},
+"devDependencies": {
+  "test-helper": { "path": "../test-helper" }
 }
 ```
 
-In v0.x, dependencies are recorded in the manifest but not yet resolved or fetched automatically. Future versions will add a registry, lock file, and automatic download.
+**Namespace discipline.** A dependency is imported under its namespace — its `namespace` field, else the
+PascalCase of its name (`json-parser` → `JsonParser`). Every module a dependency exports must live under
+that namespace directory (its own entry file excepted), and no two dependencies may claim the same
+namespace; violations are `ASH028` / `ASH029` (see the [diagnostics reference](../reference/diagnostics.md)).
 
 ### 3.8 `defaults` (optional)
 A future-facing object for CLI defaults. In v0.x this is allowed but not required to be used.
@@ -241,12 +257,14 @@ Creates a new Ashes project in the current directory.
 - The project name defaults to the current directory name.
 - Fails if `ashes.json` already exists.
 
-### 6.2 `ashes add <package>`
+### 6.2 `ashes add <package> [--path <dir>] [--dev]`
 
 Adds a dependency to the project manifest.
 
 - Locates `ashes.json` by walking upward from the current directory.
-- Adds the package name with version `"*"` to the `dependencies` map.
+- With `--path <dir>`, records `{ "path": "<dir>" }` (a path dependency); otherwise records the SemVer
+  string `"*"` (a registry dependency).
+- With `--dev`, writes to `devDependencies` instead of `dependencies`.
 - Fails if no `ashes.json` is found.
 
 ### 6.3 `ashes remove <package>`
@@ -254,17 +272,19 @@ Adds a dependency to the project manifest.
 Removes a dependency from the project manifest.
 
 - Locates `ashes.json` by walking upward from the current directory.
-- Removes the package from the `dependencies` map.
-- If the `dependencies` map becomes empty, the field is omitted.
-- Fails if no `ashes.json` is found or the package is not in dependencies.
+- Removes the package from `dependencies` or `devDependencies`; an emptied map is omitted.
+- Fails if no `ashes.json` is found or the package is not a dependency.
 
-### 6.4 ashes install
+### 6.4 `ashes restore`
 
-Lists project dependencies. In v0.x the package registry is not yet available, so dependencies are recorded but not fetched.
+Materializes and validates dependencies.
 
 - Locates `ashes.json` by walking upward from the current directory.
-- Lists all entries in the `dependencies` map with their version constraints.
-- If there are no dependencies, prints a message and exits.
+- Resolves and validates **path dependencies** — a missing path or non-project fails with `ASH030` /
+  `ASH031` — and lists each with its namespace.
+- Registry/git dependencies require a lock file and cache (not yet available); they are reported but not
+  fetched.
+- `ashes install` is retired; use `restore` (or `add` to add a dependency).
 
 ---
 
