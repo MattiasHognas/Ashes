@@ -1755,6 +1755,101 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_decode_chunked_frames_across_many_writes()
+    {
+        // Incremental chunked decoding: many chunk frames arriving in many separate writes, with
+        // writes deliberately split MID-frame (inside a size line and inside chunk data), keep-alive
+        // (not Connection: close), and the NEXT pipelined request arriving in the same write as the
+        // terminating 0-frame. The decoder must carry only the undecoded tail between reads, hand
+        // the handler the exact body, and serve the pipelined request from the remainder.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Text
+            import Ashes.Http.Server
+            import Ashes.Async
+            let onReq req =
+                async(match Ashes.Http.Server.path(req) with
+                    | "/len" -> Ashes.Http.Server.text(200)("len=" + Ashes.Text.fromInt(Ashes.Text.byteLength(Ashes.Http.Server.body(req))))
+                    | _p -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_chunkinc_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+            while (true)
+            {
+                try
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    var stream = client.GetStream();
+                    await using (stream.ConfigureAwait(false))
+                    {
+                        // 30 frames of 100 bytes; the full wire text is cut into 37-byte writes so
+                        // frame boundaries never align with write boundaries.
+                        var piece = new string('x', 100);
+                        var wire = new StringBuilder("POST /body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+                        for (int i = 0; i < 30; i++)
+                        {
+                            wire.Append("64\r\n").Append(piece).Append("\r\n");
+                        }
+                        wire.Append("0\r\n\r\n");
+                        // Pipelined second request in the same final write as the terminator.
+                        wire.Append("GET /len HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        var wireBytes = Encoding.ASCII.GetBytes(wire.ToString());
+                        for (int off = 0; off < wireBytes.Length; off += 37)
+                        {
+                            int n = Math.Min(37, wireBytes.Length - off);
+                            await stream.WriteAsync(wireBytes.AsMemory(off, n)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                            await Task.Delay(2).ConfigureAwait(false);
+                        }
+                        using var reader = new StreamReader(stream, Encoding.UTF8);
+                        var replies = (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                        replies.ShouldContain("body=" + string.Concat(Enumerable.Repeat(piece, 30)));
+                        replies.ShouldEndWith("len=0");
+                        break;
+                    }
+                }
+                catch (Exception) when (DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(50).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_serve_http_concurrently_across_workers()
     {
         // Concurrent HTTP under the run-queue scheduler: many simultaneous requests against a
