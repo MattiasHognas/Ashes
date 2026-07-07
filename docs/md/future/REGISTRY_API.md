@@ -13,10 +13,13 @@ and mirroring are later, client-transparent additions (PACKAGE_MANAGER §7.5).
 
 ## 1. Shape and conventions
 
-- **A .NET 10 minimal-API application**, in its own top-level `registry/` directory — a standalone app,
-  **not** part of the compiler's `src/` dependency DAG (PACKAGE_MANAGER §12.1). Its only contracts with
-  the rest of Ashes are the HTTP API (below) and a **library reuse** of the compiler front end for
-  publish-time validation (§6).
+- **A .NET 10 minimal-API application** living in the compiler solution as **`src/Ashes.Registry`** (with
+  **`src/Ashes.Registry.Tests`**), added to `Ashes.slnx` so the existing `just` CI builds, format-checks,
+  and tests it (PACKAGE_MANAGER §12.1). It is a **downstream consumer** of the compiler front end — like
+  `Ashes.Lsp` — never referenced back by any compiler phase, so the dependency-DAG *direction* is
+  preserved. Its only contracts with the rest of Ashes are the HTTP API (below) and a **library reuse** of
+  the compiler front end for publish-time validation (§6); its ASP.NET Core / EF Core dependencies stay
+  out of the compiler's published artifacts, and it deploys on its own lifecycle.
 - **Versioned base path:** `/api/v1`. Unknown fields in requests are ignored; new fields are additive.
 - **Content types:** JSON (`application/json`) for metadata; the source blob is an opaque
   `application/gzip` tarball.
@@ -241,7 +244,8 @@ public interface IManifestValidator   { ValidationResult Validate(SourceTree tre
 public interface ICapabilityExtractor { IReadOnlyList<string> PublicCapabilities(SourceTree tree); }
 ```
 
-The default implementation references `Ashes.Frontend`/`Ashes.Semantics`. An alternative for looser
+The default implementation takes a plain in-solution `ProjectReference` on `Ashes.Frontend`/
+`Ashes.Semantics` (the one-way consumer edge of PACKAGE_MANAGER §12.1). An alternative for looser
 coupling is to shell out to the `ashes` CLI (a metadata-extraction subcommand) so the deployable only
 bundles the compiler binary — the interface makes either choice invisible to the rest of the server.
 
@@ -265,9 +269,24 @@ This is what powers the client's discovery command (§9).
 
 ## 8. Testing (TUnit + Shouldly + Imposter)
 
-Tests live in the registry app's own test project and mirror the orchestration app's stack and BDD
-style — TUnit as the runner, Shouldly for assertions, and Imposter for source-generated mocks
-(`Imposter.Abstractions`, `[assembly: GenerateImposter]`, `.Returns`/`.Callback`, `.Instance()`).
+Tests live in **`src/Ashes.Registry.Tests`** and use the repository's existing test stack — TUnit as the
+runner and Shouldly for assertions, exactly as `Ashes.Tests` and `Ashes.Lsp.Tests` do — plus Imposter for
+source-generated mocks (`Imposter.Abstractions`, `[assembly: GenerateImposter]`, `.Returns`/`.Callback`,
+`.Instance()`) written in a given/when/then BDD style.
+
+**CI wiring (a hard requirement).** Because the project is in `Ashes.slnx`, `just build` and `just
+fmt-check` already cover it. The `just` `test` job runs each test project explicitly, so Phase 3 adds one
+line to `ci/jobs.sh` next to the existing two:
+
+```sh
+dotnet run --project src/Ashes.Registry.Tests/Ashes.Registry.Tests.csproj --configuration Release \
+  -- --results-directory TestResults --report-trx
+```
+
+so every `just test` / `just ci` run exercises the registry. The tests must be **hermetic** — no network,
+no ambient registry, storage integration against a temp `--data` dir that is torn down — so they run
+unchanged in the container runners. `[NotInParallel]` is banned here as everywhere (CLAUDE.md); isolate
+state (fresh temp dirs, mocked stores) instead of serializing.
 
 Three layers:
 
@@ -322,13 +341,23 @@ for (PACKAGE_MANAGER §7.4), including private ones.
 
 ## 10. Project layout
 
+Both projects live under `src/` and are members of the existing `Ashes.slnx`:
+
 ```text
-registry/
-  src/AshesRegistry/          # the minimal-API app (endpoints, pipeline, validators)
-  src/AshesRegistry.Storage/  # EF Core store (SQLite default, Postgres provider) + filesystem/object blob store; migrations
-  tests/AshesRegistry.Tests/  # TUnit + Shouldly + Imposter
-  AshesRegistry.slnx
+src/
+  Ashes.Registry/             # the minimal-API app (endpoints, pipeline, validators, storage) — net10.0
+    Storage/                  # EF Core store (SQLite default, Postgres provider) + filesystem blob store; migrations
+  Ashes.Registry.Tests/       # TUnit + Shouldly + Imposter (added to the `just` CI test job)
+Ashes.slnx                    # both projects added here
 ```
 
-Independent build/test lifecycle from the compiler solution; the compiler is consumed only as a library
-(or CLI) behind the §6 interfaces.
+The storage layer is a folder inside `Ashes.Registry` for the MVP; if it grows it can be lifted into a
+separate `src/Ashes.Registry.Storage` project behind the same interfaces (§5) with no API or client
+change. `Ashes.Registry` inherits the root `Directory.Build.props` (warnings-as-errors, the Meziantou +
+Sonar analyzers, nullable, `dotnet format`) like every other `src/` project; where the minimal-API /
+generated-OpenAPI surface trips a rule that does not fit a web app, scope the relaxation with a
+`Directory.Build.props` under `src/Ashes.Registry` rather than loosening the whole solution.
+
+Shared build/test/format lifecycle with the compiler solution, but an **independent deploy lifecycle**
+and a strict one-way dependency: the registry consumes `Ashes.Frontend`/`Ashes.Semantics` as a library
+(or the CLI) behind the §6 interfaces, and no compiler phase depends on it (PACKAGE_MANAGER §12.1).

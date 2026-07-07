@@ -379,28 +379,43 @@ The integration is small and localized, centered where the resolver already live
 | Resolver/cache/registry client | `src/Ashes.Cli/` (new) | A CLI-side `PackageResolver` (SemVer + lock), a content-addressed cache, and the registry HTTP client (resolve/download/login/publish). Pure .NET: HTTP, hashing, and zip handling are all in the base library. Not in the compiler phases. |
 | CLI commands | `src/Ashes.Cli/Program.cs` | `RunAdd`/`RunRemove` write the new manifest shape; new `RunRestore`; `build`/`run`/`test` gain an auto-restore + lock-verify pre-step; new `login`/`publish`/`yank`; retire `install`. |
 | Shared consumers | `src/Ashes.Lsp/DocumentService.cs`, `src/Ashes.TestRunner/Runner.cs` | Consume the same resolved-roots view so all front ends agree. |
+| Registry server (Phase 3) | `src/Ashes.Registry/`, `src/Ashes.Registry.Tests/` (new) | The reference registry app + its tests, added to `Ashes.slnx` and the `just` CI (§12.1, [REGISTRY_API.md](REGISTRY_API.md)). A downstream consumer of `Ashes.Frontend`/`Ashes.Semantics`; never referenced back by any compiler phase. |
 | Ripple | tests, runner | The new `AshesProject` field touches its manual constructors and `project with { ... }` call sites. |
 
 The principle throughout: the CLI resolves and materializes a deterministic set of roots; the compiler,
 LSP, and test runner share that single resolved project view.
 
-### 12.1 The registry server is a separate application
+### 12.1 The registry server is a downstream consumer, not a compiler phase
 
-Only the registry **client** lives in the compiler tree (`src/Ashes.Cli/`). The registry **server**
-(§7) is a **standalone application, not part of the compiler's `src/` dependency DAG** — it has nothing
-to do with lexing, inference, or codegen and must not be entangled with them. It lives in its own
-top-level directory (e.g. `registry/`), following the same pattern as the existing standalone
-`orchestration/` .NET 10 app.
+The registry **client** lives in the compiler tree (`src/Ashes.Cli/`). The registry **server** (§7)
+lives alongside it as **`src/Ashes.Registry`** (the minimal-API app) with **`src/Ashes.Registry.Tests`**
+for its tests, both added to `Ashes.slnx`. Keeping it in the solution is deliberate: the existing
+`just` CI already builds `Ashes.slnx` and runs the test projects, so the server is compiled,
+format-checked, and its tests executed by the same pipeline with no separate build lifecycle to
+maintain (§13 Phase 3 wires the one extra `test`-job line).
+
+The one rule that must not bend is the **direction of the dependency DAG**. `Ashes.Registry` is a
+*downstream consumer* of the compiler front end (`Ashes.Frontend`/`Ashes.Semantics`) for publish-time
+validation (§8, [REGISTRY_API.md](REGISTRY_API.md) §6) — exactly as `Ashes.Lsp` consumes compiler logic
+rather than reimplementing it. Nothing in the compiler phases may depend on `Ashes.Registry`: it is a
+leaf of the graph, never referenced by Frontend, Semantics, Backend, or the CLI. It has nothing to do
+with lexing, inference, or codegen and must not entangle them; it only *reads* them as a library.
+
+Being in the solution is a build/test convenience, not a shipping coupling: the registry server has its
+own **deploy/release lifecycle** and is **not** part of the compiler's published artifacts (the
+CLI/LSP/DAP self-contained binaries), so its ASP.NET Core and EF Core dependencies never reach a
+compiler release.
 
 Shape of the reference server:
 
 - A **.NET 10 minimal-API** service exposing the read/publish/yank endpoints of §7.
-- A **pluggable persistent-storage abstraction** — a single storage interface (packages, versions,
-  ownership, tokens) with a **filesystem-backed implementation** for the minimal self-hostable cut, and
-  room to swap in an object-store/database implementation for scale without touching the API or the
-  client.
-- Its own build/test lifecycle, independent of the compiler solution; the only contract it shares with
-  the rest of Ashes is the registry API the CLI client speaks.
+- A **pluggable persistent-storage abstraction** — narrow interfaces (packages, versions, ownership,
+  tokens, blobs) with a **filesystem + embedded-SQLite implementation** for the minimal self-hostable
+  cut, and room to swap in an object-store/database implementation for scale without touching the API or
+  the client. The interfaces live in `Ashes.Registry`; if the storage layer grows it can be split into
+  its own `src/Ashes.Registry.Storage` project without any API or client change.
+- The same solution as the compiler for build/test/format, but an independent deploy lifecycle, and a
+  strict one-way dependency on the front end (never the reverse).
 
 ---
 
@@ -478,10 +493,13 @@ Goal: a self-hostable registry server (§7, §12.1) and the client integration t
    (`login`, `publish`, `yank`, `search`, `info`, the `registries` config, per-dependency `registry`);
    allocate codes for auth failure, namespace-owned-by-another-account, immutable-version-overwrite, and
    yanked-version. *Acceptance: docs merged, codes reserved.*
-2. **Server scaffolding.** New top-level `registry/` .NET 10 minimal-API app; the storage interfaces plus a
-   filesystem implementation; the read endpoints (resolve, download, list, search). Tests in TUnit +
-   Shouldly + Imposter (REGISTRY_API §8). *Acceptance: a locally-run server resolves, serves, and searches
-   a hand-seeded package.*
+2. **Server scaffolding + CI.** New `src/Ashes.Registry` .NET 10 minimal-API app and
+   `src/Ashes.Registry.Tests`, both added to `Ashes.slnx`; the storage interfaces plus the
+   filesystem/SQLite implementation; the read endpoints (resolve, download, list, search). Tests in
+   TUnit + Shouldly + Imposter (REGISTRY_API §8), and the `just` CI `test` job gains a line running
+   `Ashes.Registry.Tests` alongside `Ashes.Tests`/`Ashes.Lsp.Tests` (`ci/jobs.sh`). *Acceptance: a
+   locally-run server resolves, serves, and searches a hand-seeded package; `just test` runs the
+   registry tests.*
 3. **Server publish + auth.** Accounts and API tokens; namespace ownership with first-claim and co-owners;
    the publish pipeline (limits, append-only, namespace lint, hash computation, capability extraction);
    `yank`. *Acceptance: an authorized publish stores an immutable version; an unauthorized or overwriting
@@ -509,8 +527,11 @@ Deferred, client-transparent additions to the same server: mirroring (pull-throu
    file, one version per package, conflicts are errors.
 3. **Registry:** a self-contained, hostable registry server that is authoritative for source and
    metadata, with immutable versions, per-namespace account ownership, API-token auth, and hash-pinned
-   downloads. The reference server is a standalone .NET 10 minimal-API app with pluggable storage
-   (filesystem first), living outside the compiler `src/` tree; the Ashes org runs the canonical public
-   instance and anyone can self-host. Multiple/custom registries are first-class (`registries` config +
+   downloads. The reference server is a .NET 10 minimal-API app with pluggable storage (filesystem +
+   SQLite first), living in the compiler solution as `src/Ashes.Registry` (+ `src/Ashes.Registry.Tests`)
+   so the same `just` CI builds, format-checks, and tests it — a strict downstream consumer of the
+   compiler front end, never referenced back by any compiler phase, and with its own deploy lifecycle
+   outside the compiler's published artifacts. The Ashes org runs the canonical public instance and
+   anyone can self-host. Multiple/custom registries are first-class (`registries` config +
    per-dependency `registry`).
 4. **`ashes install`:** retired; `build`/`run`/`test` auto-restore and `ashes restore` is explicit.
