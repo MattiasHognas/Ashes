@@ -476,6 +476,27 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
+        // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
+        // (kept out of generalization via _eqConstrainedVars) so a later use resolves it — e.g.
+        // `assertEqual expected actual = expected == actual` called with two Strs. Emit a
+        // provisional CmpIntEq/CmpIntNe, patched to CmpStrEq/CmpFloatEq (or their Ne counterparts)
+        // in ResolveDeferredEqs once the operand type is known. If it never resolves (an unused
+        // generic '=='), it defaults to Int there, matching the old result. Mirrors LowerAdd.
+        if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
+        {
+            Unify(leftPruned, rightPruned);
+            if (Prune(leftPruned) is TypeRef.TVar sharedVar)
+            {
+                _eqConstrainedVars.Add(sharedVar);
+                _hasDeferredEqs = true;
+                int deferredTarget = NewTemp();
+                Emit(negate
+                    ? new IrInst.CmpIntNe(deferredTarget, leftTemp, rightTemp, sharedVar)
+                    : new IrInst.CmpIntEq(deferredTarget, leftTemp, rightTemp, sharedVar));
+                return (deferredTarget, new TypeRef.TBool());
+            }
+        }
+
         // Resolve type variables: prefer the other side's concrete type, defaulting to Int
         if (leftPruned is TypeRef.TVar)
         {
