@@ -90,6 +90,55 @@ public sealed class PathDependencyTests
         ex.Message.ShouldContain("ASH029");
     }
 
+    [Test]
+    public void Path_dependencies_are_resolved_transitively()
+    {
+        var root = NewRoot();
+        Directory.CreateDirectory(Path.Combine(root, "base", "src"));
+        Directory.CreateDirectory(Path.Combine(root, "mid", "src"));
+        Directory.CreateDirectory(Path.Combine(root, "app", "src"));
+
+        File.WriteAllText(Path.Combine(root, "base", "ashes.json"),
+            """{ "name": "base", "entry": "src/Base.ash", "sourceRoots": ["src"] }""");
+        File.WriteAllText(Path.Combine(root, "base", "src", "Base.ash"), "let greeting = given (n) -> n\n");
+
+        File.WriteAllText(Path.Combine(root, "mid", "ashes.json"),
+            """{ "name": "mid", "entry": "src/Mid.ash", "sourceRoots": ["src"], "dependencies": { "base": { "path": "../base" } } }""");
+        File.WriteAllText(Path.Combine(root, "mid", "src", "Mid.ash"),
+            "import Base\nlet shout = given (n) -> Base.greeting(n)\n");
+
+        File.WriteAllText(Path.Combine(root, "app", "ashes.json"),
+            """{ "name": "app", "entry": "src/Main.ash", "sourceRoots": ["src"], "dependencies": { "mid": { "path": "../mid" } } }""");
+        File.WriteAllText(Path.Combine(root, "app", "src", "Main.ash"),
+            "import Mid\nAshes.IO.print(Mid.shout(\"hi\"))\n");
+
+        var project = ProjectSupport.LoadProject(Path.Combine(root, "app", "ashes.json"));
+
+        // 'base' is only a dependency of 'mid', yet it is pulled into the app's build.
+        project.Dependencies.Select(d => d.Namespace).ShouldBe(["Mid", "Base"], ignoreOrder: true);
+        var source = ProjectSupport.BuildCompilationSource(ProjectSupport.BuildCompilationPlan(project));
+        source.ShouldContain("Base_greeting");
+    }
+
+    [Test]
+    public void A_dependency_cycle_is_rejected()
+    {
+        var root = NewRoot();
+        Directory.CreateDirectory(Path.Combine(root, "a", "src"));
+        Directory.CreateDirectory(Path.Combine(root, "b", "src"));
+
+        File.WriteAllText(Path.Combine(root, "a", "ashes.json"),
+            """{ "name": "a", "namespace": "A", "entry": "src/A.ash", "sourceRoots": ["src"], "dependencies": { "b": { "path": "../b" } } }""");
+        File.WriteAllText(Path.Combine(root, "a", "src", "A.ash"), "let x = given (n) -> n\n");
+        File.WriteAllText(Path.Combine(root, "b", "ashes.json"),
+            """{ "name": "b", "namespace": "B", "entry": "src/B.ash", "sourceRoots": ["src"], "dependencies": { "a": { "path": "../a" } } }""");
+        File.WriteAllText(Path.Combine(root, "b", "src", "B.ash"), "let y = given (n) -> n\n");
+
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ProjectSupport.LoadProject(Path.Combine(root, "a", "ashes.json")));
+        ex.Message.ShouldContain("ASH035");
+    }
+
     private static string WriteWorkspace()
     {
         var root = NewRoot();

@@ -1490,9 +1490,26 @@ static async Task RestoreRegistryDependenciesAsync(
 
 static List<Ashes.Cli.Package.DependencyReq> CollectRegistryRoots(string manifestPath)
 {
-    using var doc = ParseProjectJson(manifestPath);
+    // Registry constraints come from the root manifest AND every transitive path dependency's manifest,
+    // so a source dependency's own registry deps are resolved into the unified lock.
     var roots = new List<Ashes.Cli.Package.DependencyReq>();
-    foreach (var field in (string[])["dependencies", "devDependencies"])
+    CollectRegistryRootsRecursive(Path.GetFullPath(manifestPath), roots, new HashSet<string>(StringComparer.OrdinalIgnoreCase), topLevel: true);
+    return roots;
+}
+
+static void CollectRegistryRootsRecursive(
+    string manifestPath, List<Ashes.Cli.Package.DependencyReq> roots, HashSet<string> visited, bool topLevel)
+{
+    if (!File.Exists(manifestPath))
+    {
+        return;
+    }
+
+    var dir = Path.GetDirectoryName(manifestPath)!;
+    using var doc = ParseProjectJson(manifestPath);
+
+    // A dependency's devDependencies are not transitive, so only the top-level manifest follows them.
+    foreach (var field in topLevel ? (string[])["dependencies", "devDependencies"] : ["dependencies"])
     {
         if (!doc.RootElement.TryGetProperty(field, out var deps) || deps.ValueKind != System.Text.Json.JsonValueKind.Object)
         {
@@ -1508,9 +1525,20 @@ static List<Ashes.Cli.Package.DependencyReq> CollectRegistryRoots(string manifes
             }
             else if (dep.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
-                if (dep.Value.TryGetProperty("path", out _) || dep.Value.TryGetProperty("git", out _))
+                if (dep.Value.TryGetProperty("path", out var pathEl) && pathEl.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
-                    continue; // path/git dependencies are not registry-resolved
+                    var depDir = Path.GetFullPath(Path.Combine(dir, pathEl.GetString()!));
+                    if (visited.Add(depDir))
+                    {
+                        CollectRegistryRootsRecursive(Path.Combine(depDir, "ashes.json"), roots, visited, topLevel: false);
+                    }
+
+                    continue;
+                }
+
+                if (dep.Value.TryGetProperty("git", out _))
+                {
+                    continue; // git dependencies are resolved separately
                 }
 
                 if (dep.Value.TryGetProperty("version", out var ver) && ver.ValueKind == System.Text.Json.JsonValueKind.String)
@@ -1521,13 +1549,11 @@ static List<Ashes.Cli.Package.DependencyReq> CollectRegistryRoots(string manifes
 
             if (constraint is not null)
             {
-                var ns = ProjectSupport.PascalCase(dep.Name);
-                roots.Add(new Ashes.Cli.Package.DependencyReq(ns, Ashes.Cli.Package.VersionConstraint.Parse(constraint), "manifest"));
+                roots.Add(new Ashes.Cli.Package.DependencyReq(
+                    ProjectSupport.PascalCase(dep.Name), Ashes.Cli.Package.VersionConstraint.Parse(constraint), "manifest"));
             }
         }
     }
-
-    return roots;
 }
 
 static object? DeserializeJsonElement(System.Text.Json.JsonElement element)

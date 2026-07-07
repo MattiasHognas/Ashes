@@ -259,16 +259,22 @@ public static class ProjectSupport
     private static IReadOnlyList<ResolvedDependency> ResolveDependencies(JsonElement root, string projectDirectory)
     {
         var result = new List<ResolvedDependency>();
-        AddDependencies(root, "dependencies", isDev: false, projectDirectory, result);
-        AddDependencies(root, "devDependencies", isDev: true, projectDirectory, result);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // A dependency's own `dependencies` are pulled transitively; its `devDependencies` are not
+        // (they build/test that package only). So the root follows both maps, recursion follows only
+        // `dependencies`, and dev-ness is inherited down each chain.
+        CollectPathDependencies(root, projectDirectory, "dependencies", isDev: false, result, visited, []);
+        CollectPathDependencies(root, projectDirectory, "devDependencies", isDev: true, result, visited, []);
         AddLockedDependencies(projectDirectory, result);
         return result;
     }
 
-    private static void AddDependencies(
-        JsonElement root, string field, bool isDev, string projectDirectory, List<ResolvedDependency> accumulator)
+    private static void CollectPathDependencies(
+        JsonElement manifest, string manifestDir, string field, bool isDev,
+        List<ResolvedDependency> accumulator, HashSet<string> visited, HashSet<string> chain)
     {
-        if (!root.TryGetProperty(field, out var deps) || deps.ValueKind != JsonValueKind.Object)
+        if (!manifest.TryGetProperty(field, out var deps) || deps.ValueKind != JsonValueKind.Object)
         {
             return;
         }
@@ -283,25 +289,41 @@ public static class ProjectSupport
                 continue;
             }
 
-            var depDir = ResolvePath(projectDirectory, pathEl.GetString()!);
-            var manifest = Path.Combine(depDir, "ashes.json");
+            var depDir = Path.GetFullPath(ResolvePath(manifestDir, pathEl.GetString()!));
+            var depManifest = Path.Combine(depDir, "ashes.json");
             if (!Directory.Exists(depDir))
             {
                 throw new InvalidOperationException(
                     $"ASH030: dependency '{entry.Name}' path not found: {pathEl.GetString()}");
             }
 
-            if (!File.Exists(manifest))
+            if (!File.Exists(depManifest))
             {
                 throw new InvalidOperationException(
                     $"ASH031: dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
             }
 
+            if (chain.Contains(depDir))
+            {
+                throw new InvalidOperationException(
+                    $"ASH035: dependency cycle through '{entry.Name}' ({depDir}).");
+            }
+
+            if (!visited.Add(depDir))
+            {
+                continue; // already resolved via another route (diamond) — resolve once
+            }
+
             var nsOverride = entry.Value.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
                 ? entryNs.GetString()
                 : null;
-            var (ns, roots, entryFile) = ReadDependencyManifest(manifest, depDir, nsOverride, entry.Name);
+            var (ns, roots, entryFile) = ReadDependencyManifest(depManifest, depDir, nsOverride, entry.Name);
             accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev) { EntryFile = entryFile });
+
+            using var depDoc = JsonDocument.Parse(File.ReadAllText(depManifest));
+            chain.Add(depDir);
+            CollectPathDependencies(depDoc.RootElement, depDir, "dependencies", isDev, accumulator, visited, chain);
+            chain.Remove(depDir);
         }
     }
 
