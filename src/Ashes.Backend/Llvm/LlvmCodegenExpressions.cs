@@ -1949,10 +1949,10 @@ internal static partial class LlvmCodegen
     /// <c>AwaitedTask</c>) and re-enqueues the waiter. A coroutine that SUSPENDS links its fresh
     /// <c>AwaitedTask</c> back to itself via <c>Waiter</c> and enqueues that sub-task, then parks. A leaf
     /// that stays pending joins the parked list. When the ready queue drains, it blocks in the
-    /// aggregate timer wait until the earliest sleep elapses and re-queues the elapsed leaves; the loop
-    /// ends when the main task has completed. Returns the main task's result.
-    /// v1 scope: global-arena tasks (no per-task <c>ArenaOwner</c> install) and timer leaves only — it
-    /// is wired for non-networking async programs; socket-bearing programs still use the legacy driver.
+    /// aggregate wait (timers + socket readiness, see <see cref="EmitSchedulerAggregateWait"/>) until a
+    /// parked leaf is ready and re-queues the parked leaves; the loop ends when the main task has
+    /// completed. Returns the main task's result. Every async program on every target runs on this
+    /// scheduler; tasks with a private arena (spawn) get it installed around each step.
     /// </summary>
     private static LlvmValueHandle EmitSchedulerRunBody(LlvmCodegenState state, LlvmValueHandle mainTask)
     {
@@ -2172,11 +2172,13 @@ internal static partial class LlvmCodegen
     /// Aggregate wait for the run-queue scheduler: with the ready queue empty, blocks until a parked
     /// leaf is ready, then re-queues every parked leaf so the loop re-steps them (a leaf whose I/O is
     /// still not ready re-parks on its next step). Timer leaves fold into the wait timeout and have
-    /// their remaining decremented by the elapsed time; socket/TLS leaves (Linux) register their fd in
-    /// the persistent epoll set and the wait is an <c>epoll_wait</c>. With no socket leaves the wait is a
-    /// cooperative sleep to the earliest timer deadline. Parked leaves link through <c>ReadyNext</c> off
-    /// <c>__ashes_parked_head</c>. Requeue-all-on-wakeup is O(parked) per wakeup — correct with the
-    /// level-triggered epoll set; per-fd wakeup targeting is a later refinement.
+    /// their remaining decremented by the elapsed time; socket/TLS leaves register their fd in the
+    /// persistent epoll set and the wait is an <c>epoll_wait</c> (Linux), or fill a pollfd scratch
+    /// array and the wait is one <c>WSAPoll</c> over the parked set (Windows). With no socket leaves
+    /// the wait is a cooperative sleep to the earliest timer deadline. Parked leaves link through
+    /// <c>ReadyNext</c> off <c>__ashes_parked_head</c>. Requeue-all-on-wakeup is O(parked) per wakeup —
+    /// correct with the level-triggered epoll set and the per-wait pollfd rebuild; per-fd wakeup
+    /// targeting is a later refinement.
     /// </summary>
     private static void EmitSchedulerAggregateWait(LlvmCodegenState state)
     {
@@ -2186,6 +2188,11 @@ internal static partial class LlvmCodegen
         LlvmValueHandle maxVal = LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0);
         LlvmValueHandle timerKind = LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0);
         bool linux = IsLinuxFlavor(state.Flavor);
+        // Socket waits on Windows need the WSAPoll import, which exists exactly when the program
+        // uses the networking runtime; without it no socket leaf can ever park, so the timer-only
+        // sleep below is complete.
+        bool windowsSockets = state.Flavor == LlvmCodegenFlavor.WindowsX64
+            && state.WindowsWsaPollImport.Ptr != 0;
 
         LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_min_slot");
         LlvmValueHandle hasSocketSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_has_socket_slot");
@@ -2194,6 +2201,21 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, maxVal, minSlot);
         LlvmApi.BuildStore(builder, zero, hasSocketSlot);
         LlvmApi.BuildStore(builder, zero, elapsedSlot);
+
+        // Windows: pollfd scratch array (module-global, same shape as the legacy detached wait's)
+        // plus a fill count, rebuilt on every wait from the parked list.
+        LlvmValueHandle pollCountSlot = default;
+        LlvmValueHandle pollArrayPtr = default;
+        LlvmValueHandle pollArrayAddress = default;
+        if (windowsSockets)
+        {
+            LlvmTypeHandle pollArrayType = LlvmApi.ArrayType2(state.I8, (ulong)(WindowsPollFdSize * DetachedPollFdCapacity));
+            LlvmValueHandle pollArrayGlobal = ReadLineScratchGlobal(state, "__ashes_sched_pollfds", pollArrayType);
+            pollArrayPtr = GetArrayElementPointer(state, pollArrayType, pollArrayGlobal, zero, "saw_poll_array_ptr");
+            pollArrayAddress = LlvmApi.BuildPtrToInt(builder, pollArrayPtr, state.I64, "saw_poll_array_address");
+            pollCountSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_poll_count_slot");
+            LlvmApi.BuildStore(builder, zero, pollCountSlot);
+        }
 
         // Persistent per-reactor epoll fd (created once, reused).
         LlvmValueHandle epollFd = zero;
@@ -2247,6 +2269,30 @@ internal static partial class LlvmCodegen
             LlvmValueHandle mask = LlvmApi.BuildSelect(builder, readish, LlvmApi.ConstInt(state.I64, 0x001, 0), LlvmApi.ConstInt(state.I64, 0x004, 0), "saw_mask");
             _ = EmitNetworkingRuntimeCall(state, "ashes_epoll_register", [epollFd, LoadMemory(state, scanCur, TaskStructLayout.WaitHandle, "saw_wait_handle"), mask], "saw_register");
         }
+        else if (windowsSockets)
+        {
+            // Fill the next pollfd slot, capped at capacity. An overflow leaf simply is not polled
+            // this round — the requeue-all pass re-steps it, and it re-parks for the next wait.
+            LlvmValueHandle readish = LlvmApi.BuildOr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), "saw_is_read1"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, scanKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantRead, 0), "saw_is_read3"),
+                "saw_readish");
+            LlvmValueHandle fillCount = LlvmApi.BuildLoad2(builder, state.I64, pollCountSlot, "saw_poll_fill_count");
+            LlvmBasicBlockHandle fillBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_poll_fill");
+            LlvmBasicBlockHandle fillDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_poll_fill_done");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, fillCount, LlvmApi.ConstInt(state.I64, DetachedPollFdCapacity, 0), "saw_poll_has_room"),
+                fillBlock, fillDoneBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, fillBlock);
+            LlvmValueHandle slotAddress = LlvmApi.BuildAdd(builder, pollArrayAddress,
+                LlvmApi.BuildMul(builder, fillCount, LlvmApi.ConstInt(state.I64, WindowsPollFdSize, 0), "saw_poll_slot_offset"),
+                "saw_poll_slot_address");
+            LlvmValueHandle eventMask = EmitWindowsPollEventMask(state, readish, "saw_poll_event_mask");
+            EmitWindowsInitializePollFd(state, slotAddress, LoadMemory(state, scanCur, TaskStructLayout.WaitHandle, "saw_wait_handle"), eventMask, "saw_pollfd");
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, fillCount, LlvmApi.ConstInt(state.I64, 1, 0), "saw_poll_count_next"), pollCountSlot);
+            LlvmApi.BuildBr(builder, fillDoneBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, fillDoneBlock);
+        }
         LlvmApi.BuildBr(builder, scanNextBlock);
         LlvmApi.PositionBuilderAtEnd(builder, scanNextBlock);
         LlvmApi.BuildBr(builder, scanBlock);
@@ -2277,6 +2323,26 @@ internal static partial class LlvmCodegen
                 EmitLinuxSyscall4(state, SyscallEpollWait, epollFd, eventArg, LlvmApi.ConstInt(state.I64, 1, 0), timeout, "saw_epoll_wait");
             }
             LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, EmitMonotonicNowMs(state, "saw_wait_end"), startMs, "saw_epoll_elapsed"), elapsedSlot);
+            LlvmApi.BuildBr(builder, afterWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, timerWaitBlock);
+            EmitNanosleep(state, sleepMs);
+            LlvmApi.BuildStore(builder, sleepMs, elapsedSlot);
+            LlvmApi.BuildBr(builder, afterWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, afterWaitBlock);
+        }
+        else if (windowsSockets)
+        {
+            LlvmValueHandle hasSocket = LlvmApi.BuildLoad2(builder, state.I64, hasSocketSlot, "saw_has_socket");
+            LlvmBasicBlockHandle socketWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_socket_wait");
+            LlvmBasicBlockHandle timerWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_timer_wait");
+            LlvmBasicBlockHandle afterWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_after_wait");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, hasSocket, zero, "saw_do_wsapoll"), socketWaitBlock, timerWaitBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, socketWaitBlock);
+            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_wsapoll_no_timer"), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), minRem, "saw_wsapoll_timeout");
+            LlvmValueHandle startMs = EmitMonotonicNowMs(state, "saw_wait_start");
+            LlvmValueHandle pollCount = LlvmApi.BuildLoad2(builder, state.I64, pollCountSlot, "saw_poll_count");
+            _ = EmitWindowsWsaPoll(state, pollArrayPtr, pollCount, timeout, "saw_wsapoll_wait");
+            LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, EmitMonotonicNowMs(state, "saw_wait_end"), startMs, "saw_wsapoll_elapsed"), elapsedSlot);
             LlvmApi.BuildBr(builder, afterWaitBlock);
             LlvmApi.PositionBuilderAtEnd(builder, timerWaitBlock);
             EmitNanosleep(state, sleepMs);

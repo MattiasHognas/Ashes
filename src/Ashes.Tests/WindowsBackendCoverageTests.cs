@@ -1075,6 +1075,160 @@ public sealed class WindowsBackendCoverageTests
         }
     }
 
+    [Test]
+    public async Task Windows_backend_llvm_should_overlap_handlers_blocked_in_async_all()
+    {
+        // Run-queue scheduler parity regression: a spawned handler blocked in Ashes.Async.all must
+        // not stop peer connections from advancing. Under the legacy re-entrant driver two handlers
+        // that both aggregate sub-tasks serialized; on the scheduler (WSAPoll aggregate wait) they
+        // overlap — four clients against a handler that Async.all-waits two 300 ms sleeps complete
+        // in roughly one sleep, not four.
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Async.all([Ashes.Async.sleep(300), Ashes.Async.sleep(300)]) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_ts) ->
+                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                                    | Error(e3) -> Error(e3)
+                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_all_{Guid.NewGuid():N}.exe");
+        Process? proc = null;
+        try
+        {
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
+            var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = tmpDir;
+            proc = Process.Start(psi)!;
+
+            // Wait for the listener, then fire four clients at once.
+            _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
+
+            var sw = Stopwatch.StartNew();
+            var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(
+                i => ConnectSendReceiveWithRetryAsync(port, $"conc-{i}"))).ConfigureAwait(false);
+            sw.Stop();
+
+            for (int i = 0; i < replies.Length; i++)
+            {
+                replies[i].ShouldBe($"echo: conc-{i}");
+            }
+
+            // Four serialized Async.all handlers would take >= 1200 ms; overlapping ones finish in
+            // roughly one 300 ms sleep. Allow generous headroom for wine and a loaded CI box.
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(900),
+                "handlers blocked in Async.all should overlap, not serialize");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_serve_http_concurrently_on_one_reactor()
+    {
+        // Concurrent HTTP through the run-queue scheduler on win-x64: many simultaneous requests
+        // against a single reactor; every one must get a 200 and the server must stay up. One
+        // worker because wine's cross-process inherited-socket accept is unreliable; the
+        // multi-process path is covered by the Linux serveParallel test.
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let route req =
+                async(Ashes.Http.Server.text(200)("ok"))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_httpc_{Guid.NewGuid():N}.exe");
+        Process? proc = null;
+        try
+        {
+            await File.WriteAllBytesAsync(exePath, exeBytes).ConfigureAwait(false);
+            var psi = TestProcessHelper.CreateWindowsProcessStartInfo(exePath);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.WorkingDirectory = tmpDir;
+            proc = Process.Start(psi)!;
+
+            // Readiness.
+            var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+            warm.ShouldContain("HTTP/1.1 200 OK");
+
+            // Fire many concurrent requests at once; every one must get a 200 and the server must stay up.
+            const int total = 60;
+            var tasks = new List<Task<bool>>(total);
+            for (int i = 0; i < total; i++)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+                    return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
+                }));
+            }
+            bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            int ok = 0;
+            foreach (bool r in results)
+            {
+                if (r)
+                {
+                    ok++;
+                }
+            }
+
+            ok.ShouldBe(total);
+            proc.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
     private static IrProgram LowerProgramWithImports(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");

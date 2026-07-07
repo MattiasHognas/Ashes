@@ -468,41 +468,10 @@ internal static partial class LlvmCodegen
             || ProgramUsesInstruction<IrInst.AsyncAll>(program)
             || ProgramUsesInstruction<IrInst.AsyncRace>(program)
             || ProgramUsesInstruction<IrInst.Drop>(program);
-        // Run-queue scheduler eligibility. Its v1 scope is
-        // coroutines + timer (sleep) leaves with global-arena tasks, so it is used only when the program
-        // uses async (RunTask) but no socket/TLS/HTTP leaf and no spawn (both need per-task arena
-        // install/reap and the socket epoll wait, which land in later phases). Such programs still use
-        // the legacy recursive driver.
-        bool usesSocketLeaves = ProgramUsesInstruction<IrInst.HttpGet>(program)
-            || ProgramUsesInstruction<IrInst.HttpPost>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpListen>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpAccept>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpListenTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateForkWorkersTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpAcceptTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsServerHandshakeTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program);
-        // On Linux the run-queue scheduler covers every async program: coroutines + timer leaves, the
-        // socket/TLS/HTTP epoll aggregate wait, and spawn with per-task arena install/reap. On Windows
-        // the epoll wait is unavailable, so only async programs with neither socket leaves nor spawn use
-        // it there; the rest keep the legacy driver.
-        bool schedulerLinux = flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.LinuxArm64;
-        bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program)
-            && (schedulerLinux || (!usesSocketLeaves && !ProgramUsesInstruction<IrInst.SpawnTask>(program)));
+        // The run-queue scheduler covers every async program on all targets: coroutines + timer
+        // leaves, the socket/TLS/HTTP aggregate wait (persistent epoll on Linux, one WSAPoll over
+        // the parked set on Windows), and spawn with per-task arena install/reap.
+        bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program);
         // arm64 always uses the real-ELF-TLS per-thread arena (PT_TLS + local-exec cursors), so a
         // `both` worker can be handed its own arena. This coexists with networking: a networking
         // program is dynamically linked and dlopen's rustls, whose dynamic TLS lives in the loader's
@@ -1541,8 +1510,8 @@ internal static partial class LlvmCodegen
                 EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),
             // AwaitTask: should not appear after state machine transform. Pass-through for safety.
             IrInst.AwaitTask awaitTask => StoreTemp(state, awaitTask.Target, LoadTemp(state, awaitTask.TaskTemp)),
-            // RunTask: drive task to completion. Eligible non-networking async programs use the
-            // run-queue scheduler; the rest use the legacy recursive driver (see UseRunQueueScheduler).
+            // RunTask: drive task to completion through the run-queue scheduler (see
+            // UseRunQueueScheduler); the legacy recursive driver remains for non-async task runs.
             IrInst.RunTask runTask => StoreTemp(state, runTask.Target,
                 state.UseRunQueueScheduler
                     ? EmitNetworkingRuntimeCall(state, "ashes_scheduler_run", [LoadTemp(state, runTask.TaskTemp)], "run_sched")
@@ -1833,8 +1802,8 @@ internal static partial class LlvmCodegen
         public LlvmValueHandle BlobEndSlot { get; init; }
 
         // When true, RunTask drives the top-level task through the run-queue scheduler
-        // (ashes_scheduler_run) instead of the legacy recursive driver. Set for async programs that use
-        // neither socket/TLS/HTTP leaves nor spawn (the run queue's v1 scope: coroutines + timer leaves).
+        // (ashes_scheduler_run) instead of the legacy recursive driver. Set for every async program
+        // (any RunTask use) on all targets.
         public bool UseRunQueueScheduler { get; init; }
 
         public LlvmBasicBlockHandle GetLabelBlock(string name) => LabelBlocks[name];
