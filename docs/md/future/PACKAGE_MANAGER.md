@@ -144,6 +144,24 @@ of how the source was fetched.
 - "Installing" a cached package is making its root visible to resolution — no copy, no build. This is
   why `ashes add <cached>` completes instantly.
 
+### 5.1 The `ash1:` content hash
+
+The integrity value is a hash of the **source tree**, not of any particular archive, so it is identical
+however the source was fetched (registry tarball, git checkout, vendored copy). It is computed
+deterministically over the set of packaged files:
+
+1. Consider every packaged file as a `(path, bytes)` pair, where `path` is the package-root-relative
+   path with `/` separators (never a leading `./` or platform backslashes).
+2. For each file emit the line `"<sha256-hex-of-bytes>  <path>\n"` (two spaces, LF).
+3. Sort the lines by `path` with an ordinal (byte-wise) comparison.
+4. Concatenate them, take the SHA-256 of that concatenation, hex-encode it lowercase, and prefix
+   `ash1:`. The scheme prefix names the algorithm so a future `ash2:` can coexist.
+
+Directory entries, symlinks, and file modes are deliberately excluded — only file paths and contents
+contribute, matching the "a package is source" model (§1). The registry recomputes this hash server-side
+at publish and rejects a mismatch against the client's declared value; the client re-verifies every
+download against the lock (§4).
+
 ---
 
 ## 6. Resolution

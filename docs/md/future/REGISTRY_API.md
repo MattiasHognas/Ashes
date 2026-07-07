@@ -290,34 +290,37 @@ state (fresh temp dirs, mocked stores) instead of serializing.
 
 Three layers:
 
-- **Pipeline unit tests.** Drive the publish pipeline (§4) directly with the storage and validator
-  interfaces **mocked via Imposter**, one test per stage outcome — first-claim vs `namespace_owned_by_another`,
-  `version_exists` on a differing hash, each limit tripping `limit_exceeded`, `namespace_lint`,
-  server-hash-mismatch. Given/when/then bodies; Shouldly on the `error.code` and the store interactions.
-- **Endpoint tests.** A minimal-API `WebApplicationFactory` in-memory host with the stores mocked, so
-  routing, auth, content negotiation, status codes, and the error envelope are covered without disk —
-  including resolve, download, list, and search happy/edge paths and the `Authorization` header handling.
-- **Storage integration tests.** The **real store** against a temp `--data` dir: the EF Core/SQLite
-  metadata store (transactional version writes that reject a duplicate `(namespace, version)`, FTS5 search
-  and persistence across restart, migrations apply cleanly) plus the filesystem blob store (content-
-  addressing and dedup).
+- **Pipeline unit tests.** Drive the publish pipeline (§4) directly, one test per stage outcome —
+  first-claim vs `namespace_owned_by_another`, `version_exists` on a differing hash, `invalid_version`,
+  each limit tripping `limit_exceeded`, `namespace_lint`, `hash_mismatch`, and the idempotent re-publish.
+  The stores are the real temp-SQLite stores plus an in-memory blob store (so the transactional and
+  ownership behaviour is exercised for real), while the **validator/extractor seam is forced with an
+  Imposter mock** for the `namespace_lint` case. Given/when/then bodies; Shouldly on the `error.code`.
+- **Endpoint tests.** A minimal-API `WebApplicationFactory` in-memory host over a fresh temp `--data`
+  dir, so routing, auth, content negotiation, status codes, and the error envelope are covered end to
+  end — resolve/download/list/search on the read side, and token minting, publish, ownership, and yank
+  with `Authorization` handling on the write side.
+- **Storage integration tests.** The **real stores** against a temp `--data` dir: the EF Core/SQLite
+  metadata store (version writes that reject a duplicate `(namespace, version)`, search ranking, and
+  persistence across a reopen) plus the filesystem blob store (content-addressing and dedup).
 
-Example (illustrative):
+Example (the real Imposter API — generate with `[assembly: GenerateImposter(typeof(IManifestValidator))]`):
 
 ```csharp
 [Test]
-public async Task Publishing_a_namespace_owned_by_another_account_is_rejected()
+public async Task A_namespace_lint_failure_aborts_the_publish()
 {
     // given
-    var meta = Imposter.For<IMetadataStore>();
-    meta.GetPackageAsync("Json", Any.Token).Returns(PackageOwnedBy("bob"));
-    var pipeline = new PublishPipeline(meta.Instance(), /* blobs, validators mocked */ ...);
+    var imposter = new IManifestValidatorImposter();
+    imposter.Validate(Arg<IReadOnlyList<SourceFile>>.Any(), Arg<string>.Any())
+        .Returns(ValidationResult.Invalid("module outside namespace"));
+    var pipeline = Pipeline(store, blobs, validator: imposter.Instance());
 
     // when
-    var result = await pipeline.RunAsync(UploadFrom("alice"), Ct);
+    var result = await pipeline.RunAsync(Request(alice, "Json", "1.0.0"), Ct);
 
     // then
-    result.Error!.Code.ShouldBe("namespace_owned_by_another");
+    result.Error!.Code.ShouldBe("namespace_lint");
 }
 ```
 
