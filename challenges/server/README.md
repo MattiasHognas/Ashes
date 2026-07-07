@@ -45,24 +45,26 @@ multi-core scaling out of the box.
 
 ```
 === TCP echo   127.0.0.1:18080 ===
-  ashes    conc 1     41,746 req/s   p50 0.018  p99 0.030  max 2.714 ms
-  ashes    conc 8    212,601 req/s   p50 0.027  p99 0.075  max 3.060 ms
-  ashes    conc 64   319,799 req/s   p50 0.131  p99 0.558  max 4.547 ms
-  dotnet   conc 1     41,428 req/s   p50 0.018  p99 0.033  max 3.037 ms
-  dotnet   conc 8    130,651 req/s   p50 0.056  p99 0.085  max 3.154 ms
-  dotnet   conc 64   117,640 req/s   p50 0.452  p99 1.893  max 7.201 ms
+  ashes    conc 1     39,626 req/s   p50 0.019  p99 0.030  max 2.885 ms
+  ashes    conc 8    213,949 req/s   p50 0.027  p99 0.074  max 2.995 ms
+  ashes    conc 64   314,488 req/s   p50 0.134  p99 0.590  max 4.491 ms
+  dotnet   conc 1     40,250 req/s   p50 0.019  p99 0.031  max 2.875 ms
+  dotnet   conc 8    137,001 req/s   p50 0.049  p99 0.080  max 3.298 ms
+  dotnet   conc 64   134,462 req/s   p50 0.489  p99 0.806  max 3.942 ms
 
 === HTTP 200   127.0.0.1:18081 ===
-  ashes    conc 1     25,597 req/s   p50 0.033  p99 0.049  max 1.149 ms
-  ashes    conc 8    145,184 req/s   p50 0.042  p99 0.097  max 1.766 ms
-  ashes    conc 64   238,701 req/s   p50 0.200  p99 1.002  max 3.373 ms
-  dotnet   conc 1     40,173 req/s   p50 0.020  p99 0.030  max 1.511 ms
-  dotnet   conc 8    122,498 req/s   p50 0.058  p99 0.082  max 1.416 ms
-  dotnet   conc 64   124,524 req/s   p50 0.506  p99 1.650  max 3.043 ms
+  ashes    conc 1     25,169 req/s   p50 0.033  p99 0.049  max 1.111 ms
+  ashes    conc 8    144,611 req/s   p50 0.042  p99 0.100  max 1.698 ms
+  ashes    conc 64   249,445 req/s   p50 0.191  p99 0.847  max 3.971 ms
+  dotnet   conc 1     40,571 req/s   p50 0.020  p99 0.032  max 1.403 ms
+  dotnet   conc 8    131,726 req/s   p50 0.049  p99 0.078  max 1.491 ms
+  dotnet   conc 64   123,764 req/s   p50 0.534  p99 1.393  max 2.045 ms
 ```
 
-Measured on the run-queue scheduler with async tail-recursive loops and the per-iteration arena reset
-(bounded keep-alive memory) — the reset costs no measurable throughput against the previous recording.
+Measured on the run-queue scheduler with async tail-recursive loops, the per-iteration arena reset
+(bounded keep-alive memory), incremental Content-Length and chunked request buffering, and the
+graceful-shutdown drain — all in place, zero errors across every stage, no measurable throughput
+change from earlier recordings.
 
 ## Reading the results
 
@@ -71,6 +73,6 @@ Measured on the run-queue scheduler with async tail-recursive loops and the per-
 connection uses a single reactor, so Ashes and .NET are within noise on TCP (the raw
 accept/receive/send/close path is tight); on HTTP the pure-Ashes request parse is the per-request cost,
 so .NET leads single-connection. As concurrency rises the reactors light up: on **TCP echo** Ashes
-leads .NET ~2.7x at conc 64 (~320k vs ~118k), and on **HTTP 200** the extra cores more than absorb the
-parse cost, so Ashes roughly **doubles** .NET at conc 64 (~239k vs ~125k). Remaining single-reactor
+leads .NET ~2.3x at conc 64 (~314k vs ~134k), and on **HTTP 200** the extra cores more than absorb the
+parse cost, so Ashes roughly **doubles** .NET at conc 64 (~249k vs ~124k). Remaining single-reactor
 headroom (faster in-loop parsing) would lift the conc-1 HTTP number further.
