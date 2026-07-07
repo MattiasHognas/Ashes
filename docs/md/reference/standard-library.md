@@ -315,8 +315,9 @@ Reads are **buffered** until a full request has arrived — the header block plu
 `Content-Length` or `Transfer-Encoding: chunked`) — so requests larger than one read and slow/split
 requests are handled. A request is capped at **8 MiB**: a declared `Content-Length` over the cap is
 rejected with `413 Payload Too Large` on the header (before the body is buffered), and an unbounded
-chunked/no-length stream is capped by the buffered size. See
-[SERVER_SUPPORT.md](../future/SERVER_SUPPORT.md) for what remains.
+chunked/no-length stream is capped by the buffered size. Streaming a request body *into* the handler
+(rather than buffering it) is the one deferred piece, waiting on the resource-safety/ownership work
+that would check the reader's non-escape guarantee.
 
 ```ash
 import Ashes.IO
