@@ -968,6 +968,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerNetTcpConnect(Expr hostArg, Expr portArg)
     {
+        RequireBuiltinCapability(NetConnectCapabilityName, GetSpan(hostArg));
         using var hostSpan = PushDiagnosticSpan(hostArg);
         var (hostTemp, hostType) = LowerExpr(hostArg);
         var prunedHostType = Prune(hostType);
@@ -1015,6 +1016,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerNetTcpListen(Expr portArg)
     {
+        RequireBuiltinCapability(NetListenCapabilityName, GetSpan(portArg));
         using var portSpan = PushDiagnosticSpan(portArg);
         var (portTemp, portType) = LowerExpr(portArg);
         var prunedPortType = Prune(portType);
@@ -1042,6 +1044,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerNetForkWorkers(Expr portArg, Expr countArg)
     {
+        RequireBuiltinCapability(NetListenCapabilityName, GetSpan(portArg));
         using var portSpan = PushDiagnosticSpan(portArg);
         var (portTemp, portType) = LowerExpr(portArg);
         var prunedPortType = Prune(portType);
@@ -1137,6 +1140,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerNetTlsConnect(Expr hostArg, Expr portArg)
     {
+        RequireBuiltinCapability(NetConnectCapabilityName, GetSpan(hostArg));
         using var hostSpan = PushDiagnosticSpan(hostArg);
         var (hostTemp, hostType) = LowerExpr(hostArg);
         var prunedHostType = Prune(hostType);
@@ -1184,6 +1188,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerHttpGet(Expr urlArg)
     {
+        RequireBuiltinCapability(NetConnectCapabilityName, GetSpan(urlArg));
         using var urlSpan = PushDiagnosticSpan(urlArg);
         var (urlTemp, urlType) = LowerExpr(urlArg);
         var prunedUrlType = Prune(urlType);
@@ -1211,6 +1216,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerHttpPost(Expr urlArg, Expr bodyArg)
     {
+        RequireBuiltinCapability(NetConnectCapabilityName, GetSpan(urlArg));
         using var urlSpan = PushDiagnosticSpan(urlArg);
         var (urlTemp, urlType) = LowerExpr(urlArg);
         var prunedUrlType = Prune(urlType);
@@ -2499,7 +2505,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.HttpGet,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr())))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr())) { Row = BuiltinCapabilityRow(NetConnectCapabilityName) })
         );
     }
 
@@ -2507,7 +2513,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.HttpPost,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr()))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringTaskType(new TypeRef.TStr())) { Row = BuiltinCapabilityRow(NetConnectCapabilityName) }))
         );
     }
 
@@ -2515,7 +2521,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.NetTcpConnect,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"]))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"])) { Row = BuiltinCapabilityRow(NetConnectCapabilityName) }))
         );
     }
 
@@ -2547,7 +2553,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.NetTcpListen,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"])))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["Socket"])) { Row = BuiltinCapabilityRow(NetListenCapabilityName) })
         );
     }
 
@@ -2563,7 +2569,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.NetForkWorkers,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt()))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(new TypeRef.TInt())) { Row = BuiltinCapabilityRow(NetListenCapabilityName) }))
         );
     }
 
@@ -2579,7 +2585,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.NetTlsConnect,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["TlsSocket"]))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TInt(), CreateStringTaskType(_resolvedTypes["TlsSocket"])) { Row = BuiltinCapabilityRow(NetConnectCapabilityName) }))
         );
     }
 

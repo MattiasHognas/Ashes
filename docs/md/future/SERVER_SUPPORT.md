@@ -215,8 +215,9 @@ a smoke test.
 
 Server entry points perform network I/O, so they carry a network capability under the unified
 capabilities system. This is consistent with how effectful operations are tracked elsewhere and
-makes "this program is a server" visible in its type rather than hidden. Granularity is decided:
-split `NetListen` / `NetConnect` — see Decisions below.
+makes "this program is a server" visible in its type rather than hidden. Delivered as the split
+built-in marker capabilities `NetListen` / `NetConnect` — see Decisions below and LANGUAGE_SPEC
+section 20.8.
 
 ---
 
@@ -382,7 +383,9 @@ transport is that HTTPS falls out without a second handler model.
    parent forwarding the signal and waiting instead of cutting children via the death signal.
 2. **Stop capability:** programmatic stop as a one-shot capability sharing the signal-shutdown
    runtime path (LANGUAGE_SPEC addition first).
-3. **`NetListen` / `NetConnect` capabilities** on the endpoint-creating operations.
+3. **`NetListen` / `NetConnect` capabilities**: DELIVERED — built-in marker capabilities on the
+   endpoint-creating operations (LANGUAGE_SPEC section 20.8); closed rows reject undeclared
+   endpoint creation (ASH018), the runtime is their implicit provider at top level.
 4. **HTTP streaming bodies:** incremental chunked-request decode is DELIVERED (each read decodes
    only the undecoded tail; the 8 MiB cap applies mid-stream). Next: response streaming
    (`Transfer-Encoding: chunked` from a pull-based producer), then the request-side body reader.
