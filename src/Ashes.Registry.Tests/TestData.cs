@@ -42,7 +42,7 @@ internal static class TestData
             .UseSqlite($"Data Source={Path.Combine(dir, "registry.db")}")
             .Options;
         var db = new RegistryDbContext(options);
-        db.Database.EnsureCreated();
+        db.Database.Migrate();
         return new StoreHandle(dir, db, ownsDir);
     }
 

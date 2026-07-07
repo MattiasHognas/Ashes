@@ -36,7 +36,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<RegistryDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
 // The interactive API reference is a Development-only affordance, never exposed in production.
