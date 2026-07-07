@@ -364,26 +364,20 @@ transport is that HTTPS falls out without a second handler model.
   so a detached handler blocked in `Ashes.Async.all` / `race` advances its peers — two connections
   whose handlers both aggregate sub-tasks now overlap instead of serializing. Async tail-recursive
   loops (the serve and connection loops) compile to a single looping coroutine with a restart
-  back-edge (no C-stack recursion), which also fixed concurrent-HTTP corruption under load. On Linux
-  every async program runs on the scheduler; on Windows, programs that use socket leaves or
-  `Async.spawn` remain on the legacy driver because the aggregate wait is epoll-based (see
-  Remaining).
+  back-edge (no C-stack recursion), which also fixed concurrent-HTTP corruption under load. Every
+  async program on every target runs on the scheduler: the aggregate wait is the persistent epoll
+  set on Linux and one `WSAPoll` over the parked set on Windows (win-x64 parity delivered
+  2026-07-07; overlap regression test mutation-verified against the legacy driver).
 - **Per-iteration arena reset at the async-loop restart back-edge** (2026-07-07): a long-lived loop
   such as an HTTP keep-alive connection reclaims each request's allocations instead of growing its
   arena per request. The reset is gated statically (no `Async.spawn` in the loop body) and at
   runtime (a task-header flag cleared when an `all` / `race` composite ancestor shares the arena).
   Validated by an RSS regression test (3000 keep-alive requests of a 16 KB body: bounded, versus
   +68 MB with the reset disabled) and a benchmark rerun showing no throughput cost. This closes the
-  memory-lifetime acceptance criterion (steady-state resident set) for the scheduler targets; the
-  reset compiles to nothing under the legacy driver, so Windows socket/spawn programs do not get it
-  until scheduler parity lands.
+  memory-lifetime acceptance criterion (steady-state resident set); with win-x64 scheduler parity
+  the reset is active on all three targets.
 
 ### Remaining
-- **Windows run-queue scheduler parity.** Programs using socket leaves or `Async.spawn` still run
-  on the legacy re-entrant driver on win-x64 because the scheduler's aggregate wait is epoll-based;
-  porting the aggregate wait to WSAPoll would move them onto the run queue. Until then win-x64
-  lacks both the fair `all` / `race` composites and the keep-alive arena reset above. The largest
-  open item.
 - **Graceful shutdown completion:** the Windows console-ctrl handler plus an accept wake-up
   (Windows terminates on the default disposition today), and draining in-flight connections at
   shutdown (a multi-worker parent may cut a child mid-request via the death signal / job object).

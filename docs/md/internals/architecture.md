@@ -219,7 +219,7 @@ each instruction site.
 
 #### The run-queue scheduler
 
-On Linux, every async program runs on a **flat run-queue scheduler**
+Every async program, on every target, runs on a **flat run-queue scheduler**
 (`ashes_scheduler_run`): tasks link into an intrusive FIFO through a `ReadyNext`
 header slot, and the loop pops a task, steps it once, and routes the outcome —
 *completed* delivers the result to the task's `Waiter` (the task suspended on it)
@@ -228,8 +228,10 @@ parks the awaiter; a *pending leaf* moves to a parked list. `await` therefore
 **parks instead of blocking**: no C-stack recursion, and any number of tasks
 interleave fairly on one thread (concurrency, not parallelism). When the ready
 queue drains and the main task is incomplete, an **aggregate wait** blocks until
-the earliest timer deadline or, when socket/TLS/HTTP leaves are parked, an
-`epoll_wait` on a persistent epoll set, then re-queues the parked leaves.
+the earliest timer deadline or, when socket/TLS/HTTP leaves are parked, on socket
+readiness — an `epoll_wait` on a persistent epoll set on Linux, or one `WSAPoll`
+over a pollfd array rebuilt from the parked list on Windows — then re-queues the
+parked leaves.
 `Ashes.Async.all` / `race` are **parking composite tasks**: children carry the
 composite as their `Waiter`, each completion decrements the composite's counter
 (`all`) or delivers the first result (`race`), and the composite completes to its
@@ -239,9 +241,6 @@ own waiter — a handler blocked in `all` never serializes its peers.
 cursor as the global bump allocator and writes it back after, sub-tasks inherit
 the awaiter's owner (zero-copy awaits), and a spawned root's arena is reaped when
 it completes — a server handling many connections does not grow without bound.
-Windows keeps the legacy recursive driver for socket/spawn programs (the
-aggregate wait is epoll-based); non-networking async uses the scheduler on all
-targets.
 
 #### Async tail-recursive loops
 
@@ -272,8 +271,7 @@ emitted only when the loop body contains no `spawn` (a detached task's captures
 could reference iteration allocations), and at runtime it runs only while the
 task's `LoopResetOk` header flag is set — the scheduler clears the flag at
 suspend time when a composite (`all`/`race`) ancestor shares the arena, where
-interleaved siblings could allocate above a stale watermark. Under the legacy
-task driver the flagged save/restore/reclaim group compiles to nothing.
+interleaved siblings could allocate above a stale watermark.
 
 #### Task frames and memory
 
