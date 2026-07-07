@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
+using Ashes.Cli.Registry;
 using Ashes.Formatter;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -516,6 +517,11 @@ try
         "add" => RunAdd(args.Skip(1).ToArray()),
         "remove" => RunRemove(args.Skip(1).ToArray()),
         "install" => RunInstall(args.Skip(1).ToArray()),
+        "login" => await RegistryCommands.LoginAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
+        "publish" => await RegistryCommands.PublishAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
+        "yank" => await RegistryCommands.YankAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
+        "search" => await RegistryCommands.SearchAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
+        "info" => await RegistryCommands.InfoAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "--version" or "-v" => RunVersion(),
         _ => Usage()
     };

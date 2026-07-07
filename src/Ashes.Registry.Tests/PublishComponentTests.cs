@@ -22,6 +22,15 @@ public sealed class PublishComponentTests
     }
 
     [Test]
+    public void ContentHash_matches_the_pinned_spec_vector()
+    {
+        // Pinned ash1 for {("a.ash","x"),("b.ash","y")} per PACKAGE_MANAGER 5.1. The CLI's SourceHasher
+        // pins the SAME constant, so publish-time client/server hash agreement is locked in CI.
+        ContentHash.Compute([new SourceFile("a.ash", "x"u8.ToArray()), new SourceFile("b.ash", "y"u8.ToArray())])
+            .ShouldBe("ash1:c5c024c8b87b74fddfd0f8cd6d4728eca0324e051eb4f248613525a8158e3808");
+    }
+
+    [Test]
     public void ContentHash_changes_when_content_changes()
     {
         var before = ContentHash.Compute([new SourceFile("a.ash", "x"u8.ToArray())]);

@@ -36,6 +36,31 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes add`       | Add a dependency to the project manifest                |
 | `ashes remove`    | Remove a dependency from the project manifest           |
 | `ashes install`   | List project dependencies (registry not yet available)  |
+| `ashes login`     | Store an API token for a registry                       |
+| `ashes publish`   | Package the current project and publish it to a registry |
+| `ashes yank`      | Yank (or `--undo`) a published version                  |
+| `ashes search`    | Search a registry for packages                          |
+| `ashes info`      | Show a package's versions, owners, and capabilities     |
+
+---
+
+## Registry commands
+
+These talk to an Ashes package registry (see the registry API reference). Each accepts
+`--registry <name-or-url>`, resolving a name from `~/.ashes/config.json` (the `default` entry falls back
+to the canonical public instance) or using a literal `http(s)://` URL as-is. Credentials are stored per
+registry base URL in `~/.ashes/credentials.json`.
+
+| Command | Synopsis | Notes |
+|---|---|---|
+| `ashes login`   | `ashes login [--registry <r>] (--as <account> \| --token <t>)` | `--as` mints a token via the registry; `--token` stores a provided one. |
+| `ashes publish` | `ashes publish [--registry <r>] [--project <ashes.json>] [--version <v>]` | Packages the project's `.ash` sources (plus `ashes.json`/README/LICENSE), computes the `ash1:` content hash, and uploads. Namespace derives from `namespace` or the PascalCase package name; version from `--version` or the manifest. Requires a prior `login`. |
+| `ashes yank`    | `ashes yank <namespace> <version> [--undo] [--registry <r>]` | Marks a version un-resolvable for new builds (existing locks still resolve); `--undo` reverses it. Owner-only. |
+| `ashes search`  | `ashes search <query> [--registry <r>]` | Prints a ranked list (namespace, latest, description). |
+| `ashes info`    | `ashes info <namespace>[@<version>] [--registry <r>]` | Shows owners and, for the selected (or latest) version, its capability row and dependencies. |
+
+The capability row shown by `ashes info` is the registry's server-computed audit — the capabilities the
+package's public API needs, inferred by the compiler at publish time, not a heuristic scan.
 
 ---
 
