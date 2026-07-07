@@ -105,8 +105,11 @@ public abstract record IrInst
     public sealed record CmpUIntGe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpUIntLt(int Target, int Left, int Right) : IrInst;
     public sealed record CmpUIntLe(int Target, int Left, int Right) : IrInst;
-    public sealed record CmpIntEq(int Target, int Left, int Right) : IrInst;
-    public sealed record CmpIntNe(int Target, int Left, int Right) : IrInst;
+    // DeferredType is non-null only for a provisional '==' / '!=' whose operand type was still
+    // unresolved at lowering time; ResolveDeferredEqs patches such comparisons to CmpStrEq/CmpStrNe
+    // or CmpFloatEq/CmpFloatNe (or leaves a plain CmpIntEq/CmpIntNe) once inference finishes.
+    public sealed record CmpIntEq(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
+    public sealed record CmpIntNe(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
     public sealed record CmpFloatGt(int Target, int Left, int Right) : IrInst;
     public sealed record CmpFloatGe(int Target, int Left, int Right) : IrInst;
     public sealed record CmpFloatLt(int Target, int Left, int Right) : IrInst;

@@ -41,6 +41,25 @@ public sealed partial class Lowering
 
         return ids;
     }
+
+    // Same mechanism as the '+'-constrained vars above, but for '==' / '!=' operand types (Int /
+    // Float / Str, no type classes). See ResolveDeferredEqs.
+    private bool _hasDeferredEqs;
+    private readonly List<TypeRef.TVar> _eqConstrainedVars = new();
+
+    private HashSet<int> ConstrainedEqVarRepIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var v in _eqConstrainedVars)
+        {
+            if (Prune(v) is TypeRef.TVar rep)
+            {
+                ids.Add(rep.Id);
+            }
+        }
+
+        return ids;
+    }
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
@@ -621,6 +640,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Return(resultTemp));
 
         ResolveDeferredAdds();
+        ResolveDeferredEqs();
 
         // Any concrete effect left in the entry expression's row after inference has no handler
         // discharging it — a compile-time error, not a runtime failure.
@@ -704,6 +724,60 @@ public sealed partial class Lowering
     {
         _usesConcatStr = true;
         return inst;
+    }
+
+    // Patches the provisional CmpIntEq/CmpIntNe emitted for '==' / '!=' with two unconstrained
+    // operands, now that inference is complete. Any operand var still unbound (e.g. an unused
+    // generic '==') defaults to Int, matching ResolveDeferredAdds.
+    private void ResolveDeferredEqs()
+    {
+        if (!_hasDeferredEqs)
+        {
+            return;
+        }
+
+        ResolveDeferredEqsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredEqsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredEqsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            switch (instructions[i])
+            {
+                case IrInst.CmpIntEq { DeferredType: { } operandType } eq:
+                    if (Prune(operandType) is TypeRef.TVar)
+                    {
+                        Unify(operandType, new TypeRef.TInt());
+                    }
+
+                    instructions[i] = Prune(operandType) switch
+                    {
+                        TypeRef.TStr => new IrInst.CmpStrEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
+                        TypeRef.TFloat => new IrInst.CmpFloatEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
+                        _ => new IrInst.CmpIntEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
+                    };
+                    break;
+
+                case IrInst.CmpIntNe { DeferredType: { } operandType } ne:
+                    if (Prune(operandType) is TypeRef.TVar)
+                    {
+                        Unify(operandType, new TypeRef.TInt());
+                    }
+
+                    instructions[i] = Prune(operandType) switch
+                    {
+                        TypeRef.TStr => new IrInst.CmpStrNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
+                        TypeRef.TFloat => new IrInst.CmpFloatNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
+                        _ => new IrInst.CmpIntNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
+                    };
+                    break;
+            }
+        }
     }
 
     private (int Temp, TypeRef Type) LowerExpr(Expr e)
