@@ -383,8 +383,8 @@ transport is that HTTPS falls out without a second handler model.
 2. **Stop capability:** programmatic stop as a one-shot capability sharing the signal-shutdown
    runtime path (LANGUAGE_SPEC addition first).
 3. **`NetListen` / `NetConnect` capabilities** on the endpoint-creating operations.
-4. **HTTP streaming bodies:** incremental chunked-request decode first (no API change; chunked
-   bodies still re-decode the accumulated buffer per read today), then response streaming
+4. **HTTP streaming bodies:** incremental chunked-request decode is DELIVERED (each read decodes
+   only the undecoded tail; the 8 MiB cap applies mid-stream). Next: response streaming
    (`Transfer-Encoding: chunked` from a pull-based producer), then the request-side body reader.
 5. Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
    (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
