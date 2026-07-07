@@ -649,8 +649,10 @@ ashes restore [--registry <name-or-url>] [--frozen] [--offline]
 2. Fetches and caches **registry dependencies** (resolving SemVer constraints across the transitive
    graph) and writes `ashes.lock`; then validates **path dependencies** (a missing path or non-project
    fails with `ASH030` / `ASH031`) and lists every resolved dependency with its namespace.
-3. `build` / `run` / `test` read the resulting lock, so once restored the project compiles against its
-   dependencies.
+3. Each cached package's content is verified against the lock's `ash1:` hash (`ASH034` on mismatch).
+4. `build` / `run` / `test` **auto-restore** when a project's lock is missing or a locked package is not
+   cached (against the default registry). Use `ashes restore` explicitly to target a specific registry,
+   or with `--frozen` / `--offline`.
 
 #### Examples
 

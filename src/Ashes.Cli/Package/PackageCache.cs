@@ -26,6 +26,17 @@ internal sealed class PackageCache(string cacheRoot)
 
     public bool Has(string ns, string version, string hash) => Directory.Exists(PathFor(ns, version, hash));
 
+    /// <summary>The <c>ash1:</c> content hash of a cached package's source tree — the same computation the
+    /// registry ran at publish — so a restore can verify the cache against the lock (detecting corruption
+    /// or a lying mirror).</summary>
+    public static string ComputeTreeHash(string directory)
+    {
+        var files = Directory
+            .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+            .Select(f => (Path.GetRelativePath(directory, f), File.ReadAllBytes(f)));
+        return Ashes.Cli.Registry.SourceHasher.Compute(files);
+    }
+
     public async Task<string> StoreAsync(string ns, string version, string hash, byte[] gzipTarball, CancellationToken ct)
     {
         var dir = PathFor(ns, version, hash);

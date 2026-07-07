@@ -81,6 +81,43 @@ static AshesProject? ResolveProject(string? projectOption, string? inputFile, st
     return null;
 }
 
+// Auto-restore before build/run/test: if a project declares registry dependencies and its lock is
+// missing or a locked package is not cached, restore against the default registry (skipped for
+// standalone files/expressions and projects with only path dependencies). Explicit registry selection
+// or --frozen/--offline is done via `ashes restore`.
+static async Task AutoRestoreProjectAsync(string? projectOption, string? inputFile, string? expr)
+{
+    var projectFile = projectOption;
+    if (string.IsNullOrEmpty(projectFile) && string.IsNullOrEmpty(inputFile) && string.IsNullOrEmpty(expr))
+    {
+        projectFile = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
+    }
+
+    if (string.IsNullOrEmpty(projectFile))
+    {
+        return;
+    }
+
+    var projectDirectory = Path.GetDirectoryName(Path.GetFullPath(projectFile))!;
+    var roots = CollectRegistryRoots(projectFile);
+    if (roots.Count == 0)
+    {
+        return;
+    }
+
+    var lockFile = Ashes.Cli.Package.LockFile.Read(projectDirectory);
+    var cache = new Ashes.Cli.Package.PackageCache();
+    var needsRestore = lockFile is null || lockFile.Package.Any(p => !cache.Has(p.Namespace, p.Version, p.Hash));
+    if (!needsRestore)
+    {
+        return;
+    }
+
+    AnsiConsole.MarkupLine("[grey]Restoring dependencies...[/]");
+    await RestoreRegistryDependenciesAsync(projectFile, projectDirectory, null, frozen: false, offline: false, CancellationToken.None)
+        .ConfigureAwait(false);
+}
+
 static string DeriveProjectOutputPath(AshesProject project, string targetId)
 {
     var outputName = !string.IsNullOrWhiteSpace(project.Name)
@@ -513,7 +550,7 @@ try
         "compile" => await RunCompileAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
         "run" => await RunRunAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
         "repl" => await RunReplAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
-        "test" => RunTest(args.Skip(1).ToArray()),
+        "test" => await RunTest(args.Skip(1).ToArray()).ConfigureAwait(false),
         "fmt" => await RunFmtAsync(args.Skip(1).ToArray()).ConfigureAwait(false),
         "init" => RunInit(args.Skip(1).ToArray()),
         "add" => RunAdd(args.Skip(1).ToArray()),
@@ -597,6 +634,7 @@ async Task<int> RunCompileAsync(string[] a)
         optimizationLevel = BackendOptimizationLevel.O0;
     }
 
+    await AutoRestoreProjectAsync(projectPath, inputFile, expr).ConfigureAwait(false);
     var project = ResolveProject(projectPath, inputFile, expr);
     if (project is not null && (!string.IsNullOrEmpty(inputFile) || !string.IsNullOrEmpty(expr)))
     {
@@ -716,6 +754,7 @@ async Task<int> RunRunAsync(string[] a)
         optimizationLevel = BackendOptimizationLevel.O0;
     }
 
+    await AutoRestoreProjectAsync(projectPath, inputFile, expr).ConfigureAwait(false);
     var project = ResolveProject(projectPath, inputFile, expr);
     if (project is not null && (!string.IsNullOrEmpty(inputFile) || !string.IsNullOrEmpty(expr)))
     {
@@ -941,7 +980,7 @@ async Task<int> RunReplAsync(string[] a)
     return 0;
 }
 
-int RunTest(string[] a)
+async Task<int> RunTest(string[] a)
 {
     if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
     {
@@ -974,6 +1013,7 @@ int RunTest(string[] a)
         paths.Add(arg);
     }
 
+    await AutoRestoreProjectAsync(projectPath, null, null).ConfigureAwait(false);
     var project = ResolveProject(projectPath, null, null);
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
     var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
@@ -1638,6 +1678,8 @@ static async Task RestoreRegistryDependenciesAsync(
             {
                 throw new CliUserException($"ASH033: '{p.Namespace}@{p.Version}' is not in the cache (--offline).");
             }
+
+            VerifyCacheHash(cache.PathFor(p.Namespace, p.Version, p.Hash), p.Hash, p.Namespace, p.Version);
         }
 
         return;
@@ -1680,6 +1722,10 @@ static async Task RestoreRegistryDependenciesAsync(
             var tarball = await client.DownloadSourceAsync(baseUrl, ns, version.Version, ct).ConfigureAwait(false);
             await cache.StoreAsync(ns, version.Version, version.Hash, tarball, ct).ConfigureAwait(false);
         }
+
+        // The registry computed this hash at publish; verifying the cached tree catches a corrupt cache
+        // or a lying mirror before the compiler ever reads it.
+        VerifyCacheHash(cache.PathFor(ns, version.Version, version.Hash), version.Hash, ns, version.Version);
     }
 
     if (!frozen)
@@ -1688,6 +1734,16 @@ static async Task RestoreRegistryDependenciesAsync(
     }
 
     AnsiConsole.MarkupLine($"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")}{(frozen ? " (frozen)" : " into ashes.lock")}.");
+}
+
+static void VerifyCacheHash(string cacheDir, string expectedHash, string ns, string version)
+{
+    var actual = Ashes.Cli.Package.PackageCache.ComputeTreeHash(cacheDir);
+    if (!string.Equals(actual, expectedHash, StringComparison.Ordinal))
+    {
+        throw new CliUserException(
+            $"ASH034: cached content of '{ns}@{version}' does not match its lock hash (expected {expectedHash}, got {actual}).");
+    }
 }
 
 static bool SameLock(IReadOnlyList<Ashes.Cli.Package.LockedPackage> a, IReadOnlyList<Ashes.Cli.Package.LockedPackage> b)
