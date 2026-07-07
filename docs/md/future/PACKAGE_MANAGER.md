@@ -217,8 +217,8 @@ The design is deliberately three separable things, so "host your own" is real:
 
 ### 7.1 What the registry stores and serves (read API)
 
-The read API is unauthenticated, cacheable, and CDN-frontable (full sketch in
-[REGISTRY_API.md](REGISTRY_API.md)):
+The read API is unauthenticated, cacheable, and CDN-frontable (the delivered registry is documented in
+[the registry architecture](../internals/architecture.md#package-registry)):
 
 - **Resolve:** `GET /api/v1/packages/<namespace>` returns the version list and per-version metadata
   (content hash, dependencies, capability metadata from §8).
@@ -356,8 +356,8 @@ ashes build | run | test   # auto-restore if the lock is stale or missing (unles
 
 Later additions: `ashes tree`, `ashes why <pkg>`, `ashes outdated`, `ashes update [<pkg>]`,
 `ashes vendor`, `ashes clean`, `ashes capabilities`, the discovery commands
-`ashes search <query>` / `ashes info <pkg>` (backed by the registry list/search API,
-[REGISTRY_API.md](REGISTRY_API.md) §9), and the registry-facing
+`ashes search <query>` / `ashes info <pkg>` (backed by the registry list/search API — see
+[the registry architecture](../internals/architecture.md#package-registry)), and the registry-facing
 `ashes login` / `ashes publish` / `ashes yank` (§7.2).
 
 The common path requires **zero explicit package commands**: edit `ashes.json` (or run `ashes add`),
@@ -397,7 +397,7 @@ The integration is small and localized, centered where the resolver already live
 | Resolver/cache/registry client | `src/Ashes.Cli/` (new) | A CLI-side `PackageResolver` (SemVer + lock), a content-addressed cache, and the registry HTTP client (resolve/download/login/publish). Pure .NET: HTTP, hashing, and zip handling are all in the base library. Not in the compiler phases. |
 | CLI commands | `src/Ashes.Cli/Program.cs` | `RunAdd`/`RunRemove` write the new manifest shape; new `RunRestore`; `build`/`run`/`test` gain an auto-restore + lock-verify pre-step; new `login`/`publish`/`yank`; retire `install`. |
 | Shared consumers | `src/Ashes.Lsp/DocumentService.cs`, `src/Ashes.TestRunner/Runner.cs` | Consume the same resolved-roots view so all front ends agree. |
-| Registry server (Phase 3) | `src/Ashes.Registry/`, `src/Ashes.Registry.Tests/` (new) | The reference registry app + its tests, added to `Ashes.slnx` and the `just` CI (§12.1, [REGISTRY_API.md](REGISTRY_API.md)). A downstream consumer of `Ashes.Frontend`/`Ashes.Semantics`; never referenced back by any compiler phase. |
+| Registry server (Phase 3) | `src/Ashes.Registry/`, `src/Ashes.Registry.Tests/` (new) | The reference registry app + its tests, added to `Ashes.slnx` and the `just` CI (§12.1). A downstream consumer of `Ashes.Frontend`/`Ashes.Semantics`; never referenced back by any compiler phase. |
 | Ripple | tests, runner | The new `AshesProject` field touches its manual constructors and `project with { ... }` call sites. |
 
 The principle throughout: the CLI resolves and materializes a deterministic set of roots; the compiler,
@@ -414,7 +414,7 @@ maintain (§13 Phase 3 wires the one extra `test`-job line).
 
 The one rule that must not bend is the **direction of the dependency DAG**. `Ashes.Registry` is a
 *downstream consumer* of the compiler front end (`Ashes.Frontend`/`Ashes.Semantics`) for publish-time
-validation (§8, [REGISTRY_API.md](REGISTRY_API.md) §6) — exactly as `Ashes.Lsp` consumes compiler logic
+validation (§8) — exactly as `Ashes.Lsp` consumes compiler logic
 rather than reimplementing it. Nothing in the compiler phases may depend on `Ashes.Registry`: it is a
 leaf of the graph, never referenced by Frontend, Semantics, Backend, or the CLI. It has nothing to do
 with lexing, inference, or codegen and must not entangle them; it only *reads* them as a library.
@@ -506,15 +506,16 @@ Goal: reproducible, transitive, cached resolution; git dependencies; workspaces.
 
 Goal: a self-hostable registry server (§7, §12.1) and the client integration that uses it.
 
-1. **Spec + diagnostics.** [REGISTRY_API.md](REGISTRY_API.md) sketches the API/server; finalize it
-   (read/list/search/publish/yank endpoints, auth, storage contract) and update `COMPILER_CLI_SPEC.md`
+1. **Spec + diagnostics.** Specify the registry API/server (now documented in
+   [the registry architecture](../internals/architecture.md#package-registry)) — read/list/search/publish/yank
+   endpoints, auth, storage contract — and update `COMPILER_CLI_SPEC.md`
    (`login`, `publish`, `yank`, `search`, `info`, the `registries` config, per-dependency `registry`);
    allocate codes for auth failure, namespace-owned-by-another-account, immutable-version-overwrite, and
    yanked-version. *Acceptance: docs merged, codes reserved.*
 2. **Server scaffolding + CI.** New `src/Ashes.Registry` .NET 10 minimal-API app and
    `src/Ashes.Registry.Tests`, both added to `Ashes.slnx`; the storage interfaces plus the
    filesystem/SQLite implementation; the read endpoints (resolve, download, list, search). Tests in
-   TUnit + Shouldly + Imposter (REGISTRY_API §8), and the `just` CI `test` job gains a line running
+   TUnit + Shouldly + Imposter, and the `just` CI `test` job gains a line running
    `Ashes.Registry.Tests` alongside `Ashes.Tests`/`Ashes.Lsp.Tests` (`ci/jobs.sh`). *Acceptance: a
    locally-run server resolves, serves, and searches a hand-seeded package; `just test` runs the
    registry tests.*
@@ -526,7 +527,7 @@ Goal: a self-hostable registry server (§7, §12.1) and the client integration t
    selection; the lock's `registry+<url>` source; download-and-verify against the cache. *Acceptance: a
    project resolves and builds a package from a running registry.*
 5. **Client verbs.** `ashes login`, `ashes publish`, `ashes yank`, and the discovery commands
-   `ashes search` / `ashes info` (REGISTRY_API §9). *Acceptance: a full search → add → publish → resolve →
+   `ashes search` / `ashes info`. *Acceptance: a full search → add → publish → resolve →
    build loop against a local server.*
 6. **Capabilities.** `ashes capabilities` as a first-class command; write the capability snapshot into the
    lock. *Acceptance: the command reports each dependency's introduced capability row.*

@@ -8,7 +8,7 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [Package Manager](PACKAGE_MANAGER.md) | Partial | Local deps first, lock file second, registry third |
+| [Package Manager](PACKAGE_MANAGER.md) | Partial | Registry delivered (see [architecture.md](../internals/architecture.md#package-registry)); local deps + lock file remain |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ---

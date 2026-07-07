@@ -173,7 +173,6 @@ export default defineConfig({
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
           page("Package Manager", "/future/PACKAGE_MANAGER"),
-          page("Registry API", "/future/REGISTRY_API"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
         ],
       },

@@ -110,6 +110,62 @@ already-compiled binaries and their debug information.
 
 ---
 
+## Package registry
+
+`Ashes.Registry` is the reference package registry: a standalone ASP.NET Core (.NET 10) minimal-API server
+that stores and serves Ashes packages. It lives in the compiler solution for build/test/format but deploys
+on its own lifecycle, and is a strict downstream consumer of `Ashes.Frontend`/`Ashes.Semantics` for
+publish-time validation — no compiler phase depends on it. Packages are **source**: a published version's
+blob is the gzip source tarball, content-addressed by the `ash1:` hash of its uncompressed file tree, so
+identical trees deduplicate and a download verifies by re-hashing regardless of transport.
+
+**HTTP API (`/api/v1`).** Read endpoints are unauthenticated and cacheable; writes take a bearer token.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/healthz`, `/api/v1/index` | Liveness; registry info + effective limits |
+| GET | `/api/v1/packages`, `/api/v1/search?q=` | Browse (paginated); search (FTS5-ranked) |
+| GET | `/api/v1/packages/{ns}`, `/api/v1/packages/{ns}/{version}` | Package metadata + versions; one version |
+| GET | `/api/v1/packages/{ns}/{version}/source` | Download the source tarball (`application/gzip`) |
+| POST | `/api/v1/tokens` | Mint an API token |
+| PUT | `/api/v1/packages/{ns}/{version}` | Publish (multipart: `metadata` JSON + `source` tarball) |
+| POST | `/api/v1/packages/{ns}/{version}/yank`, `/unyank` | Yank / reverse a yank (owner-only) |
+| GET/POST/DELETE | `/api/v1/packages/{ns}/owners` | List / add / remove co-owners (owner-only) |
+
+Errors use a uniform envelope `{ "error": { "code", "message" } }` with stable codes: `not_found`,
+`unauthorized`, `namespace_owned_by_another`, `version_exists`, `version_yanked`, `limit_exceeded`,
+`namespace_lint`, `invalid_version`, `hash_mismatch`. The generated OpenAPI document and its Scalar
+reference are mapped in the Development environment only.
+
+**Publish pipeline.** `PUT` runs an ordered pipeline that writes nothing until every stage passes:
+authenticate → unpack the tarball under the per-file/total/count and decompressed-ceiling limits and the
+source-only content allowlist → authorize the namespace (the first publish claims it, later versions
+require ownership) → validate SemVer and immutability (a differing hash for an existing version is
+`version_exists`; an identical re-publish is an idempotent no-op) → namespace lint → compute the `ash1:`
+hash server-side and verify it against the client's declared value → extract the public capability rows →
+store the blob, then the package (owner claim), then the version.
+
+**Capability audit.** The namespace lint and capability extraction reuse the compiler front end behind
+`IManifestValidator` / `ICapabilityExtractor`. The default extractor parses and lowers the uploaded source
+— stitching multi-module packages through the project loader when an `ashes.json` is present — and reads
+the inferred `needs {...}` rows off the exported bindings via `Lowering.PublicApiCapabilities()`, so the
+audit reflects real inference rather than a heuristic scan. It is best-effort: a compiler failure yields
+no capabilities instead of blocking the publish.
+
+**Storage** sits behind narrow interfaces (`IBlobStore`, `IMetadataStore`, `ISearchIndex`, `IAccountStore`)
+so the reference filesystem/SQLite implementation can be swapped for object storage / PostgreSQL at scale:
+
+- Content-addressed **blobs** on the filesystem (`data/blobs/<kk>/<hash>`), written atomically and deduplicated.
+- **Metadata, accounts, and tokens** in SQLite via EF Core migrations. The database is configured by
+  `ConnectionStrings:Registry` (defaulting under the `--data` directory) and swaps to PostgreSQL by provider.
+- **Search** is a SQLite FTS5 index over namespace/description/keywords, kept in sync by triggers; queries
+  select candidates by prefix-token match and rank name-first (exact > prefix > description, downloads tie-break).
+
+Token secrets are random 256-bit values, shown once and stored only as SHA-256 hashes. The client verbs
+(`login`, `publish`, `yank`, `search`, `info`) are covered in the CLI reference.
+
+---
+
 ## Backend Architecture
 
 The backend converts IR into a native executable through LLVM:
