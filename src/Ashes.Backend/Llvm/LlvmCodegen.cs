@@ -1535,7 +1535,7 @@ internal static partial class LlvmCodegen
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
-                    createTask.StateStructSize, createTask.CaptureCount)),
+                    createTask.StateStructSize, createTask.CaptureCount, createTask.LoopResetEligible)),
             // CreateCompletedTask: pre-completed task with result already available.
             IrInst.CreateCompletedTask cct => StoreTemp(state, cct.Target,
                 EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),
@@ -1692,9 +1692,9 @@ internal static partial class LlvmCodegen
             IrInst.SwitchTag switchTag => EmitSwitchTag(state, LoadTemp(state, switchTag.TagTemp), switchTag.Cases, switchTag.DefaultLabel),
             IrInst.Return ret => EmitReturn(state, ret.Source),
             // Arena deallocation: save/restore heap cursor and end pointers
-            IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot),
-            IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot),
-            IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot),
+            IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot, save.CoroutineLoop),
+            IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot, restore.CoroutineLoop),
+            IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot, reclaim.CoroutineLoop),
             IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
             IrInst.CopyOutArenaToSpace copyOutTs => StoreTemp(state, copyOutTs.DestTemp, EmitCopyOutArenaToSpace(state, copyOutTs.SrcTemp, copyOutTs.StaticSizeBytes)),
             IrInst.CopyFixedInto copyInto => EmitCopyFixedInto(state, copyInto.DestTemp, copyInto.SrcTemp, copyInto.SizeBytes),

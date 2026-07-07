@@ -2449,8 +2449,8 @@ public sealed partial class Lowering
                     // while a one-shot effect post pushed this iteration is still pending — the
                     // post (and its captures) lives in the iteration's allocations.
                     var tcoResetSkipLabel = BeginLivePostsGuard();
-                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
-                    Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
+                    Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
                     EndLivePostsGuard(tcoResetSkipLabel);
                 }
                 else
@@ -2510,7 +2510,7 @@ public sealed partial class Lowering
                         }
 
                         // Reset (pointer reset only, no chunk freeing): cursor → W.
-                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
 
                         // Phase B: copy each up-copy down to W and store into the slot.
                         for (int i = 0; i < newArgTypes.Length; i++)
@@ -2526,7 +2526,7 @@ public sealed partial class Lowering
 
                         // Free the chunks abandoned above W (including the Phase A
                         // up-copies, now fully consumed by Phase B).
-                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot));
+                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
                         EndLivePostsGuard(tcoCopySkipLabel);
                     }
                     // else: complex heap types — no arena reset.

@@ -536,15 +536,43 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Saves the current heap cursor and end pointers into local slots.
     /// Used at ownership scope entry for arena-based deallocation.
+    /// A <paramref name="coroutineLoop"/> save (an async loop's per-iteration watermark) is a no-op
+    /// under the legacy task driver — the matching restore/reclaim are no-ops there too.
     /// </summary>
-    private static bool EmitSaveArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot)
+    private static bool EmitSaveArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot, bool coroutineLoop = false)
     {
+        if (coroutineLoop && !state.UseRunQueueScheduler)
+        {
+            return false;
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "arena_save_cursor");
         LlvmApi.BuildStore(builder, cursor, state.LocalSlots[cursorLocalSlot]);
         LlvmValueHandle end = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_save_end");
         LlvmApi.BuildStore(builder, end, state.LocalSlots[endLocalSlot]);
         return false;
+    }
+
+    /// <summary>
+    /// Emits the runtime gate for a coroutine-loop arena reset: branches to a fresh "do it" block
+    /// only when the coroutine's task (local slot 0 is the state struct) still has its
+    /// <c>LoopResetOk</c> header flag set — the scheduler clears it when a composite ancestor shares
+    /// the arena, where resetting to a stale watermark could free a sibling's live allocations.
+    /// Returns the merge block; the caller emits the gated work and must branch to the merge block.
+    /// </summary>
+    private static LlvmBasicBlockHandle EmitLoopResetGate(LlvmCodegenState state, string prefix, out LlvmBasicBlockHandle doBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        doBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_do");
+        LlvmBasicBlockHandle mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_merge");
+        LlvmValueHandle taskPtr = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], prefix + "_task");
+        LlvmValueHandle resetOk = LoadMemory(state, taskPtr, TaskStructLayout.LoopResetOk, prefix + "_ok");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, resetOk, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_ok_cmp"),
+            doBlock, mergeBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, doBlock);
+        return mergeBlock;
     }
 
     /// <summary>
@@ -561,9 +589,19 @@ internal static partial class LlvmCodegen
     /// <see cref="EmitCopyOutArena"/> can safely read from the not-yet-freed chunks.
     /// </para>
     /// </summary>
-    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot, int preRestoreEndSlot)
+    private static bool EmitRestoreArenaState(LlvmCodegenState state, int cursorLocalSlot, int endLocalSlot, int preRestoreEndSlot, bool coroutineLoop = false)
     {
+        if (coroutineLoop && !state.UseRunQueueScheduler)
+        {
+            return false;
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle mergeBlock = default;
+        if (coroutineLoop)
+        {
+            mergeBlock = EmitLoopResetGate(state, "loop_reset_restore", out _);
+        }
 
         // Save the current heap end before resetting — needed by ReclaimArenaChunks.
         LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "arena_pre_restore_end");
@@ -574,6 +612,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[endLocalSlot], "arena_restore_end");
         LlvmApi.BuildStore(builder, savedCursor, state.HeapCursorSlot);
         LlvmApi.BuildStore(builder, savedEnd, state.HeapEndSlot);
+
+        if (coroutineLoop)
+        {
+            LlvmApi.BuildBr(builder, mergeBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        }
+
         return false;
     }
 
@@ -589,9 +634,21 @@ internal static partial class LlvmCodegen
     /// <c>munmap</c> (Linux) or <c>VirtualFree</c> (Windows) on each abandoned chunk.
     /// </para>
     /// </summary>
-    private static bool EmitReclaimArenaChunks(LlvmCodegenState state, int savedEndSlot, int preRestoreEndSlot)
+    private static bool EmitReclaimArenaChunks(LlvmCodegenState state, int savedEndSlot, int preRestoreEndSlot, bool coroutineLoop = false)
     {
+        if (coroutineLoop && !state.UseRunQueueScheduler)
+        {
+            return false;
+        }
+
         LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle loopMergeBlock = default;
+        if (coroutineLoop)
+        {
+            // Same gate as the restore: if the reset was vetoed, the pre-restore slot holds garbage
+            // and nothing above the watermark was abandoned — skip the walk entirely.
+            loopMergeBlock = EmitLoopResetGate(state, "loop_reset_reclaim", out _);
+        }
 
         LlvmValueHandle savedEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[savedEndSlot], "reclaim_saved_end");
         LlvmValueHandle preRestoreEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[preRestoreEndSlot], "reclaim_pre_restore_end");
@@ -623,6 +680,13 @@ internal static partial class LlvmCodegen
 
         // Merge point.
         LlvmApi.PositionBuilderAtEnd(builder, reclaimDoneBlock);
+
+        if (coroutineLoop)
+        {
+            LlvmApi.BuildBr(builder, loopMergeBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, loopMergeBlock);
+        }
+
         return false;
     }
 

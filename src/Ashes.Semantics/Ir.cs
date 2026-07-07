@@ -282,7 +282,18 @@ public abstract record IrInst
     /// local slots. Emitted at ownership scope entry so that arena-based
     /// deallocation can restore the cursor at scope exit.
     /// </summary>
-    public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst;
+    /// <remarks>
+    /// <see cref="CoroutineLoop"/> marks the save/restore/reclaim group emitted at an async
+    /// tail-recursive loop's restart back-edge (inside a coroutine). The backend gates such a group:
+    /// it is a no-op under the legacy task driver, and under the run-queue scheduler the restore and
+    /// reclaim run only while the task's <c>LoopResetOk</c> header flag is set (cleared when a
+    /// composite ancestor shares the arena, where a stale-watermark reset could free a sibling's
+    /// live allocations).
+    /// </remarks>
+    public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst
+    {
+        public bool CoroutineLoop { get; init; }
+    }
 
     /// <summary>
     /// Restores the heap allocator state (cursor and end pointers) from two local
@@ -296,7 +307,11 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/> can determine which chunks to free.
     /// </para>
     /// </summary>
-    public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot, int PreRestoreEndSlot) : IrInst;
+    public sealed record RestoreArenaState(int CursorLocalSlot, int EndLocalSlot, int PreRestoreEndSlot) : IrInst
+    {
+        /// <summary>See <see cref="SaveArenaState.CoroutineLoop"/>.</summary>
+        public bool CoroutineLoop { get; init; }
+    }
 
     /// <summary>
     /// Frees OS chunks that were allocated between the saved watermark and the
@@ -311,7 +326,11 @@ public abstract record IrInst
     /// <c>munmap</c> (Linux) or <c>VirtualFree</c> (Windows) on each intermediate chunk.
     /// </para>
     /// </summary>
-    public sealed record ReclaimArenaChunks(int SavedEndSlot, int PreRestoreEndSlot) : IrInst;
+    public sealed record ReclaimArenaChunks(int SavedEndSlot, int PreRestoreEndSlot) : IrInst
+    {
+        /// <summary>See <see cref="SaveArenaState.CoroutineLoop"/>.</summary>
+        public bool CoroutineLoop { get; init; }
+    }
 
     /// <summary>
     /// Copies a heap object out of the arena to a fresh allocation, emitted AFTER
@@ -437,7 +456,15 @@ public abstract record IrInst
     /// StateStructSize includes the header, captures, and live variable slots.
     /// CaptureCount is the number of captured environment variables to copy.
     /// </summary>
-    public sealed record CreateTask(int Target, int ClosureTemp, int StateStructSize, int CaptureCount) : IrInst;
+    public sealed record CreateTask(int Target, int ClosureTemp, int StateStructSize, int CaptureCount) : IrInst
+    {
+        /// <summary>
+        /// True for an async tail-recursive loop coroutine that emits a flagged arena reset at its
+        /// restart back-edge; the backend stamps the task's <c>LoopResetOk</c> header flag so the
+        /// scheduler can veto the reset when a composite ancestor shares the arena.
+        /// </summary>
+        public bool LoopResetEligible { get; init; }
+    }
 
     /// <summary>
     /// Creates an already-completed Task value. Used by Ashes.Async.fromResult
@@ -744,7 +771,8 @@ public static class TaskStructLayout
     public const int ReadyNext = 120;      // run-queue "next ready task" link (i64); run-queue scheduler
     public const int Waiter = 128;         // task blocked on this task's completion, re-enqueued on it (i64)
     public const int ArenaOwner = 136;     // nearest spawned-ancestor whose arena this task shares; 0 = global (i64)
-    public const int HeaderSize = 144;     // total header size in bytes
+    public const int LoopResetOk = 144;    // 1 = this async-loop coroutine may reset its arena at the restart back-edge (i64)
+    public const int HeaderSize = 152;     // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 

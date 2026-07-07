@@ -261,6 +261,20 @@ every suspend), since positional before/after analysis is unsound across a
 backward jump. Awaits inside *nested plain lambdas* still lower to a blocking
 `RunTask` — only the helper's own coroutine scope suspends.
 
+The restart back-edge also carries a **per-iteration arena reset** (the same
+watermark + copy-out machinery as synchronous TCO loops), so a long-lived loop —
+an HTTP keep-alive connection serving thousands of requests — reclaims each
+iteration's allocations instead of growing its arena per request. Loop-invariant
+and scalar arguments take the plain reset (flat memory); fresh heap-typed
+arguments are copied out to the watermark (the loop retains only the live
+loop-carried state per iteration). The reset is gated twice for soundness: it is
+emitted only when the loop body contains no `spawn` (a detached task's captures
+could reference iteration allocations), and at runtime it runs only while the
+task's `LoopResetOk` header flag is set — the scheduler clears the flag at
+suspend time when a composite (`all`/`race`) ancestor shares the arena, where
+interleaved siblings could allocate above a stale watermark. Under the legacy
+task driver the flagged save/restore/reclaim group compiles to nothing.
+
 #### Task frames and memory
 
 A `Task` value is a heap **state struct** allocated by `CreateTask` through the
