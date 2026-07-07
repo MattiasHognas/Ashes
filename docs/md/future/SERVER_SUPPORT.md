@@ -396,7 +396,18 @@ transport is that HTTPS falls out without a second handler model.
    (`Transfer-Encoding: chunked` from a pull-based producer, which needs function-typed ADT fields
    first), then the request-side body reader (after the affine-ownership work).
 5. Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
-   (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency.
+   (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency. A first
+   implementation attempt is parked as too delicate to land in a rushed pass — it needs care on
+   three points found the hard way: (a) `struct epoll_event` is `__attribute__((packed))` on x86-64
+   (12-byte stride, `data` at offset 4) but unpacked on arm64 (16-byte stride, `data` at offset 8),
+   so registering the fd in `data` and reading it back from `epoll_wait` must be arch-correct — the
+   existing registration writes `data` at offset 8, which is harmless only because the current
+   requeue-all never reads it back; (b) the batched event buffer must be a module-global, not a
+   stack alloca — `EmitSchedulerAggregateWait` runs inside the scheduler loop, so a per-wakeup 1 KB
+   alloca overflows the stack; (c) the requeue pass must partition the parked list (re-queue only
+   ready sockets and elapsed timers, rebuild the rest) without breaking the drain-timer and
+   graceful-shutdown paths, which the first attempt still got wrong. Best done as a focused change
+   with the full server suite plus the concurrent-HTTP test as the guard.
 
 ---
 
