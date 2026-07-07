@@ -5,10 +5,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Ashes.Registry.Storage;
 
 /// <summary>
-/// List + search over the package set, reading live metadata. Ranking is lexical and name-first
-/// (exact namespace &gt; prefix &gt; token/description), tie-broken by downloads — the MVP behaviour the
-/// spec assigns to SQLite FTS5. This implementation ranks in memory over the package table; swapping in
-/// FTS5 or Postgres full-text is a later, API-transparent change behind this same interface.
+/// List + search over the package set. Search selects candidates through a SQLite FTS5 index
+/// (namespace/description/keywords, prefix-token match) and applies the documented name-first ranking
+/// (exact namespace &gt; prefix &gt; description) in memory over just those candidates, tie-broken by
+/// downloads. Browse orders the package table directly. Swapping in Postgres full-text at scale is an
+/// API-transparent change behind this same interface.
 /// </summary>
 internal sealed class EfSearchIndex(RegistryDbContext db) : ISearchIndex
 {
@@ -20,17 +21,49 @@ internal sealed class EfSearchIndex(RegistryDbContext db) : ISearchIndex
     public async Task<ResultPage> SearchAsync(string query, int limit, string? cursor, CancellationToken ct)
     {
         var q = (query ?? "").Trim().ToLowerInvariant();
-        var rows = await LoadAsync(ct);
+        var match = BuildMatch(q);
+        if (match is null)
+        {
+            return new ResultPage([], null);
+        }
 
-        var scored = rows
+        // FTS5 selects the candidate set (prefix-token match across namespace/description/keywords); the
+        // documented name-first ranking (exact > prefix > description) is then applied in memory over just
+        // those candidates, tie-broken by downloads.
+        var namespaces = await db.Database
+            .SqlQueryRaw<string>("SELECT namespace AS Value FROM PackageSearch WHERE PackageSearch MATCH {0}", match)
+            .ToListAsync(ct);
+        if (namespaces.Count == 0)
+        {
+            return new ResultPage([], null);
+        }
+
+        var packages = await db.Packages.AsNoTracking().Include(p => p.Versions)
+            .Where(p => namespaces.Contains(p.Namespace))
+            .ToListAsync(ct);
+
+        var scored = packages
             .Select(p => (Package: p, Score: Score(p, q)))
-            .Where(t => q.Length == 0 || t.Score > 0)
             .OrderByDescending(t => t.Score)
             .ThenByDescending(t => t.Package.Downloads)
             .ThenBy(t => t.Package.Namespace, StringComparer.Ordinal)
             .Select(t => Summarize(t.Package, t.Score));
 
         return Paginate(scored, limit, cursor);
+    }
+
+    /// <summary>Turn a user query into a safe FTS5 MATCH expression: alphanumeric tokens as prefix terms,
+    /// OR-joined. Returns null when there is nothing to match (so the caller returns an empty page).</summary>
+    private static string? BuildMatch(string query)
+    {
+        var cleaned = new StringBuilder(query.Length);
+        foreach (var c in query)
+        {
+            cleaned.Append(char.IsLetterOrDigit(c) ? c : ' ');
+        }
+
+        var tokens = cleaned.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length == 0 ? null : string.Join(" OR ", tokens.Select(t => t + "*"));
     }
 
     public async Task<ResultPage> ListAsync(SortOrder sort, int limit, string? cursor, CancellationToken ct)

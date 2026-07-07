@@ -131,6 +131,23 @@ public sealed class StorageIntegrationTests
     }
 
     [Test]
+    public async Task Search_matches_by_namespace_prefix_and_description_fallback()
+    {
+        using var store = TestData.NewStore();
+        await store.Metadata.UpsertPackageAsync(TestData.Package("Json", "A parser for data"), CancellationToken.None);
+        await store.Metadata.UpsertPackageAsync(TestData.Package("Http", "networking client"), CancellationToken.None);
+
+        var byPrefix = await store.Search.SearchAsync("jso", 20, cursor: null, CancellationToken.None);
+        byPrefix.Results.Select(r => r.Namespace).ShouldContain("Json");
+
+        var byDescription = await store.Search.SearchAsync("networking", 20, cursor: null, CancellationToken.None);
+        byDescription.Results.Select(r => r.Namespace).ShouldContain("Http");
+
+        var noMatch = await store.Search.SearchAsync("zzzznope", 20, cursor: null, CancellationToken.None);
+        noMatch.Results.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Browse_paginates_with_a_cursor()
     {
         using var store = TestData.NewStore();
