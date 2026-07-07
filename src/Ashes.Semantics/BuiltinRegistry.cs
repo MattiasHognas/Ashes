@@ -119,6 +119,11 @@ public static class BuiltinRegistry
         MathAtan2,
         MathHypot,
         MathFmod,
+        RegexCompile,
+        RegexCompileError,
+        RegexFind,
+        RegexCaptures,
+        RegexSubstitute,
         FileWriteBytes,
         IoReadExact,
         TextByteLength,
@@ -426,10 +431,21 @@ public static class BuiltinRegistry
                 "Ashes.Rpc",
                 "Ashes.Semantics.StdLib.Ashes.Rpc.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            // Ashes.Regex is backed by PCRE2. The native members below are the low-level primitives
+            // (a compiled pattern is a pcre2_code* carried as an Int handle); the ergonomic pattern-
+            // string API (compile/isMatch/find/findAll/captures/replace and the Regex type) is defined
+            // on top of them in Regex.ash, which references them as Ashes.Regex.<primitive>.
             ["Ashes.Regex"] = new(
                 "Ashes.Regex",
                 "Ashes.Semantics.StdLib.Ashes.Regex.ash",
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal))
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["compileRaw"] = new("compileRaw", BuiltinValueKind.RegexCompile, IsCallable: true, Arity: 1),
+                    ["compileError"] = new("compileError", BuiltinValueKind.RegexCompileError, IsCallable: true, Arity: 1),
+                    ["findFrom"] = new("findFrom", BuiltinValueKind.RegexFind, IsCallable: true, Arity: 3),
+                    ["capturesFrom"] = new("capturesFrom", BuiltinValueKind.RegexCaptures, IsCallable: true, Arity: 3),
+                    ["substituteAll"] = new("substituteAll", BuiltinValueKind.RegexSubstitute, IsCallable: true, Arity: 3)
+                })
         };
 
     /// <summary>

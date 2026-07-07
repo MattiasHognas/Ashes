@@ -388,6 +388,11 @@ public static class IrOptimizer
             IrInst.FloatToInt f => f with { ValueTemp = R(f.ValueTemp) },
             IrInst.FloatUnaryIntrinsic u => u with { ValueTemp = R(u.ValueTemp) },
             IrInst.CallLibm c => c with { Args = c.Args.Select(R).ToList() },
+            IrInst.RegexCompile c => c with { Pattern = R(c.Pattern) },
+            IrInst.RegexCompileError c => c with { Pattern = R(c.Pattern) },
+            IrInst.RegexFind c => c with { Code = R(c.Code), Subject = R(c.Subject), Start = R(c.Start) },
+            IrInst.RegexCaptures c => c with { Code = R(c.Code), Subject = R(c.Subject), Start = R(c.Start) },
+            IrInst.RegexSubstitute c => c with { Code = R(c.Code), Subject = R(c.Subject), Replacement = R(c.Replacement) },
             IrInst.CmpIntGt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntLt c => c with { Left = R(c.Left), Right = R(c.Right) },
@@ -1338,6 +1343,11 @@ public static class IrOptimizer
             case IrInst.FloatToInt f: usedTemps.Add(f.ValueTemp); break;
             case IrInst.FloatUnaryIntrinsic u: usedTemps.Add(u.ValueTemp); break;
             case IrInst.CallLibm c: foreach (int a in c.Args) { usedTemps.Add(a); } break;
+            case IrInst.RegexCompile c: usedTemps.Add(c.Pattern); break;
+            case IrInst.RegexCompileError c: usedTemps.Add(c.Pattern); break;
+            case IrInst.RegexFind c: usedTemps.Add(c.Code); usedTemps.Add(c.Subject); usedTemps.Add(c.Start); break;
+            case IrInst.RegexCaptures c: usedTemps.Add(c.Code); usedTemps.Add(c.Subject); usedTemps.Add(c.Start); break;
+            case IrInst.RegexSubstitute c: usedTemps.Add(c.Code); usedTemps.Add(c.Subject); usedTemps.Add(c.Replacement); break;
             case IrInst.CmpIntGt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntGe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpIntLt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;

@@ -3,6 +3,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RustlsFfiVersion>0.15.3</RustlsFfiVersion>
     <OpenlibmVersion>0.8.7</OpenlibmVersion>
+    <Pcre2Version>10.45</Pcre2Version>
 
     <!-- Enable .NET analyzers -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>

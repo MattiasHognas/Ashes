@@ -1,148 +1,49 @@
-type Regex(S, B) =
-    | REpsilon
-    | RChar(S)
-    | RAny
-    | RClass(S, B)
-    | RSeq(Regex, Regex)
-    | RAlt(Regex, Regex)
-    | RStar(Regex)
-    | RPlus(Regex)
-    | ROpt(Regex)
+// Ashes.Regex — regular expressions backed by PCRE2.
+//
+// A pattern is compiled once into an opaque Regex value and then matched against subject strings.
+// Pattern and subject are treated as UTF-8 with Unicode property support (\d, \w, \p{...}). Offsets
+// returned by find/findAll are byte offsets into the subject.
+//
+// The low-level PCRE2 primitives — compileRaw, compileError, findFrom, capturesFrom, substituteAll —
+// are native members of this module; the ergonomic API below is written on top of them.
 
-let lowercase = "abcdefghijklmnopqrstuvwxyz"
+type Regex =
+    | Regex(Int)
 
-let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+let compile pattern = 
+    (let code = Ashes.Regex.compileRaw(pattern)
+    in 
+        if code == 0
+        then Error(Ashes.Regex.compileError(pattern))
+        else Ok(Regex(code)))
 
-let digits = "0123456789"
-
-let hexDigits = "0123456789abcdefABCDEF"
-
-let whitespace = " \t\n\r"
-
-let identStart = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
-
-let identCont = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
-
-let recursive charIn c chars = 
-    match Ashes.Text.uncons(chars) with
-        | None -> false
-        | Some((h, t)) -> 
-            if h == c
-            then true
-            else charIn(c)(t)
-
-let recursive strLen text = 
-    match Ashes.Text.uncons(text) with
-        | None -> 0
-        | Some((_h, t)) -> 1 + strLen(t)
-
-let recursive strTake n text = 
-    if n <= 0
-    then ""
-    else 
-        match Ashes.Text.uncons(text) with
-            | None -> ""
-            | Some((h, t)) -> h + strTake(n - 1)(t)
-
-let recursive tryMatchHere regex text = 
+let isMatch regex text = 
     match regex with
-        | REpsilon -> Some(text)
-        | RChar(c) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> None
-                | Some((h, t)) -> 
-                    if h == c
-                    then Some(t)
-                    else None
-        | RAny -> 
-            match Ashes.Text.uncons(text) with
-                | None -> None
-                | Some((_h, t)) -> Some(t)
-        | RClass(chars, negated) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> None
-                | Some((h, t)) -> 
-                    let inSet = charIn(h)(chars)
-                    in 
-                        if negated
-                        then 
-                            if inSet
-                            then None
-                            else Some(t)
-                        else 
-                            if inSet
-                            then Some(t)
-                            else None
-        | RSeq(r1, r2) -> 
-            match tryMatchHere(r1)(text) with
-                | None -> None
-                | Some(rest) -> tryMatchHere(r2)(rest)
-        | RAlt(r1, r2) -> 
-            match tryMatchHere(r1)(text) with
-                | Some(rest) -> Some(rest)
-                | None -> tryMatchHere(r2)(text)
-        | RStar(r) -> 
-            let recursive goStar remaining = 
-                match tryMatchHere(r)(remaining) with
-                    | None -> Some(remaining)
-                    | Some(rest) -> 
-                        if rest == remaining
-                        then Some(remaining)
-                        else goStar(rest)
-            in goStar(text)
-        | RPlus(r) -> 
-            match tryMatchHere(r)(text) with
-                | None -> None
-                | Some(first) -> 
-                    let recursive goPlus remaining = 
-                        match tryMatchHere(r)(remaining) with
-                            | None -> Some(remaining)
-                            | Some(rest) -> 
-                                if rest == remaining
-                                then Some(remaining)
-                                else goPlus(rest)
-                    in goPlus(first)
-        | ROpt(r) -> 
-            match tryMatchHere(r)(text) with
-                | Some(rest) -> Some(rest)
-                | None -> Some(text)
-
-let matches regex text = 
-    match tryMatchHere(regex)(text) with
-        | None -> false
-        | Some(rest) -> rest == ""
+        | Regex(code) -> 
+            match Ashes.Regex.findFrom(code)(text)(0) with
+                | Some(_span) -> true
+                | None -> false
 
 let find regex text = 
-    (let recursive search remaining = 
-        match tryMatchHere(regex)(remaining) with
-            | Some(rest) -> 
-                let matchLen = strLen(remaining) - strLen(rest)
-                in Some(strTake(matchLen)(remaining))
-            | None -> 
-                match Ashes.Text.uncons(remaining) with
-                    | None -> None
-                    | Some((_h, t)) -> search(t)
-    in search(text))
+    match regex with
+        | Regex(code) -> Ashes.Regex.findFrom(code)(text)(0)
 
-let recursive findAll regex text = 
-    (let recursive go remaining = 
-        if remaining == ""
-        then []
-        else 
-            match tryMatchHere(regex)(remaining) with
-                | Some(rest) -> 
-                    if rest == remaining
-                    then 
-                        match Ashes.Text.uncons(remaining) with
-                            | None -> []
-                            | Some((_h, t)) -> go(t)
-                    else 
-                        let matchLen = strLen(remaining) - strLen(rest)
-                        in 
-                            let matched = strTake(matchLen)(remaining)
-                            in matched :: go(rest)
-                | None -> 
-                    match Ashes.Text.uncons(remaining) with
-                        | None -> []
-                        | Some((_h, t)) -> go(t)
-    in go(text))
+let captures regex text = 
+    match regex with
+        | Regex(code) -> Ashes.Regex.capturesFrom(code)(text)(0)
+
+let findAll regex text = 
+    match regex with
+        | Regex(code) -> 
+            let recursive go start = 
+                match Ashes.Regex.findFrom(code)(text)(start) with
+                    | None -> []
+                    | Some((s, e)) -> 
+                        (s, e) :: go(if e > s
+                        then e
+                        else e + 1)
+            in go(0)
+
+let replace regex text replacement = 
+    match regex with
+        | Regex(code) -> Ashes.Regex.substituteAll(code)(text)(replacement)

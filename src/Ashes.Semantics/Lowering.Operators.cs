@@ -503,6 +503,8 @@ public sealed partial class Lowering
             TypeRef resolved = rightPruned switch
             {
                 TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBool => new TypeRef.TBool(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
@@ -516,6 +518,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TBool => new TypeRef.TBool(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
@@ -525,6 +528,14 @@ public sealed partial class Lowering
         }
 
         if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+        {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        // Booleans are represented as i64 0/1, so they compare with the integer equality ops.
+        if (leftPruned is TypeRef.TBool && rightPruned is TypeRef.TBool)
         {
             int target = NewTemp();
             Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));

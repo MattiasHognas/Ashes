@@ -1184,11 +1184,13 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
     {
-        // add(10)(32) returns Int — per-call watermark should save+restore.
+        // mul(10)(32) returns Int — per-call watermark should save+restore. (A `+`/`==`-of-two-
+        // parameters helper would instead be inlined as an overload-generic function, so this uses
+        // `*`, which is monomorphic and stays a real call.)
         var ir = LowerProgram(
             """
-            let add = given (x) -> given (y) -> x + y
-            in add(10)(32)
+            let mul = given (x) -> given (y) -> x * y
+            in mul(10)(32)
             """);
         var instructions = ir.EntryFunction.Instructions;
 

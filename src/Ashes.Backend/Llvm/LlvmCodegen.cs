@@ -220,6 +220,7 @@ internal static partial class LlvmCodegen
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
+        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
@@ -244,6 +245,7 @@ internal static partial class LlvmCodegen
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
@@ -268,6 +270,7 @@ internal static partial class LlvmCodegen
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
+        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", CreateLinkedTlsPayload(rustlsSharedLibrary), GetExternalLibraries(program));
     }
@@ -776,6 +779,13 @@ internal static partial class LlvmCodegen
             EmitBigIntRuntimeHelpers(target);
         }
 
+        // Emit the malloc/free the linked PCRE2 payload calls (a bump allocator over the lazily
+        // OS-allocated regex region) when the program uses Ashes.Regex.
+        if (ProgramUsesRegexRuntimeAbi(program))
+        {
+            EmitPcre2Allocator(target, i64, i8Ptr);
+        }
+
         // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
         // point and lifted closures. The current runtime ABI layer does not unwind.
         uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
@@ -1074,6 +1084,15 @@ internal static partial class LlvmCodegen
         return ProgramUsesInstruction<IrInst.CallLibm>(program);
     }
 
+    private static bool ProgramUsesRegexRuntimeAbi(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.RegexCompile>(program)
+            || ProgramUsesInstruction<IrInst.RegexCompileError>(program)
+            || ProgramUsesInstruction<IrInst.RegexFind>(program)
+            || ProgramUsesInstruction<IrInst.RegexCaptures>(program)
+            || ProgramUsesInstruction<IrInst.RegexSubstitute>(program);
+    }
+
     private static bool ProgramUsesBigIntRuntimeAbi(IrProgram program)
     {
         return ProgramUsesInstruction<IrInst.BigIntFromInt>(program)
@@ -1110,6 +1129,33 @@ internal static partial class LlvmCodegen
         if (LlvmApi.LinkModules2(target.Module, openlibmModule) != 0)
         {
             throw new InvalidOperationException($"Failed to link openlibm bitcode into the program module for '{targetId}'.");
+        }
+    }
+
+    /// <summary>
+    /// When the program uses Ashes.Regex, parses the vendored PCRE2 8-bit bitcode and links it into
+    /// the program module so the pcre2_* symbols resolve internally — no dynamic import, no runtime
+    /// dependency. The payload's only external symbols are malloc/free (routed to the PCRE2 region
+    /// emitted by <see cref="EmitPcre2Allocator"/>) and memcpy/memset (the module's own builtins).
+    /// Linked after the program's optimization passes, mirroring the openlibm path.
+    /// </summary>
+    private static void LinkPcre2BitcodeIfNeeded(LlvmTargetContext target, IrProgram program, string targetId)
+    {
+        if (!ProgramUsesRegexRuntimeAbi(program))
+        {
+            return;
+        }
+
+        byte[] bitcode = HermeticRegexRuntimeAssets.GetPcre2Bitcode(targetId);
+        if (!LlvmApi.TryParseModule(target.Context, bitcode, "pcre2", out var pcre2Module, out string? error))
+        {
+            throw new InvalidOperationException($"Failed to parse PCRE2 bitcode for '{targetId}': {error}");
+        }
+
+        // LLVMLinkModules2 consumes (and disposes) the source module. Returns non-zero on failure.
+        if (LlvmApi.LinkModules2(target.Module, pcre2Module) != 0)
+        {
+            throw new InvalidOperationException($"Failed to link PCRE2 bitcode into the program module for '{targetId}'.");
         }
     }
 
@@ -1616,6 +1662,11 @@ internal static partial class LlvmCodegen
             IrInst.FloatToInt floatToInt => StoreTemp(state, floatToInt.Target, LlvmApi.BuildFPToSI(builder, LoadTempAsFloat(state, floatToInt.ValueTemp), state.I64, $"fptosi_{floatToInt.Target}")),
             IrInst.FloatUnaryIntrinsic floatUnary => StoreTemp(state, floatUnary.Target, EmitFloatUnaryIntrinsic(state, LoadTempAsFloat(state, floatUnary.ValueTemp), floatUnary.LlvmIntrinsic)),
             IrInst.CallLibm callLibm => StoreTemp(state, callLibm.Target, EmitCallLibm(state, callLibm.Symbol, callLibm.Args)),
+            IrInst.RegexCompile regexCompile => StoreTemp(state, regexCompile.Target, EmitRegexCompile(state, LoadTemp(state, regexCompile.Pattern))),
+            IrInst.RegexCompileError regexCompileError => StoreTemp(state, regexCompileError.Target, EmitRegexCompileError(state, LoadTemp(state, regexCompileError.Pattern))),
+            IrInst.RegexFind regexFind => StoreTemp(state, regexFind.Target, EmitRegexFind(state, LoadTemp(state, regexFind.Code), LoadTemp(state, regexFind.Subject), LoadTemp(state, regexFind.Start))),
+            IrInst.RegexCaptures regexCaptures => StoreTemp(state, regexCaptures.Target, EmitRegexCaptures(state, LoadTemp(state, regexCaptures.Code), LoadTemp(state, regexCaptures.Subject), LoadTemp(state, regexCaptures.Start))),
+            IrInst.RegexSubstitute regexSubstitute => StoreTemp(state, regexSubstitute.Target, EmitRegexSubstitute(state, LoadTemp(state, regexSubstitute.Code), LoadTemp(state, regexSubstitute.Subject), LoadTemp(state, regexSubstitute.Replacement))),
             IrInst.AndInt andInt => StoreTemp(state, andInt.Target, LlvmApi.BuildAnd(builder, LoadTemp(state, andInt.Left), LoadTemp(state, andInt.Right), $"and_{andInt.Target}")),
             IrInst.OrInt orInt => StoreTemp(state, orInt.Target, LlvmApi.BuildOr(builder, LoadTemp(state, orInt.Left), LoadTemp(state, orInt.Right), $"or_{orInt.Target}")),
             IrInst.XorInt xorInt => StoreTemp(state, xorInt.Target, LlvmApi.BuildXor(builder, LoadTemp(state, xorInt.Left), LoadTemp(state, xorInt.Right), $"xor_{xorInt.Target}")),
