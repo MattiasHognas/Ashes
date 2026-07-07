@@ -2,13 +2,12 @@
 
 Planned features and future work for the Ashes language and ecosystem. **Shipped** features are
 documented in the normative docs under [`docs/md/`](../index.md) — syntax/semantics in
-[LANGUAGE_SPEC.md](../reference/language.md), library APIs in [STANDARD_LIBRARY.md](../reference/standard-library.md),
-runtime/backend behavior in [ARCHITECTURE.md](../internals/architecture.md), and the history of the
+[Language Spec](../reference/language.md), library APIs in [Standard Library](../reference/standard-library.md),
+runtime/backend behavior in [Architecture](../internals/architecture.md), and the history of the
 compiler's optimization/codegen work in the [Compiler Changelog](../internals/changelog.md) — not here.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Package manager | Delivered | Path + registry dependencies, resolver, lock file, cache — see [architecture.md](../internals/architecture.md#package-manager) |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 
 ---
