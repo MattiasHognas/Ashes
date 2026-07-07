@@ -32,3 +32,7 @@ let serveParallel port workers handler =
         | Ok(_idx) -> await serveOne(port)(handler))
 
 let serve port handler = serveParallel(port)(0)(handler)
+
+let serveWithDrainTimeout port drainMs handler = 
+    (let _set = Ashes.Net.Tcp.Server.setDrainTimeout(drainMs)
+    in serveParallel(port)(0)(handler))

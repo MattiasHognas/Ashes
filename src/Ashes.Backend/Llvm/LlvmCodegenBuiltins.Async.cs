@@ -117,6 +117,61 @@ internal static partial class LlvmCodegen
             return global;
         });
 
+    // Live spawned-handler count for the shutdown drain: incremented when a spawned task is
+    // enqueued, decremented when its arena is reaped on completion. Single-threaded per reactor,
+    // so plain loads/stores suffice.
+    private static LlvmValueHandle LiveSpawnedGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_live_spawned", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_live_spawned");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    // Drain deadline (monotonic ms, 0 = drain not started) and drain bound (ms, default 10 s).
+    private static LlvmValueHandle DrainDeadlineGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_drain_deadline", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_drain_deadline");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    private static LlvmValueHandle DrainTimeoutGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_drain_timeout_ms", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_drain_timeout_ms");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 10000, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    // Forked worker pids (Linux multi-reactor parent only; workers and single-reactor processes
+    // keep the count at 0). The parent forwards the shutdown signal to these and reaps them as
+    // part of its drain, so it cannot exit (and PDEATHSIG-cut them) mid-request.
+    private const int MaxTrackedChildren = 1024;
+
+    private static LlvmValueHandle ChildPidsGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_child_pids", () =>
+        {
+            LlvmTypeHandle arrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, arrType, "__ashes_child_pids");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstNull(arrType));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    private static LlvmValueHandle ChildCountGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_child_count", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_child_count");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
     /// <summary>
     /// Installs SIGINT/SIGTERM handlers (Linux) that set the shutdown flag, so a parked accept is
     /// interrupted (EINTR — the handler does not set SA_RESTART) and re-steps into the flag check.
@@ -137,7 +192,20 @@ internal static partial class LlvmCodegen
             handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_handler", LlvmApi.FunctionType(voidTy, [state.I32]));
             LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
             LlvmBasicBlockHandle he = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
+            // First signal starts the drain (sets the flag; the accept step turns it into the
+            // sentinel after draining). A second signal during the drain forces an immediate,
+            // still-clean exit(0) right here in the handler.
+            LlvmBasicBlockHandle forceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "force_exit");
+            LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "first_signal");
             LlvmApi.PositionBuilderAtEnd(builder, he);
+            LlvmValueHandle alreadyRequested = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "sig_already");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, alreadyRequested, LlvmApi.ConstInt(state.I64, 0, 0), "sig_is_second"),
+                forceBlock, firstBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, forceBlock);
+            _ = EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sig_force_exit");
+            LlvmApi.BuildUnreachable(builder);
+            LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
             LlvmApi.BuildRetVoid(builder);
 
@@ -846,11 +914,33 @@ internal static partial class LlvmCodegen
             LlvmApi.PositionBuilderAtEnd(builder, childBlock);
             _ = EmitLinuxSyscall(state, SyscallPrctl,
                 LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 15, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pdeathsig");
+            // A child inherits the pids of earlier siblings recorded by the parent's copy of the
+            // count; it has no children of its own to forward to or reap, so zero it.
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), ChildCountGlobal(state));
             LlvmApi.BuildStore(builder, i, idxSlot);
             LlvmApi.BuildBr(builder, doneBlock);
 
-            // Parent: on success move to the next worker; on fork failure (pid < 0) stop spawning.
+            // Parent: record the child pid (for shutdown forwarding + reaping in the drain), move to
+            // the next worker on success; on fork failure (pid < 0) stop spawning.
+            LlvmBasicBlockHandle recordBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_record");
+            LlvmBasicBlockHandle recordedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_recorded");
             LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
+            LlvmValueHandle childCountGlobal = ChildCountGlobal(state);
+            LlvmValueHandle curCount = LlvmApi.BuildLoad2(builder, state.I64, childCountGlobal, "step_fork_workers_child_count");
+            LlvmValueHandle canRecord = LlvmApi.BuildAnd(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pid_ok"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, curCount, LlvmApi.ConstInt(state.I64, MaxTrackedChildren, 0), "step_fork_workers_slot_ok"),
+                "step_fork_workers_can_record");
+            LlvmApi.BuildCondBr(builder, canRecord, recordBlock, recordedBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, recordBlock);
+            LlvmTypeHandle pidArrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
+            LlvmValueHandle pidSlot = LlvmApi.BuildGEP2(builder, state.I64,
+                GetArrayElementPointer(state, pidArrType, ChildPidsGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pids_base"),
+                [curCount], "step_fork_workers_pid_slot");
+            LlvmApi.BuildStore(builder, pid, pidSlot);
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, curCount, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_child_count_inc"), childCountGlobal);
+            LlvmApi.BuildBr(builder, recordedBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, recordedBlock);
             LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_next"), iSlot);
             LlvmApi.BuildCondBr(builder,
                 LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_failed"),
@@ -863,6 +953,60 @@ internal static partial class LlvmCodegen
         return EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, idx), "step_fork_workers_complete");
     }
 
+    /// <summary>Stores the graceful-shutdown drain bound for this process; returns unit (0).</summary>
+    private static LlvmValueHandle EmitSetDrainTimeout(LlvmCodegenState state, LlvmValueHandle ms)
+    {
+        LlvmApi.BuildStore(state.Target.Builder, ms, DrainTimeoutGlobal(state));
+        return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    // The Windows console-ctrl handler runs on a separate thread: first event sets the shutdown
+    // flag (the accept step's drain observes it within the capped WSAPoll timeout); a second event
+    // during the drain calls ExitProcess(0) via the pointer stashed at install time. Returns TRUE
+    // so the default terminator never runs.
+    private static LlvmValueHandle ExitProcessFnGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_exitprocess_fn", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_exitprocess_fn");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    private static LlvmValueHandle EmitWindowsConsoleCtrlHandlerFn(LlvmCodegenState state)
+    {
+        LlvmValueHandle handlerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_console_ctrl_handler");
+        if (handlerFn.Ptr != 0)
+        {
+            return handlerFn;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_console_ctrl_handler", LlvmApi.FunctionType(state.I32, [state.I32]));
+        LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
+        LlvmBasicBlockHandle forceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "force_exit");
+        LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "first_event");
+        LlvmApi.PositionBuilderAtEnd(builder, entry);
+        LlvmValueHandle already = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "ctrl_already");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, already, LlvmApi.ConstInt(state.I64, 0, 0), "ctrl_is_second"),
+            forceBlock, firstBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, forceBlock);
+        LlvmValueHandle exitFnAddr = LlvmApi.BuildLoad2(builder, state.I64, ExitProcessFnGlobal(state), "ctrl_exit_fn");
+        LlvmTypeHandle exitType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32]);
+        LlvmApi.BuildCall2(builder, exitType,
+            LlvmApi.BuildIntToPtr(builder, exitFnAddr, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "ctrl_exit_ptr"),
+            [LlvmApi.ConstInt(state.I32, 0, 0)], "");
+        LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I32, 1, 0));
+        LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
+        LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I32, 1, 0));
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return handlerFn;
+    }
+
     private static LlvmValueHandle EmitStepForkWorkersTaskWindows(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle port, LlvmValueHandle requested)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -871,6 +1015,16 @@ internal static partial class LlvmCodegen
         // Resolve the kernel32 entry points we need dynamically (keeps this self-contained — no extra
         // import wiring beyond what socket/listen already pull in).
         LlvmValueHandle kernel32 = EmitWindowsLoadLibrary(state, EmitStringToCString(state, EmitHeapStringLiteral(state, "KERNEL32.DLL"), p + "_k32_name"), p + "_k32");
+
+        // Graceful shutdown: stash ExitProcess for the handler's force path, then install the
+        // console-ctrl handler. Runs in the parent and in every relaunched worker.
+        LlvmValueHandle exitProcFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "ExitProcess"), p + "_exit_sym"), p + "_exit");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, exitProcFn, state.I64, p + "_exit_i64"), ExitProcessFnGlobal(state));
+        LlvmValueHandle setCtrlFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "SetConsoleCtrlHandler"), p + "_scc_sym"), p + "_scc");
+        LlvmTypeHandle setCtrlType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I32]);
+        LlvmValueHandle ctrlHandler = EmitWindowsConsoleCtrlHandlerFn(state);
+        _ = EmitCallFunctionAddress(state, setCtrlFn, setCtrlType,
+            [LlvmApi.BuildBitCast(builder, ctrlHandler, state.I8Ptr, p + "_handler_ptr"), LlvmApi.ConstInt(state.I32, 1, 0)], p + "_scc_call");
         LlvmValueHandle getEnvFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "GetEnvironmentVariableA"), p + "_getenv_sym"), p + "_getenv");
         LlvmValueHandle setEnvFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "SetEnvironmentVariableA"), p + "_setenv_sym"), p + "_setenv");
         LlvmValueHandle getModFn = EmitWindowsGetProcAddress(state, kernel32, EmitStringToCString(state, EmitHeapStringLiteral(state, "GetModuleFileNameA"), p + "_getmod_sym"), p + "_getmod");
@@ -1023,14 +1177,121 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_finish");
 
         // Graceful shutdown: a SIGINT/SIGTERM sets the flag and interrupts the parked accept (EINTR),
-        // which re-steps here; complete with the shutdown sentinel so serve stops and returns Ok(()).
+        // which re-steps here. The step then DRAINS instead of completing at once: accepting stops
+        // (this path never reaches the accept call), and the sentinel completion is held back until
+        // every live spawned handler has finished or the drain deadline (default 10 s) passes. In
+        // between, the accept task parks as a short timer; each scheduler wakeup re-steps it (the
+        // aggregate wait re-queues all parked leaves), so the counter is re-checked as handlers
+        // complete. serve then stops and returns Ok(()).
         LlvmBasicBlockHandle shutdownBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_shutdown");
+        LlvmBasicBlockHandle drainArmBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_arm");
+        LlvmBasicBlockHandle drainCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_check");
+        LlvmBasicBlockHandle drainWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_wait");
+        LlvmBasicBlockHandle shutdownDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_shutdown_done");
         LlvmBasicBlockHandle acceptGoBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_go");
         LlvmValueHandle shuttingDown = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "step_tcp_accept_shutdown_flag");
         LlvmApi.BuildCondBr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, shuttingDown, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_is_shutdown"),
             shutdownBlock, acceptGoBlock);
+
         LlvmApi.PositionBuilderAtEnd(builder, shutdownBlock);
+        LlvmValueHandle nowMs = EmitMonotonicNowMs(state, "step_tcp_accept_drain_now");
+        LlvmValueHandle deadline0 = LlvmApi.BuildLoad2(builder, state.I64, DrainDeadlineGlobal(state), "step_tcp_accept_deadline0");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, deadline0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_drain_unarmed"),
+            drainArmBlock, drainCheckBlock);
+
+        // First observation of the flag: arm the deadline = now + bound, and (multi-reactor parent
+        // only) forward the signal to every recorded worker so they begin their own drains instead
+        // of being cut by the death signal when the parent exits.
+        LlvmApi.PositionBuilderAtEnd(builder, drainArmBlock);
+        LlvmValueHandle bound = LlvmApi.BuildLoad2(builder, state.I64, DrainTimeoutGlobal(state), "step_tcp_accept_drain_bound");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, nowMs, bound, "step_tcp_accept_deadline_new"), DrainDeadlineGlobal(state));
+        if (linux)
+        {
+            LlvmTypeHandle pidArrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
+            LlvmValueHandle pidsBase = GetArrayElementPointer(state, pidArrType, ChildPidsGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_fwd_base");
+            LlvmValueHandle childCount = LlvmApi.BuildLoad2(builder, state.I64, ChildCountGlobal(state), "step_tcp_accept_fwd_count");
+            LlvmValueHandle fwdISlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_accept_fwd_i");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fwdISlot);
+            LlvmBasicBlockHandle fwdLoop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_fwd_loop");
+            LlvmBasicBlockHandle fwdBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_fwd_body");
+            LlvmBasicBlockHandle fwdDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_fwd_done");
+            LlvmApi.BuildBr(builder, fwdLoop);
+            LlvmApi.PositionBuilderAtEnd(builder, fwdLoop);
+            LlvmValueHandle fwdI = LlvmApi.BuildLoad2(builder, state.I64, fwdISlot, "step_tcp_accept_fwd_i_val");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, fwdI, childCount, "step_tcp_accept_fwd_more"), fwdBody, fwdDone);
+            LlvmApi.PositionBuilderAtEnd(builder, fwdBody);
+            LlvmValueHandle fwdPid = LlvmApi.BuildLoad2(builder, state.I64, LlvmApi.BuildGEP2(builder, state.I64, pidsBase, [fwdI], "step_tcp_accept_fwd_slot"), "step_tcp_accept_fwd_pid");
+            _ = EmitLinuxSyscall(state, SyscallKill, fwdPid, LlvmApi.ConstInt(state.I64, 15, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_fwd_kill");
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, fwdI, LlvmApi.ConstInt(state.I64, 1, 0), "step_tcp_accept_fwd_next"), fwdISlot);
+            LlvmApi.BuildBr(builder, fwdLoop);
+            LlvmApi.PositionBuilderAtEnd(builder, fwdDone);
+        }
+        LlvmApi.BuildBr(builder, drainCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, drainCheckBlock);
+        // Multi-reactor parent: reap exited workers (waitpid WNOHANG), compacting by swapping the
+        // last slot down; the drain also requires the recorded child count to reach zero.
+        if (linux)
+        {
+            LlvmTypeHandle pidArrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
+            LlvmValueHandle pidsBase = GetArrayElementPointer(state, pidArrType, ChildPidsGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_reap_base");
+            LlvmValueHandle reapISlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tcp_accept_reap_i");
+            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), reapISlot);
+            LlvmBasicBlockHandle reapLoop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_reap_loop");
+            LlvmBasicBlockHandle reapBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_reap_body");
+            LlvmBasicBlockHandle reapHit = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_reap_hit");
+            LlvmBasicBlockHandle reapNext = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_reap_next");
+            LlvmBasicBlockHandle reapDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_reap_done");
+            LlvmApi.BuildBr(builder, reapLoop);
+            LlvmApi.PositionBuilderAtEnd(builder, reapLoop);
+            LlvmValueHandle reapI = LlvmApi.BuildLoad2(builder, state.I64, reapISlot, "step_tcp_accept_reap_i_val");
+            LlvmValueHandle reapCount = LlvmApi.BuildLoad2(builder, state.I64, ChildCountGlobal(state), "step_tcp_accept_reap_count");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, reapI, reapCount, "step_tcp_accept_reap_more"), reapBody, reapDone);
+            LlvmApi.PositionBuilderAtEnd(builder, reapBody);
+            LlvmValueHandle reapSlot = LlvmApi.BuildGEP2(builder, state.I64, pidsBase, [reapI], "step_tcp_accept_reap_slot");
+            LlvmValueHandle reapPid = LlvmApi.BuildLoad2(builder, state.I64, reapSlot, "step_tcp_accept_reap_pid");
+            // wait4(pid, NULL, WNOHANG=1, NULL); returns the pid when the child has exited.
+            LlvmValueHandle waited = EmitLinuxSyscall4(state, SyscallWaitpid, reapPid, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_reap_wait");
+            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, waited, reapPid, "step_tcp_accept_reap_exited"), reapHit, reapNext);
+            LlvmApi.PositionBuilderAtEnd(builder, reapHit);
+            LlvmValueHandle lastIdx = LlvmApi.BuildSub(builder, reapCount, LlvmApi.ConstInt(state.I64, 1, 0), "step_tcp_accept_reap_last");
+            LlvmValueHandle lastPid = LlvmApi.BuildLoad2(builder, state.I64, LlvmApi.BuildGEP2(builder, state.I64, pidsBase, [lastIdx], "step_tcp_accept_reap_last_slot"), "step_tcp_accept_reap_last_pid");
+            LlvmApi.BuildStore(builder, lastPid, reapSlot);
+            LlvmApi.BuildStore(builder, lastIdx, ChildCountGlobal(state));
+            // Re-check the same index (now holding the swapped-down pid) on the next pass.
+            LlvmApi.BuildBr(builder, reapLoop);
+            LlvmApi.PositionBuilderAtEnd(builder, reapNext);
+            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, reapI, LlvmApi.ConstInt(state.I64, 1, 0), "step_tcp_accept_reap_inc"), reapISlot);
+            LlvmApi.BuildBr(builder, reapLoop);
+            LlvmApi.PositionBuilderAtEnd(builder, reapDone);
+        }
+        LlvmValueHandle deadline = LlvmApi.BuildLoad2(builder, state.I64, DrainDeadlineGlobal(state), "step_tcp_accept_deadline");
+        LlvmValueHandle live = LlvmApi.BuildLoad2(builder, state.I64, LiveSpawnedGlobal(state), "step_tcp_accept_live");
+        LlvmValueHandle allWorkDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, live, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_no_live");
+        if (linux)
+        {
+            LlvmValueHandle remainingChildren = LlvmApi.BuildLoad2(builder, state.I64, ChildCountGlobal(state), "step_tcp_accept_children_left");
+            allWorkDone = LlvmApi.BuildAnd(builder, allWorkDone,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, remainingChildren, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_no_children"),
+                "step_tcp_accept_all_done");
+        }
+        LlvmValueHandle drained = LlvmApi.BuildOr(builder,
+            allWorkDone,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, nowMs, deadline, "step_tcp_accept_deadline_hit"),
+            "step_tcp_accept_drained");
+        LlvmApi.BuildCondBr(builder, drained, shutdownDoneBlock, drainWaitBlock);
+
+        // Still draining: park as a short timer so the counter is re-checked promptly even with no
+        // other wakeups; any handler I/O or timer wakeup re-steps this leaf sooner.
+        LlvmApi.PositionBuilderAtEnd(builder, drainWaitBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0), "step_tcp_accept_drain_wait_kind");
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 50, 0), "step_tcp_accept_drain_wait_slice");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, shutdownDoneBlock);
         LlvmApi.BuildStore(builder,
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, ServerShutdownSentinel)), "step_tcp_accept_shutdown_complete"),
             statusSlot);

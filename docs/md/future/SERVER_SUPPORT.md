@@ -434,9 +434,12 @@ or the bound elapses. The bound is a `serve` variant parameter (`withDrainTimeou
 global.
 
 Windows mechanism: `SetConsoleCtrlHandler` (the handler runs on a separate thread) sets the
-shutdown flag and writes one byte to a per-reactor loopback **wake socket** whose read end sits
-permanently in every WSAPoll set, waking the parked aggregate wait; from there the sentinel path is
-identical to Linux.
+shutdown flag; because another thread cannot interrupt a parked `WSAPoll` the way a signal EINTRs
+`epoll_wait`, the aggregate wait's socket timeout is **capped at 200 ms**, so the flag is observed
+within one cap interval and from there the sentinel path is identical to Linux. (A per-reactor
+loopback wake socket in every poll set is the refinement if sub-cap reaction time ever matters; an
+idle server waking 5x/s costs nothing measurable.) A second console event during the drain calls
+`ExitProcess(0)`.
 
 ### Programmatic stop: a Stop capability
 

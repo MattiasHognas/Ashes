@@ -2162,6 +2162,10 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, completedTask, TaskStructLayout.ArenaOwner, "sched_completed_owner"), completedTask, "sched_is_root_spawn"), reapBlock, loopBlock);
         LlvmApi.PositionBuilderAtEnd(builder, reapBlock);
         EmitReapTaskArena(state, completedTask, "sched_reap");
+        LlvmValueHandle liveGlobal = LiveSpawnedGlobal(state);
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildSub(builder, LlvmApi.BuildLoad2(builder, state.I64, liveGlobal, "sched_reap_live"), LlvmApi.ConstInt(state.I64, 1, 0), "sched_reap_live_dec"),
+            liveGlobal);
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, returnBlock);
@@ -2338,7 +2342,13 @@ internal static partial class LlvmCodegen
             LlvmBasicBlockHandle afterWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "saw_after_wait");
             LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, hasSocket, zero, "saw_do_wsapoll"), socketWaitBlock, timerWaitBlock);
             LlvmApi.PositionBuilderAtEnd(builder, socketWaitBlock);
-            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_wsapoll_no_timer"), LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), minRem, "saw_wsapoll_timeout");
+            // Cap the wait at 200 ms: the console-ctrl handler runs on another thread and cannot
+            // interrupt a parked WSAPoll the way a signal EINTRs epoll_wait, so the loop must
+            // re-observe the shutdown flag on a short bound (the accept step's drain re-checks on
+            // every re-step). An idle server wakes 5x/s; the cost is negligible.
+            LlvmValueHandle uncapped = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_wsapoll_no_timer"), LlvmApi.ConstInt(state.I64, 200, 0), minRem, "saw_wsapoll_timeout_raw");
+            LlvmValueHandle cap = LlvmApi.ConstInt(state.I64, 200, 0);
+            LlvmValueHandle timeout = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, uncapped, cap, "saw_wsapoll_over_cap"), cap, uncapped, "saw_wsapoll_timeout");
             LlvmValueHandle startMs = EmitMonotonicNowMs(state, "saw_wait_start");
             LlvmValueHandle pollCount = LlvmApi.BuildLoad2(builder, state.I64, pollCountSlot, "saw_poll_count");
             _ = EmitWindowsWsaPoll(state, pollArrayPtr, pollCount, timeout, "saw_wsapoll_wait");
@@ -2410,9 +2420,14 @@ internal static partial class LlvmCodegen
         if (state.UseRunQueueScheduler)
         {
             // Run-queue mode: the spawned task is its own arena owner (its sub-tasks inherit it), has no
-            // waiter (fire-and-forget), and goes straight onto the ready queue.
+            // waiter (fire-and-forget), and goes straight onto the ready queue. The live-spawned count
+            // feeds the shutdown drain (decremented when the task's arena is reaped on completion).
             StoreMemory(state, copyPtr, TaskStructLayout.ArenaOwner, copyPtr, "spawn_arena_owner_self");
             StoreMemory(state, copyPtr, TaskStructLayout.Waiter, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_no_waiter");
+            LlvmValueHandle liveGlobal = LiveSpawnedGlobal(state);
+            LlvmApi.BuildStore(builder,
+                LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, liveGlobal, "spawn_live"), LlvmApi.ConstInt(state.I64, 1, 0), "spawn_live_inc"),
+                liveGlobal);
             _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [copyPtr], "spawn_enqueue");
             return LlvmApi.ConstInt(state.I64, 0, 0);
         }

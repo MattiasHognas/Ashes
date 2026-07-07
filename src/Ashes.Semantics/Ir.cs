@@ -620,6 +620,9 @@ public abstract record IrInst
     /// </summary>
     public sealed record CreateForkWorkersTask(int Target, int PortTemp, int CountTemp) : IrInst;
 
+    /// <summary>Sets the graceful-shutdown drain bound (ms) for this process; yields unit.</summary>
+    public sealed record SetDrainTimeout(int Target, int MsTemp) : IrInst;
+
     /// <summary>
     /// Creates a leaf networking task for TCP accept (accept one connection from a listener).
     /// The task is completed by the runtime/task runner rather than a coroutine body.

@@ -1555,6 +1555,9 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpListen, LoadTemp(state, tcpListenTask.PortTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_listen_task")),
             IrInst.CreateForkWorkersTask forkWorkersTask => StoreTemp(state, forkWorkersTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateForkWorkers, LoadTemp(state, forkWorkersTask.PortTemp), LoadTemp(state, forkWorkersTask.CountTemp), "fork_workers_task")),
+            // Synchronous setter: store the drain bound (ms) for this process; yields unit.
+            IrInst.SetDrainTimeout setDrainTimeout => StoreTemp(state, setDrainTimeout.Target,
+                EmitSetDrainTimeout(state, LoadTemp(state, setDrainTimeout.MsTemp))),
             IrInst.CreateTcpAcceptTask tcpAcceptTask => StoreTemp(state, tcpAcceptTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTcpAccept, LoadTemp(state, tcpAcceptTask.SocketTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tcp_accept_task")),
             IrInst.CreateHttpGetTask httpGetTask => StoreTemp(state, httpGetTask.Target,

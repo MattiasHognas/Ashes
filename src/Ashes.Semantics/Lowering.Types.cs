@@ -117,6 +117,7 @@ public sealed partial class Lowering
         NetTcpListen,
         NetTcpAccept,
         NetForkWorkers,
+        NetSetDrainTimeout,
         NetTlsConnect,
         NetTlsSend,
         NetTlsReceive,

@@ -182,6 +182,13 @@ TCP server support. `listen`/`accept` are the primitives; `serve` is the combina
   scales across cores without the program choosing a worker count.
 - `serveParallel(port)(workers)(handler)` — the same as `serve` with an explicit worker count
   (`serve` is `serveParallel(port)(0)(handler)`; a count `<= 0` means one worker per online CPU).
+- `serveWithDrainTimeout(port)(drainMs)(handler)` — the same as `serve` with an explicit
+  graceful-shutdown drain bound. On the first `SIGINT`/`SIGTERM` (console-ctrl on Windows) the
+  server stops accepting and lets in-flight handlers finish for up to `drainMs` milliseconds
+  (default 10000 for `serve`), then returns `Ok(())`; a second signal exits immediately. A
+  multi-reactor parent forwards the signal to its workers and reaps them before returning.
+- `setDrainTimeout(ms)` returning `Unit` — sets the drain bound for this process (the primitive
+  under `serveWithDrainTimeout`; call before `serve` so forked workers inherit it).
 
 `serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
 binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
