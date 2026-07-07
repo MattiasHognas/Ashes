@@ -745,7 +745,8 @@ public sealed partial class Lowering
         IReadOnlyList<int> captureTemps,
         TypeRef successType,
         Expr origin,
-        Func<IReadOnlyList<int>, int> emitBody)
+        Func<IReadOnlyList<int>, int> emitBody,
+        bool loopResetEligible = false)
     {
         _usesAsync = true;
 
@@ -862,7 +863,7 @@ public sealed partial class Lowering
         int closureTemp = NewTemp();
         Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captureTemps.Count * 8));
         int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captureTemps.Count));
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captureTemps.Count) { LoopResetEligible = loopResetEligible });
         return (taskTemp, taskType);
     }
 
@@ -1612,6 +1613,76 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Whether an expression references <c>Ashes.Async.spawn</c> anywhere (including inside nested
+    /// lambdas, which run synchronously during a loop iteration). Used as the static safety gate for
+    /// the async-loop arena reset: a spawned task's captures may point at allocations made during the
+    /// current iteration, which the back-edge reset would free under the detached task. Var references
+    /// resolve through the scope (so a selector-import alias of spawn is caught); qualified references
+    /// are matched by their member name, which can only over-reject.
+    /// </summary>
+    private bool ContainsAsyncSpawn(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.Var v:
+                return string.Equals(v.Name, "spawn", StringComparison.Ordinal)
+                    || Lookup(v.Name) is Binding.Intrinsic { Kind: IntrinsicKind.AsyncSpawn };
+            case Expr.QualifiedVar qv:
+                return string.Equals(qv.Name, "spawn", StringComparison.Ordinal);
+            case Expr.Add x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Subtract x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Multiply x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Divide x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Modulo x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.BitwiseAnd x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.BitwiseOr x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.BitwiseXor x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.ShiftLeft x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.ShiftRight x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.GreaterThan x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.LessThan x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.GreaterOrEqual x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.LessOrEqual x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Equal x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.NotEqual x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.ResultPipe x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.ResultMapErrorPipe x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.Cons x: return ContainsAsyncSpawn(x.Head) || ContainsAsyncSpawn(x.Tail);
+            case Expr.BitwiseNot x: return ContainsAsyncSpawn(x.Operand);
+            case Expr.Await x: return ContainsAsyncSpawn(x.Task);
+            case Expr.Call x: return ContainsAsyncSpawn(x.Func) || ContainsAsyncSpawn(x.Arg);
+            case Expr.If x: return ContainsAsyncSpawn(x.Cond) || ContainsAsyncSpawn(x.Then) || ContainsAsyncSpawn(x.Else);
+            case Expr.Lambda x: return ContainsAsyncSpawn(x.Body);
+            case Expr.Let x: return ContainsAsyncSpawn(x.Value) || ContainsAsyncSpawn(x.Body);
+            case Expr.LetRecursive x: return ContainsAsyncSpawn(x.Value) || ContainsAsyncSpawn(x.Body);
+            case Expr.LetResult x: return ContainsAsyncSpawn(x.Value) || ContainsAsyncSpawn(x.Body);
+            case Expr.TupleLit x: return x.Elements.Any(ContainsAsyncSpawn);
+            case Expr.ListLit x: return x.Elements.Any(ContainsAsyncSpawn);
+            case Expr.RecordLit x: return x.Fields.Any(f => ContainsAsyncSpawn(f.Value));
+            case Expr.RecordUpdate x: return ContainsAsyncSpawn(x.Target) || x.Updates.Any(u => ContainsAsyncSpawn(u.Value));
+            case Expr.Perform x: return ContainsAsyncSpawn(x.Operation);
+            case Expr.Handle x: return ContainsAsyncSpawn(x.Body) || x.Arms.Any(a => ContainsAsyncSpawn(a.Body));
+            case Expr.Match x:
+                if (ContainsAsyncSpawn(x.Value))
+                {
+                    return true;
+                }
+
+                foreach (var c in x.Cases)
+                {
+                    if (ContainsAsyncSpawn(c.Body) || (c.Guard is not null && ContainsAsyncSpawn(c.Guard)))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Lowers the innermost body of an async tail-recursive helper (a <c>let recursive</c> defined
     /// inside a coroutine body whose own body awaits) as a *transparent* coroutine task:
     /// - the coroutine's result slot holds the body's RAW value (no Ok-wrap), so a call site that
@@ -1656,6 +1727,13 @@ public sealed partial class Lowering
 
         var successType = NewTypeVar();
 
+        // Static safety gate for the per-iteration arena reset: no spawn in the loop body (a detached
+        // task's captures could point at iteration allocations the reset would free). The remaining
+        // hazards are covered elsewhere: escaping via the loop-carried arguments is blocked by the
+        // copy-out type gate at the back-edge, and a composite ancestor sharing the arena clears the
+        // task's LoopResetOk flag at suspend time (see the scheduler's suspend path).
+        bool loopResetEligible = !ContainsAsyncSpawn(body);
+
         int EmitLoopBody(IReadOnlyList<int> coroutineCaptureTemps)
         {
             bool savedInCoroutine = _inCoroutineBody;
@@ -1692,7 +1770,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(restartLabel));
 
             var savedTco = _tcoCtx;
-            _tcoCtx = new TcoContext
+            var loopTco = new TcoContext
             {
                 SelfName = info.Name,
                 ParamCount = info.ParamNames.Count,
@@ -1702,6 +1780,19 @@ public sealed partial class Lowering
                 InTailPosition = true,
                 DescendingChain = false
             };
+            if (loopResetEligible)
+            {
+                // Per-iteration watermark, re-saved on every pass over the restart label. The slots
+                // are ordinary locals, so the loop-aware liveness in StateMachineTransform carries
+                // them across suspends. The back-edge emits the flagged restore/reclaim (gated by
+                // the backend); heap-typed loop-carried args go through the standard copy-out.
+                loopTco.ArenaCursorSlot = NewLocal();
+                loopTco.ArenaEndSlot = NewLocal();
+                loopTco.CoroutineLoopReset = true;
+                Emit(new IrInst.SaveArenaState(loopTco.ArenaCursorSlot, loopTco.ArenaEndSlot) { CoroutineLoop = true });
+            }
+
+            _tcoCtx = loopTco;
 
             var (valueTemp, valueType) = LowerExpr(body);
             Unify(valueType, successType);
@@ -1711,7 +1802,7 @@ public sealed partial class Lowering
             return valueTemp; // raw body value — no Ok-wrap (transparent to the awaiting call site)
         }
 
-        return LowerCapturedStringTask(captureTemps, successType, body, EmitLoopBody);
+        return LowerCapturedStringTask(captureTemps, successType, body, EmitLoopBody, loopResetEligible);
     }
 
     /// <summary>

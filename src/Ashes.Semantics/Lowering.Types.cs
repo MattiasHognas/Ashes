@@ -60,6 +60,13 @@ public sealed partial class Lowering
         // stack allocations in the loop body are freed instead of accumulating until the stack overflows.
         public int StackPtrSlot { get; set; } = -1;
 
+        // True for the restart loop of an async tail-recursive helper coroutine: the back-edge's arena
+        // save/restore/reclaim are emitted with their CoroutineLoop flag set, so the backend can gate
+        // them (no-op on the legacy driver; runtime LoopResetOk check under the scheduler). Stack
+        // restore stays disabled in this mode — a stack pointer saved before a suspend belongs to a
+        // dead C frame.
+        public bool CoroutineLoopReset { get; set; }
+
         // Ownership-scope stack depth at the loop body start. Scopes pushed above this during the
         // iteration hold iteration-local resources that must be closed at the back-edge (else the
         // per-arm Drop becomes dead code after the jump and the resource leaks each iteration).

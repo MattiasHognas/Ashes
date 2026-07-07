@@ -330,10 +330,10 @@ internal static partial class LlvmCodegen
     // ── Async / Task support ──────────────────────────────────────────
 
     /// <summary>
-    /// Zero the run-queue scheduler header slots (<c>ReadyNext</c> / <c>Waiter</c> / <c>ArenaOwner</c>)
-    /// of a freshly allocated task. These are not part of the legacy layout, so without this a newly
-    /// created task carries garbage in them — harmless at -O0 (stack incidentally zero) but a wild
-    /// pointer at -O2, where the scheduler reads a bogus Waiter/ArenaOwner and crashes.
+    /// Zero the run-queue scheduler header slots (<c>ReadyNext</c> / <c>Waiter</c> / <c>ArenaOwner</c>
+    /// / <c>LoopResetOk</c>) of a freshly allocated task. These are not part of the legacy layout, so
+    /// without this a newly created task carries garbage in them — harmless at -O0 (stack incidentally
+    /// zero) but a wild pointer at -O2, where the scheduler reads a bogus Waiter/ArenaOwner and crashes.
     /// </summary>
     private static void EmitZeroSchedulerFields(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
@@ -341,15 +341,18 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.ReadyNext, zero, "task_ready_next_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.Waiter, zero, "task_waiter_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaOwner, zero, "task_arena_owner_zero");
+        StoreMemory(state, taskPtr, TaskStructLayout.LoopResetOk, zero, "task_loop_reset_zero");
     }
 
     /// <summary>
     /// CreateTask: allocate a task/state struct and initialize it.
     /// Layout: [state_index(0), coroutine_fn, result(0), awaited_task(0), next_task(0), sleep_duration_ms(0), captures...]
     /// The closure temp is [fn_ptr, env_ptr]. We unpack it and copy captures starting at <see cref="TaskStructLayout.HeaderSize"/>.
+    /// An async-loop coroutine eligible for the back-edge arena reset gets <c>LoopResetOk</c> = 1
+    /// (re-cleared by the scheduler when a composite ancestor shares the arena).
     /// </summary>
     private static LlvmValueHandle EmitCreateTask(LlvmCodegenState state, LlvmValueHandle closurePtr,
-        int stateStructSize, int captureCount)
+        int stateStructSize, int captureCount, bool loopResetEligible = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
@@ -402,6 +405,12 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaEnd,
             LlvmApi.ConstInt(state.I64, 0, 0), "task_arena_end_zero");
         EmitZeroSchedulerFields(state, taskPtr);
+        if (loopResetEligible)
+        {
+            StoreMemory(state, taskPtr, TaskStructLayout.LoopResetOk,
+                LlvmApi.ConstInt(state.I64, 1, 0), "task_loop_reset_ok");
+        }
+
         if (captureCount > 0)
         {
             LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "task_env_ptr");
@@ -2061,6 +2070,48 @@ internal static partial class LlvmCodegen
         LlvmValueHandle awaited = LoadMemory(state, task, TaskStructLayout.AwaitedTask, "sched_awaited");
         StoreMemory(state, awaited, TaskStructLayout.Waiter, task, "sched_set_waiter");
         StoreMemory(state, awaited, TaskStructLayout.ArenaOwner, LoadMemory(state, task, TaskStructLayout.ArenaOwner, "sched_owner"), "sched_inherit_owner");
+
+        // Async-loop arena-reset veto: a loop coroutine (LoopResetOk = 1) awaited under a composite
+        // (all/race) ancestor shares its arena with the composite's other children, which run
+        // interleaved with the loop's iterations — resetting to a stale watermark could free a
+        // sibling's live allocations. Walk the waiter chain (fixed for the helper's lifetime; it
+        // ends at a spawned root or the main task, never crossing an arena boundary) and clear the
+        // flag if any ancestor is a composite. Skipped entirely for ordinary tasks (flag already 0).
+        LlvmBasicBlockHandle walkInitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reset_walk_init");
+        LlvmBasicBlockHandle walkLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reset_walk_loop");
+        LlvmBasicBlockHandle walkBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reset_walk_body");
+        LlvmBasicBlockHandle walkClearBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reset_walk_clear");
+        LlvmBasicBlockHandle walkNextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reset_walk_next");
+        LlvmBasicBlockHandle suspendEnqueueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_suspend_enqueue");
+        LlvmValueHandle awaitedResetOk = LoadMemory(state, awaited, TaskStructLayout.LoopResetOk, "sched_awaited_reset_ok");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaitedResetOk, zero, "sched_has_reset_ok"), walkInitBlock, suspendEnqueueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, walkInitBlock);
+        LlvmValueHandle walkCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "sched_reset_walk_cur");
+        LlvmApi.BuildStore(builder, task, walkCurSlot);
+        LlvmApi.BuildBr(builder, walkLoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, walkLoopBlock);
+        LlvmValueHandle walkCur = LlvmApi.BuildLoad2(builder, state.I64, walkCurSlot, "sched_reset_walk_cur_load");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, walkCur, zero, "sched_reset_walk_end"), suspendEnqueueBlock, walkBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, walkBodyBlock);
+        LlvmValueHandle walkState = LoadMemory(state, walkCur, TaskStructLayout.StateIndex, "sched_reset_walk_state");
+        LlvmValueHandle walkIsComposite = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, walkState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateAllComposite), 1), "sched_reset_walk_is_all"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, walkState, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateRaceComposite), 1), "sched_reset_walk_is_race"),
+            "sched_reset_walk_is_comp");
+        LlvmApi.BuildCondBr(builder, walkIsComposite, walkClearBlock, walkNextBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, walkClearBlock);
+        StoreMemory(state, awaited, TaskStructLayout.LoopResetOk, zero, "sched_reset_veto");
+        LlvmApi.BuildBr(builder, suspendEnqueueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, walkNextBlock);
+        LlvmApi.BuildStore(builder, LoadMemory(state, walkCur, TaskStructLayout.Waiter, "sched_reset_walk_up"), walkCurSlot);
+        LlvmApi.BuildBr(builder, walkLoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, suspendEnqueueBlock);
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [awaited], "sched_enqueue_sub");
         LlvmApi.BuildBr(builder, loopBlock);
 

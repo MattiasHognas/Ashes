@@ -206,7 +206,8 @@
       Label: _start_main,
       Instructions: [
         {
-          EndLocalSlot: 1
+          EndLocalSlot: 1,
+          CoroutineLoop: false
         },
         {},
         {
@@ -219,7 +220,8 @@
         },
         {
           CursorLocalSlot: 3,
-          EndLocalSlot: 4
+          EndLocalSlot: 4,
+          CoroutineLoop: false
         },
         {
           Target: 2,
@@ -250,11 +252,13 @@
         {
           CursorLocalSlot: 3,
           EndLocalSlot: 4,
-          PreRestoreEndSlot: 5
+          PreRestoreEndSlot: 5,
+          CoroutineLoop: false
         },
         {
           SavedEndSlot: 4,
-          PreRestoreEndSlot: 5
+          PreRestoreEndSlot: 5,
+          CoroutineLoop: false
         },
         {
           Source: 7
@@ -276,7 +280,8 @@
         },
         {
           EndLocalSlot: 1,
-          PreRestoreEndSlot: 7
+          PreRestoreEndSlot: 7,
+          CoroutineLoop: false
         },
         {
           DestTemp: 10,
@@ -285,7 +290,8 @@
         },
         {
           SavedEndSlot: 1,
-          PreRestoreEndSlot: 7
+          PreRestoreEndSlot: 7,
+          CoroutineLoop: false
         },
         {
           Source: 10
@@ -382,5 +388,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: 19A0856E712AAC4F7A889B3382DAC334D52B2C1DEB416488F0158A3B08603927
+  ElfSha256: 524EA3875A77E0047E84A876195372E36FF6076AD41F35434ED7DE90A60F732E
 }

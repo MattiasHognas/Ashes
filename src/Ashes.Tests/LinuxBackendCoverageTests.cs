@@ -1057,6 +1057,119 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    [Test]
+    public async Task Linux_backend_llvm_http_keep_alive_should_not_accumulate_memory_per_request()
+    {
+        // Async-loop arena reset: the HTTP connection loop reclaims its per-request allocations
+        // (buffered reads, parse scaffolding, the rendered response) at the loop back-edge. Serve a
+        // ~16 KB body over ONE keep-alive connection many times and assert the server's resident
+        // memory stays flat — without the reset every request leaks its garbage into the connection's
+        // arena (~50 MB across this run).
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            import Ashes.Text
+            let recursive repeat s n =
+                if n == 0
+                then s
+                else repeat(s + s)(n - 1)
+            let big = repeat("x")(14)
+            let route req =
+                async(Ashes.Http.Server.text(200)(big))
+            in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(1)(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_httpka_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+            warm.ShouldContain("HTTP/1.1 200 OK");
+
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+            var stream = client.GetStream();
+            var request = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+            // Warm up the connection (chunk growth, first-response scaffolding), then measure.
+            await HttpKeepAliveBurstAsync(stream, request, 50).ConfigureAwait(false);
+            long warmRssKb = ReadVmRssKb(proc.Id);
+            await HttpKeepAliveBurstAsync(stream, request, 3000).ConfigureAwait(false);
+            long endRssKb = ReadVmRssKb(proc.Id);
+
+            proc.HasExited.ShouldBeFalse();
+            long growthKb = endRssKb - warmRssKb;
+            growthKb.ShouldBeLessThan(24_000, $"server RSS grew {growthKb} KB over 3000 keep-alive requests (warm {warmRssKb} KB, end {endRssKb} KB) — the connection loop is not reclaiming per-request memory");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    // Sends `count` identical keep-alive requests on one connection, fully reading each response
+    // (headers + the fixed 16384-byte body) before sending the next.
+    private static async Task HttpKeepAliveBurstAsync(NetworkStream stream, byte[] request, int count)
+    {
+        var buffer = new byte[65536];
+        for (int i = 0; i < count; i++)
+        {
+            await stream.WriteAsync(request).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+            int total = 0;
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer.AsMemory(total)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                read.ShouldBeGreaterThan(0, "server closed a keep-alive connection mid-response");
+                total += read;
+                var text = Encoding.ASCII.GetString(buffer, 0, total);
+                int headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                if (headerEnd >= 0 && total >= headerEnd + 4 + 16384)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Reads the process's resident set size (VmRSS, in KB) from /proc.
+    private static long ReadVmRssKb(int pid)
+    {
+        foreach (var line in File.ReadLines($"/proc/{pid}/status"))
+        {
+            if (line.StartsWith("VmRSS:", StringComparison.Ordinal))
+            {
+                return long.Parse(line[6..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+
+        return -1;
+    }
+
     // Sends two requests on one persistent connection, returning both responses (keep-alive).
     private static async Task<(string First, string Second)> HttpTwoRequestsOneConnectionAsync(int port, string firstRequest, string secondRequest)
     {

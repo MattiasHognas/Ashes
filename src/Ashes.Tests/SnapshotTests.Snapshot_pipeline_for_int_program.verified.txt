@@ -124,7 +124,8 @@
       Label: _start_main,
       Instructions: [
         {
-          EndLocalSlot: 1
+          EndLocalSlot: 1,
+          CoroutineLoop: false
         },
         {
           Value: 40
