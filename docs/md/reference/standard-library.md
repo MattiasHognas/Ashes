@@ -486,7 +486,7 @@ constant-memory.
 ### `Ashes.Parallel`
 
 Structured, deterministic parallelism over **pure** functions (see
-`docs/future/COMPILER_OPTIMIZATION.md`). Every result is identical to the sequential
+the [compiler changelog](../internals/changelog.md)). Every result is identical to the sequential
 equivalent. `both` is a **genuinely parallel** fork/join primitive on all three targets
 (per-thread arenas + worker threads + deep-copy-on-join), forking at concrete result types
 and running sequentially for abstract ones. `map`/`reduce` fork at concrete element types via
