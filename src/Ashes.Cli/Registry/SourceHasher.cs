@@ -4,7 +4,7 @@ using System.Text;
 namespace Ashes.Cli.Registry;
 
 /// <summary>
-/// Client-side computation of the canonical <c>ash1:</c> source-tree hash (PACKAGE_MANAGER §5.1): per
+/// Client-side computation of the canonical <c>ash1:</c> source-tree hash: per
 /// file emit <c>"&lt;sha256-hex&gt;  &lt;path&gt;\n"</c>, sort by path (ordinal), concatenate, SHA-256.
 /// Must stay byte-identical to the server's computation so a publish's declared hash verifies.
 /// </summary>

@@ -6,7 +6,7 @@ namespace Ashes.Cli.Registry;
 /// <summary>
 /// Client configuration for registries and credentials, stored under <c>~/.ashes</c>:
 /// <c>config.json</c> maps registry names to base URLs (with an overridable <c>default</c>), and
-/// <c>credentials.json</c> maps a registry base URL to its bearer token (PACKAGE_MANAGER §7.4).
+/// <c>credentials.json</c> maps a registry base URL to its bearer token.
 /// </summary>
 internal static class RegistryConfig
 {

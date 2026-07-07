@@ -28,7 +28,7 @@ public static class WriteEndpoints
         var api = app.MapGroup("/api/v1");
 
         // MVP bootstrap: create-or-get an account by name and mint a token. Production deployments front
-        // this with the server CLI / disable it; see REGISTRY_API §3.2.
+        // this with the server CLI / disable it.
         api.MapPost("/tokens", async (TokenRequest body, IAccountStore accounts, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.Name))

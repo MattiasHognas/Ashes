@@ -8,15 +8,15 @@ public sealed record ValidationResult(bool Ok, string? Message)
     public static ValidationResult Invalid(string message) => new(false, message);
 }
 
-/// <summary>Namespace lint (PACKAGE_MANAGER §2): every exported module must live under the package's
+/// <summary>Namespace lint: every exported module must live under the package's
 /// namespace. Exposed as an interface so the pipeline is mockable and the implementation is swappable
-/// (structural check now; compiler-front-end reuse later, REGISTRY_API §6).</summary>
+/// (structural check now; compiler-front-end reuse later).</summary>
 public interface IManifestValidator
 {
     ValidationResult Validate(IReadOnlyList<SourceFile> files, string ns);
 }
 
-/// <summary>Public API capability extraction (PACKAGE_MANAGER §8). Interface-first for the same reasons
+/// <summary>Public API capability extraction. Interface-first for the same reasons
 /// as <see cref="IManifestValidator"/>.</summary>
 public interface ICapabilityExtractor
 {
@@ -65,7 +65,7 @@ public sealed class StructuralManifestValidator : IManifestValidator
 
 /// <summary>
 /// Default capability extractor. Real extraction reuses the compiler front end to read the inferred
-/// <c>needs {...}</c> rows on the public API (REGISTRY_API §6); until that integration lands it reports
+/// <c>needs {...}</c> rows on the public API; until that integration lands it reports
 /// no capabilities, so the field is present and forward-compatible but not yet authoritative.
 /// </summary>
 public sealed class EmptyCapabilityExtractor : ICapabilityExtractor

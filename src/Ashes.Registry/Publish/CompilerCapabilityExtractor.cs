@@ -5,8 +5,8 @@ using Ashes.Semantics;
 namespace Ashes.Registry.Publish;
 
 /// <summary>
-/// Extracts a package's public-API capability rows by reusing the compiler front end
-/// (REGISTRY_API §6): parse + lower the uploaded source, then read the inferred capabilities off the
+/// Extracts a package's public-API capability rows by reusing the compiler front end: parse and lower
+/// the uploaded source, then read the inferred capabilities off the
 /// exported bindings via <see cref="Lowering.PublicApiCapabilities"/>. Authoritative because it runs the
 /// real inference over the uploaded bytes, not a heuristic scan.
 ///

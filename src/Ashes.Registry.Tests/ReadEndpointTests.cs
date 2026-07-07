@@ -6,7 +6,7 @@ using Shouldly;
 
 namespace Ashes.Registry.Tests;
 
-/// <summary>The read HTTP surface over the in-memory host (REGISTRY_API §8, endpoint layer).</summary>
+/// <summary>The read HTTP surface over the in-memory host.</summary>
 public sealed class ReadEndpointTests
 {
     [Test]

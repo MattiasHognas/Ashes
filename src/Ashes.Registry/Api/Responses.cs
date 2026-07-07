@@ -3,7 +3,7 @@ using Ashes.Registry.Storage;
 namespace Ashes.Registry.Api;
 
 // Response DTOs. Minimal API serializes with web defaults (camelCase), so these PascalCase members
-// render as the lowerCamel fields documented in REGISTRY_API §3.
+// render as the documented lowerCamel fields.
 
 public sealed record IndexResponse(string Name, string ApiVersion, LimitsResponse Limits);
 

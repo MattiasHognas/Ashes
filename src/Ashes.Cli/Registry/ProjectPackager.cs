@@ -6,7 +6,7 @@ using Ashes.Semantics;
 namespace Ashes.Cli.Registry;
 
 /// <summary>Packages a loaded project's source into the source-only upload the registry expects: the
-/// <c>.ash</c> modules under the source roots plus a few root metadata files (PACKAGE_MANAGER §7.2).</summary>
+/// <c>.ash</c> modules under the source roots plus a few root metadata files.</summary>
 internal static class ProjectPackager
 {
     public static IReadOnlyList<(string Path, byte[] Bytes)> GatherFiles(AshesProject project)
@@ -58,7 +58,7 @@ internal static class ProjectPackager
     }
 
     /// <summary>The publishing namespace: an explicit <c>namespace</c> field wins, else the package name
-    /// mapped to PascalCase (PACKAGE_MANAGER §2).</summary>
+    /// mapped to PascalCase.</summary>
     public static string DeriveNamespace(string? explicitNamespace, string? name)
     {
         if (!string.IsNullOrWhiteSpace(explicitNamespace))

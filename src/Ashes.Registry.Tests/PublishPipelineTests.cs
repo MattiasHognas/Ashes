@@ -6,7 +6,7 @@ using Shouldly;
 
 namespace Ashes.Registry.Tests;
 
-/// <summary>The publish pipeline, one test per stage outcome (REGISTRY_API §4, §8). Real temp-SQLite
+/// <summary>The publish pipeline, one test per stage outcome. Real temp-SQLite
 /// stores drive most stages; the namespace-lint seam is forced with an Imposter mock.</summary>
 public sealed class PublishPipelineTests
 {

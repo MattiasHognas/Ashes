@@ -4,7 +4,7 @@ using Shouldly;
 
 namespace Ashes.Registry.Tests;
 
-/// <summary>The real stores against a temp <c>--data</c> dir (REGISTRY_API §8, storage layer).</summary>
+/// <summary>The real stores against a temp <c>--data</c> dir.</summary>
 public sealed class StorageIntegrationTests
 {
     [Test]

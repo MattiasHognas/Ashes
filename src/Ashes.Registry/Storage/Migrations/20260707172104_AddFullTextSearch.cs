@@ -12,7 +12,7 @@ namespace Ashes.Registry.Storage.Migrations
         {
             // A standalone SQLite FTS5 index over package namespace/description/keywords, kept in sync
             // with the Packages table by triggers so every write path (including direct seeding) stays
-            // consistent without app code. REGISTRY_API 5.2 / 7.
+            // consistent without app code.
             migrationBuilder.Sql("CREATE VIRTUAL TABLE PackageSearch USING fts5(namespace, description, keywords);");
 
             migrationBuilder.Sql(

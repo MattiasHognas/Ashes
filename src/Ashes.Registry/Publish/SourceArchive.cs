@@ -6,8 +6,8 @@ using Ashes.Registry.Storage;
 namespace Ashes.Registry.Publish;
 
 /// <summary>
-/// Unpacks a gzip-compressed tarball into an in-memory source set while enforcing the publish limits
-/// (PACKAGE_MANAGER §7.2): per-file size, total uncompressed size (also the decompressed-size ceiling —
+/// Unpacks a gzip-compressed tarball into an in-memory source set while enforcing the publish limits —
+/// per-file size, total uncompressed size (also the decompressed-size ceiling —
 /// counted against bytes actually read, so a tiny upload cannot expand past the cap), file count, path
 /// safety, and the source-only content allowlist. Any breach returns a <c>limit_exceeded</c> error and
 /// nothing is stored.

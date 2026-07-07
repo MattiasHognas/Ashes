@@ -62,7 +62,7 @@ public interface IAccountStore
     Task<Account?> ResolveTokenAsync(string presentedSecret, CancellationToken ct);
 }
 
-/// <summary>List + search over the package set (§7). Lexical, name-first ranking; no semantic search.</summary>
+/// <summary>List + search over the package set. Lexical, name-first ranking; no semantic search.</summary>
 public interface ISearchIndex
 {
     /// <summary>Bring the index up to date for a package. A no-op when search reads live metadata.</summary>

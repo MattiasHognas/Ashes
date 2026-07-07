@@ -6,7 +6,7 @@ namespace Ashes.Tests;
 
 /// <summary>
 /// <see cref="Lowering.PublicApiCapabilities"/> — the compiler surface the registry reuses for its
-/// capability audit (REGISTRY_API §6).
+/// capability audit.
 /// </summary>
 public sealed class CapabilityAuditTests
 {

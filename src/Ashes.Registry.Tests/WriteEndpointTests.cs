@@ -9,7 +9,7 @@ using Shouldly;
 
 namespace Ashes.Registry.Tests;
 
-/// <summary>The authenticated write surface over the in-memory host (REGISTRY_API §8, endpoint layer).</summary>
+/// <summary>The authenticated write surface over the in-memory host.</summary>
 public sealed class WriteEndpointTests
 {
     private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);

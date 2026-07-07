@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 namespace Ashes.Registry.Publish;
 
 /// <summary>
-/// The ordered publish pipeline (REGISTRY_API §4). Each stage's failure aborts with a typed error and
+/// The ordered publish pipeline. Each stage's failure aborts with a typed error and
 /// writes nothing; only a fully-validated upload reaches the atomic store stage. Authentication (stage 1)
 /// happens at the endpoint, which hands the resolved <see cref="Account"/> to <see cref="RunAsync"/>.
 /// </summary>

@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace Ashes.Registry.Api;
 
-/// <summary>The unauthenticated, cacheable read surface (REGISTRY_API §3.1).</summary>
+/// <summary>The unauthenticated, cacheable read surface.</summary>
 public static class ReadEndpoints
 {
     public static IEndpointRouteBuilder MapReadEndpoints(this IEndpointRouteBuilder app)

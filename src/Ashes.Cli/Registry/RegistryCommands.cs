@@ -4,7 +4,7 @@ using Spectre.Console;
 
 namespace Ashes.Cli.Registry;
 
-/// <summary>The registry-facing CLI verbs: login, publish, yank, search, info (REGISTRY_API §9).</summary>
+/// <summary>The registry-facing CLI verbs: login, publish, yank, search, info.</summary>
 internal static class RegistryCommands
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

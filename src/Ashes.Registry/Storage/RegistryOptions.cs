@@ -13,7 +13,7 @@ public sealed class RegistryOptions
 }
 
 /// <summary>
-/// Publish-time size and abuse limits (PACKAGE_MANAGER §7.2). Reported by the index endpoint so a client
+/// Publish-time size and abuse limits. Reported by the index endpoint so a client
 /// can discover a registry's effective caps; enforced by the publish pipeline (a later step).
 /// </summary>
 public sealed class RegistryLimits

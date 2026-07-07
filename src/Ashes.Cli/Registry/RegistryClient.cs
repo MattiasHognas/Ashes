@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace Ashes.Cli.Registry;
 
-/// <summary>Talks the registry HTTP API (REGISTRY_API §3). Maps the uniform error envelope onto
+/// <summary>Talks the registry HTTP API. Maps the uniform error envelope onto
 /// <see cref="CliUserException"/> so failures surface as ordinary CLI diagnostics.</summary>
 internal sealed class RegistryClient : IDisposable
 {

@@ -4,7 +4,7 @@ using System.Text;
 namespace Ashes.Registry.Publish;
 
 /// <summary>
-/// The canonical <c>ash1:</c> source-tree hash (PACKAGE_MANAGER §5.1): per file emit
+/// The canonical <c>ash1:</c> source-tree hash: per file emit
 /// <c>"&lt;sha256-hex-of-bytes&gt;  &lt;path&gt;\n"</c>, sort those lines by path (ordinal), concatenate,
 /// and SHA-256 the result. Only file paths and contents contribute — never directory entries, modes, or
 /// ordering of the input.

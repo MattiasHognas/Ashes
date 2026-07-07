@@ -4,8 +4,8 @@ public sealed partial class Lowering
 {
     /// <summary>
     /// The capability names appearing in the types of the package's exported (top-level) bindings after
-    /// lowering — the static, inference-based capability audit surface (see the package-manager
-    /// capability-audit design). Call after <see cref="Lower(Program)"/>. Reads the inferred types, not
+    /// lowering — the static, inference-based capability audit surface. Call after
+    /// <see cref="Lower(Program)"/>. Reads the inferred types, not
     /// the bodies, so a capability discharged by an in-body handler is correctly absent; it is
     /// over-approximation-safe in the other direction (a capability anywhere in an exported binding's
     /// resolved type is reported), which is the safe bias for a supply-chain audit.
