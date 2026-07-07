@@ -27,53 +27,86 @@ let substring text start count =
         then ""
         else take(drop(text)(start))(count)
 
-let recursive startsWith text prefix = 
-    match Ashes.Text.uncons(prefix) with
-        | None -> true
-        | Some((prefixHead, prefixTail)) -> 
-            match Ashes.Text.uncons(text) with
-                | None -> false
-                | Some((textHead, textTail)) -> 
-                    if textHead == prefixHead
-                    then startsWith(textTail)(prefixTail)
-                    else false
+let recursive countCodepoints bytes i limit acc = 
+    if i >= limit
+    then acc
+    else 
+        let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i))
+        in 
+            let isStart = 
+                if b < 128
+                then true
+                else b >= 192
+            in 
+                countCodepoints(bytes)(i + 1)(limit)(if isStart
+                then acc + 1
+                else acc)
+
+let recursive byteFind tb needle from tlen nlen firstByte = 
+    (let idx = Ashes.Bytes.indexOf(tb)(firstByte)(from)
+    in 
+        if idx < 0
+        then -1
+        else 
+            if idx + nlen > tlen
+            then -1
+            else 
+                if Ashes.Bytes.subView(tb)(idx)(nlen) == needle
+                then idx
+                else byteFind(tb)(needle)(idx + 1)(tlen)(nlen)(firstByte))
+
+let firstByteOf text = Ashes.UInt.toInt(Ashes.Bytes.get(Ashes.Bytes.fromText(text))(0))
+
+let startsWith text prefix = 
+    (let nlen = Ashes.Text.byteLength(prefix)
+    in 
+        if nlen == 0
+        then true
+        else 
+            let tb = Ashes.Bytes.fromText(text)
+            in 
+                if nlen > Ashes.Bytes.length(tb)
+                then false
+                else Ashes.Bytes.subView(tb)(0)(nlen) == prefix)
 
 let indexOf text needle = 
     if needle == ""
     then 0
     else 
-        let recursive go remaining offset = 
-            if startsWith(remaining)(needle)
-            then offset
-            else 
-                match Ashes.Text.uncons(remaining) with
-                    | None -> -1
-                    | Some((_head, tail)) -> go(tail)(offset + 1)
-        in go(text)(0)
+        let tb = Ashes.Bytes.fromText(text)
+        in 
+            let bytePos = byteFind(tb)(needle)(0)(Ashes.Bytes.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle))
+            in 
+                if bytePos < 0
+                then -1
+                else countCodepoints(tb)(0)(bytePos)(0)
 
-let contains text needle = indexOf(text)(needle) >= 0
+let contains text needle = 
+    if needle == ""
+    then true
+    else 
+        let tb = Ashes.Bytes.fromText(text)
+        in byteFind(tb)(needle)(0)(Ashes.Bytes.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle)) >= 0
 
 let split text separator = 
     if separator == ""
     then [text]
     else 
-        let separatorLength = length(separator)
+        let tb = Ashes.Bytes.fromText(text)
         in 
-            let recursive go remaining = 
-                let foundAt = indexOf(remaining)(separator)
+            let tlen = Ashes.Bytes.length(tb)
+            in 
+                let slen = Ashes.Text.byteLength(separator)
                 in 
-                    if foundAt <= -1
-                    then [remaining]
-                    else 
-                        let piece = substring(remaining)(0)(foundAt)
-                        in 
-                            let restStart = foundAt + separatorLength
+                    let sfirst = firstByteOf(separator)
+                    in 
+                        let recursive go from = 
+                            let idx = byteFind(tb)(separator)(from)(tlen)(slen)(sfirst)
                             in 
-                                let restLen = length(remaining) - restStart
-                                in 
-                                    let rest = substring(remaining)(restStart)(restLen)
-                                    in piece :: go(rest)
-            in go(text)
+                                if idx < 0
+                                then [Ashes.Bytes.subText(tb)(from)(tlen - from)]
+                                else Ashes.Bytes.subText(tb)(from)(idx - from) :: go(idx + slen)
+                        in go(0)
 
 let isDigit text = 
     match text with
@@ -153,13 +186,30 @@ let isWhiteSpace text =
         | "\r" -> true
         | _ -> false
 
-let recursive trimStart text = 
-    match Ashes.Text.uncons(text) with
-        | None -> ""
-        | Some((head, tail)) -> 
-            if isWhiteSpace(head)
-            then trimStart(tail)
-            else text
+let isWhiteSpaceByte b = 
+    if b == 32
+    then true
+    else 
+        if b == 9
+        then true
+        else 
+            if b == 10
+            then true
+            else b == 13
+
+let trimStart text = 
+    (let tb = Ashes.Bytes.fromText(text)
+    in 
+        let n = Ashes.Bytes.length(tb)
+        in 
+            let recursive go i = 
+                if i >= n
+                then ""
+                else 
+                    if isWhiteSpaceByte(Ashes.UInt.toInt(Ashes.Bytes.get(tb)(i)))
+                    then go(i + 1)
+                    else Ashes.Bytes.subText(tb)(i)(n - i)
+            in go(0))
 
 let recursive lastAndInit text = 
     match Ashes.Text.uncons(text) with
@@ -172,13 +222,17 @@ let recursive lastAndInit text =
                         | None -> None
                         | Some((init, last)) -> Some((head + init, last))
 
-let recursive trimEnd text = 
-    match lastAndInit(text) with
-        | None -> ""
-        | Some((init, last)) -> 
-            if isWhiteSpace(last)
-            then trimEnd(init)
-            else text
+let trimEnd text = 
+    (let tb = Ashes.Bytes.fromText(text)
+    in 
+        let recursive go j = 
+            if j <= 0
+            then ""
+            else 
+                if isWhiteSpaceByte(Ashes.UInt.toInt(Ashes.Bytes.get(tb)(j - 1)))
+                then go(j - 1)
+                else Ashes.Bytes.subText(tb)(0)(j)
+        in go(Ashes.Bytes.length(tb)))
 
 let trim text = trimEnd(trimStart(text))
 
