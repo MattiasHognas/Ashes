@@ -33,6 +33,7 @@ test() {
     set -e
     dotnet run --project src/Ashes.Tests/Ashes.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
     dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
+    dotnet run --project src/Ashes.Registry.Tests/Ashes.Registry.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
   "
 }
 

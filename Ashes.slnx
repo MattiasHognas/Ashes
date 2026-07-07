@@ -6,6 +6,8 @@
   <Project Path="src/Ashes.Frontend/Ashes.Frontend.csproj" />
   <Project Path="src/Ashes.Lsp/Ashes.Lsp.csproj" />
   <Project Path="src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj" />
+  <Project Path="src/Ashes.Registry/Ashes.Registry.csproj" />
+  <Project Path="src/Ashes.Registry.Tests/Ashes.Registry.Tests.csproj" />
   <Project Path="src/Ashes.Semantics/Ashes.Semantics.csproj" />
   <Project Path="src/Ashes.TestRunner/Ashes.TestRunner.csproj" />
   <Project Path="src/Ashes.Tests/Ashes.Tests.csproj" />
