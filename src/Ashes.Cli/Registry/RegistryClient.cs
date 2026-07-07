@@ -46,6 +46,14 @@ internal sealed class RegistryClient : IDisposable
         return await response.Content.ReadFromJsonAsync<PackageResponseDto>(Json, ct).ConfigureAwait(false);
     }
 
+    public async Task<byte[]> DownloadSourceAsync(string baseUrl, string ns, string version, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            Url(baseUrl, $"/api/v1/packages/{ns}/{version}/source"), ct).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task PublishAsync(
         string baseUrl, string token, string ns, string version, string metadataJson, byte[] tarball, CancellationToken ct)
     {

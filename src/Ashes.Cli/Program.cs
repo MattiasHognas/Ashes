@@ -516,7 +516,7 @@ try
         "init" => RunInit(args.Skip(1).ToArray()),
         "add" => RunAdd(args.Skip(1).ToArray()),
         "remove" => RunRemove(args.Skip(1).ToArray()),
-        "restore" => RunRestore(args.Skip(1).ToArray()),
+        "restore" => await RunRestore(args.Skip(1).ToArray()).ConfigureAwait(false),
         "install" => throw new CliUserException("`ashes install` has been retired. Use `ashes restore` to materialize dependencies (or `ashes add` to add one)."),
         "login" => await RegistryCommands.LoginAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "publish" => await RegistryCommands.PublishAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
@@ -1406,7 +1406,7 @@ static int RunRemove(string[] a)
     return 0;
 }
 
-static int RunRestore(string[] a)
+static async Task<int> RunRestore(string[] a)
 {
     var opts = Ashes.Cli.Registry.ArgScanner.Parse(a);
     if (opts.Flag("help"))
@@ -1420,16 +1420,23 @@ static int RunRestore(string[] a)
         throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
     }
 
-    // Loading resolves and validates path dependencies; a missing or non-project path throws here.
+    var projectDirectory = Path.GetDirectoryName(projectFilePath)!;
+
+    // Registry dependencies resolve, download, and cache first (writing ashes.lock) so that the
+    // subsequent project load — which reads the lock — finds them materialized.
+    await RestoreRegistryDependenciesAsync(projectFilePath, projectDirectory, opts.Value("registry"), CancellationToken.None)
+        .ConfigureAwait(false);
+
+    // Loading resolves + validates path dependencies and now-cached registry dependencies.
     var project = ProjectSupport.LoadProject(projectFilePath);
 
     if (project.Dependencies.Count == 0)
     {
-        AnsiConsole.MarkupLine("[grey]No path dependencies to restore.[/]");
+        AnsiConsole.MarkupLine("[grey]No dependencies to restore.[/]");
     }
     else
     {
-        AnsiConsole.MarkupLine($"[green]Restored[/] {project.Dependencies.Count} path dependenc{(project.Dependencies.Count == 1 ? "y" : "ies")}:");
+        AnsiConsole.MarkupLine($"[green]Restored[/] {project.Dependencies.Count} dependenc{(project.Dependencies.Count == 1 ? "y" : "ies")}:");
         foreach (var d in project.Dependencies)
         {
             var dev = d.IsDev ? " [grey](dev)[/]" : "";
@@ -1437,19 +1444,54 @@ static int RunRestore(string[] a)
         }
     }
 
-    var registryDeps = CountNonPathDependencies(projectFilePath);
-    if (registryDeps > 0)
-    {
-        AnsiConsole.MarkupLine($"[yellow]{registryDeps} registry/git dependenc{(registryDeps == 1 ? "y" : "ies")} require a lock file and cache (not yet available).[/]");
-    }
-
     return 0;
 }
 
-static int CountNonPathDependencies(string projectFilePath)
+static async Task RestoreRegistryDependenciesAsync(
+    string manifestPath, string projectDirectory, string? registryOption, CancellationToken ct)
 {
-    using var doc = ParseProjectJson(projectFilePath);
-    var count = 0;
+    var roots = CollectRegistryRoots(manifestPath);
+    if (roots.Count == 0)
+    {
+        return;
+    }
+
+    var baseUrl = Ashes.Cli.Registry.RegistryConfig.ResolveBaseUrl(registryOption);
+    using var client = new Ashes.Cli.Registry.RegistryClient();
+    var resolved = await new Ashes.Cli.Package.DependencyResolver(new Ashes.Cli.Package.RegistryPackageIndex(client, baseUrl))
+        .ResolveAsync(roots, ct).ConfigureAwait(false);
+
+    var cache = new Ashes.Cli.Package.PackageCache();
+    var locked = new List<Ashes.Cli.Package.LockedPackage>();
+    foreach (var package in resolved)
+    {
+        var meta = await client.GetPackageAsync(baseUrl, package.Namespace, ct).ConfigureAwait(false)
+            ?? throw new CliUserException($"Package '{package.Namespace}' not found on {baseUrl}.");
+        var version = meta.Versions.First(v => string.Equals(v.Version, package.Version.ToString(), StringComparison.Ordinal));
+
+        if (!cache.Has(package.Namespace, version.Version, version.Hash))
+        {
+            var tarball = await client.DownloadSourceAsync(baseUrl, package.Namespace, version.Version, ct).ConfigureAwait(false);
+            await cache.StoreAsync(package.Namespace, version.Version, version.Hash, tarball, ct).ConfigureAwait(false);
+        }
+
+        locked.Add(new Ashes.Cli.Package.LockedPackage(
+            package.Namespace, version.Version, $"registry+{baseUrl}", version.Hash,
+            version.Dependencies.Select(d => d.Namespace).ToList()));
+    }
+
+    new Ashes.Cli.Package.LockFile
+    {
+        Package = locked.OrderBy(p => p.Namespace, StringComparer.Ordinal).ToList(),
+    }.Write(projectDirectory);
+
+    AnsiConsole.MarkupLine($"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")} into ashes.lock.");
+}
+
+static List<Ashes.Cli.Package.DependencyReq> CollectRegistryRoots(string manifestPath)
+{
+    using var doc = ParseProjectJson(manifestPath);
+    var roots = new List<Ashes.Cli.Package.DependencyReq>();
     foreach (var field in (string[])["dependencies", "devDependencies"])
     {
         if (!doc.RootElement.TryGetProperty(field, out var deps) || deps.ValueKind != System.Text.Json.JsonValueKind.Object)
@@ -1459,16 +1501,33 @@ static int CountNonPathDependencies(string projectFilePath)
 
         foreach (var dep in deps.EnumerateObject())
         {
-            var isPath = dep.Value.ValueKind == System.Text.Json.JsonValueKind.Object
-                && dep.Value.TryGetProperty("path", out _);
-            if (!isPath)
+            string? constraint = null;
+            if (dep.Value.ValueKind == System.Text.Json.JsonValueKind.String)
             {
-                count++;
+                constraint = dep.Value.GetString();
+            }
+            else if (dep.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (dep.Value.TryGetProperty("path", out _) || dep.Value.TryGetProperty("git", out _))
+                {
+                    continue; // path/git dependencies are not registry-resolved
+                }
+
+                if (dep.Value.TryGetProperty("version", out var ver) && ver.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    constraint = ver.GetString();
+                }
+            }
+
+            if (constraint is not null)
+            {
+                var ns = ProjectSupport.PascalCase(dep.Name);
+                roots.Add(new Ashes.Cli.Package.DependencyReq(ns, Ashes.Cli.Package.VersionConstraint.Parse(constraint), "manifest"));
             }
         }
     }
 
-    return count;
+    return roots;
 }
 
 static object? DeserializeJsonElement(System.Text.Json.JsonElement element)

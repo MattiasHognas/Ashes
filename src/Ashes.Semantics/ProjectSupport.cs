@@ -261,6 +261,7 @@ public static class ProjectSupport
         var result = new List<ResolvedDependency>();
         AddDependencies(root, "dependencies", isDev: false, projectDirectory, result);
         AddDependencies(root, "devDependencies", isDev: true, projectDirectory, result);
+        AddLockedDependencies(projectDirectory, result);
         return result;
     }
 
@@ -296,13 +297,60 @@ public static class ProjectSupport
                     $"ASH031: dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
             }
 
-            var (ns, roots, entryFile) = ReadDependencyManifest(manifest, depDir, entry.Value, entry.Name);
+            var nsOverride = entry.Value.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
+                ? entryNs.GetString()
+                : null;
+            var (ns, roots, entryFile) = ReadDependencyManifest(manifest, depDir, nsOverride, entry.Name);
             accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev) { EntryFile = entryFile });
         }
     }
 
+    /// <summary>
+    /// Add registry/git dependencies recorded in <c>ashes.lock</c>: each is materialized in the shared
+    /// content-addressed cache and consumed exactly like a path dependency (its cached tree is the source
+    /// root). A locked package missing from the cache means the project has not been restored.
+    /// </summary>
+    private static void AddLockedDependencies(string projectDirectory, List<ResolvedDependency> accumulator)
+    {
+        var lockPath = Path.Combine(projectDirectory, "ashes.lock");
+        if (!File.Exists(lockPath))
+        {
+            return;
+        }
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(lockPath));
+        if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("package", out var packages) ||
+            packages.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var package in packages.EnumerateArray())
+        {
+            var ns = ReadString(package, "namespace");
+            var version = ReadString(package, "version");
+            var hash = ReadString(package, "hash");
+            if (ns is null || version is null || hash is null)
+            {
+                continue;
+            }
+
+            var cacheDir = CachePathFor(ns, version, hash);
+            var manifest = Path.Combine(cacheDir, "ashes.json");
+            if (!File.Exists(manifest))
+            {
+                throw new InvalidOperationException(
+                    $"ASH033: locked package '{ns}@{version}' is not in the cache. Run 'ashes restore'.");
+            }
+
+            var (_, roots, entryFile) = ReadDependencyManifest(manifest, cacheDir, ns, ns);
+            accumulator.Add(new ResolvedDependency(ns, ns, roots, cacheDir, IsDev: false) { EntryFile = entryFile });
+        }
+    }
+
     private static (string Namespace, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(
-        string manifestPath, string depDir, JsonElement depEntry, string depKey)
+        string manifestPath, string depDir, string? namespaceOverride, string depKey)
     {
         using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
         var manifest = doc.RootElement;
@@ -313,9 +361,7 @@ public static class ProjectSupport
             sourceRoots.Add(".");
         }
 
-        var ns = (depEntry.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
-                     ? entryNs.GetString()
-                     : null)
+        var ns = namespaceOverride
                  ?? ReadString(manifest, "namespace")
                  ?? PascalCase(ReadString(manifest, "name") ?? depKey);
 
@@ -323,6 +369,25 @@ public static class ProjectSupport
         var entryFile = entryValue is null ? null : ResolvePath(depDir, entryValue);
 
         return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList(), entryFile);
+    }
+
+    /// <summary>Root of the shared content-addressed package cache (<c>$XDG_CACHE_HOME/ashes</c>, else
+    /// <c>~/.cache/ashes</c>). Both the CLI (writing) and the compiler (reading) compute paths the same way.</summary>
+    public static string PackageCacheRoot()
+    {
+        var xdg = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        var baseDir = string.IsNullOrEmpty(xdg)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache")
+            : xdg;
+        return Path.Combine(baseDir, "ashes");
+    }
+
+    /// <summary>The cache directory for a specific package version: <c>cache/pkg/&lt;ns&gt;/&lt;version&gt;/&lt;hashkey&gt;</c>.</summary>
+    public static string CachePathFor(string ns, string version, string hash)
+    {
+        var colon = hash.IndexOf(':', StringComparison.Ordinal);
+        var key = colon >= 0 ? hash[(colon + 1)..] : hash;
+        return Path.Combine(PackageCacheRoot(), "pkg", ns, version, key);
     }
 
     /// <summary>Map a package name to its default namespace (e.g. <c>json-parser</c> → <c>JsonParser</c>).</summary>

@@ -335,7 +335,7 @@ public sealed class PackageManagementCliTests
             var result = await RunCliAsync(["restore"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
-            result.Output.ShouldContain("No path dependencies");
+            result.Output.ShouldContain("No dependencies");
         }
         finally
         {
