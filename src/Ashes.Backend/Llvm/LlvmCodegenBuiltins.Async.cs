@@ -117,6 +117,37 @@ internal static partial class LlvmCodegen
             return global;
         });
 
+    // Live spawned-handler count for the shutdown drain: incremented when a spawned task is
+    // enqueued, decremented when its arena is reaped on completion. Single-threaded per reactor,
+    // so plain loads/stores suffice.
+    private static LlvmValueHandle LiveSpawnedGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_live_spawned", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_live_spawned");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    // Drain deadline (monotonic ms, 0 = drain not started) and drain bound (ms, default 10 s).
+    private static LlvmValueHandle DrainDeadlineGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_drain_deadline", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_drain_deadline");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
+    private static LlvmValueHandle DrainTimeoutGlobal(LlvmCodegenState state) =>
+        state.Target.GetOrAddNamedGlobal("__ashes_drain_timeout_ms", () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, "__ashes_drain_timeout_ms");
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 10000, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
     /// <summary>
     /// Installs SIGINT/SIGTERM handlers (Linux) that set the shutdown flag, so a parked accept is
     /// interrupted (EINTR — the handler does not set SA_RESTART) and re-steps into the flag check.
@@ -137,7 +168,20 @@ internal static partial class LlvmCodegen
             handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_handler", LlvmApi.FunctionType(voidTy, [state.I32]));
             LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
             LlvmBasicBlockHandle he = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
+            // First signal starts the drain (sets the flag; the accept step turns it into the
+            // sentinel after draining). A second signal during the drain forces an immediate,
+            // still-clean exit(0) right here in the handler.
+            LlvmBasicBlockHandle forceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "force_exit");
+            LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "first_signal");
             LlvmApi.PositionBuilderAtEnd(builder, he);
+            LlvmValueHandle alreadyRequested = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "sig_already");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, alreadyRequested, LlvmApi.ConstInt(state.I64, 0, 0), "sig_is_second"),
+                forceBlock, firstBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, forceBlock);
+            _ = EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sig_force_exit");
+            LlvmApi.BuildUnreachable(builder);
+            LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
             LlvmApi.BuildRetVoid(builder);
 
@@ -1023,14 +1067,54 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_finish");
 
         // Graceful shutdown: a SIGINT/SIGTERM sets the flag and interrupts the parked accept (EINTR),
-        // which re-steps here; complete with the shutdown sentinel so serve stops and returns Ok(()).
+        // which re-steps here. The step then DRAINS instead of completing at once: accepting stops
+        // (this path never reaches the accept call), and the sentinel completion is held back until
+        // every live spawned handler has finished or the drain deadline (default 10 s) passes. In
+        // between, the accept task parks as a short timer; each scheduler wakeup re-steps it (the
+        // aggregate wait re-queues all parked leaves), so the counter is re-checked as handlers
+        // complete. serve then stops and returns Ok(()).
         LlvmBasicBlockHandle shutdownBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_shutdown");
+        LlvmBasicBlockHandle drainArmBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_arm");
+        LlvmBasicBlockHandle drainCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_check");
+        LlvmBasicBlockHandle drainWaitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_drain_wait");
+        LlvmBasicBlockHandle shutdownDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_shutdown_done");
         LlvmBasicBlockHandle acceptGoBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_accept_go");
         LlvmValueHandle shuttingDown = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "step_tcp_accept_shutdown_flag");
         LlvmApi.BuildCondBr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, shuttingDown, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_is_shutdown"),
             shutdownBlock, acceptGoBlock);
+
         LlvmApi.PositionBuilderAtEnd(builder, shutdownBlock);
+        LlvmValueHandle nowMs = EmitMonotonicNowMs(state, "step_tcp_accept_drain_now");
+        LlvmValueHandle deadline0 = LlvmApi.BuildLoad2(builder, state.I64, DrainDeadlineGlobal(state), "step_tcp_accept_deadline0");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, deadline0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_drain_unarmed"),
+            drainArmBlock, drainCheckBlock);
+
+        // First observation of the flag: arm the deadline = now + bound.
+        LlvmApi.PositionBuilderAtEnd(builder, drainArmBlock);
+        LlvmValueHandle bound = LlvmApi.BuildLoad2(builder, state.I64, DrainTimeoutGlobal(state), "step_tcp_accept_drain_bound");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, nowMs, bound, "step_tcp_accept_deadline_new"), DrainDeadlineGlobal(state));
+        LlvmApi.BuildBr(builder, drainCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, drainCheckBlock);
+        LlvmValueHandle deadline = LlvmApi.BuildLoad2(builder, state.I64, DrainDeadlineGlobal(state), "step_tcp_accept_deadline");
+        LlvmValueHandle live = LlvmApi.BuildLoad2(builder, state.I64, LiveSpawnedGlobal(state), "step_tcp_accept_live");
+        LlvmValueHandle drained = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, live, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_no_live"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, nowMs, deadline, "step_tcp_accept_deadline_hit"),
+            "step_tcp_accept_drained");
+        LlvmApi.BuildCondBr(builder, drained, shutdownDoneBlock, drainWaitBlock);
+
+        // Still draining: park as a short timer so the counter is re-checked promptly even with no
+        // other wakeups; any handler I/O or timer wakeup re-steps this leaf sooner.
+        LlvmApi.PositionBuilderAtEnd(builder, drainWaitBlock);
+        StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTimer, 0), "step_tcp_accept_drain_wait_kind");
+        StoreMemory(state, taskPtr, TaskStructLayout.SleepDurationMs, LlvmApi.ConstInt(state.I64, 50, 0), "step_tcp_accept_drain_wait_slice");
+        LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, shutdownDoneBlock);
         LlvmApi.BuildStore(builder,
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, ServerShutdownSentinel)), "step_tcp_accept_shutdown_complete"),
             statusSlot);
