@@ -8,8 +8,9 @@
 // A Content-Length body buffers incrementally: once the headers are parsed the loop only counts
 // received bytes (chunks accumulate as a list, joined once when complete), so a body arriving in
 // k reads costs O(total) work, not k re-parses of a growing accumulator. Chunked bodies
-// (Transfer-Encoding: chunked; chunk extensions ignored, trailers not supported) still re-decode
-// the accumulated buffer per read.
+// (Transfer-Encoding: chunked; chunk extensions ignored, trailers not supported) decode
+// incrementally too: each read decodes only the undecoded tail (the partial frame carried
+// between reads), and decoded pieces accumulate as a list joined once at the terminating frame.
 //
 // ADT field types must be simple type names, so a request keeps its headers as the raw header block
 // (a Str) and a response keeps its extra headers as a pre-rendered "Name: value\r\n..." block; the
@@ -33,14 +34,16 @@ type HttpParse =
     | HttpTooLarge
     | HttpParsed(HttpRequest, Bool, Str)
     | HttpNeedBody(Str, Str, Bool, Str, Int)
+    | HttpNeedChunked(Str, Str, Bool, Str, Str)
 
 type BodyRead =
     | BodyDone(HttpRequest, Bool, Str)
     | BodyPeerClosed
     | BodyFailed(Str)
+    | BodyTooLarge
 
 type ChunkResult =
-    | ChunkNeedMore
+    | ChunkPartial(Str, Int)
     | ChunkDone(Str, Int)
 
 let method req = 
@@ -308,14 +311,14 @@ let recursive decodeChunkedFrom allBytes pos acc =
     (let nl = Ashes.Bytes.indexOf(allBytes)(10)(pos)
     in 
         if nl < 0
-        then ChunkNeedMore
+        then ChunkPartial(acc)(pos)
         else 
             let size = parseHexRange(allBytes)(pos)(nl)(0)
             in 
                 if size == 0
                 then 
                     if Ashes.Bytes.length(allBytes) < nl + 3
-                    then ChunkNeedMore
+                    then ChunkPartial(acc)(pos)
                     else ChunkDone(acc)(nl + 3)
                 else 
                     let dataStart = nl + 1
@@ -323,7 +326,7 @@ let recursive decodeChunkedFrom allBytes pos acc =
                         let need = dataStart + size + 2
                         in 
                             if Ashes.Bytes.length(allBytes) < need
-                            then ChunkNeedMore
+                            then ChunkPartial(acc)(pos)
                             else decodeChunkedFrom(allBytes)(need)(acc + Ashes.Bytes.subText(allBytes)(dataStart)(size)))
 
 let tryParseBuffered buffered = 
@@ -369,7 +372,7 @@ let tryParseBuffered buffered =
                                                     if isChunked
                                                     then 
                                                         match decodeChunkedFrom(allBytes)(headBytes)("") with
-                                                            | ChunkNeedMore -> HttpNeedMore
+                                                            | ChunkPartial(piece, frameStart) -> HttpNeedChunked(requestLine)(headerBlock)(keepAlive)(piece)(Ashes.Bytes.subText(allBytes)(frameStart)(Ashes.Bytes.length(allBytes) - frameStart))
                                                             | ChunkDone(body, endOffset) -> build(body)(Ashes.Bytes.subText(allBytes)(endOffset)(Ashes.Bytes.length(allBytes) - endOffset))
                                                     else 
                                                         let contentLength = 
@@ -432,6 +435,10 @@ let connectionHandler handler =
                             match bodyLoop(fragment :: [])(Ashes.Text.byteLength(fragment)) with
                                 | BodyFailed(e5) -> Error(e5)
                                 | BodyPeerClosed -> await Ashes.Net.Tcp.close(client)
+                                | BodyTooLarge -> 
+                                    match await Ashes.Net.Tcp.send(client)(render(text(413)("Payload Too Large"))) with
+                                        | Error(e8) -> Error(e8)
+                                        | Ok(_n5) -> await Ashes.Net.Tcp.close(client)
                                 | BodyDone(req, bodyKeepAlive, rest) -> 
                                     match await handler(req) with
                                         | Ok(resp) -> 
@@ -450,6 +457,50 @@ let connectionHandler handler =
                                             match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
                                                 | Error(e7) -> Error(e7)
                                                 | Ok(_n4) -> await Ashes.Net.Tcp.close(client)
+                    | HttpNeedChunked(requestLine, headerBlock, keepAlive, firstPiece, firstTail) -> 
+                        let recursive chunkedLoop pieces tail got = 
+                            if got + Ashes.Text.byteLength(tail) >= maxRequestBytes
+                            then BodyTooLarge
+                            else 
+                                match await Ashes.Net.Tcp.receive(client)(65536) with
+                                    | Error(e9) -> BodyFailed(e9)
+                                    | Ok(chunk) -> 
+                                        if Ashes.Text.byteLength(chunk) == 0
+                                        then BodyPeerClosed
+                                        else 
+                                            let tailBytes = Ashes.Bytes.fromText(tail + chunk)
+                                            in 
+                                                match decodeChunkedFrom(tailBytes)(0)("") with
+                                                    | ChunkDone(piece, endOffset) -> 
+                                                        let body = Ashes.String.join("")(Ashes.List.reverse(piece :: pieces))
+                                                        in BodyDone(requestFromLine(requestLine)(headerBlock)(body))(keepAlive)(Ashes.Bytes.subText(tailBytes)(endOffset)(Ashes.Bytes.length(tailBytes) - endOffset))
+                                                    | ChunkPartial(piece, frameStart) -> chunkedLoop(piece :: pieces)(Ashes.Bytes.subText(tailBytes)(frameStart)(Ashes.Bytes.length(tailBytes) - frameStart))(got + Ashes.Text.byteLength(piece))
+                        in 
+                            match chunkedLoop(firstPiece :: [])(firstTail)(Ashes.Text.byteLength(firstPiece)) with
+                                | BodyFailed(e10) -> Error(e10)
+                                | BodyPeerClosed -> await Ashes.Net.Tcp.close(client)
+                                | BodyTooLarge -> 
+                                    match await Ashes.Net.Tcp.send(client)(render(text(413)("Payload Too Large"))) with
+                                        | Error(e11) -> Error(e11)
+                                        | Ok(_n6) -> await Ashes.Net.Tcp.close(client)
+                                | BodyDone(req, chunkedKeepAlive, rest) -> 
+                                    match await handler(req) with
+                                        | Ok(resp) -> 
+                                            let wire = 
+                                                renderConnection(if chunkedKeepAlive
+                                                then "keep-alive"
+                                                else "close")(resp)
+                                            in 
+                                                match await Ashes.Net.Tcp.send(client)(wire) with
+                                                    | Error(e12) -> Error(e12)
+                                                    | Ok(_n7) -> 
+                                                        if chunkedKeepAlive
+                                                        then connLoop(rest)
+                                                        else await Ashes.Net.Tcp.close(client)
+                                        | Error(_he3) -> 
+                                            match await Ashes.Net.Tcp.send(client)(render(text(500)("Internal Server Error"))) with
+                                                | Error(e13) -> Error(e13)
+                                                | Ok(_n8) -> await Ashes.Net.Tcp.close(client)
                     | HttpParsed(req, keepAlive, rest) -> 
                         match await handler(req) with
                             | Ok(resp) -> 
