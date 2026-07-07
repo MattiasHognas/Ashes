@@ -29,9 +29,6 @@ public static class DiagnosticCodes
     public const string UseAfterDrop = "ASH006";
     public const string DoubleDrop = "ASH007";
 
-    /// <summary>A renamed capability keyword was used with its old spelling (`effect`→`capability`, `uses`→`needs`).</summary>
-    public const string RenamedCapabilityKeyword = "ASH025";
-
     // ASH010–ASH012 were allocated for an `async`-block enforcement model (await/networking outside
     // `async`, async error-type conflict) that the language no longer has — `async` is now a builtin
     // (Ashes.Async.task), not a keyword, and async-only safety is enforced by the Task type. They

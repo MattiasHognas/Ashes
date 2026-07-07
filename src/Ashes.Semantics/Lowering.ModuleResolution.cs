@@ -13,21 +13,21 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
     {
-        // A bare (uncalled) effect operation reference. Direct application is handled in
+        // A bare (uncalled) capability operation reference. Direct application is handled in
         // LowerCall; a first-class operation value eta-expands to a lambda performing the
         // operation, so the perform happens where the value is eventually applied. The expansion
         // needs the operation's arity, so an unsigned operation cannot be used as a value.
-        if (_capabilitySymbols.TryGetValue(qv.Module, out var bareEffectSym))
+        if (_capabilitySymbols.TryGetValue(qv.Module, out var bareCapabilitySym))
         {
-            if (!bareEffectSym.Operations.TryGetValue(qv.Name, out var bareOperation))
+            if (!bareCapabilitySym.Operations.TryGetValue(qv.Name, out var bareOperation))
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
+                ReportDiagnostic(GetSpan(qv), $"Capability '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 
             if (bareOperation.DeclaredSignature is null)
             {
-                ReportDiagnostic(GetSpan(qv), $"Effect operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
+                ReportDiagnostic(GetSpan(qv), $"Capability operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
                 return ReturnNeverWithDummyTemp();
             }
 

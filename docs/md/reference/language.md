@@ -33,7 +33,7 @@ The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `recursive`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `when`, `given`,
 `true`, `false`, `type`, `external`, `await`, `import`, `as`,
-`effect`, `uses`, `perform`, `handle`
+`capability`, `needs`, `perform`, `handle`
 
 Two principles govern the keyword set:
 
@@ -2333,9 +2333,8 @@ Implementation status: the full surface is implemented — capability declaratio
 capability typing, the unsatisfied-capability diagnostic, `handle`/`perform` with
 **tail-resumptive and one-shot resumptive** arms, first-class operation values (for operations with
 explicit signatures), static `provide` with concrete and generic (monomorphized / dictionary-passed)
-resolution, and capabilities and providers declared in imported project modules. The former
-`effect` / `uses` spellings are renamed to `capability` / `needs` and now produce a rename diagnostic
-(`ASH025`). Aborting arms (a path that never resumes) and multi-shot `resume` are rejected with a
+resolution, and capabilities and providers declared in imported project modules. Aborting arms
+(a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
 defined; handler evidence is currently per-process, not per-task or per-thread (see
@@ -2606,8 +2605,8 @@ compile-time error.
 
 Because a handler's `needs {Stop}` (or `{NetConnect}`, for a handler that dials out) must thread
 through `serve`, capability rows propagate correctly through higher-order library combinators and
-recursive helpers: a recursive function that performs a capability — or that applies an effectful
-parameter, as `Ashes.List.map` applies its mapping function — carries an open latent row, so
+recursive helpers: a recursive function that performs a capability — or that applies a
+capability-performing parameter, as `Ashes.List.map` applies its mapping function — carries an open latent row, so
 passing a capability-performing function to it is accepted.
 
 ## 20.9 Design Notes
@@ -2629,7 +2628,7 @@ documented limitation, not a TODO.
 
 `ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row, and the
 generic-provider limitation), `ASH019` (unknown capability or operation), `ASH020` (invalid
-handler), `ASH025` (the old `effect`/`uses` spellings), `ASH026` (duplicate/incomplete provider),
+handler), `ASH026` (duplicate/incomplete provider),
 and `ASH027` (a capability satisfied by both a provider and a handler) cover this surface; see
 [DIAGNOSTICS.md](diagnostics.md).
 

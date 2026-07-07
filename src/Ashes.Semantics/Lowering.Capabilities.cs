@@ -17,14 +17,14 @@ public sealed partial class Lowering
     private readonly Dictionary<string, int> _capabilityIndices = new(StringComparer.Ordinal);
 
     // Unique suffix source for the labels of perform-site unhandled-guard blocks.
-    private int _nextEffectSiteId;
+    private int _nextCapabilitySiteId;
 
     // First perform-site span per capability, giving the unhandled-capability diagnostic (ASH017) a
     // useful location to point at.
     private readonly Dictionary<string, TextSpan> _firstPerformSites = new(StringComparer.Ordinal);
 
     // The ambient capability row of the code currently being lowered: every operation performed and
-    // every effectful call in a scope inserts its capabilities here. Each lambda body gets its own row
+    // every capability-performing call in a scope inserts its capabilities here. Each lambda body gets its own row
     // (the lambda's arrow row); the field holds the entry expression's row otherwise. Created
     // lazily because type-variable numbering starts with the program.
     private TypeRef? _ambientRow;
@@ -404,7 +404,7 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int isZeroTemp = NewTemp();
         Emit(new IrInst.CmpIntEq(isZeroTemp, counterTemp, zeroTemp));
-        string skipLabel = $"live_posts_skip_{_nextEffectSiteId++}";
+        string skipLabel = $"live_posts_skip_{_nextCapabilitySiteId++}";
         Emit(new IrInst.JumpIfFalse(isZeroTemp, skipLabel));
         return skipLabel;
     }
@@ -434,7 +434,7 @@ public sealed partial class Lowering
     /// perform), then create the post-resume continuation closure and hand it to the perform site
     /// through the pending-post register.
     /// </summary>
-    private (int, TypeRef) LowerEffectPost(CapabilityPostExpr post)
+    private (int, TypeRef) LowerCapabilityPost(CapabilityPostExpr post)
     {
         var (valueTemp, valueType) = LowerExpr(post.Value);
         var (postTemp, postType) = LowerExpr(post.PostLambda);
@@ -466,9 +466,9 @@ public sealed partial class Lowering
         return -1;
     }
 
-    private static TextSpan GetSpan(CapabilityDecl effectDecl)
+    private static TextSpan GetSpan(CapabilityDecl capabilityDecl)
     {
-        var span = AstSpans.GetOrDefault(effectDecl);
+        var span = AstSpans.GetOrDefault(capabilityDecl);
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 
@@ -542,37 +542,37 @@ public sealed partial class Lowering
     /// </summary>
     private void UnifyRows(TypeRef? a, TypeRef? b)
     {
-        var (effectsA, tailA) = NormalizeRow(a);
-        var (effectsB, tailB) = NormalizeRow(b);
+        var (capabilitiesA, tailA) = NormalizeRow(a);
+        var (capabilitiesB, tailB) = NormalizeRow(b);
 
         var onlyA = new List<TypeRef.TCapability>();
-        foreach (var effectA in effectsA)
+        foreach (var capabilityA in capabilitiesA)
         {
             TypeRef.TCapability? match = null;
-            foreach (var effectB in effectsB)
+            foreach (var capabilityB in capabilitiesB)
             {
-                if (string.Equals(effectA.Symbol.Name, effectB.Symbol.Name, StringComparison.Ordinal))
+                if (string.Equals(capabilityA.Symbol.Name, capabilityB.Symbol.Name, StringComparison.Ordinal))
                 {
-                    match = effectB;
+                    match = capabilityB;
                     break;
                 }
             }
 
             if (match is null)
             {
-                onlyA.Add(effectA);
+                onlyA.Add(capabilityA);
             }
             else
             {
-                for (int i = 0; i < Math.Min(effectA.Args.Count, match.Args.Count); i++)
+                for (int i = 0; i < Math.Min(capabilityA.Args.Count, match.Args.Count); i++)
                 {
-                    Unify(effectA.Args[i], match.Args[i]);
+                    Unify(capabilityA.Args[i], match.Args[i]);
                 }
             }
         }
 
-        var onlyB = effectsB
-            .Where(effectB => !effectsA.Any(effectA => string.Equals(effectA.Symbol.Name, effectB.Symbol.Name, StringComparison.Ordinal)))
+        var onlyB = capabilitiesB
+            .Where(capabilityB => !capabilitiesA.Any(capabilityA => string.Equals(capabilityA.Symbol.Name, capabilityB.Symbol.Name, StringComparison.Ordinal)))
             .ToList();
 
         if (onlyA.Count == 0 && onlyB.Count == 0)
@@ -598,20 +598,20 @@ public sealed partial class Lowering
 
         if (onlyB.Count > 0 && tailA is null)
         {
-            ReportRowMissingEffects(onlyB, effectsA);
+            ReportRowMissingCapabilities(onlyB, capabilitiesA);
             return;
         }
 
         if (onlyA.Count > 0 && tailB is null)
         {
-            ReportRowMissingEffects(onlyA, effectsB);
+            ReportRowMissingCapabilities(onlyA, capabilitiesB);
             return;
         }
 
         if (tailA is not null && tailB is not null && tailA.Id == tailB.Id)
         {
             // One tail cannot absorb different capability sets on both sides.
-            ReportRowMissingEffects(onlyA.Concat(onlyB).ToList(), []);
+            ReportRowMissingCapabilities(onlyA.Concat(onlyB).ToList(), []);
             return;
         }
 
@@ -637,15 +637,15 @@ public sealed partial class Lowering
         }
     }
 
-    private void ReportRowMissingEffects(List<TypeRef.TCapability> missing, List<TypeRef.TCapability> closedRowEffects)
+    private void ReportRowMissingCapabilities(List<TypeRef.TCapability> missing, List<TypeRef.TCapability> closedRowCapabilities)
     {
-        var names = string.Join(", ", missing.Select(PrettyEffect).OrderBy(n => n, StringComparer.Ordinal));
-        var row = string.Join(", ", closedRowEffects.Select(PrettyEffect).OrderBy(n => n, StringComparer.Ordinal));
+        var names = string.Join(", ", missing.Select(PrettyCapability).OrderBy(n => n, StringComparer.Ordinal));
+        var row = string.Join(", ", closedRowCapabilities.Select(PrettyCapability).OrderBy(n => n, StringComparer.Ordinal));
         var plural = missing.Count == 1 ? $"Capability '{names}' is" : $"Capabilities '{names}' are";
         ReportDiagnostic(0, $"{plural} not permitted by the closed row needs {{{row}}}.", CapabilityNotPermittedCode);
     }
 
-    private string PrettyEffect(TypeRef.TCapability capability)
+    private string PrettyCapability(TypeRef.TCapability capability)
     {
         return capability.Args.Count == 0
             ? capability.Symbol.Name
@@ -684,12 +684,12 @@ public sealed partial class Lowering
         }
         else
         {
-            RequireEffectsInAmbient(capabilities);
+            RequireCapabilitiesInAmbient(capabilities);
         }
     }
 
     /// <summary>Requires the ambient row to include the given capabilities, extending its tail as needed.</summary>
-    private void RequireEffectsInAmbient(List<TypeRef.TCapability> capabilities)
+    private void RequireCapabilitiesInAmbient(List<TypeRef.TCapability> capabilities)
     {
         if (capabilities.Count == 0)
         {
@@ -711,7 +711,7 @@ public sealed partial class Lowering
     /// The end-of-program unhandled-capability check (ASH017): after lowering, any concrete capability
     /// left in the entry expression's row has no handler discharging it.
     /// </summary>
-    private void CheckUnhandledEffects()
+    private void CheckUnhandledCapabilities()
     {
         if (_ambientRow is null)
         {
@@ -762,22 +762,22 @@ public sealed partial class Lowering
         }
 
         if (rootExpr is Expr.QualifiedVar qv
-            && _capabilitySymbols.TryGetValue(qv.Module, out var effectSym)
+            && _capabilitySymbols.TryGetValue(qv.Module, out var capabilitySym)
             && collectedArgs.Count > 0)
         {
-            return LowerCapabilityOperationCall(effectSym, qv, collectedArgs);
+            return LowerCapabilityOperationCall(capabilitySym, qv, collectedArgs);
         }
 
         ReportDiagnostic(GetSpan(perform), "'perform' must be applied to a capability operation call.", UnknownCapabilityCode);
         return LowerExpr(perform.Operation);
     }
 
-    private (int, TypeRef) LowerCapabilityOperationCall(CapabilitySymbol effectSym, Expr.QualifiedVar qv, List<Expr> args)
+    private (int, TypeRef) LowerCapabilityOperationCall(CapabilitySymbol capabilitySym, Expr.QualifiedVar qv, List<Expr> args)
     {
         var span = GetSpan(qv);
-        if (!effectSym.Operations.TryGetValue(qv.Name, out var operation))
+        if (!capabilitySym.Operations.TryGetValue(qv.Name, out var operation))
         {
-            ReportDiagnostic(span, $"Capability '{effectSym.Name}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
+            ReportDiagnostic(span, $"Capability '{capabilitySym.Name}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
             foreach (var arg in args)
             {
                 LowerExpr(arg);
@@ -790,12 +790,12 @@ public sealed partial class Lowering
         // parameters with fresh variables shared with the row entry, so `State(a)` ties
         // `get : Unit -> a` to the `State(a)` instance in the row. An unsigned operation uses its
         // shared inference variable (monomorphic within the compilation unit).
-        var effectArgs = effectSym.TypeParameters.Select(_ => NewTypeVar()).ToList();
+        var capabilityArgs = capabilitySym.TypeParameters.Select(_ => NewTypeVar()).ToList();
         var opType = operation.DeclaredSignature is not null
-            ? InstantiateEffectSignature(operation.DeclaredSignature, effectSym.TypeParameters, effectArgs)
+            ? InstantiateCapabilitySignature(operation.DeclaredSignature, capabilitySym.TypeParameters, capabilityArgs)
             : operation.InferredType!;
 
-        RecordHoverType(span, $"{effectSym.Name}.{qv.Name}", opType);
+        RecordHoverType(span, $"{capabilitySym.Name}.{qv.Name}", opType);
 
         // Type the application like an ordinary curried call chain, collecting argument temps.
         var argTemps = new List<int>(args.Count);
@@ -818,11 +818,11 @@ public sealed partial class Lowering
 
             if (currentType is not TypeRef.TFun funType)
             {
-                ReportDiagnostic(span, $"Operation '{effectSym.Name}.{qv.Name}' expects {i} argument(s) but got {args.Count}.");
+                ReportDiagnostic(span, $"Operation '{capabilitySym.Name}.{qv.Name}' expects {i} argument(s) but got {args.Count}.");
                 return ReturnNeverWithDummyTemp();
             }
 
-            using (PushDiagnosticContext($"in argument #{i + 1} of operation '{effectSym.Name}.{qv.Name}'"))
+            using (PushDiagnosticContext($"in argument #{i + 1} of operation '{capabilitySym.Name}.{qv.Name}'"))
             {
                 Unify(funType.Arg, argType);
             }
@@ -835,12 +835,12 @@ public sealed partial class Lowering
         //  - a matching static provider, not handled     -> direct call to the provider's impl
         //  - both                                         -> ambiguity error (ASH027)
         //  - neither / abstract instance                 -> dynamic path; residual row -> ASH017
-        bool handled = _lexicallyHandledCapabilities.Contains(effectSym.Name);
-        var provider = ResolveProvider(effectSym, effectArgs);
+        bool handled = _lexicallyHandledCapabilities.Contains(capabilitySym.Name);
+        var provider = ResolveProvider(capabilitySym, capabilityArgs);
 
         if (handled && provider is not null)
         {
-            ReportDiagnostic(span, $"Capability '{effectSym.Name}' is satisfied both by a provider and by an enclosing handler. Choose one.", AmbiguousSatisfactionCode);
+            ReportDiagnostic(span, $"Capability '{capabilitySym.Name}' is satisfied both by a provider and by an enclosing handler. Choose one.", AmbiguousSatisfactionCode);
         }
 
         if (provider is not null && !handled)
@@ -857,14 +857,14 @@ public sealed partial class Lowering
 
         // Dynamic satisfaction: record the requirement in the ambient row so a handler discharges
         // it (or the top-level unsatisfied check reports it), and emit the evidence-based perform.
-        var effectInstance = new TypeRef.TCapability(effectSym, effectArgs);
-        RecordPerformSite(effectInstance, span);
+        var capabilityInstance = new TypeRef.TCapability(capabilitySym, capabilityArgs);
+        RecordPerformSite(capabilityInstance, span);
         using (PushDiagnosticSpan(span))
         {
-            RequireEffectsInAmbient([effectInstance]);
+            RequireCapabilitiesInAmbient([capabilityInstance]);
         }
 
-        int resultTemp = EmitPerform(effectSym, qv.Name, argTemps);
+        int resultTemp = EmitPerform(capabilitySym, qv.Name, argTemps);
         return (resultTemp, currentType);
     }
 
@@ -883,7 +883,7 @@ public sealed partial class Lowering
         var operation = provider.Capability.Operations[opName];
         if (operation.DeclaredSignature is not null)
         {
-            var expected = InstantiateEffectSignature(operation.DeclaredSignature, provider.Capability.TypeParameters, provider.TypeArgs);
+            var expected = InstantiateCapabilitySignature(operation.DeclaredSignature, provider.Capability.TypeParameters, provider.TypeArgs);
             using (PushDiagnosticContext($"in provider '{BuildProviderKey(provider.Capability.Name, provider.TypeArgs)}' operation '{opName}'"))
             {
                 Unify(implType, expected);
@@ -909,17 +909,17 @@ public sealed partial class Lowering
     /// a guard panics with a clear message rather than dereferencing null if that invariant is ever
     /// broken.
     /// </summary>
-    private int EmitPerform(CapabilitySymbol effectSym, string opName, List<int> argTemps)
+    private int EmitPerform(CapabilitySymbol capabilitySym, string opName, List<int> argTemps)
     {
-        int effectIndex = _capabilityIndices[effectSym.Name];
-        int opIndex = OperationDeclIndex(effectSym, opName);
+        int capabilityIndex = _capabilityIndices[capabilitySym.Name];
+        int opIndex = OperationDeclIndex(capabilitySym, opName);
         int globalCount = CapabilityGlobalCount;
-        int siteId = _nextEffectSiteId++;
-        string unhandledLabel = $"effect_unhandled_{siteId}";
-        string doneLabel = $"effect_done_{siteId}";
+        int siteId = _nextCapabilitySiteId++;
+        string unhandledLabel = $"capability_unhandled_{siteId}";
+        string doneLabel = $"capability_done_{siteId}";
 
         int frameTemp = NewTemp();
-        Emit(new IrInst.LoadCapabilityHandler(frameTemp, effectIndex));
+        Emit(new IrInst.LoadCapabilityHandler(frameTemp, capabilityIndex));
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int installedTemp = NewTemp();
@@ -969,7 +969,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreCapabilityHandler(PostRegisterIndex, postZeroTemp));
         int hasPostTemp = NewTemp();
         Emit(new IrInst.CmpIntNe(hasPostTemp, postTemp, postZeroTemp));
-        string noPostLabel = $"effect_no_post_{siteId}";
+        string noPostLabel = $"capability_no_post_{siteId}";
         Emit(new IrInst.JumpIfFalse(hasPostTemp, noPostLabel));
         int postsHeadPtrTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(postsHeadPtrTemp, frameTemp, globalCount * 8));
@@ -989,7 +989,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Jump(doneLabel));
 
         Emit(new IrInst.Label(unhandledLabel));
-        var panicLabelStr = InternString($"Unhandled capability operation '{effectSym.Name}.{opName}'.");
+        var panicLabelStr = InternString($"Unhandled capability operation '{capabilitySym.Name}.{opName}'.");
         int panicMsgTemp = NewTemp();
         Emit(new IrInst.LoadConstStr(panicMsgTemp, panicLabelStr));
         Emit(new IrInst.PanicStr(panicMsgTemp));
@@ -1000,7 +1000,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>Substitutes a capability's type parameters with fresh per-use variables in an operation signature.</summary>
-    private TypeRef InstantiateEffectSignature(TypeRef signature, IReadOnlyList<TypeParameterSymbol> typeParameters, IReadOnlyList<TypeRef> freshArgs)
+    private TypeRef InstantiateCapabilitySignature(TypeRef signature, IReadOnlyList<TypeParameterSymbol> typeParameters, IReadOnlyList<TypeRef> freshArgs)
     {
         if (typeParameters.Count == 0)
         {
@@ -1078,27 +1078,27 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (!_capabilitySymbols.TryGetValue(arm.CapabilityName, out var armEffect)
-                || !armEffect.Operations.ContainsKey(arm.OperationName))
+            if (!_capabilitySymbols.TryGetValue(arm.CapabilityName, out var armCapability)
+                || !armCapability.Operations.ContainsKey(arm.OperationName))
             {
                 ReportDiagnostic(GetSpan(handle), $"Handler arm '{arm.CapabilityName}.{arm.OperationName}' does not name a declared capability operation.", InvalidHandlerCode);
                 malformed = true;
                 continue;
             }
 
-            if (opArms.Any(x => ReferenceEquals(x.Capability, armEffect) && string.Equals(x.OpName, arm.OperationName, StringComparison.Ordinal)))
+            if (opArms.Any(x => ReferenceEquals(x.Capability, armCapability) && string.Equals(x.OpName, arm.OperationName, StringComparison.Ordinal)))
             {
                 ReportDiagnostic(GetSpan(handle), $"Duplicate handler arm for '{arm.CapabilityName}.{arm.OperationName}'.", InvalidHandlerCode);
                 malformed = true;
                 continue;
             }
 
-            opArms.Add((armEffect, arm.OperationName, arm));
+            opArms.Add((armCapability, arm.OperationName, arm));
         }
 
         // A handler discharges whole capabilities, so every operation of each handled capability needs an arm.
-        var handledEffects = opArms.Select(x => x.Capability).Distinct().ToList();
-        foreach (var capability in handledEffects)
+        var handledCapabilities = opArms.Select(x => x.Capability).Distinct().ToList();
+        foreach (var capability in handledCapabilities)
         {
             foreach (var operation in capability.DeclaringSyntax.Operations)
             {
@@ -1110,9 +1110,9 @@ public sealed partial class Lowering
             }
         }
 
-        if (malformed || handledEffects.Count == 0)
+        if (malformed || handledCapabilities.Count == 0)
         {
-            if (handledEffects.Count == 0 && !malformed)
+            if (handledCapabilities.Count == 0 && !malformed)
             {
                 ReportDiagnostic(GetSpan(handle), "A handler must have at least one operation arm.", InvalidHandlerCode);
             }
@@ -1124,7 +1124,7 @@ public sealed partial class Lowering
         // and every arm's operation signature (`handle ... with | State.get ...` handles State(a)
         // at one concrete-or-inferred `a`), plus the handle's result type — one-shot arms need it
         // before the body is lowered, since their post-resume continuations have type R -> R.
-        var effectInstances = handledEffects.ToDictionary(
+        var capabilityInstances = handledCapabilities.ToDictionary(
             e => e.Name,
             e => e.TypeParameters.Select(_ => NewTypeVar()).ToList(),
             StringComparer.Ordinal);
@@ -1143,7 +1143,7 @@ public sealed partial class Lowering
             }
 
             var (closureTemp, closureType) = LowerExpr(armLambda);
-            UnifyArmWithOperation(capability, opName, effectInstances[capability.Name], closureType, arm.Parameters.Count);
+            UnifyArmWithOperation(capability, opName, capabilityInstances[capability.Name], closureType, arm.Parameters.Count);
             SubsumeCalleeRow(InnermostArrowRow(closureType, arm.Parameters.Count), GetSpan(handle));
             armClosures.Add((capability, OperationDeclIndex(capability, opName), closureTemp));
         }
@@ -1161,7 +1161,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreMemOffset(postsHeadPtrTemp, 0, postsInitZeroTemp));
 
         var frameTemps = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var capability in handledEffects)
+        foreach (var capability in handledCapabilities)
         {
             int frameTemp = NewTemp();
             Emit(new IrInst.AllocStack(frameTemp, (globalCount + 1 + capability.DeclaringSyntax.Operations.Count) * 8));
@@ -1173,9 +1173,9 @@ public sealed partial class Lowering
             }
 
             Emit(new IrInst.StoreMemOffset(frameTemp, globalCount * 8, postsHeadPtrTemp));
-            foreach (var (armEffect, opIndex, closureTemp) in armClosures)
+            foreach (var (armCapability, opIndex, closureTemp) in armClosures)
             {
-                if (ReferenceEquals(armEffect, capability))
+                if (ReferenceEquals(armCapability, capability))
                 {
                     Emit(new IrInst.StoreMemOffset(frameTemp, (globalCount + 1 + opIndex) * 8, closureTemp));
                 }
@@ -1184,7 +1184,7 @@ public sealed partial class Lowering
             frameTemps[capability.Name] = frameTemp;
         }
 
-        foreach (var capability in handledEffects)
+        foreach (var capability in handledCapabilities)
         {
             Emit(new IrInst.StoreCapabilityHandler(_capabilityIndices[capability.Name], frameTemps[capability.Name]));
         }
@@ -1193,13 +1193,13 @@ public sealed partial class Lowering
         // performs flows through the fresh tail to the enclosing row.
         var outerTail = NewTypeVar();
         var bodyRow = new TypeRef.TRow(
-            handledEffects.Select(e => new TypeRef.TCapability(e, effectInstances[e.Name])).ToList(),
+            handledCapabilities.Select(e => new TypeRef.TCapability(e, capabilityInstances[e.Name])).ToList(),
             outerTail);
         var savedAmbientRow = _ambientRow;
         _ambientRow = bodyRow;
         // Operations of the handled capabilities resolve dynamically (this handler's evidence) while
         // lowering the body — and a static provider for one of them is then an ambiguity error.
-        var newlyHandled = handledEffects.Where(e => _lexicallyHandledCapabilities.Add(e.Name)).ToList();
+        var newlyHandled = handledCapabilities.Where(e => _lexicallyHandledCapabilities.Add(e.Name)).ToList();
         var (bodyTemp, bodyType) = LowerExpr(handle.Body);
         foreach (var handledCapability in newlyHandled)
         {
@@ -1210,12 +1210,12 @@ public sealed partial class Lowering
         UnifyRows(outerTail, AmbientRow);
 
         // 6. Uninstall: restore each handled capability's global from this frame's own snapshot slot.
-        foreach (var capability in handledEffects)
+        foreach (var capability in handledCapabilities)
         {
-            int effectIndex = _capabilityIndices[capability.Name];
+            int capabilityIndex = _capabilityIndices[capability.Name];
             int previousTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(previousTemp, frameTemps[capability.Name], effectIndex * 8));
-            Emit(new IrInst.StoreCapabilityHandler(effectIndex, previousTemp));
+            Emit(new IrInst.LoadMemOffset(previousTemp, frameTemps[capability.Name], capabilityIndex * 8));
+            Emit(new IrInst.StoreCapabilityHandler(capabilityIndex, previousTemp));
         }
 
         // 7. The return arm transforms the body's final value; without one the value passes through.
@@ -1229,7 +1229,7 @@ public sealed partial class Lowering
         {
             int bodySlot = NewLocal();
             Emit(new IrInst.StoreLocal(bodySlot, bodyTemp));
-            var resultName = $"__handle_result_{_nextEffectSiteId++}";
+            var resultName = $"__handle_result_{_nextCapabilitySiteId++}";
             _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
             {
                 [resultName] = new Binding.Local(bodySlot, bodyType),
@@ -1248,7 +1248,7 @@ public sealed partial class Lowering
         // most recent perform's continuation is innermost in the reduction), decrementing the
         // live-posts counter as each is consumed. Posts run here — outside the handle — under the
         // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h].
-        int foldId = _nextEffectSiteId++;
+        int foldId = _nextCapabilitySiteId++;
         string foldLoopLabel = $"posts_fold_{foldId}";
         string foldDoneLabel = $"posts_fold_done_{foldId}";
         int foldResultSlot = NewLocal();
@@ -1308,7 +1308,7 @@ public sealed partial class Lowering
             paramNames[i] = arm.Parameters[i] switch
             {
                 Pattern.Var v => v.Name,
-                _ => $"__arm_arg_{_nextEffectSiteId++}",
+                _ => $"__arm_arg_{_nextCapabilitySiteId++}",
             };
         }
 
@@ -1372,7 +1372,7 @@ public sealed partial class Lowering
                     return false;
                 }
 
-                rewritten = BuildEffectPost(oneShotLet.Name, oneShotLet.Body, resumeCall.Arg, handleResultType, oneShotLet);
+                rewritten = BuildCapabilityPost(oneShotLet.Name, oneShotLet.Body, resumeCall.Arg, handleResultType, oneShotLet);
                 return true;
 
             case Expr.Let let:
@@ -1430,12 +1430,12 @@ public sealed partial class Lowering
                     return false;
                 }
 
-                var postParam = $"__resume_result_{_nextEffectSiteId++}";
+                var postParam = $"__resume_result_{_nextCapabilitySiteId++}";
                 var postScrutinee = new Expr.Var(postParam);
                 AstSpans.Set(postScrutinee, GetSpan(oneShotMatch));
                 var postMatch = new Expr.Match(postScrutinee, oneShotMatch.Cases, oneShotMatch.Pos);
                 AstSpans.Set(postMatch, AstSpans.GetOrDefault(oneShotMatch));
-                rewritten = BuildEffectPost(postParam, postMatch, scrutineeResume.Arg, handleResultType, oneShotMatch);
+                rewritten = BuildCapabilityPost(postParam, postMatch, scrutineeResume.Arg, handleResultType, oneShotMatch);
                 return true;
 
             case Expr.Match match:
@@ -1472,7 +1472,7 @@ public sealed partial class Lowering
     /// Builds the one-shot split node: the resume argument as the value returned to the perform
     /// site, and <c>given param -&gt; postBody</c> as the post-resume continuation.
     /// </summary>
-    private Expr BuildEffectPost(string paramName, Expr postBody, Expr resumeArg, TypeRef handleResultType, Expr original)
+    private Expr BuildCapabilityPost(string paramName, Expr postBody, Expr resumeArg, TypeRef handleResultType, Expr original)
     {
         var postLambda = new Expr.Lambda(paramName, postBody);
         AstSpans.Set(postLambda, AstSpans.GetOrDefault(original));
@@ -1493,7 +1493,7 @@ public sealed partial class Lowering
     /// function type. The arm's capability rows are detached (replaced by fresh variables) first: the
     /// arm's real row belongs to the enclosing context, not to the operation's published type.
     /// </summary>
-    private void UnifyArmWithOperation(CapabilitySymbol capability, string opName, IReadOnlyList<TypeRef> effectArgs, TypeRef armClosureType, int armParamCount)
+    private void UnifyArmWithOperation(CapabilitySymbol capability, string opName, IReadOnlyList<TypeRef> capabilityArgs, TypeRef armClosureType, int armParamCount)
     {
         var operation = capability.Operations[opName];
         if (operation.DeclaredSignature is not null && CountArrows(operation.DeclaredSignature) < armParamCount)
@@ -1503,7 +1503,7 @@ public sealed partial class Lowering
         }
 
         var opType = operation.DeclaredSignature is not null
-            ? InstantiateEffectSignature(operation.DeclaredSignature, capability.TypeParameters, effectArgs)
+            ? InstantiateCapabilitySignature(operation.DeclaredSignature, capability.TypeParameters, capabilityArgs)
             : operation.InferredType!;
 
         using (PushDiagnosticContext($"in handler arm '{capability.Name}.{opName}'"))
@@ -1548,7 +1548,7 @@ public sealed partial class Lowering
     {
         var span = AstSpans.GetOrDefault(qv);
         var paramNames = Enumerable.Range(0, Math.Max(arity, 1))
-            .Select(i => $"__op_arg_{_nextEffectSiteId++}_{i}")
+            .Select(i => $"__op_arg_{_nextCapabilitySiteId++}_{i}")
             .ToList();
 
         Expr body = new Expr.QualifiedVar(qv.Module, qv.Name);
@@ -1586,28 +1586,28 @@ public sealed partial class Lowering
     private TypeRef ResolveNeedsRow(NeedsRowSyntax row)
     {
         var capabilities = new List<TypeRef.TCapability>();
-        foreach (var effectRef in row.Capabilities)
+        foreach (var capabilityRef in row.Capabilities)
         {
-            if (!_capabilitySymbols.TryGetValue(effectRef.Name, out var symbol))
+            if (!_capabilitySymbols.TryGetValue(capabilityRef.Name, out var symbol))
             {
-                if (IsBuiltinNetworkCapability(effectRef.Name))
+                if (IsBuiltinNetworkCapability(capabilityRef.Name))
                 {
-                    symbol = BuiltinNetworkCapability(effectRef.Name);
+                    symbol = BuiltinNetworkCapability(capabilityRef.Name);
                 }
                 else
                 {
-                    ReportDiagnostic(0, $"Unknown capability '{effectRef.Name}' in needs row.", UnknownCapabilityCode);
+                    ReportDiagnostic(0, $"Unknown capability '{capabilityRef.Name}' in needs row.", UnknownCapabilityCode);
                     continue;
                 }
             }
 
-            if (effectRef.Args.Count != symbol.TypeParameters.Count)
+            if (capabilityRef.Args.Count != symbol.TypeParameters.Count)
             {
-                ReportDiagnostic(0, $"Capability '{effectRef.Name}' expects {symbol.TypeParameters.Count} type argument(s) but got {effectRef.Args.Count}.", UnknownCapabilityCode);
+                ReportDiagnostic(0, $"Capability '{capabilityRef.Name}' expects {symbol.TypeParameters.Count} type argument(s) but got {capabilityRef.Args.Count}.", UnknownCapabilityCode);
                 continue;
             }
 
-            capabilities.Add(new TypeRef.TCapability(symbol, effectRef.Args.Select(ResolveTypeExpr).ToList()));
+            capabilities.Add(new TypeRef.TCapability(symbol, capabilityRef.Args.Select(ResolveTypeExpr).ToList()));
         }
 
         TypeRef? tail = null;

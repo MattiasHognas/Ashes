@@ -62,18 +62,11 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability or TokenKind.RenamedEffect or TokenKind.Provide)
+        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability or TokenKind.Provide)
         {
             if (_current.Kind == TokenKind.Provide)
             {
                 items.Add(new TopLevelItem.Provide(ParseProvideDecl()));
-                continue;
-            }
-
-            if (_current.Kind == TokenKind.RenamedEffect)
-            {
-                _diag.Error(CurrentErrorSpan(), "'effect' has been renamed to 'capability'.", DiagnosticCodes.RenamedCapabilityKeyword);
-                items.Add(new TopLevelItem.Capability(ParseCapabilityDecl()));
                 continue;
             }
 
@@ -366,14 +359,13 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses an <c>effect</c> declaration:
+    /// Parses a <c>capability</c> declaration:
     /// <c>capability Name [(a, b)] = | op [: TypeExpr] | op2 ...</c>.
     /// </summary>
     private CapabilityDecl ParseCapabilityDecl()
     {
         var start = _current.Position;
-        // Accept the legacy `effect` spelling too; the rename diagnostic is emitted at the call site.
-        Consume(_current.Kind == TokenKind.RenamedEffect ? TokenKind.RenamedEffect : TokenKind.Capability);
+        Consume(TokenKind.Capability);
         var name = Consume(TokenKind.Ident).Text;
         var typeParameters = new List<TypeParameter>();
         if (_current.Kind == TokenKind.LParen)
@@ -484,7 +476,7 @@ public sealed class Parser
 
     /// <summary>
     /// Parses a full type expression: <c>Int</c>, <c>Int -> Str</c>, <c>List(Int)</c>,
-    /// <c>(Int, Str)</c>, <c>()</c> (Unit), and effect rows: <c>Str -> Int uses {Prices}</c>.
+    /// <c>(Int, Str)</c>, <c>()</c> (Unit), and capability rows: <c>Str -> Int uses {Prices}</c>.
     /// </summary>
     private TypeExpr ParseTypeExpr()
     {
@@ -514,13 +506,8 @@ public sealed class Parser
             return (new TypeExpr.Arrow(atom, returnType) { Needs = pendingUses }, null);
         }
 
-        if (_current.Kind is TokenKind.Needs or TokenKind.RenamedUses)
+        if (_current.Kind is TokenKind.Needs)
         {
-            if (_current.Kind == TokenKind.RenamedUses)
-            {
-                _diag.Error(CurrentErrorSpan(), "'uses' has been renamed to 'needs'.", DiagnosticCodes.RenamedCapabilityKeyword);
-            }
-
             return (atom, ParseNeedsRow());
         }
 
@@ -528,29 +515,29 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses a <c>uses</c> row: <c>uses {A, B}</c>, <c>uses {A, B | e}</c>, <c>uses {State(Int)}</c>,
-    /// or the bare row variable form <c>uses e</c>.
+    /// Parses a <c>needs</c> row: <c>needs {A, B}</c>, <c>needs {A, B | e}</c>, <c>needs {State(Int)}</c>,
+    /// or the bare row variable form <c>needs e</c>.
     /// </summary>
     private NeedsRowSyntax ParseNeedsRow()
     {
-        Consume(_current.Kind == TokenKind.RenamedUses ? TokenKind.RenamedUses : TokenKind.Needs);
+        Consume(TokenKind.Needs);
 
-        // Bare row variable: `uses e`.
+        // Bare row variable: `needs e`.
         if (_current.Kind == TokenKind.Ident)
         {
             return new NeedsRowSyntax([], Consume(TokenKind.Ident).Text);
         }
 
         Consume(TokenKind.LBrace);
-        var effects = new List<CapabilityRefSyntax>();
+        var capabilities = new List<CapabilityRefSyntax>();
         string? tailVar = null;
         if (_current.Kind != TokenKind.RBrace)
         {
-            effects.Add(ParseEffectRef());
+            capabilities.Add(ParseCapabilityRef());
             while (_current.Kind == TokenKind.Comma)
             {
                 Consume(TokenKind.Comma);
-                effects.Add(ParseEffectRef());
+                capabilities.Add(ParseCapabilityRef());
             }
 
             if (_current.Kind == TokenKind.Pipe)
@@ -561,11 +548,11 @@ public sealed class Parser
         }
 
         Consume(TokenKind.RBrace);
-        return new NeedsRowSyntax(effects, tailVar);
+        return new NeedsRowSyntax(capabilities, tailVar);
     }
 
-    /// <summary>Parses one effect reference in a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
-    private CapabilityRefSyntax ParseEffectRef()
+    /// <summary>Parses one capability reference in a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
+    private CapabilityRefSyntax ParseCapabilityRef()
     {
         var name = Consume(TokenKind.Ident).Text;
         var args = new List<TypeExpr>();
@@ -713,7 +700,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses <c>handle body with | Effect.op(args) -> arm | return(r) -> arm</c>. The body is
+    /// Parses <c>handle body with | Capability.op(args) -> arm | return(r) -> arm</c>. The body is
     /// parsed like a match scrutinee (the trailing <c>with</c> belongs to the handle), and arms
     /// follow the same pipe/column rules as match cases.
     /// </summary>
@@ -752,22 +739,22 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses one handler arm: <c>Effect.op(p1, p2) -> body</c> or <c>return(r) -> body</c>.
+    /// Parses one handler arm: <c>Capability.op(p1, p2) -> body</c> or <c>return(r) -> body</c>.
     /// </summary>
     private HandlerArm ParseHandlerArm()
     {
         var head = Consume(TokenKind.Ident);
-        string? effectName = null;
+        string? capabilityName = null;
         var operationName = head.Text;
         if (_current.Kind == TokenKind.Dot)
         {
             Consume(TokenKind.Dot);
-            effectName = head.Text;
+            capabilityName = head.Text;
             operationName = Consume(TokenKind.Ident).Text;
         }
         else if (!string.Equals(head.Text, "return", StringComparison.Ordinal))
         {
-            _diag.Error(head.Span, "Handler arm must be 'Effect.op(args)' or 'return(value)'.", DiagnosticCodes.ParseError);
+            _diag.Error(head.Span, "Handler arm must be 'Capability.op(args)' or 'return(value)'.", DiagnosticCodes.ParseError);
         }
 
         var parameters = new List<Pattern>();
@@ -785,7 +772,7 @@ public sealed class Parser
         Consume(TokenKind.RParen);
         Consume(TokenKind.Arrow);
         var body = ParseMatchCaseBody();
-        return new HandlerArm(effectName, operationName, parameters, body);
+        return new HandlerArm(capabilityName, operationName, parameters, body);
     }
 
     private Expr ParseIf()

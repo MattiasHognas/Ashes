@@ -361,10 +361,10 @@ public sealed partial class Lowering
         var operation = cap.Operations[op];
         if (operation.DeclaredSignature is not null)
         {
-            // Match only the type structure to recover the instance arguments — not the effect rows.
-            // The op-parameter's arrows may have picked up the caller's ambient effects (a pure
-            // operation called in an effectful body), which a provider's pure impl need not carry.
-            var sig = InstantiateEffectSignature(operation.DeclaredSignature, cap.TypeParameters, freshArgs);
+            // Match only the type structure to recover the instance arguments — not the capability rows.
+            // The op-parameter's arrows may have picked up the caller's ambient capabilities (a pure
+            // operation called in a capability-performing body), which a provider's pure impl need not carry.
+            var sig = InstantiateCapabilitySignature(operation.DeclaredSignature, cap.TypeParameters, freshArgs);
             UnifyIgnoringRows(sig, opType);
         }
 
@@ -395,7 +395,7 @@ public sealed partial class Lowering
         return EmitDummyTemp();
     }
 
-    /// <summary>Unifies two types by structure while leaving arrow effect rows free — used to recover a capability instance from an op-parameter type polluted by the caller's ambient effects.</summary>
+    /// <summary>Unifies two types by structure while leaving arrow capability rows free — used to recover a capability instance from an op-parameter type polluted by the caller's ambient capabilities.</summary>
     private void UnifyIgnoringRows(TypeRef a, TypeRef b)
     {
         a = Prune(a);

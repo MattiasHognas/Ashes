@@ -543,7 +543,7 @@ public static class IrOptimizer
             },
             IrInst.Resume r => r with { StateStructTemp = R(r.StateStructTemp) },
 
-            // Effects.
+            // Capabilities.
             IrInst.StoreCapabilityHandler se => se with { Source = R(se.Source) },
 
             // Control flow.

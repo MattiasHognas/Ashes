@@ -25,7 +25,6 @@ Current codes:
 | `ASH018` | Capability not permitted by a closed `needs` row, or a provider used at a non-monomorphizable generic instance |
 | `ASH019` | Unknown capability or capability operation                    |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
-| `ASH025` | Renamed capability keyword (`effect`→`capability`, `uses`→`needs`) |
 | `ASH026` | Duplicate or incomplete static provider (`provide`)            |
 | `ASH027` | Capability satisfied by both a provider and an enclosing handler |
 | `ASH028` | A dependency exports a module outside its declared namespace   |
@@ -49,6 +48,9 @@ Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics
 longer has an `async` keyword — `async` is a builtin (`Ashes.Async.task`), and
 async-only safety is enforced by the `Task` type — so those codes were never
 emitted and have been retired. The numbers are unused and free for reuse.
+
+`ASH025` was briefly a rename diagnostic for the former `effect`/`uses` spellings.
+Those words are now ordinary identifiers, so the code has been retired and is free for reuse.
 
 ## Top-level declaration and import diagnostics
 
@@ -89,10 +91,10 @@ for the remaining roadmap.
 - `ASH017` — **Unsatisfied capability.** The program's residual capability row at the top level is
   non-empty after default built-in handlers are applied: some code reachable from the
   entry expression performs a capability that no enclosing handler discharges. The span
-  points at the first perform-site of the offending effect.
+  points at the first perform-site of the offending capability.
   Message: `Unhandled capability 'Capability': no enclosing handler discharges it.`
 
-- `ASH018` — **Capability not permitted by a closed row.** A function whose written `uses`
+- `ASH018` — **Capability not permitted by a closed row.** A function whose written `needs`
   row is closed performs a capability (directly or by calling a capability-requiring function) that
   the row does not include.
   Message: `Capability 'Capability' is not permitted by the closed row needs {...}.`
@@ -109,13 +111,9 @@ for the remaining roadmap.
   operation for a handled capability), uses `resume` in an unsupported position (supported:
   tail position, let value, match scrutinee — exactly once per path), or has an arm path
   that never resumes (aborting arms need unwinding and are not supported).
-  Messages include: `Handler arm 'Effect.op' does not name a declared effect operation.`,
-  `Duplicate handler arm for 'Effect.op'.`,
+  Messages include: `Handler arm 'Capability.op' does not name a declared capability operation.`,
+  `Duplicate handler arm for 'Capability.op'.`,
   `Handler for capability 'Capability' must handle operation 'op'.`
-
-- `ASH025` — **Renamed capability keyword.** The former spellings `effect` and `uses` were
-  renamed to `capability` and `needs`; using an old spelling reports this with the replacement.
-  Messages: `'effect' has been renamed to 'capability'.`, `'uses' has been renamed to 'needs'.`
 
 - `ASH026` — **Duplicate or incomplete provider.** Two `provide` declarations target the same
   concrete capability instance, a provider supplies an operation more than once, or a provider is

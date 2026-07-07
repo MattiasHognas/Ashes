@@ -547,7 +547,7 @@ public sealed partial class Lowering
                 var copyOutKind = GetCopyOutKind(resultType, out int staticSizeBytes);
                 if (copyOutKind != CopyOutKind.None)
                 {
-                    // With effects in the program the copy-out is conditional on no post being
+                    // With capabilities in the program the copy-out is conditional on no post being
                     // pending; the result routes through a local so the skipped path keeps the
                     // original pointer.
                     int guardResultSlot = -1;

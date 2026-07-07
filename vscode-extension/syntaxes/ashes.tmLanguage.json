@@ -43,7 +43,7 @@
         },
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|async|await|external|effect|uses|perform|handle)\\b"
+          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|async|await|external|capability|needs|perform|handle)\\b"
         }
       ]
     },

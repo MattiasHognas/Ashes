@@ -22,14 +22,14 @@ public sealed record TypeSymbol(
 );
 
 /// <summary>
-/// One operation of a declared effect. <see cref="DeclaredSignature"/> is the resolved signature
-/// with the effect's type parameters as <see cref="TypeRef.TTypeParam"/> placeholders, or null for
+/// One operation of a declared capability. <see cref="DeclaredSignature"/> is the resolved signature
+/// with the capability's type parameters as <see cref="TypeRef.TTypeParam"/> placeholders, or null for
 /// an unsigned operation whose type is inferred by unifying its uses (<see cref="InferredType"/> is
 /// the shared inference variable in that case).
 /// </summary>
 public sealed record CapabilityOperationSymbol(string Name, TypeRef? DeclaredSignature, TypeRef? InferredType);
 
-/// <summary>A declared effect: a named set of operations, optionally parameterized.</summary>
+/// <summary>A declared capability: a named set of operations, optionally parameterized.</summary>
 public sealed record CapabilitySymbol(
     string Name,
     IReadOnlyList<TypeParameterSymbol> TypeParameters,
@@ -37,7 +37,7 @@ public sealed record CapabilitySymbol(
     CapabilityDecl DeclaringSyntax
 )
 {
-    // Rows compare and dedupe effects by name; the record's structural equality over the
+    // Rows compare and dedupe capabilities by name; the record's structural equality over the
     // operations dictionary is neither needed nor meaningful.
     public bool Equals(CapabilitySymbol? other)
     {

@@ -165,7 +165,7 @@ public static class ProjectSupport
     {
         "let", "recursive", "in", "if", "then", "else", "match", "with",
         "given", "true", "false", "type", "await", "external",
-        "effect", "uses", "perform", "handle"
+        "capability", "needs", "perform", "handle"
     };
 
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;
