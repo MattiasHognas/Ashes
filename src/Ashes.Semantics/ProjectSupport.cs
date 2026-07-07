@@ -32,7 +32,12 @@ public sealed record ResolvedDependency(
     string Namespace,
     IReadOnlyList<string> SourceRoots,
     string ProjectDirectory,
-    bool IsDev);
+    bool IsDev)
+{
+    /// <summary>The dependency's own entry file, if any — exempt from the namespace lint because a
+    /// project's entry is never one of its exports.</summary>
+    public string? EntryFile { get; init; }
+}
 
 public sealed record ProjectModule(
     string ModuleName,
@@ -227,6 +232,9 @@ public static class ProjectSupport
         var name = ReadString(root, "name");
         var target = ReadString(root, "target");
 
+        var dependencies = ResolveDependencies(root, projectDirectory);
+        ValidateDependencyNamespaces(dependencies);
+
         return new AshesProject(
             ProjectFilePath: fullProjectPath,
             ProjectDirectory: projectDirectory,
@@ -239,7 +247,7 @@ public static class ProjectSupport
             Target: target
         )
         {
-            Dependencies = ResolveDependencies(root, projectDirectory),
+            Dependencies = dependencies,
         };
     }
 
@@ -279,21 +287,21 @@ public static class ProjectSupport
             if (!Directory.Exists(depDir))
             {
                 throw new InvalidOperationException(
-                    $"Dependency '{entry.Name}' path not found: {pathEl.GetString()}");
+                    $"ASH030: dependency '{entry.Name}' path not found: {pathEl.GetString()}");
             }
 
             if (!File.Exists(manifest))
             {
                 throw new InvalidOperationException(
-                    $"Dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
+                    $"ASH031: dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
             }
 
-            var (ns, roots) = ReadDependencyManifest(manifest, depDir, entry.Value, entry.Name);
-            accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev));
+            var (ns, roots, entryFile) = ReadDependencyManifest(manifest, depDir, entry.Value, entry.Name);
+            accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev) { EntryFile = entryFile });
         }
     }
 
-    private static (string Namespace, IReadOnlyList<string> Roots) ReadDependencyManifest(
+    private static (string Namespace, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(
         string manifestPath, string depDir, JsonElement depEntry, string depKey)
     {
         using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
@@ -311,7 +319,10 @@ public static class ProjectSupport
                  ?? ReadString(manifest, "namespace")
                  ?? PascalCase(ReadString(manifest, "name") ?? depKey);
 
-        return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList());
+        var entryValue = ReadString(manifest, "entry");
+        var entryFile = entryValue is null ? null : ResolvePath(depDir, entryValue);
+
+        return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList(), entryFile);
     }
 
     /// <summary>Map a package name to its default namespace (e.g. <c>json-parser</c> → <c>JsonParser</c>).</summary>
@@ -332,6 +343,62 @@ public static class ProjectSupport
         }
 
         return builder.Length == 0 ? name : builder.ToString();
+    }
+
+    /// <summary>
+    /// Enforce the namespace discipline over resolved dependencies: no two dependencies may claim the
+    /// same namespace (ASH009), and every module a dependency exports must live under its namespace —
+    /// its own entry file excepted, since an entry is never an export (ASH008).
+    /// </summary>
+    private static void ValidateDependencyNamespaces(IReadOnlyList<ResolvedDependency> dependencies)
+    {
+        foreach (var group in dependencies.GroupBy(d => d.Namespace, StringComparer.Ordinal))
+        {
+            var owners = group.ToList();
+            if (owners.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"ASH029: dependencies '{string.Join("', '", owners.Select(d => d.Name))}' both declare " +
+                    $"namespace '{group.Key}'. A namespace may be owned by only one dependency.");
+            }
+        }
+
+        foreach (var dep in dependencies)
+        {
+            foreach (var root in dep.SourceRoots)
+            {
+                if (!Directory.Exists(root))
+                {
+                    continue;
+                }
+
+                foreach (var file in Directory.EnumerateFiles(root, "*.ash", SearchOption.AllDirectories))
+                {
+                    if (dep.EntryFile is not null &&
+                        string.Equals(Path.GetFullPath(file), Path.GetFullPath(dep.EntryFile), StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var module = ModuleNameFromPath(root, file);
+                    var underNamespace = string.Equals(module, dep.Namespace, StringComparison.Ordinal)
+                        || module.StartsWith(dep.Namespace + ".", StringComparison.Ordinal);
+                    if (!underNamespace)
+                    {
+                        throw new InvalidOperationException(
+                            $"ASH028: dependency '{dep.Name}' exports module '{module}' outside its namespace " +
+                            $"'{dep.Namespace}'. A library's modules must live under its namespace directory.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static string ModuleNameFromPath(string root, string file)
+    {
+        var relative = Path.GetRelativePath(root, file);
+        var withoutExtension = relative[..^".ash".Length];
+        return withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace('/', '.');
     }
 
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)

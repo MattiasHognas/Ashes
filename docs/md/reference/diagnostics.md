@@ -28,6 +28,10 @@ Current codes:
 | `ASH025` | Renamed capability keyword (`effect`→`capability`, `uses`→`needs`) |
 | `ASH026` | Duplicate or incomplete static provider (`provide`)            |
 | `ASH027` | Capability satisfied by both a provider and an enclosing handler |
+| `ASH028` | A dependency exports a module outside its declared namespace   |
+| `ASH029` | Two dependencies claim the same namespace                      |
+| `ASH030` | A dependency's `path` was not found                           |
+| `ASH031` | A dependency's `path` is not an Ashes project (no `ashes.json`) |
 | `ASH021` | Disallowed form in an inline `module` block                   |
 | `ASH022` | Inline module path collides with a file module of the same path |
 | `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |

@@ -33,9 +33,9 @@ Running `ashes <command> --help` (or `ashes <command> -h`) also prints the CLI h
 | `ashes test`      | Run `.ash` test files and compare against `// expect:` comments |
 | `ashes fmt`       | Format `.ash` source files                             |
 | `ashes init`      | Create a new Ashes project in the current directory     |
-| `ashes add`       | Add a dependency to the project manifest                |
+| `ashes add`       | Add a dependency to the project manifest (`--path`, `--dev`) |
 | `ashes remove`    | Remove a dependency from the project manifest           |
-| `ashes install`   | List project dependencies (registry not yet available)  |
+| `ashes restore`   | Resolve and validate dependencies (path deps today)     |
 | `ashes login`     | Store an API token for a registry                       |
 | `ashes publish`   | Package the current project and publish it to a registry |
 | `ashes yank`      | Yank (or `--undo`) a published version                  |
@@ -539,25 +539,29 @@ Add a dependency to the nearest `ashes.json` project manifest.
 #### Synopsis
 
 ```sh
-ashes add <package>
+ashes add <package> [--path <dir>] [--dev]
 ```
 
 #### Arguments
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `<package>` | string | **Yes** | The package name to add. |
+| `<package>` | string | **Yes** | The dependency name to add. |
 
 #### Options
 
-None.
+| Name | Description |
+|------|-------------|
+| `--path <dir>` | Record a path dependency `{ "path": "<dir>" }` instead of a registry version. |
+| `--dev` | Write to `devDependencies` instead of `dependencies`. |
 
 #### Behaviour
 
 1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
 2. If no `ashes.json` is found, the command fails with exit code **1**.
-3. Reads the existing JSON, adds the package to the `dependencies` object with version `"*"`, and writes the file back.
-4. If the package already exists in `dependencies`, it is overwritten with `"*"`.
+3. Adds the dependency to `dependencies` (or `devDependencies` with `--dev`): `{ "path": "<dir>" }` when
+   `--path` is given, otherwise the SemVer string `"*"`. Existing entries are overwritten; other
+   dependencies are preserved.
 
 #### Exit Codes
 
@@ -619,21 +623,17 @@ ashes remove json-parser
 
 ---
 
-### `ashes install`
+### `ashes restore`
 
-List project dependencies from the nearest `ashes.json` project manifest. In v0.x the package registry is not yet available, so dependencies are listed but not fetched.
+Resolve and validate a project's dependencies from the nearest `ashes.json`. (`ashes install` is retired.)
 
 #### Synopsis
 
 ```sh
-ashes install
+ashes restore
 ```
 
 #### Arguments
-
-None.
-
-#### Options
 
 None.
 
@@ -641,24 +641,24 @@ None.
 
 1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
 2. If no `ashes.json` is found, the command fails with exit code **1**.
-3. Lists all entries in the `dependencies` object with their version constraints.
-4. If there are no dependencies, prints a message and exits successfully.
+3. Resolves and validates **path dependencies** — a missing path or a non-project path fails with
+   `ASH030` / `ASH031` — and lists each with its namespace.
+4. Registry/git dependencies require a lock file and cache (not yet available); they are reported but not
+   fetched.
 
 #### Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| `0`  | Dependencies listed (or none present). |
-| `1`  | No `ashes.json` found or I/O error. |
+| `0`  | Dependencies resolved (or none present). |
+| `1`  | No `ashes.json` found, an invalid dependency, or I/O error. |
 
 #### Examples
 
 ```bash
-ashes install
-# Dependencies (2):
-#   json-parser *
-#   http-utils  *
-# Package registry not yet available. Dependencies are recorded but not fetched.
+ashes restore
+# Restored 1 path dependency:
+#   greet -> Greet (/path/to/dep)
 ```
 
 ---
@@ -742,8 +742,8 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | `ashes add` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 | `ashes remove` without package argument | `Missing package name.` | `1` |
 | `ashes remove` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
-| `ashes remove` when package not in dependencies | `Package '<name>' is not in dependencies.` | `1` |
-| `ashes install` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
+| `ashes remove` when package not a dependency | `Package '<name>' is not a dependency.` | `1` |
+| `ashes restore` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 
 ---
 
