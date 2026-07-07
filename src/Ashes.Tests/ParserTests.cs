@@ -251,7 +251,7 @@ public sealed class ParserTests
         decl.Constructors[0].Name.ShouldBe("None");
         decl.Constructors[0].Parameters.ShouldBeEmpty();
         decl.Constructors[1].Name.ShouldBe("Some");
-        decl.Constructors[1].Parameters.ShouldBe(["T"]);
+        decl.Constructors[1].Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["T"]);
     }
 
     [Test]
@@ -263,8 +263,8 @@ public sealed class ParserTests
         var decl = program.TypeDecls[0];
         decl.Name.ShouldBe("Result");
         decl.TypeParameters.Select(x => x.Name).ShouldBe(["E", "A"]);
-        decl.Constructors[0].Parameters.ShouldBe(["A"]);
-        decl.Constructors[1].Parameters.ShouldBe(["E"]);
+        decl.Constructors[0].Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["A"]);
+        decl.Constructors[1].Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["E"]);
     }
 
     [Test]
@@ -275,7 +275,7 @@ public sealed class ParserTests
         program.TypeDecls.Count.ShouldBe(2);
         program.TypeDecls[0].Name.ShouldBe("A");
         program.TypeDecls[1].Name.ShouldBe("B");
-        program.TypeDecls[1].Constructors[0].Parameters.ShouldBe(["T1", "T2"]);
+        program.TypeDecls[1].Constructors[0].Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["T1", "T2"]);
     }
 
     [Test]
@@ -339,7 +339,7 @@ public sealed class ParserTests
         decl.Constructors.Count.ShouldBe(2);
         decl.Constructors[0].Name.ShouldBe("None");
         decl.Constructors[1].Name.ShouldBe("Some");
-        decl.Constructors[1].Parameters.ShouldBe(["T"]);
+        decl.Constructors[1].Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["T"]);
     }
 
     [Test]
@@ -374,7 +374,7 @@ public sealed class ParserTests
     public void TypeDecl_should_support_type_parameters()
     {
         var typeParam = new TypeParameter("'a");
-        var ctor = new TypeConstructor("Some", ["'a"]);
+        var ctor = new TypeConstructor("Some", [new TypeExpr.Named("'a")]);
         var decl = new TypeDecl("Maybe", [typeParam], [ctor]);
 
         decl.Name.ShouldBe("Maybe");

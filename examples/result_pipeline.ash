@@ -2,7 +2,7 @@
 // `let ... in` that runs the Result pipeline and matches on the outcome.
 
 type ParseError =
-    | NotAnInt(String)
+    | NotAnInt(Str)
 
 let trim x = 
     if x == " 42 "

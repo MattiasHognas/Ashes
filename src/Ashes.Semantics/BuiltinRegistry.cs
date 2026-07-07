@@ -690,7 +690,7 @@ public static class BuiltinRegistry
             [new TypeParameter("T")],
             [
                 new TypeConstructor("None", []),
-                new TypeConstructor("Some", ["T"])
+                new TypeConstructor("Some", [new TypeExpr.Named("T")])
             ]);
 
         var resultTypeParameters = new[]
@@ -702,8 +702,8 @@ public static class BuiltinRegistry
             "Result",
             [new TypeParameter("E"), new TypeParameter("A")],
             [
-                new TypeConstructor("Ok", ["A"]),
-                new TypeConstructor("Error", ["E"])
+                new TypeConstructor("Ok", [new TypeExpr.Named("A")]),
+                new TypeConstructor("Error", [new TypeExpr.Named("E")])
             ]);
 
         var socketTypeParameters = Array.Empty<TypeParameterSymbol>();

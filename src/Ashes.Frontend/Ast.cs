@@ -112,7 +112,7 @@ public abstract record Pattern
 
 public sealed record TypeParameter(string Name);
 
-public sealed record TypeConstructor(string Name, IReadOnlyList<string> Parameters)
+public sealed record TypeConstructor(string Name, IReadOnlyList<TypeExpr> Parameters)
 {
     /// <summary>For record types: the named field identifiers corresponding to each parameter position. Empty for regular ADT constructors.</summary>
     public IReadOnlyList<string> FieldNames { get; init; } = [];
@@ -172,6 +172,22 @@ public abstract record TypeExpr
     public sealed record TupleType(IReadOnlyList<TypeExpr> Elements) : TypeExpr;
     /// <summary>Unit written as an empty tuple: <c>()</c>.</summary>
     public sealed record UnitType : TypeExpr;
+}
+
+/// <summary>Helpers over <see cref="TypeExpr"/> trees.</summary>
+public static class TypeExprExtensions
+{
+    /// <summary>Every <c>Named</c> / <c>Applied</c> head name mentioned anywhere in a type
+    /// expression (leaves and application heads), in order. Used to discover the implicit type
+    /// parameters of a constructor field — a name that resolves to no known type is a parameter.</summary>
+    public static IEnumerable<string> MentionedNames(this TypeExpr typeExpr) => typeExpr switch
+    {
+        TypeExpr.Named n => [n.Name],
+        TypeExpr.Applied a => new[] { a.Name }.Concat(a.Args.SelectMany(arg => arg.MentionedNames())),
+        TypeExpr.Arrow arr => arr.From.MentionedNames().Concat(arr.To.MentionedNames()),
+        TypeExpr.TupleType t => t.Elements.SelectMany(e => e.MentionedNames()),
+        _ => []
+    };
 }
 
 public abstract record ExternalDecl

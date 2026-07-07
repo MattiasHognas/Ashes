@@ -146,7 +146,7 @@ public sealed class SymbolRegistrationTests
     {
         // Directly construct a TypeDecl with duplicate type parameters
         var diag = new Diagnostics();
-        var decl = new TypeDecl("Pair", [new TypeParameter("T"), new TypeParameter("T")], [new TypeConstructor("MkPair", ["T"])]);
+        var decl = new TypeDecl("Pair", [new TypeParameter("T"), new TypeParameter("T")], [new TypeConstructor("MkPair", [new TypeExpr.Named("T")])]);
         var program = new Program([decl], new Expr.IntLit(1));
         var lowering = new Lowering(diag);
         lowering.Lower(program);

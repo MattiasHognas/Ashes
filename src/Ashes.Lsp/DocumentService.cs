@@ -725,7 +725,7 @@ public static partial class DocumentService
         // Collect unique type-parameter names used in constructor parameter lists
         var typeParamNames = program.TypeDecls
             .SelectMany(d => d.TypeParameters.Select(tp => tp.Name)
-                .Concat(d.Constructors.SelectMany(c => c.Parameters)))
+                .Concat(d.Constructors.SelectMany(c => c.Parameters).SelectMany(fieldType => fieldType.MentionedNames())))
             .ToHashSet(StringComparer.Ordinal);
 
         // Scan the stripped source (user's code without import header) for tokens.

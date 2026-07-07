@@ -1,6 +1,6 @@
 // expect: fail
 type AppError =
-    | Fail(String)
+    | Fail(Str)
 
 let x = 
     let? a = Error(Fail("fail"))

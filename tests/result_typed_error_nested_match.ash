@@ -1,6 +1,6 @@
 // expect: missing age
 type JsonError =
-    | MissingField(String)
+    | MissingField(Str)
 
 type AppError =
     | Json(JsonError)

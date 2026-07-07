@@ -1,6 +1,6 @@
 // expect: 41
 type AppError =
-    | Wrapped(String)
+    | Wrapped(Str)
 
 let x = Ok(41) |!> Wrapped
 in 
