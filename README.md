@@ -403,7 +403,7 @@ unsound in a language with aliased mutable state. Purity is also what makes the
 data-parallel fold behind the compiler's own benchmarks correct: partial
 results merge order-independently because there is nothing to race on.
 *Details: [Evaluation Strategy](docs/md/reference/language.md#15-evaluation-strategy) in
-the spec; the [compiler-optimization record](docs/md/future/COMPILER_OPTIMIZATION.md).*
+the spec; the [compiler changelog](docs/md/internals/changelog.md).*
 
 **Can Ashes produce competitive native code?**
 That is the goal, and it is actively benchmarked. The pipeline lowers the typed
@@ -414,7 +414,7 @@ The [`challenges/`](challenges/) directory tracks this with a 1BRC
 implementation and the Computer Language Benchmarks Game programs (n-body,
 mandelbrot, fannkuch-redux, k-nucleotide, and more).
 *Details: [Compiler Architecture](docs/md/internals/architecture.md) and the
-[optimization arc](docs/md/future/COMPILER_OPTIMIZATION.md).*
+[compiler changelog](docs/md/internals/changelog.md).*
 
 **How are the collections implemented?**
 Everything is persistent (immutable, structure-sharing):

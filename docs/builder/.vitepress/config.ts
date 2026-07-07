@@ -164,6 +164,7 @@ export default defineConfig({
         items: [
           page("Compiler Architecture", "/internals/architecture"),
           page("IR Reference", "/internals/ir"),
+          page("Compiler Changelog", "/internals/changelog"),
         ],
       },
       {
@@ -174,7 +175,6 @@ export default defineConfig({
           page("Package Manager", "/future/PACKAGE_MANAGER"),
           page("Registry API", "/future/REGISTRY_API"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
-          page("Compiler Optimization", "/future/COMPILER_OPTIMIZATION"),
         ],
       },
     ],
