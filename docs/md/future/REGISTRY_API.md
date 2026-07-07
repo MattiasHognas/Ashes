@@ -251,11 +251,13 @@ The shipped implementations take a plain in-solution `ProjectReference` on `Ashe
   *exported* modules lands with the multi-module capability path below.
 - `CompilerCapabilityExtractor` parses and lowers the uploaded source, then reads the inferred
   capabilities off the exported bindings via the compiler's `Lowering.PublicApiCapabilities()` accessor —
-  the same inference the compiler runs, so the audit cannot be evaded. It is best-effort (any compiler
-  failure yields no capabilities rather than blocking a publish) and currently covers **single-module
-  packages**; multi-module stitching arrives with the project-loader integration (shared with the client
-  work). An alternative for looser coupling is to shell out to the `ashes` CLI so the deployable bundles
-  only the compiler binary — the interface makes either choice invisible to the rest of the server.
+  the same inference the compiler runs, so the audit cannot be evaded. Multi-module packages are stitched
+  through the real project loader when the upload carries an `ashes.json` (as `ashes publish` produces); a
+  bare single module is compiled standalone. It is best-effort: any compiler failure — including an
+  unresolved *external* dependency whose source is not in the upload — yields no capabilities rather than
+  blocking the publish. An alternative for looser coupling is to shell out to the `ashes` CLI so the
+  deployable bundles only the compiler binary — the interface makes either choice invisible to the rest of
+  the server.
 
 Because these run over the *uploaded* source server-side, the capability audit and namespace guarantee
 are authoritative, not client-trusted.
