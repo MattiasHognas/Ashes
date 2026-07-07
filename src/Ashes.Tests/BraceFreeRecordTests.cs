@@ -25,7 +25,7 @@ public sealed class BraceFreeRecordTests
         var ctor = decl.Constructors[0];
         ctor.Name.ShouldBe("Point");
         ctor.FieldNames.ShouldBe(["x", "y"]);
-        ctor.Parameters.ShouldBe(["Int", "Int"]);
+        ctor.Parameters.SelectMany(p => p.MentionedNames()).ShouldBe(["Int", "Int"]);
     }
 
     [Test]

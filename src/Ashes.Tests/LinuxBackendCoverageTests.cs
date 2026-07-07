@@ -1748,6 +1748,74 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_stream_a_chunked_response()
+    {
+        // Response streaming: the handler returns Ashes.Http.Server.streamed with a pull `step`
+        // producer (a function-typed field of the StreamStep ADT). The server frames the body with
+        // Transfer-Encoding: chunked, one chunk per pulled StreamChunk, terminated by StreamDone.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        var source = $$"""
+            import Ashes.IO
+            import Ashes.Text
+            import Ashes.Http.Server
+            import Ashes.Async
+            let step acc =
+                async(match Ashes.Text.parseInt(acc) with
+                    | Error(_e) -> StreamDone
+                    | Ok(i) ->
+                        if i >= 3
+                        then StreamDone
+                        else StreamChunk("part" + Ashes.Text.fromInt(i) + "-")(Ashes.Text.fromInt(i + 1)))
+            let route _req =
+                async(Ashes.Http.Server.streamed(200)("Content-Type: text/plain\r\n")("0")(step))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        var tmpDir = CreateTempDirectory();
+        var exePath = Path.Combine(tmpDir, $"llvm_stream_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            proc = Process.Start(new ProcessStartInfo(exePath)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = tmpDir,
+            })!;
+
+            var raw = await HttpGetRawWithRetryAsync(port, "/stream").ConfigureAwait(false);
+            raw.ShouldContain("Transfer-Encoding: chunked");
+            raw.ShouldNotContain("Content-Length");
+            // Three 6-byte chunks then the terminating zero-length chunk.
+            raw.ShouldContain("6\r\npart0-\r\n");
+            raw.ShouldContain("6\r\npart1-\r\n");
+            raw.ShouldContain("6\r\npart2-\r\n");
+            // The last chunk is immediately followed by the zero-length terminating chunk
+            // (the helper trims the final CRLFs).
+            raw.ShouldEndWith("part2-\r\n0");
+        }
+        finally
+        {
+            if (proc is not null)
+            {
+                TryKillProcess(proc);
+            }
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_decode_a_chunked_request_body()
     {
         // Transfer-Encoding: chunked request body — decoded and echoed. Also split across two writes so

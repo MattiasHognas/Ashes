@@ -117,7 +117,7 @@ public static class Formatter
                 sb.Append("| ");
                 sb.Append(ctor.FieldNames[i]);
                 sb.Append(": ");
-                sb.Append(ctor.Parameters[i]);
+                WriteTypeExpr(sb, ctor.Parameters[i]);
                 sb.Append('\n');
             }
             return;
@@ -132,7 +132,15 @@ public static class Formatter
             if (ctor.Parameters.Count > 0)
             {
                 sb.Append('(');
-                sb.Append(string.Join(", ", ctor.Parameters));
+                for (int i = 0; i < ctor.Parameters.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(", ");
+                    }
+
+                    WriteTypeExpr(sb, ctor.Parameters[i]);
+                }
                 sb.Append(')');
             }
             sb.Append('\n');

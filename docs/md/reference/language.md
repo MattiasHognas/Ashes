@@ -577,21 +577,38 @@ type Result(E, A) =
 `Result` is a built-in runtime type. User code may use `Ok(...)` and `Error(...)`
 directly, and helper functions are available from the shipped `Ashes.Result` module.
 
+A constructor payload is a full **type expression**, not just a simple name:
+
+type Reply =
+    | Full(HttpResponse)
+    | Streamed(Str -> Task(Str, Str), Str)   // a function field and a parameterized field
+
+Payload types may be simple names (`Int`, `a`), the declaring type applied to its own
+parameters written bare (`Node(Tree, Int, Tree)` inside `type Tree(a)`), other user or
+built-in types applied to their arguments (`List(Int)`, `Maybe(a)`, `Task(E, A)`), function
+types (`Int -> Str`, including a `needs` row), and tuples (`(Int, Str)`).
+
 Generic ADTs declare their type parameters explicitly after the type name.
 For migration compatibility, code may omit explicit type parameters and rely on
 constructor payload names, but canonical Ashes source should declare them explicitly.
-When type parameters are omitted, a payload naming the declaring type itself (a
-self-recursive field, e.g. `Node(Tree, Int, Tree)`) or a primitive type (`Int`,
-`Bool`, `Str`, `Bytes`, `Float`) is a concrete field type, **not** an inferred type
-parameter; only genuinely unbound payload names are treated as implicit parameters.
-This lets a self-recursive ADT be built by a recursive function (`let recursive build n =
-… Node(build(n - 1)) …`) without the self-referential field being over-generalized.
+When type parameters are omitted, a payload name is an **implicit type parameter only when
+it denotes no known type**. A payload naming the declaring type itself (a self-recursive
+field, e.g. `Node(Tree, Int, Tree)`), a primitive (`Int`, `Bool`, `Str`, `Bytes`, `Float`),
+or any other declared user/built-in type is a concrete field type. This lets a self-recursive
+ADT be built by a recursive function (`let recursive build n = … Node(build(n - 1)) …`)
+without over-generalizing the self-referential field, and lets one ADT wrap another
+concretely (`type AppError = | Json(JsonError)` refers to the `JsonError` type, not a fresh
+parameter). Referencing a parameterized type without its arguments (a bare `List` or bare
+`JsonError` where `JsonError` takes a parameter) is an arity error — apply the arguments
+(`List(Int)`), except for the declaring type's own name, which is shorthand for itself applied
+to its parameters.
 
 Rules:
 
 - The type name should begin with an uppercase letter by convention.
 - Each constructor is introduced by `|`.
-- Constructors may have zero or more payload parameters in parentheses.
+- Constructors may have zero or more payload parameters in parentheses; each payload is a type
+  expression (a name, a parameterized type, a function type, or a tuple).
 - Type declarations appear before the expression body of the program.
 
 ## 4.1 Record Types

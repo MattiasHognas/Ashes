@@ -392,9 +392,12 @@ transport is that HTTPS falls out without a second handler model.
    endpoint-creating operations (LANGUAGE_SPEC section 20.8); closed rows reject undeclared
    endpoint creation (ASH018), the runtime is their implicit provider at top level.
 4. **HTTP streaming bodies:** incremental chunked-request decode is DELIVERED (each read decodes
-   only the undecoded tail; the 8 MiB cap applies mid-stream). Next: response streaming
-   (`Transfer-Encoding: chunked` from a pull-based producer, which needs function-typed ADT fields
-   first), then the request-side body reader (after the affine-ownership work).
+   only the undecoded tail; the 8 MiB cap applies mid-stream). Response streaming is DELIVERED:
+   `Ashes.Http.Server.streamed(status)(headers)(seed)(step)` frames the body with
+   `Transfer-Encoding: chunked`, pulling one chunk per `StreamChunk(bytes, nextAcc)` from the
+   `step : Str -> Task(E, StreamStep)` producer until `StreamDone` (built on function-typed ADT
+   fields — `HttpStreamed` carries the producer function). Remaining: the request-side body reader
+   (a streaming request body as a resource), deferred to after the affine-ownership work.
 5. Minor scheduler refinement: the aggregate wait re-queues every parked leaf per wakeup
    (O(parked)); per-fd wakeup targeting would cut re-step work under very high concurrency. A first
    implementation attempt is parked as too delicate to land in a rushed pass — it needs care on

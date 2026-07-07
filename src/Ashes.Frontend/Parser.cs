@@ -279,7 +279,7 @@ public sealed class Parser
         // is immediately followed by `:`; otherwise it is a constructor.
         var constructors = new List<TypeConstructor>();
         var fieldNames = new List<string>();
-        var fieldTypeNames = new List<string>();
+        var fieldTypeExprs = new List<TypeExpr>();
         var sawField = false;
         var sawConstructor = false;
         while (_current.Kind == TokenKind.Pipe)
@@ -293,25 +293,27 @@ public sealed class Parser
                 // Record field branch: | name: Type
                 sawField = true;
                 Consume(TokenKind.Colon);
-                var fieldType = ParseTypeExprAtomName();
+                var fieldType = ParseTypeExpr();
                 fieldNames.Add(branchName);
-                fieldTypeNames.Add(fieldType);
+                fieldTypeExprs.Add(fieldType);
                 continue;
             }
 
-            // Constructor branch: | Name | Name(p1, p2, ...)
+            // Constructor branch: | Name | Name(fieldType1, fieldType2, ...). A field type is a full
+            // type expression — a simple name (Int, a), a parameterized type (List(Int), Maybe(a)),
+            // a function type (Str -> Task(E, A)), or a tuple.
             sawConstructor = true;
-            var parameters = new List<string>();
+            var parameters = new List<TypeExpr>();
             if (_current.Kind == TokenKind.LParen)
             {
                 Consume(TokenKind.LParen);
                 if (_current.Kind != TokenKind.RParen)
                 {
-                    parameters.Add(Consume(TokenKind.Ident).Text);
+                    parameters.Add(ParseTypeExpr());
                     while (_current.Kind == TokenKind.Comma)
                     {
                         Consume(TokenKind.Comma);
-                        parameters.Add(Consume(TokenKind.Ident).Text);
+                        parameters.Add(ParseTypeExpr());
                     }
                 }
                 Consume(TokenKind.RParen);
@@ -327,7 +329,7 @@ public sealed class Parser
         if (sawField)
         {
             var recordCtor = RegisterTypeConstructor(
-                new TypeConstructor(name, fieldTypeNames) { FieldNames = fieldNames },
+                new TypeConstructor(name, fieldTypeExprs) { FieldNames = fieldNames },
                 start, LastConsumedEnd);
             return RegisterTypeDecl(
                 new TypeDecl(name, typeParameters, [recordCtor]) { IsRecord = true },
@@ -361,37 +363,6 @@ public sealed class Parser
             else if (_current.Kind == TokenKind.RBrace) depth--;
             Advance();
         }
-    }
-
-    /// <summary>
-    /// Parses a simple type name used inside record field declarations.
-    /// Supports parameterised types like <c>List(Int)</c> and <c>Maybe(T)</c>.
-    /// Returns the type name as a string token (for compatibility with existing <see cref="TypeConstructor.Parameters"/>).
-    /// </summary>
-    private string ParseTypeExprAtomName()
-    {
-        var typeName = Consume(TokenKind.Ident).Text;
-        // Parameterised types in field positions are not yet representable as plain strings.
-        // Consume the argument list to keep parsing, but report an error instead of silently dropping it.
-        if (_current.Kind == TokenKind.LParen)
-        {
-            _diag.Error(CurrentErrorSpan(), $"Parameterized type arguments are not supported in record field declarations yet (found '{typeName}(...)').");
-            Consume(TokenKind.LParen);
-            var depth = 1;
-            while (depth > 0 && _current.Kind != TokenKind.EOF)
-            {
-                if (_current.Kind == TokenKind.LParen) depth++;
-                else if (_current.Kind == TokenKind.RParen) depth--;
-                Advance();
-            }
-
-            if (depth > 0)
-            {
-                _diag.Error(CurrentErrorSpan(), "Unterminated type argument list in record field declaration.");
-            }
-        }
-
-        return typeName;
     }
 
     /// <summary>

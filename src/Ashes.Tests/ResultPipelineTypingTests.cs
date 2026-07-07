@@ -40,7 +40,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type AppError = | Wrapped(String)
+            type AppError = | Wrapped(Str)
             let x = Error("boom") |!> Wrapped
             in match x with
             | Ok(_) -> Ashes.IO.print("ok")
@@ -55,7 +55,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type ParseError = | NotAnInt(String)
+            type ParseError = | NotAnInt(Str)
             type AppError = | Parse(ParseError)
             let parse = given (x) -> if x == "41" then Ok(41) else Error(NotAnInt(x))
             in let y = Ok("41") |?> parse |?> (given (n) -> n + 1) |!> Parse
@@ -72,7 +72,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type JsonError = | MissingField(String)
+            type JsonError = | MissingField(Str)
             type AppError = | Json(JsonError)
             let x = Error(Json(MissingField("age")))
             in match x with
@@ -135,7 +135,7 @@ public sealed class ResultPipelineTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            type AppError = | Fail(String)
+            type AppError = | Fail(Str)
             let x =
                 let? a = Error(Fail("fail"))
                 in

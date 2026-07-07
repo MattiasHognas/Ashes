@@ -1,6 +1,6 @@
 // expect: wrapped
 type AppError =
-    | Wrapped(String)
+    | Wrapped(Str)
 
 let x = Error("wrapped") |!> Wrapped
 in 

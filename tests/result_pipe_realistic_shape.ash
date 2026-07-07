@@ -1,6 +1,6 @@
 // expect: 43
 type ParseError =
-    | NotAnInt(String)
+    | NotAnInt(Str)
 
 let trim x = 
     if x == " 42 "

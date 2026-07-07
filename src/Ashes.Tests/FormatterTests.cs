@@ -331,7 +331,7 @@ public sealed class FormatterTests
                     new[]
                     {
                         new TypeConstructor("None", []),
-                        new TypeConstructor("Some", ["T"]),
+                        new TypeConstructor("Some", [new TypeExpr.Named("T")]),
                     })
             },
             new Expr.Call(new Expr.Var("print"), new Expr.StrLit("ok")));
@@ -374,8 +374,8 @@ public sealed class FormatterTests
                     "Result",
                     [new TypeParameter("E"), new TypeParameter("A")],
                     [
-                        new TypeConstructor("Ok", ["A"]),
-                        new TypeConstructor("Error", ["E"])
+                        new TypeConstructor("Ok", [new TypeExpr.Named("A")]),
+                        new TypeConstructor("Error", [new TypeExpr.Named("E")])
                     ])
             ],
             new Expr.Call(new Expr.Var("print"), new Expr.StrLit("ok")));

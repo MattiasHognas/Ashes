@@ -177,6 +177,14 @@ public sealed partial class Lowering
 
     private void RegisterTypeDeclarations(IReadOnlyList<TypeDecl> typeDecls)
     {
+        // Every name that denotes a concrete type — builtins registered already, all user types in
+        // this program (so forward references resolve), and the primitives. A constructor field that
+        // names something outside this set is an implicit type parameter.
+        var knownTypeNames = new HashSet<string>(_typeSymbols.Keys, StringComparer.Ordinal);
+        knownTypeNames.UnionWith(typeDecls.Select(d => d.Name));
+        knownTypeNames.UnionWith(PrimitivePayloadTypeNames);
+        knownTypeNames.Add("Unit");
+
         foreach (var decl in typeDecls)
         {
             if (BuiltinRegistry.IsReservedTypeName(decl.Name))
@@ -193,7 +201,7 @@ public sealed partial class Lowering
 
             var declaredOrInferredTypeParameters = decl.TypeParameters.Count > 0
                 ? decl.TypeParameters
-                : InferImplicitTypeParameters(decl.Name, decl.Constructors);
+                : InferImplicitTypeParameters(decl.Name, decl.Constructors, knownTypeNames);
 
             var seenTypeParams = new HashSet<string>(StringComparer.Ordinal);
             var hasDuplicateTypeParams = false;
@@ -227,6 +235,13 @@ public sealed partial class Lowering
                 Constructors: ctorSymbols,
                 DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
             );
+            // Register the type symbol (and its resolved TNamedType) before resolving field types, so
+            // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
+            // constructor list is filled in place below.
+            _typeSymbols[decl.Name] = typeSymbol;
+            _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
+                typeSymbol,
+                typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
             var seenCtors = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var ctor in decl.Constructors)
@@ -242,7 +257,7 @@ public sealed partial class Lowering
                     ParentType: decl.Name,
                     Arity: ctor.Parameters.Count,
                     ParameterTypes: ctor.Parameters
-                        .Select(parameterName => ResolveUserConstructorParameterType(parameterName, declaredOrInferredTypeParameters, typeSymbol))
+                        .Select(fieldType => ResolveConstructorFieldType(fieldType, typeSymbol))
                         .ToList(),
                     DeclaringSyntax: ctor
                 );
@@ -251,13 +266,6 @@ public sealed partial class Lowering
                 // constructor with the same name shadows an earlier one intentionally.
                 _constructorSymbols[ctor.Name] = ctorSymbol;
             }
-
-            _typeSymbols[decl.Name] = typeSymbol;
-
-            var typeParams = typeSymbol.TypeParameters
-                .Select(tp => (TypeRef)new TypeRef.TTypeParam(tp))
-                .ToList();
-            _resolvedTypes[decl.Name] = new TypeRef.TNamedType(typeSymbol, typeParams);
         }
     }
 
@@ -410,51 +418,45 @@ public sealed partial class Lowering
         }
     }
 
-    private static TypeRef ResolveUserConstructorParameterType(
-        string parameterName,
-        IReadOnlyList<TypeParameter> declaredOrInferredTypeParameters,
-        TypeSymbol declaringTypeSymbol)
+    /// <summary>
+    /// Resolves one constructor field's type expression to a <see cref="TypeRef"/>. The declaring
+    /// type's own parameters are in scope (a <c>Named</c> matching one resolves to that parameter),
+    /// its own name resolves to the recursive <see cref="TypeRef.TNamedType"/>, and everything else
+    /// resolves like an ordinary type annotation — primitives, other user/builtin types (including
+    /// parameterized ones), function types, and tuples. Field names that denote no known type were
+    /// already promoted to implicit type parameters (see <see cref="InferImplicitTypeParameters"/>),
+    /// so they resolve through the parameter scope.
+    /// </summary>
+    private TypeRef ResolveConstructorFieldType(TypeExpr fieldType, TypeSymbol declaringTypeSymbol)
     {
-        var matchingParameter = declaredOrInferredTypeParameters.FirstOrDefault(tp => string.Equals(tp.Name, parameterName, StringComparison.Ordinal));
-        if (matchingParameter is not null)
+        // A bare reference to the declaring type (`type MapTree(K, V) = | Node(Int, MapTree, ...)`)
+        // means the type applied to its own parameters, `MapTree(K, V)` — the idiomatic way to write
+        // a self-recursive field. Rewrite such bare names to the explicit application (at any nesting
+        // depth) before resolving; every other name resolves as an ordinary annotation.
+        return ResolveAnnotationType(ExpandSelfReferences(fieldType, declaringTypeSymbol), declaringTypeSymbol.TypeParameters);
+    }
+
+    private static TypeExpr ExpandSelfReferences(TypeExpr typeExpr, TypeSymbol declaringTypeSymbol)
+    {
+        var ownParams = declaringTypeSymbol.TypeParameters;
+        if (ownParams.Count == 0)
         {
-            return new TypeRef.TTypeParam(
-                declaringTypeSymbol.TypeParameters.First(tp => string.Equals(tp.Name, matchingParameter.Name, StringComparison.Ordinal)));
+            return typeExpr; // a non-parameterized self name already resolves correctly
         }
 
-        if (string.Equals(parameterName, declaringTypeSymbol.Name, StringComparison.Ordinal))
-        {
-            return new TypeRef.TNamedType(
-                declaringTypeSymbol,
-                declaringTypeSymbol.TypeParameters.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
-        }
+        TypeExpr SelfApplication() =>
+            new TypeExpr.Applied(declaringTypeSymbol.Name, ownParams.Select(tp => (TypeExpr)new TypeExpr.Named(tp.Name)).ToList());
 
-        if (string.Equals(parameterName, "Int", StringComparison.Ordinal))
+        TypeExpr Rewrite(TypeExpr t) => t switch
         {
-            return new TypeRef.TInt();
-        }
+            TypeExpr.Named n when string.Equals(n.Name, declaringTypeSymbol.Name, StringComparison.Ordinal) => SelfApplication(),
+            TypeExpr.Applied a => new TypeExpr.Applied(a.Name, a.Args.Select(Rewrite).ToList()),
+            TypeExpr.Arrow arr => new TypeExpr.Arrow(Rewrite(arr.From), Rewrite(arr.To)) { Needs = arr.Needs },
+            TypeExpr.TupleType tup => new TypeExpr.TupleType(tup.Elements.Select(Rewrite).ToList()),
+            _ => t
+        };
 
-        if (string.Equals(parameterName, "Bool", StringComparison.Ordinal))
-        {
-            return new TypeRef.TBool();
-        }
-
-        if (string.Equals(parameterName, "Str", StringComparison.Ordinal))
-        {
-            return new TypeRef.TStr();
-        }
-
-        if (string.Equals(parameterName, "Bytes", StringComparison.Ordinal))
-        {
-            return new TypeRef.TBytes();
-        }
-
-        if (string.Equals(parameterName, "Float", StringComparison.Ordinal))
-        {
-            return new TypeRef.TFloat();
-        }
-
-        return new TypeRef.TTypeParam(new TypeParameterSymbol(parameterName));
+        return Rewrite(typeExpr);
     }
 
     // Concrete primitive type names that may appear as constructor payloads. A payload naming one of
@@ -465,29 +467,30 @@ public sealed partial class Lowering
 
     private static IReadOnlyList<TypeParameter> InferImplicitTypeParameters(
         string declaringTypeName,
-        IReadOnlyList<TypeConstructor> constructors)
+        IReadOnlyList<TypeConstructor> constructors,
+        IReadOnlySet<string> knownTypeNames)
     {
         var typeParameters = new List<TypeParameter>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var parameterName in constructors.SelectMany(ctor => ctor.Parameters))
+        foreach (var name in constructors.SelectMany(ctor => ctor.Parameters).SelectMany(fieldType => fieldType.MentionedNames()))
         {
-            // A payload that names the declaring type itself (a self-recursive field) or a primitive
-            // type is a *concrete* field type, not an implicit type parameter. Inferring a parameter
-            // for it over-generalizes the constructor: a self-recursive field becomes polymorphic —
-            // which makes `let rec build n = ... Node(build(n - 1)) ...` fail the occurs check when the
-            // type is actually built recursively — and a primitive field's concrete type is lost to
-            // later analyses. `ResolveUserConstructorParameterType` already resolves both of these to
-            // their concrete `TypeRef` once they are absent from the parameter list.
-            if (string.Equals(parameterName, declaringTypeName, StringComparison.Ordinal)
-                || PrimitivePayloadTypeNames.Contains(parameterName))
+            // A name mentioned in a field type is an implicit type parameter only when it denotes no
+            // known type. A name of the declaring type itself (a self-recursive field), a primitive,
+            // or any other user/builtin type is a *concrete* reference, not a parameter — inferring a
+            // parameter for it would over-generalize the constructor (a self-recursive field becomes
+            // polymorphic, failing the occurs check when the type is actually built recursively; a
+            // concrete field's type is lost). Uppercase or lowercase is irrelevant: `A`, `T`, `V` are
+            // conventional parameter names and resolve here precisely because no type is named `A`.
+            if (string.Equals(name, declaringTypeName, StringComparison.Ordinal)
+                || knownTypeNames.Contains(name))
             {
                 continue;
             }
 
-            if (seen.Add(parameterName))
+            if (seen.Add(name))
             {
-                typeParameters.Add(new TypeParameter(parameterName));
+                typeParameters.Add(new TypeParameter(name));
             }
         }
 

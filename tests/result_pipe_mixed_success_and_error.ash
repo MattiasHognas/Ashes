@@ -1,6 +1,6 @@
 // expect: not-an-int
 type ParseError =
-    | NotAnInt(String)
+    | NotAnInt(Str)
 
 type AppError =
     | Parse(ParseError)

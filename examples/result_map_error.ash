@@ -1,5 +1,5 @@
 type AppError =
-    | Wrapped(String)
+    | Wrapped(Str)
 
 let x = Error("boom") |!> Wrapped
 in 

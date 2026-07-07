@@ -298,6 +298,12 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
   per line, or `""` for none).
 - `withHeader(name)(value)(response)` — add a response header. `Content-Length` and `Connection` are
   always set by the server and must not be added here.
+- `streamed(status)(headerBlock)(seed)(step)` — a **streaming** response. The body is produced
+  incrementally: `step : Str -> Task(E, StreamStep)` is pulled starting from `seed`, and each
+  `StreamChunk(bytes, nextAcc)` is written as one `Transfer-Encoding: chunked` frame (the producer
+  runs async, so a chunk may come from a file, a socket, or a computation); `StreamDone` ends the
+  body. The response carries `Transfer-Encoding: chunked` instead of `Content-Length`. `StreamStep`
+  is `| StreamChunk(Str, Str) | StreamDone`.
 - `serve(port)(handler)` — `Int -> (HttpRequest -> Task(E, HttpResponse)) -> Task(Str, Unit)`. Binds
   the port and, per request, reads it, parses request line + headers + body, runs the handler (which
   may `await` async work), and writes the response. The connection is kept alive (HTTP/1.1 default),

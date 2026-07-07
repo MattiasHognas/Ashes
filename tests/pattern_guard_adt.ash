@@ -1,7 +1,7 @@
 // expect: big ok
 type Outcome =
     | Good(Int)
-    | Bad(String)
+    | Bad(Str)
 
 let describe r = 
     match r with
