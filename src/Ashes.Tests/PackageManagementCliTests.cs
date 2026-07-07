@@ -274,7 +274,7 @@ public sealed class PackageManagementCliTests
             var result = await RunCliAsync(["remove", "nonexistent-pkg"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
-            result.Stderr.ShouldContain("not in dependencies");
+            result.Stderr.ShouldContain("not a dependency");
         }
         finally
         {
@@ -322,23 +322,20 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    // ──────────────── ashes install ────────────────
+    // ──────────────── ashes restore ────────────────
 
     [Test]
-    public async Task Install_should_list_dependencies()
+    public async Task Restore_reports_no_dependencies_when_empty()
     {
         var tempDir = CreateTempDir();
         try
         {
             await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
-            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
+            var result = await RunCliAsync(["restore"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
-            result.Output.ShouldContain("Dependencies");
-            result.Output.ShouldContain("json-parser");
-            result.Output.ShouldContain("registry not yet available");
+            result.Output.ShouldContain("No path dependencies");
         }
         finally
         {
@@ -347,17 +344,27 @@ public sealed class PackageManagementCliTests
     }
 
     [Test]
-    public async Task Install_should_report_no_dependencies_when_empty()
+    public async Task Restore_lists_a_path_dependency()
     {
         var tempDir = CreateTempDir();
         try
         {
-            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            var depDir = Path.Combine(tempDir, "dep");
+            Directory.CreateDirectory(Path.Combine(depDir, "src"));
+            await File.WriteAllTextAsync(Path.Combine(depDir, "ashes.json"),
+                "{ \"name\": \"greet\", \"entry\": \"src/Greet.ash\", \"sourceRoots\": [\"src\"] }").ConfigureAwait(false);
+            await File.WriteAllTextAsync(Path.Combine(depDir, "src", "Greet.ash"), "let hello = given (n) -> n\n").ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
+            var appDir = Path.Combine(tempDir, "app");
+            Directory.CreateDirectory(appDir);
+            await RunCliAsync(["init"], workingDirectory: appDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "greet", "--path", "../dep"], workingDirectory: appDir).ConfigureAwait(false);
+
+            var result = await RunCliAsync(["restore"], workingDirectory: appDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(0);
-            result.Output.ShouldContain("No dependencies");
+            result.Output.ShouldContain("Restored");
+            result.Output.ShouldContain("greet");
         }
         finally
         {
@@ -366,12 +373,12 @@ public sealed class PackageManagementCliTests
     }
 
     [Test]
-    public async Task Install_should_fail_without_ashes_json()
+    public async Task Restore_fails_without_ashes_json()
     {
         var tempDir = CreateTempDir();
         try
         {
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
+            var result = await RunCliAsync(["restore"], workingDirectory: tempDir).ConfigureAwait(false);
 
             result.ExitCode.ShouldBe(1);
             result.Stderr.ShouldContain("No ashes.json found");
@@ -383,28 +390,31 @@ public sealed class PackageManagementCliTests
     }
 
     [Test]
-    public async Task Install_should_list_multiple_dependencies()
+    public async Task Add_dev_writes_dev_dependencies()
     {
         var tempDir = CreateTempDir();
         try
         {
             await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
-            await RunCliAsync(["add", "pkg-a"], workingDirectory: tempDir).ConfigureAwait(false);
-            await RunCliAsync(["add", "pkg-b"], workingDirectory: tempDir).ConfigureAwait(false);
-            await RunCliAsync(["add", "pkg-c"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "test-helper", "--dev"], workingDirectory: tempDir).ConfigureAwait(false);
 
-            var result = await RunCliAsync(["install"], workingDirectory: tempDir).ConfigureAwait(false);
-
-            result.ExitCode.ShouldBe(0);
-            result.Output.ShouldContain("3");
-            result.Output.ShouldContain("pkg-a");
-            result.Output.ShouldContain("pkg-b");
-            result.Output.ShouldContain("pkg-c");
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
+            json.ShouldContain("devDependencies");
+            json.ShouldContain("test-helper");
         }
         finally
         {
             Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    [Test]
+    public async Task Install_is_retired()
+    {
+        var result = await RunCliAsync(["install"]).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(1);
+        result.Stderr.ShouldContain("retired");
     }
 
     // ──────────────── --help and unexpected args ────────────────
@@ -443,24 +453,6 @@ public sealed class PackageManagementCliTests
 
         result.ExitCode.ShouldBe(0);
         result.Output.ShouldContain("Commands");
-    }
-
-    [Test]
-    public async Task Install_help_should_show_usage()
-    {
-        var result = await RunCliAsync(["install", "--help"]).ConfigureAwait(false);
-
-        result.ExitCode.ShouldBe(0);
-        result.Output.ShouldContain("Commands");
-    }
-
-    [Test]
-    public async Task Install_unexpected_arg_should_fail()
-    {
-        var result = await RunCliAsync(["install", "--unknown"]).ConfigureAwait(false);
-
-        result.ExitCode.ShouldBe(2);
-        result.Stderr.ShouldContain("Unknown argument");
     }
 
     [Test]

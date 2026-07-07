@@ -15,7 +15,10 @@ internal sealed record ScannedArgs(
 /// <c>--option</c> consumes the following token as its value.</summary>
 internal static class ArgScanner
 {
-    private static readonly HashSet<string> BooleanFlags = new(StringComparer.Ordinal) { "undo", "help" };
+    private static readonly HashSet<string> BooleanFlags = new(StringComparer.Ordinal)
+    {
+        "undo", "help", "dev", "frozen", "offline",
+    };
 
     public static ScannedArgs Parse(string[] args)
     {

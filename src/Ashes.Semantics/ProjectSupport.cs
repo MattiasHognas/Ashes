@@ -15,7 +15,24 @@ public sealed record AshesProject(
     IReadOnlyList<string> Include,
     string OutDir,
     string? Target
-);
+)
+{
+    /// <summary>
+    /// Resolved dependencies whose source roots are appended to the compilation search roots. Path
+    /// dependencies resolve directly from disk; registry/git dependencies are materialized by the CLI
+    /// (lock + cache) and surfaced here through the same list. Kept as an init property with an empty
+    /// default so existing constructor call sites are unaffected.
+    /// </summary>
+    public IReadOnlyList<ResolvedDependency> Dependencies { get; init; } = [];
+}
+
+/// <summary>A dependency resolved to concrete source roots on disk, imported under its namespace.</summary>
+public sealed record ResolvedDependency(
+    string Name,
+    string Namespace,
+    IReadOnlyList<string> SourceRoots,
+    string ProjectDirectory,
+    bool IsDev);
 
 public sealed record ProjectModule(
     string ModuleName,
@@ -220,7 +237,101 @@ public static class ProjectSupport
             Include: include.Select(x => ResolvePath(projectDirectory, x)).ToList(),
             OutDir: outDir,
             Target: target
-        );
+        )
+        {
+            Dependencies = ResolveDependencies(root, projectDirectory),
+        };
+    }
+
+    /// <summary>
+    /// Resolve the manifest's <c>dependencies</c> and <c>devDependencies</c>. Only path dependencies
+    /// resolve locally here (deterministic, from disk); registry/git dependencies are materialized by the
+    /// CLI restore step into the lock and cache. The compiler is never the dependency solver.
+    /// </summary>
+    private static IReadOnlyList<ResolvedDependency> ResolveDependencies(JsonElement root, string projectDirectory)
+    {
+        var result = new List<ResolvedDependency>();
+        AddDependencies(root, "dependencies", isDev: false, projectDirectory, result);
+        AddDependencies(root, "devDependencies", isDev: true, projectDirectory, result);
+        return result;
+    }
+
+    private static void AddDependencies(
+        JsonElement root, string field, bool isDev, string projectDirectory, List<ResolvedDependency> accumulator)
+    {
+        if (!root.TryGetProperty(field, out var deps) || deps.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var entry in deps.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object ||
+                !entry.Value.TryGetProperty("path", out var pathEl) ||
+                pathEl.ValueKind != JsonValueKind.String)
+            {
+                // Non-path (registry/git) dependencies are resolved by the CLI via the lock/cache.
+                continue;
+            }
+
+            var depDir = ResolvePath(projectDirectory, pathEl.GetString()!);
+            var manifest = Path.Combine(depDir, "ashes.json");
+            if (!Directory.Exists(depDir))
+            {
+                throw new InvalidOperationException(
+                    $"Dependency '{entry.Name}' path not found: {pathEl.GetString()}");
+            }
+
+            if (!File.Exists(manifest))
+            {
+                throw new InvalidOperationException(
+                    $"Dependency '{entry.Name}' at '{pathEl.GetString()}' is not an Ashes project (no ashes.json).");
+            }
+
+            var (ns, roots) = ReadDependencyManifest(manifest, depDir, entry.Value, entry.Name);
+            accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev));
+        }
+    }
+
+    private static (string Namespace, IReadOnlyList<string> Roots) ReadDependencyManifest(
+        string manifestPath, string depDir, JsonElement depEntry, string depKey)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var manifest = doc.RootElement;
+
+        var sourceRoots = ReadStringArray(manifest, "sourceRoots");
+        if (sourceRoots.Count == 0)
+        {
+            sourceRoots.Add(".");
+        }
+
+        var ns = (depEntry.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
+                     ? entryNs.GetString()
+                     : null)
+                 ?? ReadString(manifest, "namespace")
+                 ?? PascalCase(ReadString(manifest, "name") ?? depKey);
+
+        return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList());
+    }
+
+    /// <summary>Map a package name to its default namespace (e.g. <c>json-parser</c> → <c>JsonParser</c>).</summary>
+    public static string PascalCase(string name)
+    {
+        var builder = new System.Text.StringBuilder(name.Length);
+        var capitalize = true;
+        foreach (var c in name)
+        {
+            if (!char.IsLetterOrDigit(c))
+            {
+                capitalize = true;
+                continue;
+            }
+
+            builder.Append(capitalize ? char.ToUpperInvariant(c) : c);
+            capitalize = false;
+        }
+
+        return builder.Length == 0 ? name : builder.ToString();
     }
 
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)
@@ -362,7 +473,10 @@ public static class ProjectSupport
                 "Module name 'Ashes' is reserved for the standard library.");
         }
 
-        var searchRoots = project.SourceRoots.Concat(project.Include).ToArray();
+        var searchRoots = project.SourceRoots
+            .Concat(project.Include)
+            .Concat(project.Dependencies.SelectMany(d => d.SourceRoots))
+            .ToArray();
         var resolvedByModuleName = new Dictionary<string, ProjectModule>(StringComparer.Ordinal);
         var resolvedByPath = new Dictionary<string, ProjectModule>(StringComparer.OrdinalIgnoreCase);
         var states = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

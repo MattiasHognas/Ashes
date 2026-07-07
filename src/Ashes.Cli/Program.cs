@@ -19,9 +19,9 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package>");
+    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--path <dir>]] [[--dev]]");
     AnsiConsole.MarkupLine("  [bold]ashes remove[/]  <package>");
-    AnsiConsole.MarkupLine("  [bold]ashes install[/]");
+    AnsiConsole.MarkupLine("  [bold]ashes restore[/]");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
 
@@ -516,7 +516,8 @@ try
         "init" => RunInit(args.Skip(1).ToArray()),
         "add" => RunAdd(args.Skip(1).ToArray()),
         "remove" => RunRemove(args.Skip(1).ToArray()),
-        "install" => RunInstall(args.Skip(1).ToArray()),
+        "restore" => RunRestore(args.Skip(1).ToArray()),
+        "install" => throw new CliUserException("`ashes install` has been retired. Use `ashes restore` to materialize dependencies (or `ashes add` to add one)."),
         "login" => await RegistryCommands.LoginAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "publish" => await RegistryCommands.PublishAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "yank" => await RegistryCommands.YankAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
@@ -1302,17 +1303,21 @@ static int RunInit(string[] a)
 
 static int RunAdd(string[] a)
 {
-    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
+    var opts = Ashes.Cli.Registry.ArgScanner.Parse(a);
+    if (opts.Flag("help"))
     {
         return Usage(0);
     }
 
-    if (a.Length == 0)
+    if (opts.Positionals.Count == 0)
     {
         throw new CliUserException("Missing package name.");
     }
 
-    var packageName = a[0];
+    var packageName = opts.Positionals[0];
+    var path = opts.Value("path");
+    var isDev = opts.Flag("dev");
+    var field = isDev ? "devDependencies" : "dependencies";
 
     var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
     if (string.IsNullOrEmpty(projectFilePath))
@@ -1321,32 +1326,50 @@ static int RunAdd(string[] a)
     }
 
     using var doc = ParseProjectJson(projectFilePath);
-    var root = doc.RootElement;
+    var (obj, deps) = ReadProjectJson(doc.RootElement);
 
-    var (obj, deps) = ReadProjectJson(root);
+    // A path dependency writes an object value; a registry dependency writes a SemVer string (default *).
+    object value = path is not null
+        ? new Dictionary<string, object?>(StringComparer.Ordinal) { ["path"] = path.Replace('\\', '/') }
+        : "*";
 
-    deps[packageName] = "*";
-    obj["dependencies"] = deps;
+    // `dependencies` is returned separately by ReadProjectJson; `devDependencies` stays inside `obj`.
+    var map = isDev ? GetOrCreateDependencyMap(obj, "devDependencies") : deps;
+    map[packageName] = value;
+    obj[field] = map;
 
     WriteProjectJson(projectFilePath, obj);
 
-    AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to dependencies.");
+    AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to {field}.");
     return 0;
+}
+
+static Dictionary<string, object?> GetOrCreateDependencyMap(Dictionary<string, object?> obj, string field)
+{
+    if (obj.TryGetValue(field, out var existing) && existing is Dictionary<string, object?> map)
+    {
+        return map;
+    }
+
+    var created = new Dictionary<string, object?>(StringComparer.Ordinal);
+    obj[field] = created;
+    return created;
 }
 
 static int RunRemove(string[] a)
 {
-    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
+    var opts = Ashes.Cli.Registry.ArgScanner.Parse(a);
+    if (opts.Flag("help"))
     {
         return Usage(0);
     }
 
-    if (a.Length == 0)
+    if (opts.Positionals.Count == 0)
     {
         throw new CliUserException("Missing package name.");
     }
 
-    var packageName = a[0];
+    var packageName = opts.Positionals[0];
 
     var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
     if (string.IsNullOrEmpty(projectFilePath))
@@ -1355,19 +1378,22 @@ static int RunRemove(string[] a)
     }
 
     using var doc = ParseProjectJson(projectFilePath);
-    var root = doc.RootElement;
+    var (obj, deps) = ReadProjectJson(doc.RootElement);
 
-    // Check that the package actually exists in dependencies
-    if (!root.TryGetProperty("dependencies", out var existingDeps)
-        || existingDeps.ValueKind != System.Text.Json.JsonValueKind.Object
-        || !existingDeps.TryGetProperty(packageName, out _))
+    var removed = deps.Remove(packageName);
+    if (obj.TryGetValue("devDependencies", out var dev) && dev is Dictionary<string, object?> devMap)
     {
-        throw new CliUserException($"Package '{packageName}' is not in dependencies.");
+        removed |= devMap.Remove(packageName);
+        if (devMap.Count == 0)
+        {
+            obj.Remove("devDependencies");
+        }
     }
 
-    var (obj, deps) = ReadProjectJson(root);
-
-    deps.Remove(packageName);
+    if (!removed)
+    {
+        throw new CliUserException($"Package '{packageName}' is not a dependency.");
+    }
 
     if (deps.Count > 0)
     {
@@ -1376,20 +1402,16 @@ static int RunRemove(string[] a)
 
     WriteProjectJson(projectFilePath, obj);
 
-    AnsiConsole.MarkupLine($"[green]Removed[/] {Markup.Escape(packageName)} from dependencies.");
+    AnsiConsole.MarkupLine($"[green]Removed[/] {Markup.Escape(packageName)}.");
     return 0;
 }
 
-static int RunInstall(string[] a)
+static int RunRestore(string[] a)
 {
-    if (a.Length == 1 && (string.Equals(a[0], "--help", StringComparison.Ordinal) || string.Equals(a[0], "-h", StringComparison.Ordinal)))
+    var opts = Ashes.Cli.Registry.ArgScanner.Parse(a);
+    if (opts.Flag("help"))
     {
         return Usage(0);
-    }
-
-    if (a.Length > 0)
-    {
-        throw new CliUsageException("Unknown argument.");
     }
 
     var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
@@ -1398,32 +1420,55 @@ static int RunInstall(string[] a)
         throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
     }
 
-    using var doc = ParseProjectJson(projectFilePath);
-    var root = doc.RootElement;
+    // Loading resolves and validates path dependencies; a missing or non-project path throws here.
+    var project = ProjectSupport.LoadProject(projectFilePath);
 
-    var deps = new Dictionary<string, string>(StringComparer.Ordinal);
-    if (root.TryGetProperty("dependencies", out var existingDeps) && existingDeps.ValueKind == System.Text.Json.JsonValueKind.Object)
+    if (project.Dependencies.Count == 0)
     {
-        foreach (var dep in existingDeps.EnumerateObject())
+        AnsiConsole.MarkupLine("[grey]No path dependencies to restore.[/]");
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[green]Restored[/] {project.Dependencies.Count} path dependenc{(project.Dependencies.Count == 1 ? "y" : "ies")}:");
+        foreach (var d in project.Dependencies)
         {
-            deps[dep.Name] = dep.Value.GetString() ?? "*";
+            var dev = d.IsDev ? " [grey](dev)[/]" : "";
+            AnsiConsole.MarkupLine($"  {Markup.Escape(d.Name)} [grey]->[/] {Markup.Escape(d.Namespace)} [grey]({Markup.Escape(d.ProjectDirectory)})[/]{dev}");
         }
     }
 
-    if (deps.Count == 0)
+    var registryDeps = CountNonPathDependencies(projectFilePath);
+    if (registryDeps > 0)
     {
-        AnsiConsole.MarkupLine("[grey]No dependencies to install.[/]");
-        return 0;
+        AnsiConsole.MarkupLine($"[yellow]{registryDeps} registry/git dependenc{(registryDeps == 1 ? "y" : "ies")} require a lock file and cache (not yet available).[/]");
     }
 
-    AnsiConsole.MarkupLine($"[bold]Dependencies[/] ({deps.Count}):");
-    foreach (var (name, version) in deps)
-    {
-        AnsiConsole.MarkupLine($"  {Markup.Escape(name)} [grey]{Markup.Escape(version)}[/]");
-    }
-
-    AnsiConsole.MarkupLine("[yellow]Package registry not yet available. Dependencies are recorded but not fetched.[/]");
     return 0;
+}
+
+static int CountNonPathDependencies(string projectFilePath)
+{
+    using var doc = ParseProjectJson(projectFilePath);
+    var count = 0;
+    foreach (var field in (string[])["dependencies", "devDependencies"])
+    {
+        if (!doc.RootElement.TryGetProperty(field, out var deps) || deps.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            continue;
+        }
+
+        foreach (var dep in deps.EnumerateObject())
+        {
+            var isPath = dep.Value.ValueKind == System.Text.Json.JsonValueKind.Object
+                && dep.Value.TryGetProperty("path", out _);
+            if (!isPath)
+            {
+                count++;
+            }
+        }
+    }
+
+    return count;
 }
 
 static object? DeserializeJsonElement(System.Text.Json.JsonElement element)
