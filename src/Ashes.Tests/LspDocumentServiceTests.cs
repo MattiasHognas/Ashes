@@ -64,6 +64,21 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_expand_inline_modules_without_imports()
+    {
+        const string source = """
+                              module Geometry =
+                                  let area = given (r) -> r * r
+
+                              Ashes.IO.print(Geometry.area(3))
+                              """;
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_require_import_for_unqualified_print()
     {
         var diagnostics = DocumentService.Analyze("print(1)");

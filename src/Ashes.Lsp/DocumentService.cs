@@ -546,7 +546,8 @@ public static partial class DocumentService
         var entryOffset = 0;
         var bodyStart = 0;
 
-        if (standaloneImportDiagnostics.Count == 0 && header.Imports.Count > 0)
+        if (standaloneImportDiagnostics.Count == 0
+            && (header.Imports.Count > 0 || ProjectSupport.ContainsInlineModule(header.StrippedSource)))
         {
             var layout = ProjectSupport.BuildStandaloneCompilationLayout(
                 header.StrippedSource,

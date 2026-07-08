@@ -992,7 +992,53 @@ public static class ProjectSupport
 
     public static CombinedCompilationLayout BuildCompilationLayout(ProjectCompilationPlan plan, string? entrySourceOverride = null)
     {
-        return BuildCompilationLayoutCore(plan.OrderedModules, plan.EntryModule, entrySourceOverride);
+        if (entrySourceOverride is null || !ContainsInlineModule(entrySourceOverride))
+        {
+            return BuildCompilationLayoutCore(plan.OrderedModules, plan.EntryModule, entrySourceOverride);
+        }
+
+        var (entryOuter, entryInlineModules) = ExpandInlineModules(entrySourceOverride, "", plan.EntryModule.FilePath);
+        var entryInlinePathPrefix = Path.GetFullPath(plan.EntryModule.FilePath) + "#";
+        var orderedModules = new List<ProjectModule>(plan.OrderedModules.Count + entryInlineModules.Count);
+        var entryModule = plan.EntryModule with
+        {
+            Source = ApplySelectorRenames(entryOuter, plan.EntryModule.Selectors)
+        };
+
+        foreach (var module in plan.OrderedModules)
+        {
+            if (module.FilePath.StartsWith(entryInlinePathPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(module.FilePath, plan.EntryModule.FilePath, StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var inline in entryInlineModules)
+                {
+                    if (orderedModules.Any(existing => string.Equals(existing.ModuleName, inline.ModuleName, StringComparison.Ordinal)))
+                    {
+                        throw new InvalidOperationException(
+                            $"[ASH022] Module path '{inline.ModuleName}' is defined by both an inline module and a file ({plan.EntryModule.FilePath}).");
+                    }
+
+                    orderedModules.Add(new ProjectModule(
+                        inline.ModuleName,
+                        $"{Path.GetFullPath(plan.EntryModule.FilePath)}#{inline.ModuleName}",
+                        inline.Source,
+                        [],
+                        new Dictionary<string, string>(StringComparer.Ordinal),
+                        []));
+                }
+
+                orderedModules.Add(entryModule);
+                continue;
+            }
+
+            orderedModules.Add(module);
+        }
+
+        return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
     }
 
     public static CombinedCompilationLayout BuildStandaloneCompilationLayout(
