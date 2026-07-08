@@ -11,7 +11,7 @@ currently supported language features.
 
 ---
 
-# 1. Program Structure
+## 1. Program Structure
 
 Ashes is an **expression-based** language.
 
@@ -106,7 +106,7 @@ Built-in runtime types available without import include:
 The reserved `Ashes` namespace is a module root, not a direct alias surface for
 `print`, `panic`, or `args`; those live under `Ashes.IO` only.
 
-## 1.1 File Structure and Top-Level Declarations
+### 1.1 File Structure and Top-Level Declarations
 
 A source file is a flat sequence of imports, then top-level declarations, then an
 optional trailing expression:
@@ -140,7 +140,7 @@ and odd = given (n) -> if n == 0 then false else even(n - 1)
 Ashes.IO.print("hello " + name)
 ```
 
-### Sequential scoping (Model A)
+#### Sequential scoping (Model A)
 
 Top-level binding scope is **sequential**, following OCaml/F# ordering:
 
@@ -154,7 +154,7 @@ Top-level binding scope is **sequential**, following OCaml/F# ordering:
 A plain top-level `let f = ...` cannot refer to itself; self-recursion requires
 `let recursive` exactly as in nested `let` bindings (see §6).
 
-### Mutual recursion (`let recursive ... and ...`)
+#### Mutual recursion (`let recursive ... and ...`)
 
 `let recursive` may be followed by one or more `and` clauses to declare a group of
 mutually recursive bindings:
@@ -171,7 +171,7 @@ and odd = given (n) -> if n == 0 then false else even(n - 1)
 - Like nested `let recursive`, each binding in the group is monomorphic within the group
   (no polymorphic recursion; see §6 and §14.2).
 
-### Trailing expression
+#### Trailing expression
 
 - The trailing expression is **optional**. A file containing only declarations is
   legal and, when compiled as a program, produces no output.
@@ -180,7 +180,7 @@ and odd = given (n) -> if n == 0 then false else even(n - 1)
 - When a file is imported as a module, its trailing expression is **ignored
   entirely** — only its top-level declarations contribute exports (see §13.1).
 
-### Backward compatibility
+#### Backward compatibility
 
 Both existing styles remain fully valid:
 
@@ -191,9 +191,9 @@ Both existing styles remain fully valid:
 
 ---
 
-# 2. Values
+## 2. Values
 
-## 2.1 Integers
+### 2.1 Integers
 
 10
 42
@@ -213,7 +213,7 @@ Unsigned literals use an explicit suffix:
 
 Unsigned arithmetic and bitwise operations wrap at the declared bit width.
 
-## 2.1.1 Floats
+### 2.1.1 Floats
 
 Ashes has a built-in primitive type:
 
@@ -238,7 +238,7 @@ Lexing and parsing rules:
 
 Float arithmetic and comparisons are introduced in later milestones.
 
-## 2.1.2 Arbitrary-precision integers
+### 2.1.2 Arbitrary-precision integers
 
 Ashes has a native arbitrary-precision signed integer primitive type:
 
@@ -264,7 +264,7 @@ each operation allocates a fresh, normalized result.
 The `%` (remainder) operator also applies to `Int` and the unsigned types; the result's sign
 follows the dividend, matching C `%`.
 
-## 2.2 Strings
+### 2.2 Strings
 
 “hello”
 “world”
@@ -347,12 +347,12 @@ Current HTTP rules:
 - Chunked transfer encoding is not supported and returns `Error(...)`.
 - The successful payload is the response body text after the HTTP header separator.
 
-## 2.3 Booleans
+### 2.3 Booleans
 
 true
 false
 
-## 2.4 Tuples
+### 2.4 Tuples
 
 Tuple literals:
 
@@ -367,9 +367,9 @@ Rules:
 
 ---
 
-# 3. Operators
+## 3. Operators
 
-## 3.1 Arithmetic
+### 3.1 Arithmetic
 
 `+` is overloaded:
 
@@ -401,7 +401,7 @@ Unary negation is supported for integers:
 - `-x` evaluates to the negated integer value of `x`.
 - `-expr` binds tighter than `*` and `/`.
 
-## 3.2 Comparison
+### 3.2 Comparison
 
 Comparison operators evaluate to `Bool`.
 
@@ -436,7 +436,7 @@ true == false   // => false
 
 Both operands of `==` and `!=` must have the same type. Mixing `Int` and `Str` is a type error.
 
-## 3.3 Overloaded operators across types
+### 3.3 Overloaded operators across types
 
 `+`, `==`, and `!=` are overloaded (they pick a concrete operation from the operand type). A
 function that applies one of them directly to two of its own parameters is **overload-generic**: it
@@ -454,7 +454,7 @@ This is what lets `Ashes.Test.assertEqual` be used at several basic types in the
 function must be applied to arguments (called), not used as an unapplied first-class value at more
 than one type.
 
-## 3.4 Bitwise
+### 3.4 Bitwise
 
 Bitwise operators operate on integer values (`Int`, `u8`, `u16`, `u32`,
 `u64`) and return the same type as the left operand.
@@ -472,7 +472,7 @@ Where `T` is `Int` or one unsigned integer type (`u8`, `u16`, `u32`, `u64`).
 Shift counts are masked to the low 6 bits for the 64-bit `Int`
 representation.
 
-## 3.5 Cons
+### 3.5 Cons
 
 `::` constructs a new list by prepending a head value to a tail list.
 
@@ -480,7 +480,7 @@ Example:
 
 1 :: [2,3]  // => [1,2,3]
 
-## 3.6 Pipes
+### 3.6 Pipes
 
 Ashes supports three left-to-right pipeline operators.
 
@@ -541,7 +541,7 @@ let bumpIfOk2 result =
     in
     Ok(n + 1)
 
-## 3.7 Precedence and Associativity
+### 3.7 Precedence and Associativity
 
 From lowest precedence to highest:
 
@@ -565,7 +565,7 @@ all operators above.
 
 ---
 
-# 4. Type Declarations
+## 4. Type Declarations
 
 Algebraic data types are declared with `type`.
 
@@ -627,7 +627,7 @@ Rules:
   expression (a name, a parameterized type, a function type, or a tuple).
 - Type declarations appear before the expression body of the program.
 
-## 4.1 Record Types
+### 4.1 Record Types
 
 Record types are single-constructor ADTs with named fields. Records use a
 brace-free syntax that mirrors ADT declarations and ordinary constructor calls;
@@ -694,7 +694,7 @@ Rules:
 > (`type T = { f: T }`), literal (`T { f = e }`), or update (`{ base with f = e }`)
 > might be written is rejected with a diagnostic pointing to the brace-free forms above.
 
-# 5. Let Bindings
+## 5. Let Bindings
 
 Syntax:
 
@@ -712,7 +712,7 @@ Bindings are:
 - scoped to the `in` expression
 - expression-based
 
-## 5.1 External Declarations
+### 5.1 External Declarations
 
 Top-level `external` declarations expose C ABI functions to Ashes code.
 
@@ -744,7 +744,7 @@ Rules:
 - External functions must be called directly; they are not first-class function
   values in this initial FFI surface.
 
-## 5.2 Result Binding
+### 5.2 Result Binding
 
 Syntax:
 
@@ -777,7 +777,7 @@ Rules:
 - The bound name is only in scope inside `body`.
 - In this milestone, the binder target must be an identifier.
 
-## 5.3 Type Annotations
+### 5.3 Type Annotations
 
 Let bindings may carry an optional type annotation between the name and `=`.
 
@@ -807,7 +807,7 @@ Type annotations are also accepted on `let recursive` bindings.
 
 ---
 
-# 6. Recursive Bindings
+## 6. Recursive Bindings
 
 Recursive bindings must be declared with `recursive`.
 
@@ -841,7 +841,7 @@ stack-depth limits.
 
 ---
 
-# 7. Functions
+## 7. Functions
 
 Anonymous functions are declared using `given`.
 
@@ -861,11 +861,11 @@ Functions:
 - may return functions
 - may capture outer variables (closures)
 
-## 7.1 Function Application
+### 7.1 Function Application
 
 Ashes supports two equivalent syntaxes for calling functions.
 
-### Parenthesized Application
+#### Parenthesized Application
 
 The traditional syntax wraps arguments in parentheses:
 
@@ -899,7 +899,7 @@ is equivalent to:
 
 f(Unit)
 
-### ML-style (Whitespace) Application
+#### ML-style (Whitespace) Application
 
 Arguments may also be passed using whitespace, without parentheses:
 
@@ -913,7 +913,7 @@ This is pure syntax sugar. `f x y` is parsed identically to `f(x)(y)` — both
 produce the same call structure and semantics. The only AST difference is a
 formatting-only flag that records whether whitespace application was used.
 
-### Left Associativity
+#### Left Associativity
 
 Function application is left-associative:
 
@@ -925,7 +925,7 @@ parses as:
 
 which is equivalent to `f(x)(y)`.
 
-### Precedence
+#### Precedence
 
 Function application binds tighter than all binary operators:
 
@@ -937,7 +937,7 @@ parses as:
 
 not `f (x + y)`.
 
-### Valid Whitespace Arguments
+#### Valid Whitespace Arguments
 
 The following tokens may appear as whitespace arguments (without parentheses):
 
@@ -955,7 +955,7 @@ Ashes.IO.print (add 3 4)
 Keywords such as `then`, `else`, `in`, `with`, `|` are never treated as
 whitespace arguments.
 
-### Examples
+#### Examples
 
     let id x = x
     in Ashes.IO.print (id 42)
@@ -969,7 +969,7 @@ whitespace arguments.
         else loop (x + 1) (y + 1)
     in Ashes.IO.print (loop 0 0)
 
-## 7.2 Parameter Sugar
+### 7.2 Parameter Sugar
 
 A binding may list its parameters directly to the left of `=`. This is pure
 syntax sugar for a binding whose value is a chain of nested `given` lambdas — each
@@ -996,7 +996,7 @@ explicit `given` form remains valid and is what the sugar expands to.
 
 ---
 
-# 8. If Expressions
+## 8. If Expressions
 
 Syntax:
 
@@ -1014,17 +1014,17 @@ All branches must return compatible types.
 
 ---
 
-# 9. Lists
+## 9. Lists
 
 Lists are immutable linked lists. All list operations — cons (`::`),
 `Ashes.List.append`, `Ashes.List.map`, `Ashes.List.filter`, etc. —
 return a **new** list. The original list is never modified.
 
-## 9.1 Empty List
+### 9.1 Empty List
 
 []
 
-## 9.2 List Literals
+### 9.2 List Literals
 
 [1,2,3]
 [“a”,“b”]
@@ -1035,7 +1035,7 @@ Mixed-type lists are invalid.
 
 ---
 
-# 10. Cons Operator
+## 10. Cons Operator
 
 Syntax:
 
@@ -1066,7 +1066,7 @@ x :: xs : List<T>
 
 ---
 
-# 11. Pattern Matching
+## 11. Pattern Matching
 
 Pattern matching is performed using `match`.
 
@@ -1082,7 +1082,7 @@ Each arm may include an optional guard:
 
 ---
 
-## 11.1 List Patterns
+### 11.1 List Patterns
 
 Supported patterns:
 
@@ -1113,7 +1113,7 @@ Exhaustiveness:
 
 ---
 
-## 11.2 Tuple Patterns
+### 11.2 Tuple Patterns
 
 Tuple patterns destructure tuples by position.
 
@@ -1133,7 +1133,7 @@ match p with
 
 ---
 
-## 11.3 Wildcard Pattern
+### 11.3 Wildcard Pattern
 
 `_` matches any value and binds nothing.
 
@@ -1154,7 +1154,7 @@ appears in a `match`, all later arms are unreachable and are rejected.
 
 ---
 
-## 11.4 Constructor Patterns
+### 11.4 Constructor Patterns
 
 Constructor patterns destructure algebraic data type values.
 
@@ -1203,7 +1203,7 @@ Errors:
 > represented.
 >
 
-## 11.5 Integer Literal Patterns
+### 11.5 Integer Literal Patterns
 
 Integer literal patterns match values by equality.
 
@@ -1236,7 +1236,7 @@ match n with
 
 ---
 
-## 11.6 String Literal Patterns
+### 11.6 String Literal Patterns
 
 String literal patterns match values by equality.
 
@@ -1260,7 +1260,7 @@ match greeting with
 
 ---
 
-## 11.7 Boolean Literal Patterns
+### 11.7 Boolean Literal Patterns
 
 Boolean literal patterns match `true` or `false`.
 
@@ -1282,7 +1282,7 @@ match flag with
 
 ---
 
-## 11.8 Pattern Guards
+### 11.8 Pattern Guards
 
 Match arms can include an optional `when` guard clause that adds a boolean
 condition to the pattern.
@@ -1337,7 +1337,7 @@ Pattern guards are syntax sugar — no new evaluation rules are introduced.
 
 ---
 
-## 11.9 Let Pattern Bindings
+### 11.9 Let Pattern Bindings
 
 Let expressions support destructuring patterns on the left side of `=`.
 
@@ -1368,7 +1368,7 @@ in first
 
 ---
 
-# 12. Recursion over Lists
+## 12. Recursion over Lists
 
 Example:
 
@@ -1393,12 +1393,12 @@ in Ashes.IO.print(lastOr([1, 2, 3])(0))
 
 ---
 
-# 13. Standard Library Modules
+## 13. Standard Library Modules
 
 Ashes has **no implicit prelude**. All standard library functions live under the
 `Ashes` namespace and must be accessed explicitly.
 
-## 13.1 Accessing Standard Library
+### 13.1 Accessing Standard Library
 
 Ashes has no implicit standard-library open. Unqualified `print`, `panic`, and
 `args` are available only after `import Ashes.IO`, while the qualified
@@ -1409,13 +1409,13 @@ Ashes has no implicit standard-library open. Unqualified `print`, `panic`, and
 
 There are two common ways to use standard library functions:
 
-### Qualified access (no import required)
+#### Qualified access (no import required)
 
     Ashes.IO.print "hello"
     Ashes.IO.panic "boom"
     Ashes.IO.args
 
-### Import and use unqualified names
+#### Import and use unqualified names
 
     import Ashes.IO
 
@@ -1425,7 +1425,7 @@ There are two common ways to use standard library functions:
 `import Module` brings the module's exported names into local scope. The import
 must appear at the top of the source file, before any expressions.
 
-### Import Aliasing
+#### Import Aliasing
 
 An import may include an alias using `as`:
 
@@ -1453,7 +1453,7 @@ For multi-segment module imports, both full and short qualification are supporte
 
 Both styles may be mixed freely.
 
-### Import Selectors
+#### Import Selectors
 
 In addition to whole-module imports (`import M` and `import M as X`), an import may
 select an individual binding or type from a module. A selector brings the selected
@@ -1492,7 +1492,7 @@ user modules: each module has a known set of exported bindings and types, and
 selectors are checked against that set. For example `import Ashes.IO.print` and
 `import Ashes.IO.print as p` behave exactly like selectors against a user module.
 
-### Module Exports
+#### Module Exports
 
 When a file is imported as a module, its exports are:
 
@@ -1509,7 +1509,7 @@ There is **no implicit re-export**: names a module itself imported from other
 modules are not re-exported to its importers. Each importer must import what it
 needs directly.
 
-### Inline Modules
+#### Inline Modules
 
 A file may declare **inline modules** — nested, named namespaces — directly in
 its body, so related `let` / `type` declarations can be grouped under a
@@ -1558,11 +1558,11 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   path.
 
 Diagnostics `ASH021`–`ASH024` cover the inline-module surface (see
-[DIAGNOSTICS.md](diagnostics.md)); unknown-member, unknown-selector, and
+[Diagnostics Reference](diagnostics.md)); unknown-member, unknown-selector, and
 import-collision cases reuse `ASH013`–`ASH016`, since inline modules resolve
 through the same path as file modules.
 
-## 13.2 Ashes.IO Module
+### 13.2 Ashes.IO Module
 
 The built-in `Ashes.IO` module exports:
 
@@ -1597,7 +1597,7 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for `http://` and `https://` URLs.
 - `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for `http://` and `https://` URLs.
 
-## 13.3 Built-in Runtime Types
+### 13.3 Built-in Runtime Types
 
 The compiler also provides built-in runtime ADTs:
 
@@ -1664,7 +1664,7 @@ a `0x` prefix; negative values are formatted with a leading `-`.
 normalizes Windows `\r\n` input so the returned string never includes the trailing
 newline bytes.
 
-## 13.4 Error Handling
+### 13.4 Error Handling
 
 Ashes uses explicit `Result(E, A)` values for recoverable failures.
 
@@ -1686,7 +1686,7 @@ in describe(Ok(1))
 `Ashes.IO.panic(message)` is reserved for unrecoverable failures.
 It prints the provided message and terminates execution with a non-zero exit code.
 
-## 13.5 Shipped Standard Library Modules
+### 13.5 Shipped Standard Library Modules
 
 Ashes also ships pure library modules implemented in Ashes source.
 Every function in these modules is pure: it returns a new value and
@@ -1703,7 +1703,7 @@ Current shipped modules include:
 
 Stable helper surfaces:
 
-### `Ashes.List`
+#### `Ashes.List`
 
 - `Ashes.List.append : List<a> -> List<a> -> List<a>`
 - `Ashes.List.length : List<a> -> Int`
@@ -1716,7 +1716,7 @@ Stable helper surfaces:
 - `Ashes.List.isEmpty : List<a> -> Bool`
 - `Ashes.List.reverse : List<a> -> List<a>`
 
-### `Ashes.Map`
+#### `Ashes.Map`
 
 - `Ashes.Map.empty : MapTree(k, v)`
 - `Ashes.Map.isEmpty : MapTree(k, v) -> Bool`
@@ -1732,7 +1732,7 @@ Stable helper surfaces:
 `Ashes.Map` is a persistent AVL tree. Callers provide a total ordering
 function because the language does not yet have a built-in ordering abstraction.
 
-### `Ashes.Maybe`
+#### `Ashes.Maybe`
 
 - `Ashes.Maybe.default : a -> Maybe(a) -> a`
 - `Ashes.Maybe.flatMap : (a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`
@@ -1742,7 +1742,7 @@ function because the language does not yet have a built-in ordering abstraction.
 - `Ashes.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
 - `Ashes.Maybe.unwrapOr : Maybe(a) -> a -> a`
 
-### `Ashes.Result`
+#### `Ashes.Result`
 
 - `Ashes.Result.default : a -> Result(E, a) -> a`
 - `Ashes.Result.bind : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
@@ -1753,7 +1753,7 @@ function because the language does not yet have a built-in ordering abstraction.
 - `Ashes.Result.isError : Result(E, a) -> Bool`
 - `Ashes.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
 
-### `Ashes.String`
+#### `Ashes.String`
 
 - `Ashes.String.substring : Str -> Int -> Int -> Str`
 - `Ashes.String.length : Str -> Int`
@@ -1785,7 +1785,7 @@ surface sugar for curried application.
 These helper modules are compiler-shipped and live under the reserved `Ashes.*`
 namespace. User projects cannot override them with project-local modules.
 
-## 13.6 Future Standard Library Modules
+### 13.6 Future Standard Library Modules
 
 The module system supports nested module paths. Future modules are tracked in
 [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md).
@@ -1793,7 +1793,7 @@ The module system supports nested module paths. Future modules are tracked in
 The `Ashes` namespace is reserved and cannot be used for user-defined modules.
 This applies to `Ashes` itself and to any `Ashes.*` module path.
 
-## 13.7 Core Language vs Library
+### 13.7 Core Language vs Library
 
 Language-level syntax constructs remain built into the compiler:
 
@@ -1819,11 +1819,11 @@ Example usage:
 
 ---
 
-# 14. Type Inference
+## 14. Type Inference
 
 Ashes uses static Hindley-Milner style type inference with let-polymorphism.
 
-## 14.1 Let-Polymorphism
+### 14.1 Let-Polymorphism
 
 For non-recursive `let` bindings, inferred types are generalized into type schemes.
 Conceptually, this is `forall` quantification (for example `forall a. a -> a`), even
@@ -1843,17 +1843,17 @@ Example:
 
 `id` is inferred once, generalized, then instantiated separately for integer and string uses.
 
-## 14.2 Recursion and Polymorphism
+### 14.2 Recursion and Polymorphism
 
 `let recursive` bindings are monomorphic during inference. The recursive name is checked
 using a single monotype inside its own definition, so polymorphic recursion is not inferred.
 
-## 14.3 Infinite Types (Occurs Check)
+### 14.3 Infinite Types (Occurs Check)
 
 Inference rejects infinite/recursive types via an occurs check. Self-application patterns
 such as `x(x)` are invalid, because they would require a type variable to contain itself.
 
-## 14.4 What to Expect
+### 14.4 What to Expect
 
 Common patterns that typecheck:
 
@@ -1871,7 +1871,7 @@ Common patterns that do not typecheck:
 
 ---
 
-# 15. Evaluation Strategy
+## 15. Evaluation Strategy
 
 Ashes is:
 
@@ -1900,7 +1900,7 @@ once created.
 
 ---
 
-# 16. Resource Types and Deterministic Cleanup
+## 16. Resource Types and Deterministic Cleanup
 
 Certain built-in types represent external system resources (file handles,
 sockets). These are called **resource types**.
@@ -1911,7 +1911,7 @@ Currently classified resource types:
 - `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect` or a server-side
   `Ashes.Net.Tls.Server.handshake`
 
-## 16.1 Automatic Cleanup
+### 16.1 Automatic Cleanup
 
 Resource bindings are automatically cleaned up when they go out of scope.
 The compiler inserts cleanup calls at the end of every scope that contains
@@ -1924,7 +1924,7 @@ a live resource binding. This includes:
 Users do not write cleanup calls manually unless they want explicit control
 over when a resource is released.
 
-## 16.2 Explicit Close
+### 16.2 Explicit Close
 
 Resources may be closed explicitly using the appropriate API:
 
@@ -1934,7 +1934,7 @@ Resources may be closed explicitly using the appropriate API:
 When a resource is closed explicitly, the automatic cleanup for that
 resource is skipped (no double close).
 
-## 16.2.1 Move on Transfer
+### 16.2.1 Move on Transfer
 
 Ownership of a resource **moves** out of a scope when the resource is handed off to something that
 takes responsibility for it — so the original scope no longer cleans it up. Ownership moves when a
@@ -1950,7 +1950,7 @@ This is what lets a combinator hand an accepted socket to an opaque handler that
 the combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Server.serve` and
 `Ashes.Net.Tls.Server.serveTls`).
 
-## 16.3 Compile-Time Safety
+### 16.3 Compile-Time Safety
 
 The compiler enforces resource safety with two rules:
 
@@ -1963,13 +1963,13 @@ The compiler enforces resource safety with two rules:
 
 These checks are performed at compile time during semantic analysis.
 
-## 16.4 What Is Not Affected
+### 16.4 What Is Not Affected
 
 Resource safety rules (use-after-close, double-close) apply only to resource
 types. General owned types (String, List, ADTs, closures) receive automatic
 Drop but have no restrictions on reuse — see §17.
 
-## 16.5 No Garbage Collection
+### 16.5 No Garbage Collection
 
 All resource cleanup is deterministic and compile-time verified. There is
 no garbage collector. The compiler guarantees exactly-once cleanup for every
@@ -1977,13 +1977,13 @@ resource binding.
 
 ---
 
-# 17. Ownership Model
+## 17. Ownership Model
 
 Ashes uses an **implicit sharing** model for memory management. Every
 value has a clear owner, but ownership is managed entirely by the
 compiler — users never write move, borrow, or drop operations.
 
-## 17.1 Copy vs Owned Types
+### 17.1 Copy vs Owned Types
 
 | Category | Types | Behaviour |
 |----------|-------|-----------|
@@ -1994,7 +1994,7 @@ Copy types may be used any number of times without restriction.
 
 Owned types are tracked by the compiler for deterministic cleanup.
 
-## 17.2 Implicit Sharing
+### 17.2 Implicit Sharing
 
 Values in Ashes are **implicitly shared**. When a binding is used —
 passed to a function, stored in a data structure, or returned from a
@@ -2004,7 +2004,7 @@ borrow syntax (`&x`), no move keyword, and no use-after-move errors.
 The compiler decides when to share (borrow) and when to copy. Since all
 values are immutable, sharing is always safe.
 
-## 17.3 Deterministic Drop
+### 17.3 Deterministic Drop
 
 Every owned binding receives a `Drop` at the end of its owning scope.
 This applies to:
@@ -2018,7 +2018,7 @@ For resource types (Socket), `Drop` invokes platform-specific cleanup
 no-op in the linear allocator and will perform actual deallocation when
 a freeing allocator is introduced.
 
-## 17.4 Moves as Optimisation
+### 17.4 Moves as Optimisation
 
 "Move" in Ashes is a **compiler optimisation**, not a user-visible
 operation. When the compiler can prove a value is used for the last
@@ -2026,7 +2026,7 @@ time, it may transfer the underlying memory rather than sharing. This
 is invisible to user code — the program behaves identically regardless
 of whether a move or share occurs.
 
-## 17.5 Borrowing Is Inferred
+### 17.5 Borrowing Is Inferred
 
 Borrowing is **compiler-inferred**, not user-annotated. There is no
 `&x` syntax, no borrow operator, and no lifetime annotations.
@@ -2051,7 +2051,7 @@ instruction: `Borrow(target, source)`. In the current backend this
 is a simple pointer pass-through. Future phases may use borrow
 information for copy elision and in-place reuse optimizations.
 
-## 17.6 No Garbage Collection
+### 17.6 No Garbage Collection
 
 All ownership and cleanup is deterministic and resolved at compile time.
 There is no garbage collector, no reference counting at runtime (in the
@@ -2059,13 +2059,13 @@ current implementation), and no finalizers.
 
 ---
 
-# 18. Optimization
+## 18. Optimization
 
 The Ashes compiler performs multiple levels of optimization, all invisible
 to user code. Observable behaviour is always preserved — optimizations
 never change what a program prints, returns, or does.
 
-## 18.1 IR-Level Optimizations
+### 18.1 IR-Level Optimizations
 
 After semantic lowering and before backend code generation, the compiler
 runs an IR optimization pass pipeline:
@@ -2080,14 +2080,14 @@ runs an IR optimization pass pipeline:
 - **Borrow elision** — `Borrow` instructions on copy-type constants are
   candidates for removal since copy types have no ownership semantics.
 
-## 18.2 Backend Optimizations
+### 18.2 Backend Optimizations
 
 The LLVM backend applies instruction-level optimizations during code
 generation via the target machine's optimization level (O0 through O3).
 This includes register allocation, instruction scheduling, and
 peephole optimizations performed by LLVM's code generator.
 
-## 18.3 Tail-Call Optimization
+### 18.3 Tail-Call Optimization
 
 Tail-recursive functions are optimized into constant-stack loops by the
 compiler. When the compiler detects that a recursive call is in tail
@@ -2101,7 +2101,7 @@ reusing the current stack frame. This means recursive functions like:
 
 run in constant stack space, without risk of stack overflow.
 
-### 18.3.1 Mutual Recursion
+#### 18.3.1 Mutual Recursion
 
 Cross-member tail calls in a `let recursive ... and ...` group are also compiled
 to constant-stack loops when all of the following hold:
@@ -2118,7 +2118,7 @@ stack space. When they do not hold, cross-member calls are ordinary
 closure calls and each one consumes a stack frame. Non-tail in-group
 calls always consume stack frames, exactly like non-tail self-calls.
 
-### 18.3.2 Stack Depth and Non-Tail Recursion
+#### 18.3.2 Stack Depth and Non-Tail Recursion
 
 Only tail calls are rewritten into loops. A recursive call whose result
 is still consumed by the caller (for example `n * factorial(n - 1)`, or
@@ -2139,7 +2139,7 @@ unbounded input sizes, structure the recursion so the recursive call is
 in tail position, typically by threading an accumulator as in the `sum`
 example above.
 
-## 18.4 Zero-Cost Abstraction Philosophy
+### 18.4 Zero-Cost Abstraction Philosophy
 
 Values are immutable and freely shared; the compiler handles ownership
 and memory safely behind the scenes. Optimizations are never visible to
@@ -2148,11 +2148,11 @@ internal operations as long as the observable result is identical.
 
 ---
 
-# 19. Async/Await
+## 19. Async/Await
 
 Ashes supports task-based concurrency via `Task` values and `await`.
 
-## 19.1 Task Type
+### 19.1 Task Type
 
     Task(E, A)
 
@@ -2164,7 +2164,7 @@ computation that may fail with error type `E` or succeed with value type `A`.
   or double-close restrictions.
 - The compiler inserts `Drop` for `Task` at scope exit like any other owned type.
 
-## 19.2 Await Expressions
+### 19.2 Await Expressions
 
 `await <expr>` resolves a `Task(E, A)` to `Result(E, A)`:
 
@@ -2175,7 +2175,7 @@ computation that may fail with error type `E` or succeed with value type `A`.
 - `await` runs the task to completion.
 - `Ashes.Async.run(task)` has equivalent return shape (`Result(E, A)`), so `await` can be used directly.
 
-## 19.3 Async Let (let!)
+### 19.3 Async Let (let!)
 
 `let!` is sugar for `await` in a binding position:
 
@@ -2201,12 +2201,12 @@ Desugars to:
         let b = await Ashes.Http.get("http://b.com")
         in a + b
 
-## 19.4 Type Inference Rules
+### 19.4 Type Inference Rules
 
 - `await <expr>` where `<expr> : Task(E, A)` produces `Result(E, A)`.
 - Functions returning `Task` are regular functions.
 
-## 19.5 Result Interop
+### 19.5 Result Interop
 
 `Task(E, A)` and `Result(E, A)` share the same error-propagation model:
 
@@ -2216,7 +2216,7 @@ Desugars to:
 - `Ashes.Async.run(task)` — runs a task to completion and returns
   `Result(E, A)`.
 
-## 19.6 Ashes.Async Module
+### 19.6 Ashes.Async Module
 
 | Function | Type |
 |----------|------|
@@ -2236,7 +2236,7 @@ them, so the task must release its own resources. Detached tasks still in flight
 `run` completes (and the program exits) are abandoned. This is the concurrency primitive behind
 `Ashes.Net.Tcp.Server.serve`'s concurrent connection handling.
 
-### 19.6.1 Ashes.Async.sleep
+#### 19.6.1 Ashes.Async.sleep
 
 `Ashes.Async.sleep(ms)` creates a task that suspends for the given
 number of milliseconds, then completes with `0`:
@@ -2251,7 +2251,7 @@ number of milliseconds, then completes with `0`:
 - On Linux, `sleep` uses the `nanosleep` syscall.
 - On Windows, `sleep` uses the `Sleep` kernel32 function.
 
-### 19.6.2 Ashes.Async.all
+#### 19.6.2 Ashes.Async.all
 
 `Ashes.Async.all(tasks)` takes a list of tasks and runs them all,
 collecting results into a list in the original order:
@@ -2269,7 +2269,7 @@ collecting results into a list in the original order:
 - Results are collected in the same order as the input list.
 - An empty input list produces an empty result list.
 
-### 19.6.3 Ashes.Async.race
+#### 19.6.3 Ashes.Async.race
 
 `Ashes.Async.race(tasks)` takes a list of tasks and returns the result
 of the first task to complete:
@@ -2296,18 +2296,18 @@ of the first task to complete:
   tasks at wait points).
 - An empty input list produces `0` (unit placeholder).
 
-## 19.8 Diagnostics
+### 19.8 Diagnostics
 
 Async/await has no dedicated diagnostic codes. `async` is a builtin
 (`Ashes.Async.task`), not a block keyword, so there is no "outside `async`"
 state to police; misuse (for example combining tasks with mismatched error
 types, or consuming a `Task` without `await`/`Ashes.Async.run`) surfaces through
-ordinary type-inference diagnostics. See [DIAGNOSTICS.md](diagnostics.md) for the
+ordinary type-inference diagnostics. See [Diagnostics Reference](diagnostics.md) for the
 full code table.
 
 ---
 
-# 20. Capabilities and Handlers
+## 20. Capabilities and Handlers
 
 A **capability** lets a function *declare* the operations it needs — `now`, `log`, `lookup` —
 without deciding what they mean. The caller chooses the meaning by installing a **handler**. The
@@ -2335,9 +2335,9 @@ interacting with `async`/`await` state machines or `Ashes.Parallel` worker threa
 defined; handler evidence is currently per-process, not per-task or per-thread (see
 [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)). How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
-documented in [ARCHITECTURE.md](../internals/architecture.md).
+documented in [Architecture](../internals/architecture.md).
 
-## 20.1 Capability Declarations
+### 20.1 Capability Declarations
 
 A capability is a named set of operations, declared at the top level like a `type`:
 
@@ -2364,7 +2364,7 @@ capability State(a) =                // capability type parameter, for polymorph
   as in `State(a)`).
 - Operation signatures are function types; `Unit -> T` declares a Unit-taking operation.
 
-## 20.2 Performing an Operation
+### 20.2 Performing an Operation
 
 ```ash
 let t = perform Clock.now(Unit)  // explicit form
@@ -2377,7 +2377,7 @@ The formatter preserves whichever form was written. `perform` must be applied to
 operation call (`perform 42` is an error), and operations are always qualified by their capability
 (`Clock.now`), so no ambiguity arises when two capabilities share an operation name.
 
-## 20.3 Capability Rows (`needs`) in Type Annotations
+### 20.3 Capability Rows (`needs`) in Type Annotations
 
 A function type may carry a `needs` clause listing the capabilities the function performs:
 
@@ -2400,7 +2400,7 @@ let apply   : (Unit -> a needs e) -> a needs e      = ...  // bare row variable
   second performs `E`. Parenthesize to scope it differently:
   `(A -> B needs {E}) -> C` puts the row on the parameter's type.
 
-## 20.4 Capability Typing
+### 20.4 Capability Typing
 
 Capability rows are part of the Hindley-Milner type system as a second kind of row, with
 row-polymorphic unification:
@@ -2419,7 +2419,7 @@ row-polymorphic unification:
 - Annotation boundaries mirror the rest of Ashes: infer locally, annotate at module exports and
   for intentionally-polymorphic operations.
 
-## 20.5 Handlers
+### 20.5 Handlers
 
 ```ash
 handle work(Unit) with
@@ -2450,7 +2450,7 @@ Continuation power is restricted by the memory model (no GC):
 - **Aborting** arms (a path that never calls `resume`) need unwinding and are rejected.
 - **Multi-shot** (`resume` called more than once) is out of scope and rejected.
 
-## 20.6 Static Providers (`provide`)
+### 20.6 Static Providers (`provide`)
 
 A `handle` satisfies a capability *dynamically* — for the extent of a scope. A **provider**
 satisfies it *statically*: `provide` supplies a fixed implementation for a **concrete** capability
@@ -2527,7 +2527,7 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   type — the caller's dictionary is not threaded across the module boundary. Define such a wrapper in
   the module that provides the function, or call it at a concrete type.
 
-## 20.7 Worked Example
+### 20.7 Worked Example
 
 The same business code runs under any handler; only the interpretation changes:
 
@@ -2557,7 +2557,7 @@ its fully-implicit twin must produce the same inferred types and the same output
 (`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
 production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
-## 20.8 Built-in Capabilities (`NetListen`, `NetConnect`, `Stop`)
+### 20.8 Built-in Capabilities (`NetListen`, `NetConnect`, `Stop`)
 
 Three capabilities are built into the compiler and require no declaration:
 
@@ -2604,7 +2604,7 @@ recursive helpers: a recursive function that performs a capability — or that a
 capability-performing parameter, as `Ashes.List.map` applies its mapping function — carries an open latent row, so
 passing a capability-performing function to it is accepted.
 
-## 20.9 Design Notes
+### 20.9 Design Notes
 
 Ashes uses **lexical handler injection** (the OCaml 5 / Koka / Eff / Frank / Unison family):
 the nearest enclosing handler interprets an operation. The two other ML/FP injection routes are
@@ -2619,17 +2619,17 @@ model and affine ownership (double-resume is double-use/double-drop of owned val
 Consequently capability-based generators, backtracking, and nondeterminism are out of scope —
 documented limitation, not a TODO.
 
-## 20.10 Diagnostics
+### 20.10 Diagnostics
 
 `ASH017` (unsatisfied capability), `ASH018` (capability not permitted by a closed row, and the
 generic-provider limitation), `ASH019` (unknown capability or operation), `ASH020` (invalid
 handler), `ASH026` (duplicate/incomplete provider),
 and `ASH027` (a capability satisfied by both a provider and a handler) cover this surface; see
-[DIAGNOSTICS.md](diagnostics.md).
+[Diagnostics Reference](diagnostics.md).
 
 ---
 
-# 21. Unsupported (Future)
+## 21. Unsupported (Future)
 
 See [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 

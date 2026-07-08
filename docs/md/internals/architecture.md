@@ -776,7 +776,7 @@ recursion depth is bounded by these sizes:
 ## Capabilities Lowering
 
 The capability surface and typing rules are specified in
-[LANGUAGE_SPEC.md](../reference/language.md) section 20; this section documents how they compile.
+[Language Reference](../reference/language.md) section 20; this section documents how they compile.
 
 ### Capability typing: the ambient row
 
@@ -843,7 +843,7 @@ each post is folded. Programs that declare no capabilities compile byte-for-byte
 guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
-[IR_REFERENCE.md](ir.md)); frames, posts cells, and the fold loop use the ordinary
+[IR Reference](ir.md)); frames, posts cells, and the fold loop use the ordinary
 `AllocStack` / `Alloc` / `StoreMemOffset` / `LoadMemOffset` / `CallClosure` / label machinery.
 
 Current limitations: the evidence globals are per-process, so installing or using handlers

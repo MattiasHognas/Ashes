@@ -259,7 +259,7 @@ These instructions return the existing `Maybe` and `Result` ADTs.
 Handler evidence for capabilities: one module global per declared capability
 (`__ashes_capability_handler_<i>`, created when `IrProgram.CapabilityHandlerGlobals > 0`) holds a pointer
 to the innermost installed handler frame for that capability, 0 when none. See
-[ARCHITECTURE.md](architecture.md) for the frame layout and perform/handle sequences.
+[Architecture](architecture.md) for the frame layout and perform/handle sequences.
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|

@@ -108,11 +108,9 @@ shape but is only needed to build and test the project — never part of a publi
 - **String value** — a registry SemVer constraint (e.g. `"^1.2.0"`, `"*"`). Registry dependencies are
   resolved by `ashes restore` into a lock file and cache once a registry is configured.
 - **Object value** — carries a source plus optional fields:
-  - `{ "path": "../local-lib" }` — a **path dependency**, resolved live from disk. This is the form
-    supported today: the dependency's source roots are added to the build and its modules are imported
-    under its namespace.
-  - `{ "git": "https://…", "rev" | "tag" | "branch": "…" }` — a git dependency, checked out into the cache.
-  - `"namespace"` — overrides the dependency's default namespace.
+  - `{ "path": "../local-lib" }` — a **path dependency**, resolved live from disk: the dependency's
+    source roots are added to the build and its modules are imported under its namespace.
+  - `"namespace": "..."` — overrides the dependency's default namespace.
 
 Example:
 ```json
@@ -184,7 +182,7 @@ compiler-provided and are not overridable by project-local modules.
 A module path may also be satisfied by an **inline module** — a `module Name = ...`
 declaration inside a file, which is lifted to the submodule `<File>.<Name>` and is
 addressable across files exactly like a separate `<File>/<Name>.ash` (see
-[LANGUAGE_SPEC.md](../reference/language.md) §13.1). A path that is satisfied by *both* an inline
+[Language Reference](../reference/language.md) §13.1). A path that is satisfied by *both* an inline
 module and a file (e.g. `module Vec` inside `Geom.ash` and a file `Geom/Vec.ash`) is a
 compile-time ambiguity error (`ASH022`). This keeps inline ↔ file promotion transparent:
 moving an inline module out to its own file leaves every `import` and call site unchanged,
@@ -282,8 +280,12 @@ Materializes and validates dependencies.
 - Locates `ashes.json` by walking upward from the current directory.
 - Resolves and validates **path dependencies** — a missing path or non-project fails with `ASH030` /
   `ASH031` — and lists each with its namespace.
-- Registry/git dependencies require a lock file and cache (not yet available); they are reported but not
-  fetched.
+- Resolves **registry dependencies** against the configured registry: it selects the highest version
+  satisfying all SemVer constraints across the transitive graph, downloads and content-verifies each
+  package into the shared cache, and writes the resolved graph to `ashes.lock`. `--frozen` fails if
+  resolution would change the lock (`ASH033`); `--offline` trusts the lock and only verifies the cache.
+- `ashes build` / `run` / `test` **auto-restore** first when the lock is missing or stale, so running
+  `restore` explicitly is rarely necessary.
 - `ashes install` is retired; use `restore` (or `add` to add a dependency).
 
 ---

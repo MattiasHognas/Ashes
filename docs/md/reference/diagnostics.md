@@ -25,6 +25,10 @@ Current codes:
 | `ASH018` | Capability not permitted by a closed `needs` row, or a provider used at a non-monomorphizable generic instance |
 | `ASH019` | Unknown capability or capability operation                    |
 | `ASH020` | Invalid handler (bad arm, or a not-yet-supported form)        |
+| `ASH021` | Disallowed form in an inline `module` block                   |
+| `ASH022` | Inline module path collides with a file module of the same path |
+| `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
+| `ASH024` | Duplicate inline module name in the same scope                |
 | `ASH026` | Duplicate or incomplete static provider (`provide`)            |
 | `ASH027` | Capability satisfied by both a provider and an enclosing handler |
 | `ASH028` | A dependency exports a module outside its declared namespace   |
@@ -35,10 +39,6 @@ Current codes:
 | `ASH033` | `ashes.lock` is stale (resolution would change) under `--frozen` |
 | `ASH034` | Content-hash mismatch against the lock file                    |
 | `ASH035` | Dependency graph contains a cycle                             |
-| `ASH021` | Disallowed form in an inline `module` block                   |
-| `ASH022` | Inline module path collides with a file module of the same path |
-| `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
-| `ASH024` | Duplicate inline module name in the same scope                |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
@@ -48,7 +48,7 @@ Codes `ASH010`–`ASH012` and `ASH025` are unused and free for reuse.
 
 These codes cover the flat top-level declaration form (`import* declaration* expr?`)
 and the binding/type import selectors. See
-[LANGUAGE_SPEC.md](language.md) for the full grammar and scoping rules.
+[Language Reference](language.md) for the full grammar and scoping rules.
 
 - `ASH013` — **Duplicate top-level binding name.** Two top-level declarations bind
   the same name in the same file (for example two `let x = ...` declarations, or a
@@ -76,7 +76,7 @@ and the binding/type import selectors. See
 ## Capability diagnostics
 
 These codes cover the capability surface (`capability` declarations, `needs` rows,
-`perform`, `handle ... with`). See [LANGUAGE_SPEC.md](language.md) §20 for the
+`perform`, `handle ... with`). See [Language Reference](language.md) §20 for the
 grammar and typing rules, and [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)
 for the remaining roadmap.
 
@@ -122,7 +122,7 @@ for the remaining roadmap.
 
 These cover inline (`module Name = ...`) declarations. Inline modules resolve through the
 same path as file modules, so unknown-member, unknown-selector, and import-collision cases
-reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](language.md) §13.1 for the surface.
+reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the surface.
 
 - `ASH021` — **Disallowed form in an inline module.** A `module` block contains a trailing
   expression or an `external` declaration — neither is permitted (a module block is
@@ -146,7 +146,7 @@ reuse `ASH013`–`ASH016`. See [LANGUAGE_SPEC.md](language.md) §13.1 for the su
 ## Record diagnostics
 
 Records use the brace-free syntax described in
-[LANGUAGE_SPEC.md](language.md) §4.1. These diagnostics are currently
+[Language Reference](language.md) §4.1. These diagnostics are currently
 surfaced as parse errors (`ASH003`) or uncoded semantic errors:
 
 - **Curly braces are not record syntax.** Records use `{ ... }` for neither

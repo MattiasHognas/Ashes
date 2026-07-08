@@ -20,17 +20,17 @@ Default discovery:
 Project-aware behavior:
 
 - If `ashes.json` is discovered by searching upward from the current directory,
-	`ashes test` runs in project mode.
+  `ashes test` runs in project mode.
 - `ashes test --project path/to/ashes.json` forces project mode for that project.
 - In project mode, each discovered test is compiled as the entry module while
-	reusing the project `sourceRoots`, `include`, and shipped standard library
-	resolution.
+  reusing the project `sourceRoots`, `include`, and shipped standard library
+  resolution.
 
 Explicit paths:
 
 - `ashes test some/path` runs tests only from the provided file or directory.
 - If a project is active and a relative path does not exist from the current
-	directory, the runner also tries resolving it relative to the project root.
+  directory, the runner also tries resolving it relative to the project root.
 
 ## Execution Model
 
@@ -50,7 +50,7 @@ Tests run sequentially.
 Stdout matching:
 
 - The runner compares stdout after trimming trailing newlines and trailing
-	whitespace on the captured output.
+  whitespace on the captured output.
 - The expected text from `// expect:` is also trimmed at the end.
 - Matching is otherwise exact.
 
@@ -63,7 +63,7 @@ Stderr behavior:
 
 - Stderr does not participate in pass/fail matching.
 - If a test fails and stderr is non-empty, stderr is appended to the rendered
-	failure output for diagnostics.
+  failure output for diagnostics.
 
 Timeouts:
 
@@ -72,7 +72,7 @@ Timeouts:
 Compile-error tests:
 
 - `// expect-compile-error:` matches by substring containment within the
-	rendered compiler diagnostic output.
+  rendered compiler diagnostic output.
 
 ## Supported Directives
 
@@ -107,9 +107,9 @@ Ashes.IO.print("empty")
 Common mistakes:
 
 - `// expect: empty` does not mean empty stdout. It literally expects the text
-	`empty`.
+  `empty`.
 - Multi-line expected output is not supported as a single directive; only the
-	remainder of the directive line is captured.
+  remainder of the directive line is captured.
 
 ### `// expect-compile-error: ...`
 
@@ -180,8 +180,8 @@ Example:
 // stdin: hello\n
 // expect: hello
 match Ashes.IO.readLine() with
-		| Some(text) -> Ashes.IO.print(text)
-		| None -> Ashes.IO.print("none")
+    | Some(text) -> Ashes.IO.print(text)
+    | None -> Ashes.IO.print("none")
 ```
 
 ### `// file: path = content`
@@ -195,7 +195,7 @@ Syntax:
 Meaning:
 
 - Creates a UTF-8 text fixture file in the test working directory before
-	execution.
+  execution.
 - Paths must be relative and cannot escape the temporary test directory.
 
 Example:
@@ -204,8 +204,8 @@ Example:
 // file: data/input.txt = hello
 // expect: hello
 match Ashes.File.readText("data/input.txt") with
-		| Ok(text) -> Ashes.IO.print(text)
-		| Error(msg) -> Ashes.IO.print(msg)
+    | Ok(text) -> Ashes.IO.print(text)
+    | Error(msg) -> Ashes.IO.print(msg)
 ```
 
 ### `// file-bytes: path = HEX HEX ...`
@@ -226,8 +226,8 @@ Example:
 // file-bytes: bad.bin = FF FE FD
 // expect: Ashes.File.readText() encountered invalid UTF-8
 match Ashes.File.readText("bad.bin") with
-		| Ok(text) -> Ashes.IO.print(text)
-		| Error(msg) -> Ashes.IO.print(msg)
+    | Ok(text) -> Ashes.IO.print(text)
+    | Error(msg) -> Ashes.IO.print(msg)
 ```
 
 ### `// tcp-server: accept`
@@ -242,7 +242,7 @@ Meaning:
 
 - Starts a loopback TCP server fixture on an ephemeral port.
 - The test source may reference the placeholder `__TCP_PORT__`, which is
-	substituted before compilation.
+  substituted before compilation.
 
 ### `// tcp-expect: ...`
 
@@ -255,7 +255,7 @@ Syntax:
 Meaning:
 
 - The loopback TCP fixture expects the client to send exactly the provided
-	UTF-8 text.
+  UTF-8 text.
 
 ### `// tcp-send: ...`
 
@@ -268,7 +268,7 @@ Syntax:
 Meaning:
 
 - The loopback TCP fixture sends the provided UTF-8 text to the client after
-	accept.
+  accept.
 
 ## Unknown Directives
 
@@ -283,11 +283,11 @@ That means:
 ## Formatting Interaction
 
 - Tests may include leading `//` directives; examples should not use test
-	directives.
+  directives.
 - `ashes fmt` formats `.ash` source but preserves the leading comment block.
 - `// fmt-skip: ...` is not interpreted by the TestRunner. It is used by CI and
-	formatting verification scripts to exempt intentionally malformed fixtures
-	from formatting checks.
+  formatting verification scripts to exempt intentionally malformed fixtures
+  from formatting checks.
 
 ## Failure Reporting
 

@@ -295,8 +295,8 @@ On Windows, run the same command from WSL.
 
 ## Development Rules
 
-1. **Spec first.** Update `docs/LANGUAGE_SPEC.md` before implementing any
-   new syntax or semantic rule.
+1. **Spec first.** Update the [Language Reference](../reference/language.md) before
+   implementing any new syntax or semantic rule.
 2. **Layer discipline.** Respect the project dependency graph
    (Frontend → Semantics → Backend). Runtime behaviour never goes in
    Frontend; the LSP must not depend on Backend.
@@ -306,5 +306,5 @@ On Windows, run the same command from WSL.
 5. **No `[NotInParallel]` in tests.** This attribute is banned. Fix the
    root cause instead.
 
-See [docs/ARCHITECTURE.md](../internals/architecture.md) for the full dependency graph
+See [Architecture](../internals/architecture.md) for the full dependency graph
 and compiler internals.

@@ -2,7 +2,7 @@
 
 This document summarizes the current compiler-provided standard-library surface.
 It is user-facing guidance for the shipped modules; the authoritative language
-semantics remain in `docs/LANGUAGE_SPEC.md`.
+semantics remain in the [Language Reference](language.md).
 
 ## Built-in Runtime Types
 
@@ -358,7 +358,7 @@ All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
 transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
 linked into the program only when a transcendental is used, so hermetic-only
 programs carry no math payload and there is never a runtime dependency. See the
-*Math runtime model* in [ARCHITECTURE.md](../internals/architecture.md) for the mechanism.
+*Math runtime model* in [Architecture](../internals/architecture.md) for the mechanism.
 
 Integer:
 

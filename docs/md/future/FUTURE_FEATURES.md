@@ -14,8 +14,8 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 ## Ground Rules
 
-1. **Spec first.** Update `LANGUAGE_SPEC.md` before implementing any new
-   syntax or semantic rule.
+1. **Spec first.** Update the [Language Reference](../reference/language.md) before
+   implementing any new syntax or semantic rule.
 2. **Layer discipline.** Respect the project dependency graph
    (Frontend → Semantics → Backend). Runtime behaviour never goes in
    Frontend.
