@@ -42,15 +42,7 @@ Current codes:
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
-
-`ASH010`–`ASH012` were previously allocated for an `async`-block enforcement model
-(`await`/networking outside `async`, async error-type conflict). The language no
-longer has an `async` keyword — `async` is a builtin (`Ashes.Async.task`), and
-async-only safety is enforced by the `Task` type — so those codes were never
-emitted and have been retired. The numbers are unused and free for reuse.
-
-`ASH025` was briefly a rename diagnostic for the former `effect`/`uses` spellings.
-Those words are now ordinary identifiers, so the code has been retired and is free for reuse.
+Codes `ASH010`–`ASH012` and `ASH025` are unused and free for reuse.
 
 ## Top-level declaration and import diagnostics
 
@@ -157,14 +149,14 @@ Records use the brace-free syntax described in
 [LANGUAGE_SPEC.md](language.md) §4.1. These diagnostics are currently
 surfaced as parse errors (`ASH003`) or uncoded semantic errors:
 
-- **Removed curly-brace record syntax.** The old `{ ... }` record declaration,
-  construction, and update forms are no longer accepted. Encountering a `{`
-  where a record declaration, literal, or update was previously written reports
-  a parse error directing the author to the brace-free forms
-  (`type T = | f: T`, `T(f = e)`, `e with f = e`).
-  Messages: `Brace record declarations have been removed; use '| field: Type' alternatives.`,
-  `Brace record construction has been removed; use 'Name(field = value)'.`,
-  `Brace record update has been removed; use 'base with field = value'.`
+- **Curly braces are not record syntax.** Records use `{ ... }` for neither
+  declaration, construction, nor update. Encountering a `{` where a record
+  declaration, literal, or update might be written reports a parse error
+  directing the author to the brace-free forms (`type T = | f: T`, `T(f = e)`,
+  `e with f = e`).
+  Messages: `Records are declared with '| field: Type', not braces.`,
+  `Records are constructed with 'Name(field = value)', not braces.`,
+  `Records are updated with 'base with field = value', not braces.`
 
 - **Named arguments outside record construction.** Named-argument call syntax
   (`f(x = 1)`) is only valid for record construction. Using it on an arbitrary

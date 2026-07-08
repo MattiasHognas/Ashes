@@ -135,30 +135,30 @@ public sealed class BraceFreeRecordTests
         match.Value.ShouldBeOfType<Expr.RecordUpdate>();
     }
 
-    // ---- Removed curly-brace syntax --------------------------------------
+    // ---- Curly-brace record syntax rejected ------------------------------
 
     [Test]
-    public void Parse_should_reject_removed_brace_record_declaration()
+    public void Parse_should_reject_brace_record_declaration()
     {
         var diag = new Diagnostics();
         _ = new Parser("type Point = { x: Int, y: Int }\n0", diag).ParseProgram();
-        diag.Errors.ShouldContain(e => e.Contains("Brace record declarations have been removed", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(e => e.Contains("Records are declared with '| field: Type', not braces", StringComparison.Ordinal));
     }
 
     [Test]
-    public void Parse_should_reject_removed_brace_record_construction()
+    public void Parse_should_reject_brace_record_construction()
     {
         var diag = new Diagnostics();
         _ = new Parser("Point { x = 1, y = 2 }", diag).ParseExpression();
-        diag.Errors.ShouldContain(e => e.Contains("Brace record construction has been removed", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(e => e.Contains("Records are constructed with 'Name(field = value)', not braces", StringComparison.Ordinal));
     }
 
     [Test]
-    public void Parse_should_reject_removed_brace_record_update()
+    public void Parse_should_reject_brace_record_update()
     {
         var diag = new Diagnostics();
         _ = new Parser("{ p with x = 1 }", diag).ParseExpression();
-        diag.Errors.ShouldContain(e => e.Contains("Brace record update has been removed", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(e => e.Contains("Records are updated with 'base with field = value', not braces", StringComparison.Ordinal));
     }
 
     private static Expr Parse(string source)

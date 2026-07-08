@@ -258,11 +258,11 @@ public sealed class Parser
         }
         Consume(TokenKind.Equals);
 
-        // The brace record form (`type Point = { x: Int, y: Int }`) has been removed in favour of
-        // brace-free field alternatives (`type Point = | x: Int | y: Int`).
+        // Records are declared with brace-free field alternatives (`type Point = | x: Int | y: Int`);
+        // a `{` here is the brace record form used by other ML languages, caught to guide the author.
         if (_current.Kind == TokenKind.LBrace)
         {
-            _diag.Error(CurrentErrorSpan(), "Brace record declarations have been removed; use '| field: Type' alternatives.");
+            _diag.Error(CurrentErrorSpan(), "Records are declared with '| field: Type', not braces.");
             SkipBalancedBraces();
             return RegisterTypeDecl(new TypeDecl(name, typeParameters, []), start, LastConsumedEnd);
         }
@@ -338,8 +338,9 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Best-effort recovery for the removed brace record forms: consumes a balanced <c>{ ... }</c>
-    /// block starting at the current <c>{</c> token so parsing can continue after the diagnostic.
+    /// Best-effort recovery when a brace block appears where a record is expected: consumes a
+    /// balanced <c>{ ... }</c> block starting at the current <c>{</c> token so parsing can continue
+    /// after the diagnostic.
     /// </summary>
     private void SkipBalancedBraces()
     {
@@ -1543,7 +1544,7 @@ public sealed class Parser
             TokenKind.Ident => ParseVar(),
             TokenKind.LParen => ParseParen(),
             TokenKind.LBracket => ParseList(),
-            TokenKind.LBrace => ParseRemovedBraceUpdate(),
+            TokenKind.LBrace => ParseBraceRecordUpdate(),
             _ => BadPrimary(),
         };
     }
@@ -1633,11 +1634,11 @@ public sealed class Parser
             return RegisterExpr(new Expr.QualifiedVar(module, name), t.Position, LastConsumedEnd);
         }
 
-        // The brace record construction form (`TypeName { field = expr, ... }`) has been removed in
-        // favour of named-argument call syntax (`TypeName(field = expr, ...)`).
+        // Records are constructed with named-argument call syntax (`TypeName(field = expr, ...)`);
+        // a `{` after a capitalized name is the brace form used by other ML languages.
         if (_current.Kind == TokenKind.LBrace && t.Text.Length > 0 && char.IsUpper(t.Text[0]))
         {
-            _diag.Error(CurrentErrorSpan(), "Brace record construction has been removed; use 'Name(field = value)'.");
+            _diag.Error(CurrentErrorSpan(), "Records are constructed with 'Name(field = value)', not braces.");
             SkipBalancedBraces();
             return RegisterExpr(new Expr.Var(t.Text), t.Position, LastConsumedEnd);
         }
@@ -1646,13 +1647,13 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Reports the removal of the brace record update form (<c>{ expr with field = e }</c>) and
-    /// recovers by skipping the balanced brace block. Use <c>expr with field = e</c> instead.
+    /// Rejects a brace record update block (<c>{ expr with field = e }</c>) and recovers by skipping
+    /// the balanced brace block. Records are updated with <c>expr with field = e</c> instead.
     /// </summary>
-    private Expr ParseRemovedBraceUpdate()
+    private Expr ParseBraceRecordUpdate()
     {
         var start = _current.Position;
-        _diag.Error(CurrentErrorSpan(), "Brace record update has been removed; use 'base with field = value'.");
+        _diag.Error(CurrentErrorSpan(), "Records are updated with 'base with field = value', not braces.");
         SkipBalancedBraces();
         return RegisterExpr(new Expr.IntLit(0), start, LastConsumedEnd);
     }

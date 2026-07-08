@@ -40,13 +40,8 @@ Two principles govern the keyword set:
 1. **Words for meaning, symbols for plumbing.** Keywords carry semantics and are full English
    words. Structural tokens — `->`, `=`, `|`, `(...)`, `{...}`, `::` — are plumbing and stay
    symbolic; no arrow is ever replaced with a word.
-2. **No abbreviations.** A keyword is written out in full: `recursive`, not `rec`; `external`,
-   not `extern`; `given`, not `fun`.
-
-The former spellings `fun`, `rec`, and `extern` were renamed to `given`, `recursive`, and
-`external` as a breaking change; the old spellings are no longer keywords and are ordinary
-identifiers today. Pre-rename sources are migrated by rewriting the three keywords (the
-canonical formatter of a pre-rename compiler emits exactly the forms the rewrite expects).
+2. **No abbreviations.** A keyword is written out in full — `recursive`, `external`, `given` —
+   never shortened.
 
 Programs are composed using nested expressions such as:
 
@@ -695,9 +690,9 @@ Rules:
   equivalent to `(base with x = 1) with y = 2`.
 - Records may be used in pattern matching like any ADT: `| Point(x, y) -> ...`.
 
-> The earlier curly-brace record syntax (`type T = { f: T }`, `T { f = e }`,
-> `{ base with f = e }`) has been removed. Sources using it are rejected with a
-> diagnostic pointing to the brace-free forms above.
+> Curly braces are not record syntax. A `{` where a record declaration
+> (`type T = { f: T }`), literal (`T { f = e }`), or update (`{ base with f = e }`)
+> might be written is rejected with a diagnostic pointing to the brace-free forms above.
 
 # 5. Let Bindings
 

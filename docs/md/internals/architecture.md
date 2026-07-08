@@ -342,7 +342,7 @@ provision matching payloads.
 ### Async & TLS runtime model
 
 Networking (TCP/HTTP) and TLS are **async-only**: the `Ashes.Http` / `Ashes.Net.Tcp`
-/ `Ashes.Net.Tls` APIs return `Task(E, A)` and are consumed via `async`/`await` /
+/ `Ashes.Net.Tls` APIs return `Task(E, A)` and are consumed via `await` /
 `Ashes.Async.run` (the `Task` type is the enforcement — misuse is an ordinary type
 error). Under the hood these lower to **non-blocking leaf tasks** driven by the
 coroutine/state-machine machinery (`StateMachineTransform.cs` + the LLVM task
@@ -687,9 +687,9 @@ no reference counting:
    (notably closures and certain ADTs), so not every runtime value necessarily
    originates from the arena.
 
-This model is still arena-based and non-GC, but it is no longer a single
-never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
-and whole OS chunks can be returned once they fall out of scope.
+This model is arena-based and non-GC, not a single never-freed static slab.
+Memory is reclaimed at ownership-scope boundaries, and whole OS chunks can be
+returned once they fall out of scope.
 
 ### Stacks
 
@@ -747,9 +747,9 @@ no reference counting:
    (notably closures and certain ADTs), so not every runtime value necessarily
    originates from the arena.
 
-This model is still arena-based and non-GC, but it is no longer a single
-never-freed static slab. Memory is reclaimed at ownership-scope boundaries,
-and whole OS chunks can be returned once they fall out of scope.
+This model is arena-based and non-GC, not a single never-freed static slab.
+Memory is reclaimed at ownership-scope boundaries, and whole OS chunks can be
+returned once they fall out of scope.
 
 ### Stacks
 
