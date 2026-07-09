@@ -401,7 +401,7 @@ _valid_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; }
 _vsce_publish() {
   local package_path="$1"
   [[ "$package_path" = /* ]] || package_path="../$package_path"
-  ( cd vscode-extension && pnpm install --frozen-lockfile >/dev/null && pnpm exec vsce publish --packagePath "$package_path" --no-dependencies )
+  ( cd vscode-extension && export CI=true && pnpm install --frozen-lockfile && pnpm exec vsce publish --packagePath "$package_path" --no-dependencies )
 }
 
 # release_github [version] [-y]: cut a release/X.Y.Z branch from origin/main,
