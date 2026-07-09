@@ -3,6 +3,7 @@
     "redhat.vscode-xml",
     "esbenp.prettier-vscode",
     "skellock.just",
-    "ms-dotnettools.csdevkit"
+    "ms-dotnettools.csdevkit",
+    "vue.volar"
   ]
 }
