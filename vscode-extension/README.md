@@ -3,6 +3,9 @@
 Full language support for the [Ashes](https://github.com/MattiasHognas/Ashes)
 pure functional programming language.
 
+Read the [documenation here](https://mattiashognas.github.io/Ashes/).  
+Or review the [source here](https://github.com/MattiasHognas/Ashes).
+
 ## Features
 
 - **Syntax highlighting** — TextMate grammar for `.ash` files

@@ -115,4 +115,4 @@ fi
 "$pnpmCmd" run lint
 "$pnpmCmd" run format:check
 "$pnpmCmd" run compile
-"$pnpmCmd" dlx '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' '--config.ignoredBuiltDependencies[]=keytar' @vscode/vsce@3.9.2 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
+"$pnpmCmd" exec vsce package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix

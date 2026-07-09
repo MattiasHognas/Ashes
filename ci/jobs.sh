@@ -377,9 +377,6 @@ release_build() {
     corepack enable
     export COREPACK_ENABLE_AUTO_PIN=0
     pnpm install --frozen-lockfile
-    # Diagnostic: surface anything dirtying the tree (the build writes only to
-    # ignored paths, so this should be empty). Remove once the release is green.
-    echo '--- git status --porcelain (pre version bump) ---'; git status --porcelain; echo '--- end git status ---'
     # Stamp the version into package.json so vsce embeds it in the .vsix. For
     # 'just release' (standalone) this is the only place the version is set; from
     # release_github the bump is already committed on the release branch, so this
@@ -387,7 +384,7 @@ release_build() {
     # tree, so set the field directly (no git guard).
     pnpm pkg set version=\$VERSION
     pnpm run compile
-    pnpm dlx --config.ignoredBuiltDependencies[]=@vscode/vsce-sign --config.ignoredBuiltDependencies[]=keytar @vscode/vsce@3.9.2 package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
+    pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --out ../\$OUT/ashes-language-\$VERSION.vsix
   "
 }
 
@@ -401,7 +398,11 @@ _have() { command -v "$1" >/dev/null 2>&1; }
 _valid_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; }
 # vsce publish of an already-built .vsix; vsce reads the token from $VSCE_PAT
 # (kept out of argv). Shared by the fresh-release path and the resume path.
-_vsce_publish() { pnpm dlx @vscode/vsce@3.9.2 publish --packagePath "$1" --no-dependencies; }
+_vsce_publish() {
+  local package_path="$1"
+  [[ "$package_path" = /* ]] || package_path="../$package_path"
+  ( cd vscode-extension && pnpm install --frozen-lockfile >/dev/null && pnpm exec vsce publish --packagePath "$package_path" --no-dependencies )
+}
 
 # release_github [version] [-y]: cut a release/X.Y.Z branch from origin/main,
 # build the artifacts (release_build → artifacts/release/), tag vX.Y.Z, and
