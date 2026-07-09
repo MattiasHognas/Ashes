@@ -99,6 +99,19 @@ public sealed class TopLevelParserTests
     }
 
     [Test]
+    public void ParseProgram_should_treat_an_indented_trailing_expr_after_a_completed_call_as_the_body()
+    {
+        var program = ParseProgram("let a = X.test(1)\n    Ashes.IO.print(a)");
+
+        var letItem = program.Items.ShouldHaveSingleItem().ShouldBeOfType<TopLevelItem.LetDecl>();
+        letItem.Name.ShouldBe("a");
+        letItem.Value.ShouldBeOfType<Expr.Call>().Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("test");
+
+        var call = program.Body.ShouldBeOfType<Expr.Call>();
+        call.Func.ShouldBeOfType<Expr.QualifiedVar>().Name.ShouldBe("print");
+    }
+
+    [Test]
     public void ParseProgram_should_not_absorb_the_next_decl_into_a_qualified_call_binding_value()
     {
         // A binding value that is a qualified application (`List.length(xs)`) must terminate at the

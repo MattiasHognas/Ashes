@@ -79,6 +79,22 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_should_end_inline_module_on_dedented_let_and_keep_indented_body()
+    {
+        const string source = """
+                              module X =
+                                  let test x = x + 1
+
+                              let a = X.test(1)
+                                  Ashes.IO.print(a)
+                              """;
+
+        var diagnostics = DocumentService.Analyze(source);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Test]
     public void Analyze_should_require_import_for_unqualified_print()
     {
         var diagnostics = DocumentService.Analyze("print(1)");
