@@ -270,16 +270,8 @@ static long ParseParallelWorkers(string value)
     return count;
 }
 
-static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
+static void SetUnixExecutableModeIfSupported(string exePath)
 {
-    var tmpDir = Path.Combine(Path.GetTempPath(), "ashes");
-    Directory.CreateDirectory(tmpDir);
-
-    var name = "ashes_" + Guid.NewGuid().ToString("N");
-    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
-
-    await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
-
     if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
     {
         try
@@ -291,6 +283,18 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
         }
         catch { }
     }
+}
+
+static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureAsync(byte[] image, string targetId, IReadOnlyList<string>? programArgs = null)
+{
+    var tmpDir = Path.Combine(Path.GetTempPath(), "ashes");
+    Directory.CreateDirectory(tmpDir);
+
+    var name = "ashes_" + Guid.NewGuid().ToString("N");
+    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
+
+    await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
+    SetUnixExecutableModeIfSupported(exePath);
 
     var psi = new ProcessStartInfo(exePath)
     {
@@ -322,18 +326,7 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
     var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
 
     await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
-
-    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-    {
-        try
-        {
-            File.SetUnixFileMode(exePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-        }
-        catch { }
-    }
+    SetUnixExecutableModeIfSupported(exePath);
 
     var psi = new ProcessStartInfo(exePath)
     {
@@ -697,6 +690,7 @@ async Task<int> RunCompileAsync(string[] a)
         Directory.CreateDirectory(outDir!);
     }
     await File.WriteAllBytesAsync(outPath, image).ConfigureAwait(false);
+    SetUnixExecutableModeIfSupported(outPath);
 
     AnsiConsole.MarkupLine($"[green]OK[/] Wrote [bold]{Runner.FormatSize(image.Length)}[/] to [italic]{outPath}[/]");
     AnsiConsole.MarkupLine($"     Target: [bold]{target}[/]");
