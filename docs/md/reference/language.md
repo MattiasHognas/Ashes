@@ -1528,9 +1528,9 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
 - **Introducer.** `module Name =` (a capitalized `UpperCamel` name), followed by
   a **layout block**: the run of lines indented past the `module` keyword. The
   block ends at the first line dedented back to (or past) the `module` column —
-  the same column rule the parser uses to find the next top-level item. `module`
-  is recognized only in this declaration position; it remains an ordinary
-  identifier elsewhere.
+  the same column rule the parser uses to find the next top-level item. A trailing
+  line comment (`// …`) after the `=` is permitted. `module` is recognized only in
+  this declaration position; it remains an ordinary identifier elsewhere.
 - **Members.** `let`, `let recursive ... and ...`, `type`, and nested `module`
   declarations — the same forms a file may contain. A `module` block may **not**
   contain a trailing expression or an `external` declaration.
