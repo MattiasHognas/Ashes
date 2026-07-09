@@ -65,7 +65,6 @@ vscode-extension/src/test/fixtures/hello
 vscode-extension/src/test/fixtures/types
 
 # Documentation web
-.pnpm-store
 docs/builder/node_modules/
 docs/builder/.vitepress/cache/
 docs/site/
@@ -75,7 +74,6 @@ dist/
 publish/
 
 # Builds
-.pnpm-store/
 tests/*.exe
 examples/*.exe
 /*.exe
@@ -120,9 +118,6 @@ out
 _*.sh
 _*.md
 /*.sh
-.orchestrator/
-backlog.json
-*.csv
 
 # Git
 .git/
