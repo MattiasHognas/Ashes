@@ -44,6 +44,29 @@ internal static partial class LlvmCodegen
         => EmitAlloc(state, sizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
 
     /// <summary>
+    /// Returns the address (as i64) of a zero-initialized, process-lifetime BSS buffer of
+    /// <paramref name="sizeBytes"/>, uniquely identified by <paramref name="name"/>. Unlike
+    /// <see cref="EmitAlloc(LlvmCodegenState,int)"/>, this storage lives outside any arena, so the
+    /// async loop's per-iteration (TCO back-edge) arena reset never reclaims it. Use for true
+    /// process singletons — the TLS runtime context, server config, and certified key — which are
+    /// built once, cached in globals, and referenced again on later connections after the accept
+    /// loop has reset the main arena. Zero init matches the mbedtls_*_init contract.
+    /// </summary>
+    private static LlvmValueHandle EmitTlsSingletonStorage(LlvmCodegenState state, string name, int sizeBytes)
+    {
+        LlvmTargetContext target = state.Target;
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, (ulong)AlignRuntimeSize(sizeBytes));
+        LlvmValueHandle global = target.GetOrAddNamedGlobal(name, () =>
+        {
+            LlvmValueHandle g = LlvmApi.AddGlobal(target.Module, bufferType, name);
+            LlvmApi.SetInitializer(g, LlvmApi.ConstNull(bufferType));
+            LlvmApi.SetLinkage(g, LlvmLinkage.Internal);
+            return g;
+        });
+        return LlvmApi.BuildPtrToInt(target.Builder, global, state.I64, name + "_addr");
+    }
+
+    /// <summary>
     /// Bump-allocates from the arena identified by <paramref name="cursorSlot"/>/<paramref name="endSlot"/>
     /// — the main arena by default, or the persistent to-space (see <see cref="IrInst.AllocAdtToSpace"/>).
     /// Both arenas share the chunk format and grow logic; they differ only in which cursor/end pair is
@@ -275,7 +298,7 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Points the GS segment base at the main thread's control block (TCB) and writes the
     /// TCB self-pointer at offset 0, then returns the TCB base as an i64. Emitted once in the
-    /// entry prologue on linux-x64. GS (not FS) is used because the linked rustls/glibc
+    /// entry prologue on linux-x64. GS (not FS) is used because the dynamically linked glibc
     /// runtime owns the FS base for its own thread-local storage; GS is free for application
     /// use on x86-64 Linux. The TCB is a zero-initialised BSS global (can't fail, no syscall
     /// to allocate it); worker threads instead get a freshly mmap'd TCB at spawn time.
@@ -341,10 +364,10 @@ internal static partial class LlvmCodegen
     //   * Static executable (pure compute / parallelism): no loader runs, so the kernel leaves
     //     TPIDR_EL0 zero. We point it at a zeroed BSS block that backs the arena — MainTcbSizeBytes
     //     (512) easily covers the 16-byte reserve + the six i64 cursors.
-    //   * Dynamic executable (networking dlopen's rustls; user externals): the loader already set up
+    //   * Dynamic executable (networking's libc imports; user externals): the loader already set up
     //     TPIDR_EL0 and the static-TLS block (reserving this image's PT_TLS at the same TPREL the
-    //     linker baked in), and its DTV backs the dlopen'd module's dynamic TLS. We must NOT clobber
-    //     it — doing so breaks rustls/libc thread-local access.
+    //     linker baked in), and its DTV backs libc's dynamic TLS. We must NOT clobber
+    //     it — doing so breaks libc thread-local access.
     // Rather than predict the link kind at codegen time, branch on TPIDR_EL0 at runtime: a loader
     // always leaves it non-zero, an unloaded static image leaves it zero. This makes the same entry
     // prologue correct for both, so networking (dynamic) and parallelism (which needs the TLS arena

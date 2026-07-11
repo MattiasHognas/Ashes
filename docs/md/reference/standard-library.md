@@ -150,8 +150,8 @@ Current HTTP support is intentionally small:
 
 - `http://` and `https://` URLs are supported.
 - `https://` defaults to port 443 and currently ships on the Linux x64,
-  Linux arm64, and Windows x64 backends via the hermetic `rustls`
-  runtime embedded into TLS-using executables.
+  Linux arm64, and Windows x64 backends via the hermetic Mbed TLS
+  runtime linked into TLS-using executables.
 - Other backends may still return a runtime error for `https://` until their
   TLS runtime support lands.
 - Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
@@ -232,7 +232,7 @@ in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve(8080)(onClient)) with
 
 `Ashes.Net.Tls` uses the same TLS runtime path as `https://` in `Ashes.Http`.
 On Linux x64, Linux arm64, and Windows x64 that currently means the
-hermetic `rustls` runtime embedded per TLS-using executable. No
+hermetic Mbed TLS runtime linked into each TLS-using executable. No
 external OpenSSL installation is required. Hostname verification and
 system-trust validation are mandatory for successful TLS connections.
 
@@ -242,7 +242,7 @@ Server-side TLS termination, layered on `Ashes.Net.Tcp.Server`.
 
 - `handshake(socket)(certPem)(keyPem)` returning `Task(Str, TlsSocket)` — runs the server half of a
   TLS handshake over an accepted TCP socket. `certPem` / `keyPem` are the certificate-chain and
-  private-key PEM **contents** (not paths). The rustls server config is built once from these and
+  private-key PEM **contents** (not paths). The TLS server config is built once from these and
   cached for the process; the accepted socket is consumed into the returned `TlsSocket`, on which the
   ordinary `Ashes.Net.Tls.send` / `receive` / `close` operate.
 - `serveTls(port)(certPath)(keyPath)(handler)` returning `Task(Str, Unit)` — the TLS server
@@ -254,7 +254,7 @@ Server-side TLS termination, layered on `Ashes.Net.Tcp.Server`.
 
 The handshake reuses the scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking, so a TLS server
 serves concurrently on a single thread exactly as the plaintext server does. Same three targets and
-hermetic `rustls` runtime as the TLS client.
+hermetic Mbed TLS runtime as the TLS client.
 
 ```ash
 import Ashes.IO

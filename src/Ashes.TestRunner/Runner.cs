@@ -1266,7 +1266,7 @@ public static class Runner
                 return null;
             }
 
-            // Always route trust verification through rustls' PEM verifier by pointing
+            // Always route trust verification through the embedded TLS runtime's PEM roots by pointing
             // SSL_CERT_FILE at the fixture's CA PEM. This is portable across Linux, Wine,
             // and Windows hosts, and avoids touching the Windows certificate store
             // (CurrentUser\Root.Add can trigger a SmartScreen confirmation prompt that

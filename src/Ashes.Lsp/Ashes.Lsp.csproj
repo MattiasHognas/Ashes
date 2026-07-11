@@ -7,7 +7,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- No backend reference: doesn't use libLLVM/rustls, so skip bundling them. -->
+    <!-- No backend reference: does not use libLLVM or the hermetic bitcode payloads, so skip bundling them. -->
     <BundleNativeRuntimes>false</BundleNativeRuntimes>
   </PropertyGroup>
 

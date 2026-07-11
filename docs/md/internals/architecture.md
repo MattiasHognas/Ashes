@@ -283,7 +283,7 @@ the target ID.
 | Dependency | Source | Purpose |
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
-| rustls-ffi (native) | Vendored under `runtimes/` (refreshed via `scripts/download-rustls-ffi.sh`) | TLS runtime payloads for `Ashes.Http` / `Ashes.Net.Tls` (`librustls.so` / `rustls.dll`) |
+| Mbed TLS (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-mbedtls.sh`) | TLS runtime for `Ashes.Http` / `Ashes.Net.Tls` (`libmbedtls.bc`), linked into programs that use it |
 | openlibm (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-openlibm.sh`) | Transcendental math for `Ashes.Math` Layer 2 (`libopenlibm.bc`), linked into programs that use it |
 | PCRE2 (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-pcre2.sh`) | Regular-expression engine for `Ashes.Regex` (`libpcre2.bc`, 8-bit + Unicode, JIT off), linked into programs that use it |
 
@@ -299,19 +299,19 @@ and are provisioned for build/publish with the following scripts:
 | Dependency | Linux / WSL | Windows (run from WSL) |
 |------------|-------------|------------------------|
 | libLLVM | `./scripts/download-llvm-native.sh [MAJOR]` (default 22) | `./scripts/download-llvm-native.sh --all [LLVM_VERSION]` |
-| rustls-ffi | `./scripts/download-rustls-ffi.sh` (native Linux), `./scripts/download-rustls-ffi.sh --linux-arm64`, or `./scripts/download-rustls-ffi.sh --all` | `./scripts/download-rustls-ffi.sh --win-x64` or `./scripts/download-rustls-ffi.sh --all` |
+| Mbed TLS | `./scripts/download-mbedtls.sh` (host arch) or `./scripts/download-mbedtls.sh --all` | `./scripts/download-mbedtls.sh --all` (all targets build on one host with clang) |
 | openlibm | `./scripts/download-openlibm.sh` (host arch) or `./scripts/download-openlibm.sh --all` | `./scripts/download-openlibm.sh --all` (all targets build on one host with clang) |
 | PCRE2 | `./scripts/download-pcre2.sh` (host arch) or `./scripts/download-pcre2.sh --all` | `./scripts/download-pcre2.sh --all` (all targets build on one host with clang) |
 
 `Ashes.Backend.csproj` validates that the expected LLVM library and
-rustls-ffi payload exist for the active RID. LLVM is copied into the
-build output root, while rustls-ffi payloads and `rustls.version` are
+Mbed TLS payload exist for the active RID. LLVM is copied into the
+build output root, while `libmbedtls.bc` and `mbedtls.version` are
 copied under `runtimes/<rid>/`; `Directory.Build.targets` reapplies the
 RID-specific copies during `dotnet publish`.
 
-The rustls-ffi payloads are committed to the repository. Re-run
-`scripts/download-rustls-ffi.sh` only when updating `RustlsFfiVersion`
-or refreshing the vendored binaries.
+The Mbed TLS `libmbedtls.bc` payloads are committed to the repository.
+Re-run `scripts/download-mbedtls.sh` only when updating `MbedTlsVersion`
+or refreshing the vendored bitcode. See *Async & TLS runtime model* below.
 
 The openlibm `libopenlibm.bc` payloads are likewise committed. Re-run
 `scripts/download-openlibm.sh` only when updating `OpenlibmVersion` in
@@ -335,8 +335,8 @@ save/restore around each match. The payload is linked into a program only when i
 
 To bump the LLVM version, pass the new version to the download script —
 no source changes are needed because the LLVM C API is stable across
-releases. For rustls-ffi, update `RustlsFfiVersion` in
-`Directory.Build.props` and re-run `scripts/download-rustls-ffi.sh` to
+releases. For Mbed TLS, update `MbedTlsVersion` in
+`Directory.Build.props` and re-run `scripts/download-mbedtls.sh` to
 provision matching payloads.
 
 ### Async & TLS runtime model
@@ -433,16 +433,20 @@ restriction follows from the layout: a parallel fork/join (`Ashes.Parallel.both`
 must not straddle an `await`, because the worker descriptor and worker arena are
 not serialized into the state struct; the transform asserts this.
 
-TLS/HTTPS ride a **hermetic `rustls` runtime embedded per executable**: the vendored
-payload (`librustls.so` / `rustls.dll`, under `runtimes/`) is linked only into
-programs that use `https://` or `Ashes.Net.Tls`; the program writes and `dlopen`s
-(`LoadLibraryA`) it on first TLS use and resolves the `rustls_*` ABI. Both the client
+TLS/HTTPS ride a **hermetic Mbed TLS runtime linked into the executable**: the vendored
+bitcode payload (`libmbedtls.bc`, under `runtimes/`) is linked into the program module —
+like the openlibm and PCRE2 payloads — only when the program uses `https://` or
+`Ashes.Net.Tls`; no shared library is written or loaded at run time. I/O goes through
+compiler-emitted BIO callbacks over the program's own nonblocking sockets, and randomness
+comes from Mbed TLS's platform entropy (`getrandom` on Linux, `BCryptGenRandom` on
+Windows) feeding a CTR_DRBG. The remaining external surface resolves at static link
+time: libc imports on Linux, and msvcrt/kernel32/bcrypt PE imports (plus in-payload
+`__udivti3`-family shims for i128 division) on Windows. Both the client
 (config + certificate-verifier) and the **server** (server-config + acceptor half of
 the handshake, from a PEM chain and key) surfaces are wired. Client certificate and
-hostname validation are **mandatory** — the platform verifier against system trust by
-default, with `SSL_CERT_FILE` as an explicit PEM-root override (used by loopback TLS
-tests). Payload-load or verifier-init failures return `Error(...)` rather than
-crashing. Deferred TLS scope: mutual TLS / client certs, custom trust (per-call CA
+hostname validation are **mandatory** — system trust roots by default, with
+`SSL_CERT_FILE` as an explicit PEM-root override (used by loopback TLS tests).
+Runtime-init or verifier failures return `Error(...)` rather than crashing. Deferred TLS scope: mutual TLS / client certs, custom trust (per-call CA
 bundles, pinning), SNI / multiple certificates, ALPN, HTTP/2, HTTP/3.
 
 #### Server runtime: multi-reactor and graceful shutdown
@@ -633,11 +637,11 @@ race on the shared heap-cursor globals:
   (`LlvmCodegenParallel.cs`).
 - The right-hand thunk of `both` is a pure closure whose result type
   `CanRunRightOnWorker` restricts to arena-safe, deep-copyable values, so the
-  worker's arena never aliases the main thread's heap (or its rustls/socket
+  worker's arena never aliases the main thread's heap (or its TLS/socket
   state); the join copies the result back into the caller's arena.
 - This coexists with dynamically linked (networking) images: the arm64 prologue
-  self-initialises `TPIDR_EL0` only when the loader left it zero, so a `dlopen`d
-  rustls keeps the loader's thread pointer.
+  self-initialises `TPIDR_EL0` only when the loader left it zero, so the
+  loader's own thread pointer is preserved in dynamically linked programs.
 
 The number of workers a fork may spawn is capped. The **compiled maximum** is a
 fixed `--parallel-workers` constant or, when unset, the once-detected core count

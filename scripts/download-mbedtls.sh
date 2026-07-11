@@ -142,7 +142,10 @@ EOF
   cat > "$dir/time.h" <<'EOF'
 #ifndef _ASHES_STUB_TIME_H
 #define _ASHES_STUB_TIME_H
-typedef long time_t;
+/* 64-bit, NOT long: Windows x64 is LLP64 (long is 32-bit) and msvcrt's time()/gmtime() are the
+   64-bit _time64 family there. A 32-bit time_t makes gmtime read past the object and fail, which
+   x509 chain verification turns into MBEDTLS_ERR_X509_FATAL_ERROR. */
+typedef long long time_t;
 struct tm { int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, tm_isdst; };
 time_t time(time_t *);
 struct tm *gmtime(const time_t *);
@@ -279,54 +282,11 @@ build_target() {
   if [ "$rid" = "win-x64" ]; then
     write_win_stub_headers "$tmp/winstub"
     cflags+=(-ffreestanding -fno-builtin -isystem "$tmp/winstub")
-    # LLVM instruction selection lowers the payload's i128 divisions (bignum) to __udivti3-family
-    # libcalls. Linux resolves them from libgcc_s.so.1; Windows has no system provider, so the
-    # payload carries freestanding shift-subtract implementations (division-free, no recursion).
-    cat > "$tmp/ashes_mbedtls_ti_shims.c" <<'EOF'
-typedef __uint128_t u128;
-typedef __int128_t s128;
-
-static u128 ashes_udivmodti4(u128 a, u128 b, u128 *rem)
-{
-    if (b == 0) {
-        if (rem) { *rem = 0; }
-        return 0;
-    }
-
-    u128 q = 0;
-    u128 r = 0;
-    for (int i = 127; i >= 0; i--) {
-        r = (r << 1) | ((a >> i) & 1);
-        if (r >= b) {
-            r -= b;
-            q |= ((u128)1) << i;
-        }
-    }
-
-    if (rem) { *rem = r; }
-    return q;
-}
-
-u128 __udivti3(u128 a, u128 b) { return ashes_udivmodti4(a, b, 0); }
-u128 __umodti3(u128 a, u128 b) { u128 r; ashes_udivmodti4(a, b, &r); return r; }
-
-s128 __divti3(s128 a, s128 b)
-{
-    u128 ua = a < 0 ? (u128)0 - (u128)a : (u128)a;
-    u128 ub = b < 0 ? (u128)0 - (u128)b : (u128)b;
-    u128 q = ashes_udivmodti4(ua, ub, 0);
-    return (a < 0) != (b < 0) ? -(s128)q : (s128)q;
-}
-
-s128 __modti3(s128 a, s128 b)
-{
-    u128 ua = a < 0 ? (u128)0 - (u128)a : (u128)a;
-    u128 ub = b < 0 ? (u128)0 - (u128)b : (u128)b;
-    u128 r;
-    ashes_udivmodti4(ua, ub, &r);
-    return a < 0 ? -(s128)r : (s128)r;
-}
-EOF
+    # Without this, LLVM instruction selection lowers bignum's double-width division to a
+    # __udivti3 libcall. Linux resolves it from libgcc_s.so.1; Windows has no system provider
+    # (and a C-compiled shim gets the MinGW pointer ABI, which mismatches the libcall's i128
+    # register ABI), so use Mbed TLS's own escape hatch: bignum avoids 128-bit division entirely.
+    cflags+=(-DMBEDTLS_NO_UDBL_DIVISION)
   fi
 
   local sources=(
@@ -348,15 +308,9 @@ EOF
     clang "${cflags[@]}" "$file" -o "$bc/$(basename "$file" .c).bc"
   done
 
-  if [ "$rid" = "win-x64" ]; then
-    clang "${cflags[@]}" "$tmp/ashes_mbedtls_ti_shims.c" -o "$bc/ashes_mbedtls_ti_shims.bc"
-  fi
-
-  # The __*ti3 names are kept public so instruction-selection libcalls resolve to the in-payload
-  # shims (win-x64 only; the names are absent from the other targets' payloads and ignored there).
   llvm-link "$bc"/*.bc -o "$tmp/libmbedtls.full.bc"
   opt -passes='internalize,globaldce' \
-    -internalize-public-api-list='mbedtls_ctr_drbg_init,mbedtls_ctr_drbg_seed,mbedtls_ctr_drbg_random,mbedtls_entropy_init,mbedtls_entropy_func,mbedtls_ssl_config_init,mbedtls_ssl_config_defaults,mbedtls_ssl_conf_authmode,mbedtls_ssl_conf_ca_chain,mbedtls_ssl_conf_rng,mbedtls_ssl_conf_own_cert,mbedtls_ssl_init,mbedtls_ssl_setup,mbedtls_ssl_set_hostname,mbedtls_ssl_set_bio,mbedtls_ssl_get_verify_result,mbedtls_ssl_handshake,mbedtls_ssl_read,mbedtls_ssl_write,mbedtls_ssl_close_notify,mbedtls_ssl_free,mbedtls_x509_crt_init,mbedtls_x509_crt_parse,mbedtls_x509_crt_parse_file,mbedtls_x509_crt_free,mbedtls_pk_init,mbedtls_pk_parse_key,mbedtls_pk_free,mbedtls_strerror,__udivti3,__umodti3,__divti3,__modti3' \
+    -internalize-public-api-list='mbedtls_ctr_drbg_init,mbedtls_ctr_drbg_seed,mbedtls_ctr_drbg_random,mbedtls_entropy_init,mbedtls_entropy_func,mbedtls_ssl_config_init,mbedtls_ssl_config_defaults,mbedtls_ssl_conf_authmode,mbedtls_ssl_conf_ca_chain,mbedtls_ssl_conf_rng,mbedtls_ssl_conf_own_cert,mbedtls_ssl_init,mbedtls_ssl_setup,mbedtls_ssl_set_hostname,mbedtls_ssl_set_bio,mbedtls_ssl_get_verify_result,mbedtls_ssl_handshake,mbedtls_ssl_read,mbedtls_ssl_write,mbedtls_ssl_close_notify,mbedtls_ssl_free,mbedtls_x509_crt_init,mbedtls_x509_crt_parse,mbedtls_x509_crt_parse_file,mbedtls_x509_crt_free,mbedtls_pk_init,mbedtls_pk_parse_key,mbedtls_pk_free,mbedtls_strerror' \
     "$tmp/libmbedtls.full.bc" -o "$out_dir/libmbedtls.bc"
   printf '%s\n' "$VERSION" > "$out_dir/mbedtls.version"
   echo "built $out_dir/libmbedtls.bc"

@@ -8,7 +8,7 @@
   <!--
     Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set
     BundleNativeRuntimes=false to opt out of the copy below — they don't use
-    libLLVM/rustls, so copying them just bloats their publish output (libLLVM.so
+    libLLVM, so copying it just bloats their publish output (libLLVM.so
     alone is ~144 MB). Everything else keeps the copy by default.
   -->
   <Target Name="_EnsureCorrectNativeLibForPublish"

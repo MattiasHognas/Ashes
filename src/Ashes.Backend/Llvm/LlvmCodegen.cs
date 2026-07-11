@@ -49,16 +49,16 @@ internal static partial class LlvmCodegen
     private const long SyscallPrctl = 157;
     private const long SyscallRtSigaction = 13;
     private const long SyscallSchedGetaffinity = 204;
-    // ARCH_SET_GS, not ARCH_SET_FS: glibc and the Rust runtime (linked rustls) own the FS
-    // base for their thread-local storage on x86-64. GS is unused by userspace on Linux, so
-    // pointing it at our per-thread arena control block coexists with the dlopen'd TLS runtime.
+    // ARCH_SET_GS, not ARCH_SET_FS: glibc (networking images are dynamically linked) owns the
+    // FS base for its thread-local storage on x86-64. GS is unused by userspace on Linux, so
+    // pointing it at our per-thread arena control block coexists with libc TLS.
     private const long ArchSetGs = 0x1001;
     // futex op codes (FUTEX_PRIVATE_FLAG = 128)
     private const long FutexWaitPrivate = 0 | 128;
     private const long FutexWakePrivate = 1 | 128;
 
     // Per-thread control block (TCB). On linux-x64 the GS segment base points at the TCB,
-    // giving each thread a private bump arena that coexists with FS-based glibc/rustls TLS.
+    // giving each thread a private bump arena that coexists with FS-based glibc TLS.
     // To stay clear of the O0 FastISel bug that mis-propagates address-space-256 segment
     // provenance into later stores, code never addresses the arena via an addrspace(256)
     // pointer. Instead offset 0 holds a self-pointer (the TCB base); functions recover the
@@ -510,9 +510,9 @@ internal static partial class LlvmCodegen
         bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program);
         // arm64 always uses the real-ELF-TLS per-thread arena (PT_TLS + local-exec cursors), so a
         // `both` worker can be handed its own arena. This coexists with networking: a networking
-        // program is dynamically linked and dlopen's rustls, whose dynamic TLS lives in the loader's
-        // DTV — an independent mechanism from this image's local-exec PT_TLS, which the loader
-        // reserves in the static-TLS block at the same TPREL the linker baked in. The only link-kind
+        // program is dynamically linked (libc imports), and the loader's TLS/DTV is an independent
+        // mechanism from this image's local-exec PT_TLS, which the loader reserves in the
+        // static-TLS block at the same TPREL the linker baked in. The only link-kind
         // difference is who sets up TPIDR_EL0, handled at runtime in the entry prologue
         // (EmitArm64MainThreadTlsSetup): a static image self-initialises it, a dynamic image inherits
         // the loader's (and must not clobber it).
@@ -614,7 +614,7 @@ internal static partial class LlvmCodegen
             // (static reloc → local-exec) emits the mrs tpidr_el0 + TPREL sequence the ELF linker
             // resolves. Enabled for every arm64 image — including dynamically linked (networking /
             // external) ones, whose loader reserves this image's local-exec PT_TLS in the static-TLS
-            // block independently of the DTV that backs dlopen'd rustls's dynamic TLS.
+            // block independently of the loader's own DTV-backed dynamic TLS.
             // win-x64 keeps these as ordinary globals (overridden by the TEB-TCB slots).
             if (arm64UsesTlsArena)
             {
@@ -1439,7 +1439,7 @@ internal static partial class LlvmCodegen
         {
             // Must run before the first arena access (EmitHeapChunkInit below) so TPIDR_EL0 addresses
             // the thread-local arena. Self-initialises it only when no loader did (static image); a
-            // dynamic image keeps the loader's thread pointer (its DTV backs dlopen'd rustls's TLS).
+            // dynamic image keeps the loader's thread pointer (its DTV backs libc's dynamic TLS).
             EmitArm64MainThreadTlsSetup(state);
         }
 

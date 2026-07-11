@@ -59,10 +59,10 @@ dotnet build Ashes.slnx --configuration Release
 ## Native Runtime Libraries
 
 The native backend requires LLVM libraries, and HTTPS/TLS workloads also
-require rustls-ffi shared libraries. LLVM must be provisioned before
-running backend or end-to-end tests; the rustls-ffi payloads are
+require the Mbed TLS bitcode payload. LLVM must be provisioned before
+running backend or end-to-end tests; the Mbed TLS payloads are
 vendored under `runtimes/{linux-x64,linux-arm64,win-x64}/` and only need
-to be refreshed when bumping `RustlsFfiVersion`:
+to be refreshed when bumping `MbedTlsVersion`:
 
 ```sh
 # LLVM: all platforms (linux-x64, linux-arm64, win-x64):
@@ -74,34 +74,34 @@ bash scripts/download-llvm-native.sh
 # LLVM: specific architecture:
 bash scripts/download-llvm-native.sh 22 arm64
 
-# rustls-ffi: refresh all vendored payloads (linux-x64, linux-arm64, win-x64):
-bash scripts/download-rustls-ffi.sh --all
+# Mbed TLS: refresh all vendored payloads (linux-x64, linux-arm64, win-x64):
+bash scripts/download-mbedtls.sh --all
 
-# rustls-ffi: refresh selected vendored payloads:
-bash scripts/download-rustls-ffi.sh --linux-x64 --win-x64
+# Mbed TLS: refresh selected vendored payloads:
+bash scripts/download-mbedtls.sh --linux-x64 --win-x64
 ```
 
-For rustls-ffi, `--linux-arm64` builds the arm64 payload from source
-because upstream does not publish a prebuilt Linux arm64 shared
-library. The default rustls-ffi version is read from
+Mbed TLS is compiled to LLVM bitcode by the clang frontend (needs
+`clang`, `llvm-link`, `opt`), so every target's payload builds on one
+host with no cross toolchain. The default Mbed TLS version is read from
 `Directory.Build.props`.
 
 On Windows, run the bash scripts from WSL. A normal checkout already
-includes the rustls-ffi payloads; only LLVM must be downloaded for test
-setup unless you are intentionally refreshing the vendored rustls files:
+includes the Mbed TLS payloads; only LLVM must be downloaded for test
+setup unless you are intentionally refreshing the vendored bitcode:
 
 ```sh
 # Download all supported LLVM payloads:
 bash scripts/download-llvm-native.sh --all
 
-# Optional: refresh the vendored rustls payloads:
-bash scripts/download-rustls-ffi.sh --all
+# Optional: refresh the vendored Mbed TLS payloads:
+bash scripts/download-mbedtls.sh --all
 ```
 
-The scripts stage LLVM payloads and refreshed rustls payloads under
+The scripts stage LLVM payloads and refreshed Mbed TLS payloads under
 `runtimes/{linux-x64,linux-arm64,win-x64}/`. `Ashes.Backend.csproj`
-validates the vendored rustls-ffi version and copies both LLVM and
-rustls assets into build output.
+validates the vendored Mbed TLS version and copies both LLVM and
+Mbed TLS assets into build output.
 
 ### Optional linux-arm64 execution from linux-x64 hosts
 
@@ -139,11 +139,10 @@ execution, so `EndToEndWindowsBackendTests` and
 `WindowsBackendCoverageTests` can run from Linux hosts once Wine is
 installed.
 
-The Windows TLS runtime still defaults to the platform verifier. For
-loopback TLS tests and other controlled overrides, the coverage helper
-passes `SSL_CERT_FILE` to the compiled PE program using a Wine-visible
-path so the vendored `rustls.dll` can load PEM roots without touching a
-host Windows certificate store.
+For loopback TLS tests and other controlled overrides, the coverage
+helper passes `SSL_CERT_FILE` to the compiled PE program using a
+Wine-visible path so the embedded TLS runtime can load PEM roots
+without touching a host Windows certificate store.
 
 ---
 

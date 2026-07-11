@@ -146,7 +146,7 @@ internal static partial class LlvmCodegen
     {
         _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle key = EmitAlloc(state, MbedTlsCertifiedKeyTotalBytes);
+        LlvmValueHandle key = EmitTlsSingletonStorage(state, "__ashes_mbedtls_certified_key", MbedTlsCertifiedKeyTotalBytes);
         LlvmValueHandle certCtx = LlvmApi.BuildIntToPtr(builder, key, state.I8Ptr, name + "_cert_ptr");
         LlvmValueHandle pkCtx = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, key, LlvmApi.ConstInt(state.I64, MbedTlsCertifiedKeyKeyOffset, 0), name + "_pk_addr"), state.I8Ptr, name + "_pk_ptr");
         EmitMbedTlsVoidCall(state, "mbedtls_x509_crt_init", LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [certCtx], name + "_cert_init");
@@ -168,7 +168,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitRustlsServerConfigBuilderNew(LlvmCodegenState state, LlvmValueHandle libsslHandle, string name)
     {
         _ = libsslHandle;
-        return EmitAlloc(state, MbedTlsServerConfigTotalBytes);
+        return EmitTlsSingletonStorage(state, "__ashes_mbedtls_server_config", MbedTlsServerConfigTotalBytes);
     }
 
     private static LlvmValueHandle EmitRustlsServerConfigBuilderSetCertifiedKeys(
@@ -411,17 +411,34 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle verifyFlags = LoadMemory(state, connectionHandle, MbedTlsConnectionVerifyFlagsOffset, prefix + "_verify_flags");
-        LlvmValueHandle notValidForName = LlvmApi.BuildICmp(
+        // mbedtls_ssl_get_verify_result returns (uint32_t)-1 when no verification result is
+        // available (e.g. the handshake aborted on an internal error before/without completing
+        // verification); every bit is set then, so it must not be read as a real flag word.
+        LlvmValueHandle flagsAvailable = LlvmApi.BuildICmp(
             builder,
             LlvmIntPredicate.Ne,
-            LlvmApi.BuildAnd(builder, verifyFlags, LlvmApi.ConstInt(state.I64, 0x04, 0), prefix + "_name_flag"),
-            LlvmApi.ConstInt(state.I64, 0, 0),
+            verifyFlags,
+            LlvmApi.ConstInt(state.I64, 0xFFFFFFFFUL, 0),
+            prefix + "_flags_available");
+        LlvmValueHandle notValidForName = LlvmApi.BuildAnd(
+            builder,
+            flagsAvailable,
+            LlvmApi.BuildICmp(
+                builder,
+                LlvmIntPredicate.Ne,
+                LlvmApi.BuildAnd(builder, verifyFlags, LlvmApi.ConstInt(state.I64, 0x04, 0), prefix + "_name_flag"),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                prefix + "_name_flag_set"),
             prefix + "_not_valid_for_name");
-        LlvmValueHandle unknownIssuer = LlvmApi.BuildICmp(
+        LlvmValueHandle unknownIssuer = LlvmApi.BuildAnd(
             builder,
-            LlvmIntPredicate.Ne,
-            LlvmApi.BuildAnd(builder, verifyFlags, LlvmApi.ConstInt(state.I64, 0x08, 0), prefix + "_issuer_flag"),
-            LlvmApi.ConstInt(state.I64, 0, 0),
+            flagsAvailable,
+            LlvmApi.BuildICmp(
+                builder,
+                LlvmIntPredicate.Ne,
+                LlvmApi.BuildAnd(builder, verifyFlags, LlvmApi.ConstInt(state.I64, 0x08, 0), prefix + "_issuer_flag"),
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                prefix + "_issuer_flag_set"),
             prefix + "_unknown_issuer");
         LlvmValueHandle hasMappedVerifyError = LlvmApi.BuildOr(builder, notValidForName, unknownIssuer, prefix + "_has_mapped_verify_error");
         LlvmValueHandle mappedMessage = LlvmApi.BuildSelect(
@@ -472,7 +489,7 @@ internal static partial class LlvmCodegen
             return LlvmApi.BuildLoad2(builder, state.I64, globals.InitStatusGlobal, prefix + "_status");
         }
 
-        LlvmValueHandle runtime = EmitAlloc(state, MbedTlsRuntimeTotalBytes);
+        LlvmValueHandle runtime = EmitTlsSingletonStorage(state, "__ashes_mbedtls_runtime", MbedTlsRuntimeTotalBytes);
         LlvmValueHandle entropyPtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, runtime, LlvmApi.ConstInt(state.I64, MbedTlsRuntimeEntropyOffset, 0), prefix + "_entropy_addr"), state.I8Ptr, prefix + "_entropy_ptr");
         LlvmValueHandle ctrDrbgPtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, runtime, LlvmApi.ConstInt(state.I64, MbedTlsRuntimeCtrDrbgOffset, 0), prefix + "_ctr_drbg_addr"), state.I8Ptr, prefix + "_ctr_drbg_ptr");
         LlvmValueHandle rootsPtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, runtime, LlvmApi.ConstInt(state.I64, MbedTlsRuntimeRootsOffset, 0), prefix + "_roots_addr"), state.I8Ptr, prefix + "_roots_ptr");

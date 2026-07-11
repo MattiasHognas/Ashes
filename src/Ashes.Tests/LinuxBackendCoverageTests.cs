@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -857,7 +858,7 @@ public sealed class LinuxBackendCoverageTests
     {
         // Server-side TLS: the Ashes program terminates TLS (Ashes.Net.Tls.Server.serveTls with a
         // self-signed cert), the C# test is an SslStream CLIENT that trusts the test cert via a
-        // validation callback. Exercises the rustls server config build (certified key from PEMs),
+        // validation callback. Exercises the TLS server config build (certified key from PEMs),
         // the server half of the handshake (parking on WaitTlsWantRead/Write), and the shared TLS
         // send/receive/close paths on an accepted connection.
         if (!OperatingSystem.IsLinux())
@@ -2559,9 +2560,13 @@ public sealed class LinuxBackendCoverageTests
             : null;
         var result = await CompileRunWithLinuxLlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
         var serverException = await serverTask.ConfigureAwait(false);
-        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        if (allowServerHandshakeFailure && serverException is not null)
         {
-            ioException.Message.ShouldContain("unexpected EOF");
+            // The client rejects the certificate mid-handshake: Mbed TLS sends a fatal TLS alert,
+            // which the .NET peer surfaces as an AuthenticationException (an abrupt close would
+            // surface as an IOException instead).
+            (serverException is AuthenticationException or IOException)
+                .ShouldBeTrue(serverException.ToString());
         }
         else
         {
