@@ -77,8 +77,8 @@ let order = [
     Line(drink = Drip, qty = 3)
 ]
 
-// let! awaits a task with no async() wrapper; async.all joins the two tasks
-// into one. |?> maps the Ok branch, |!> tags the Error branch.
+// let! awaits a task, async.all joins the two tasks into one.
+// |?> maps the Ok branch, |!> tags the Error branch.
 let! purchase = async.all [async.task(priceLabel order), async.task(countLabel order)]
 in
     purchase
