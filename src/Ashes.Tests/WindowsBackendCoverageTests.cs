@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -781,9 +782,13 @@ public sealed class WindowsBackendCoverageTests
         var serverTask = TlsLoopbackTestHost.RunServerAsync(listener, expectedClientCount, tlsHost.ServerCertificate, handleClientAsync, tolerateClientDisconnect);
         var result = await CompileRunWithWindowsLlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
         var serverException = await serverTask.ConfigureAwait(false);
-        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        if (allowServerHandshakeFailure && serverException is not null)
         {
-            ioException.Message.ShouldContain("unexpected EOF");
+            // The client rejects the certificate mid-handshake: Mbed TLS sends a fatal TLS alert,
+            // which the .NET peer surfaces as an AuthenticationException (an abrupt close would
+            // surface as an IOException instead).
+            (serverException is AuthenticationException or IOException)
+                .ShouldBeTrue(serverException.ToString());
         }
         else
         {

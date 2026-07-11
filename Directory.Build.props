@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <RustlsFfiVersion>0.15.3</RustlsFfiVersion>
+    <MbedTlsVersion>3.6.4</MbedTlsVersion>
     <OpenlibmVersion>0.8.7</OpenlibmVersion>
     <Pcre2Version>10.45</Pcre2Version>
 

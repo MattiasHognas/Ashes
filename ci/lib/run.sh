@@ -51,8 +51,8 @@ run_in() {
 
   # LD_LIBRARY_PATH points the native loader at the mounted runtimes/ so
   # framework-dependent `dotnet run` (tests/coverage, no RID) can resolve
-  # libLLVM.so / librustls.so. On a host these come from system packages; in the
-  # container they only exist under runtimes/linux-x64. Self-contained publishes
+  # libLLVM.so. On a host it comes from system packages; in the container it
+  # only exists under runtimes/linux-x64. Self-contained publishes
   # (matrix/ext/release) bundle their own copies, so this is harmless for them.
   "$CI_ENGINE" run --rm \
     "${userns_args[@]}" \

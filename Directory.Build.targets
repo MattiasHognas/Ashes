@@ -8,14 +8,12 @@
   <!--
     Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set
     BundleNativeRuntimes=false to opt out of the copy below — they don't use
-    libLLVM/rustls, so copying them just bloats their publish output (libLLVM.so
+    libLLVM, so copying it just bloats their publish output (libLLVM.so
     alone is ~144 MB). Everything else keeps the copy by default.
   -->
   <Target Name="_EnsureCorrectNativeLibForPublish"
     AfterTargets="Publish"
     Condition="'$(RuntimeIdentifier)' != '' and '$(BundleNativeRuntimes)' != 'false'">
-    <MakeDir Directories="$(PublishDir)runtimes/$(RuntimeIdentifier)"
-      Condition="Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/librustls.so') or Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.dll') or Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.version')" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.so"
       DestinationFiles="$(PublishDir)libLLVM.so"
       SkipUnchangedFiles="false"
@@ -24,17 +22,5 @@
       DestinationFiles="$(PublishDir)libLLVM.dll"
       SkipUnchangedFiles="false"
       Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.dll')" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/librustls.so"
-      DestinationFiles="$(PublishDir)runtimes/$(RuntimeIdentifier)/librustls.so"
-      SkipUnchangedFiles="false"
-      Condition="$(RuntimeIdentifier.StartsWith('linux-')) and Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/librustls.so')" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.dll"
-      DestinationFiles="$(PublishDir)runtimes/$(RuntimeIdentifier)/rustls.dll"
-      SkipUnchangedFiles="false"
-      Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.dll')" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.version"
-      DestinationFiles="$(PublishDir)runtimes/$(RuntimeIdentifier)/rustls.version"
-      SkipUnchangedFiles="false"
-      Condition="Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/rustls.version')" />
   </Target>
 </Project>

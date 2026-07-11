@@ -15,8 +15,8 @@
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
-      <_Parameter1>RustlsFfiVersion</_Parameter1>
-      <_Parameter2>$(RustlsFfiVersion)</_Parameter2>
+      <_Parameter1>MbedTlsVersion</_Parameter1>
+      <_Parameter2>$(MbedTlsVersion)</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
 
@@ -47,10 +47,9 @@
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
     <_ExpectedNativeLibraryExtension>.so</_ExpectedNativeLibraryExtension>
-    <_ExpectedRustlsLibraryFileName>librustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
-    <_ExpectedRustlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionPath>
-    <_ExpectedRustlsProvisionHint>bash scripts/download-rustls-ffi.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedRustlsProvisionHint>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
+    <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
+    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != '' and '$(_ExpectedRustlsRuntimeIdentifier)' != 'win-x64'">
@@ -60,21 +59,23 @@
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' == 'win-x64'">
     <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
-    <_ExpectedRustlsLibraryFileName>rustls$(_ExpectedNativeLibraryExtension)</_ExpectedRustlsLibraryFileName>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
+    <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
+    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
-    <_ExpectedRustlsAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedRustlsLibraryFileName)</_ExpectedRustlsAssetPath>
     <_ExpectedLlvmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmAssetPath>
     <_ExpectedLlvmLinkFileName>libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmLinkFileName>
-    <_ExpectedRustlsAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedRustlsLibraryFileName)</_ExpectedRustlsAssetLinkPath>
-    <_ExpectedRustlsVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\rustls.version</_ExpectedRustlsVersionLinkPath>
     <_ExpectedOpenlibmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetPath>
     <_ExpectedOpenlibmVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionPath>
     <_ExpectedOpenlibmAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetLinkPath>
     <_ExpectedOpenlibmVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionLinkPath>
+    <_ExpectedMbedTlsAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetPath>
+    <_ExpectedMbedTlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionPath>
+    <_ExpectedMbedTlsAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetLinkPath>
+    <_ExpectedMbedTlsVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionLinkPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' )">
@@ -91,16 +92,6 @@
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
       Link="$(_ExpectedLlvmLinkFileName)" />
-    <None Include="$(_ExpectedRustlsAssetPath)"
-      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedRustlsAssetPath)')"
-      CopyToOutputDirectory="PreserveNewest"
-      CopyToPublishDirectory="PreserveNewest"
-      Link="$(_ExpectedRustlsAssetLinkPath)" />
-    <None Include="$(_ExpectedRustlsVersionPath)"
-      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedRustlsVersionPath)')"
-      CopyToOutputDirectory="PreserveNewest"
-      CopyToPublishDirectory="PreserveNewest"
-      Link="$(_ExpectedRustlsVersionLinkPath)" />
     <None Include="$(_ExpectedOpenlibmAssetPath)"
       Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedOpenlibmAssetPath)')"
       CopyToOutputDirectory="PreserveNewest"
@@ -111,23 +102,33 @@
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
       Link="$(_ExpectedOpenlibmVersionLinkPath)" />
+    <None Include="$(_ExpectedMbedTlsAssetPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedMbedTlsAssetPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedMbedTlsAssetLinkPath)" />
+    <None Include="$(_ExpectedMbedTlsVersionPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedMbedTlsVersionPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedMbedTlsVersionLinkPath)" />
   </ItemGroup>
 
-  <Target Name="ValidateRustlsRuntimeAsset"
+  <Target Name="ValidateMbedTlsRuntimeAsset"
     BeforeTargets="Build;Publish"
-    Condition="'$(_ExpectedRustlsAssetPath)' != ''">
-    <Error Condition="!Exists('$(_ExpectedRustlsAssetPath)')"
-      Text="Missing rustls-ffi asset '$(_ExpectedRustlsAssetPath)'. Run '$(_ExpectedRustlsProvisionHint)' to provision the expected runtime payload." />
-    <Error Condition="!Exists('$(_ExpectedRustlsVersionPath)')"
-      Text="Missing rustls-ffi version marker '$(_ExpectedRustlsVersionPath)'. Re-run '$(_ExpectedRustlsProvisionHint)' so the provisioned asset version can be verified at build time." />
-    <ReadLinesFromFile File="$(_ExpectedRustlsVersionPath)">
-      <Output TaskParameter="Lines" ItemName="_ProvisionedRustlsVersionLine" />
+    Condition="'$(_ExpectedMbedTlsAssetPath)' != ''">
+    <Error Condition="!Exists('$(_ExpectedMbedTlsAssetPath)')"
+      Text="Missing Mbed TLS bitcode '$(_ExpectedMbedTlsAssetPath)'. Run '$(_ExpectedMbedTlsProvisionHint)' to provision the expected runtime payload." />
+    <Error Condition="!Exists('$(_ExpectedMbedTlsVersionPath)')"
+      Text="Missing Mbed TLS version marker '$(_ExpectedMbedTlsVersionPath)'. Re-run '$(_ExpectedMbedTlsProvisionHint)' so the provisioned asset version can be verified at build time." />
+    <ReadLinesFromFile File="$(_ExpectedMbedTlsVersionPath)">
+      <Output TaskParameter="Lines" ItemName="_ProvisionedMbedTlsVersionLine" />
     </ReadLinesFromFile>
     <PropertyGroup>
-      <_ProvisionedRustlsVersion>@(_ProvisionedRustlsVersionLine)</_ProvisionedRustlsVersion>
+      <_ProvisionedMbedTlsVersion>@(_ProvisionedMbedTlsVersionLine)</_ProvisionedMbedTlsVersion>
     </PropertyGroup>
-    <Error Condition="'$(_ProvisionedRustlsVersion)' != '$(RustlsFfiVersion)'"
-      Text="Provisioned rustls-ffi version '$(_ProvisionedRustlsVersion)' does not match expected version '$(RustlsFfiVersion)' for '$(_ExpectedRustlsRuntimeIdentifier)'. Re-run '$(_ExpectedRustlsProvisionHint)' or update RustlsFfiVersion." />
+    <Error Condition="'$(_ProvisionedMbedTlsVersion)' != '$(MbedTlsVersion)'"
+      Text="Provisioned Mbed TLS version '$(_ProvisionedMbedTlsVersion)' does not match expected version '$(MbedTlsVersion)' for '$(_ExpectedRustlsRuntimeIdentifier)'. Re-run '$(_ExpectedMbedTlsProvisionHint)' or update MbedTlsVersion." />
   </Target>
 
   <Target Name="ValidateLlvmRuntimeAsset"

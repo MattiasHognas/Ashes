@@ -157,9 +157,10 @@ internal static partial class LlvmCodegen
     private readonly record struct LinuxTlsGlobals(
         LlvmValueHandle InitStatusGlobal,
         LlvmValueHandle ContextGlobal,
+        LlvmValueHandle RuntimeGlobal,
         LlvmValueHandle LibsslHandleGlobal,
-        LlvmValueHandle RustlsReadCallback,
-        LlvmValueHandle RustlsWriteCallback,
+        LlvmValueHandle MbedTlsReadCallback,
+        LlvmValueHandle MbedTlsWriteCallback,
         LlvmValueHandle ServerConfigGlobal);
 
     private static void EmitEntryProgramArgsInitialization(LlvmCodegenState state)

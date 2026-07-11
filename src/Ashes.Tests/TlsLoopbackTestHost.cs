@@ -42,7 +42,7 @@ internal sealed class TlsLoopbackTestHost : IDisposable
         // where RSA modular exponentiation is the dominant handshake cost. ECDSA P-256 signature
         // verification is an order of magnitude cheaper under emulation, which keeps the
         // compiled arm64 process well under the SocketTestConstants.ProcessExitTimeout budget
-        // for the https-via-loopback tests. rustls supports ecdsa_secp256r1_sha256 natively.
+        // for the https-via-loopback tests. Mbed TLS supports ecdsa_secp256r1_sha256 natively.
         using ECDsa rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var rootRequest = new CertificateRequest("CN=Ashes Test Root", rootKey, HashAlgorithmName.SHA256);
         rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));

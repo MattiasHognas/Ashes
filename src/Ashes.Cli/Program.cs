@@ -1165,7 +1165,8 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
 {
     var importLine = new Regex(
         ProjectSupport.ImportModulePattern,
-        RegexOptions.Compiled | RegexOptions.CultureInvariant
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1)
     );
     var imports = new List<string>();
     var sourceLines = new List<string>();

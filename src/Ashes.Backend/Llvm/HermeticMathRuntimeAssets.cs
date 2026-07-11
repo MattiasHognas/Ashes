@@ -8,7 +8,7 @@ namespace Ashes.Backend.Llvm;
 /// Loads the vendored openlibm LLVM bitcode (<c>libopenlibm.bc</c>) that backs the Layer-2
 /// transcendentals. The bitcode is linked into the program module at codegen time only when the
 /// program actually calls a transcendental, mirroring how <see cref="HermeticTlsRuntimeAssets"/>
-/// gates the rustls payload.
+/// gates the Mbed TLS payload.
 /// </summary>
 internal static class HermeticMathRuntimeAssets
 {

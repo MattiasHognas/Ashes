@@ -46,8 +46,9 @@ just provision    # download LLVM native libs into runtimes/
 `just provision` runs `scripts/download-llvm-native.sh --all` inside the base
 image (Debian, so `apt` works) and writes the libs into the bind-mounted
 `runtimes/`. Re-run it only when the LLVM version changes. The build copies
-`runtimes/<rid>/libLLVM.*` + `librustls.*` into publish output at publish time
-(see `Directory.Build.targets`), so these must be present before building.
+`runtimes/<rid>/libLLVM.*` (and the vendored bitcode payloads) into publish
+output at publish time (see `Directory.Build.targets` and
+`Ashes.Backend.csproj`), so these must be present before building.
 
 ## Everyday commands
 

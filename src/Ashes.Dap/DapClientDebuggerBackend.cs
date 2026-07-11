@@ -647,7 +647,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
 
     private static string NormalizeDiagnostic(string diagnostic)
     {
-        return Regex.Replace(diagnostic.Trim(), "\\s+", " ");
+        return Regex.Replace(diagnostic.Trim(), "\\s+", " ", RegexOptions.None, TimeSpan.FromSeconds(1));
     }
 
     private static string FirstNonEmpty(params string[] values)

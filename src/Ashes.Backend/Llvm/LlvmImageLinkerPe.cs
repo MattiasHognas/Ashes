@@ -33,6 +33,68 @@ internal static partial class LlvmImageLinker
     private const int PeSectionHeaderSize = 40;
     private const int PeHeadersStart = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + PeOptionalHeaderSize;
 
+    // jmp qword ptr [rip+disp32] (6 bytes) + 2 bytes of int3 padding.
+    private const int WindowsImportThunkLength = 8;
+
+    /// <summary>
+    /// Windows C-runtime and platform entry points that statically linked bitcode payloads (the
+    /// Mbed TLS module, and the compiler's own TLS codegen) reference by <em>direct</em> call or
+    /// address. The PE counterpart of the ELF linker's <c>LinuxDynamicImportLibraries</c>: any
+    /// undefined COFF symbol found here gets an import (IAT slot + call thunk) from the named DLL.
+    /// Only symbols actually undefined in the object are imported, so the map may be generous —
+    /// but every name listed must exist in the DLL's export table on real Windows and Wine.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> WindowsRuntimeImportLibraries =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["BCryptGenRandom"] = "bcrypt.dll",
+            ["FindClose"] = "kernel32.dll",
+            ["FindFirstFileW"] = "kernel32.dll",
+            ["FindNextFileW"] = "kernel32.dll",
+            ["GetLastError"] = "kernel32.dll",
+            ["GetSystemTimeAsFileTime"] = "kernel32.dll",
+            ["MoveFileExA"] = "kernel32.dll",
+            ["MultiByteToWideChar"] = "kernel32.dll",
+            ["calloc"] = "msvcrt.dll",
+            ["exit"] = "msvcrt.dll",
+            ["fclose"] = "msvcrt.dll",
+            ["feof"] = "msvcrt.dll",
+            ["ferror"] = "msvcrt.dll",
+            ["fflush"] = "msvcrt.dll",
+            ["fgets"] = "msvcrt.dll",
+            ["fopen"] = "msvcrt.dll",
+            ["fputc"] = "msvcrt.dll",
+            ["fputs"] = "msvcrt.dll",
+            ["fread"] = "msvcrt.dll",
+            ["free"] = "msvcrt.dll",
+            ["fseek"] = "msvcrt.dll",
+            ["ftell"] = "msvcrt.dll",
+            ["fwrite"] = "msvcrt.dll",
+            ["getenv"] = "msvcrt.dll",
+            ["gmtime"] = "msvcrt.dll",
+            ["malloc"] = "msvcrt.dll",
+            ["memchr"] = "msvcrt.dll",
+            ["memmove"] = "msvcrt.dll",
+            ["printf"] = "msvcrt.dll",
+            ["puts"] = "msvcrt.dll",
+            ["rand"] = "msvcrt.dll",
+            ["remove"] = "msvcrt.dll",
+            ["rename"] = "msvcrt.dll",
+            ["setbuf"] = "msvcrt.dll",
+            ["srand"] = "msvcrt.dll",
+            ["sscanf"] = "msvcrt.dll",
+            ["strchr"] = "msvcrt.dll",
+            ["strcmp"] = "msvcrt.dll",
+            ["strcpy"] = "msvcrt.dll",
+            ["strncmp"] = "msvcrt.dll",
+            ["strncpy"] = "msvcrt.dll",
+            ["strstr"] = "msvcrt.dll",
+            ["time"] = "msvcrt.dll",
+            ["tolower"] = "msvcrt.dll",
+            ["toupper"] = "msvcrt.dll",
+            ["vsnprintf"] = "msvcrt.dll",
+        };
+
     public static byte[] LinkWindowsExecutable(
         byte[] objectBytes,
         string entrySymbolName,
@@ -40,6 +102,7 @@ internal static partial class LlvmImageLinker
         IReadOnlyDictionary<string, string>? externalLibraries = null)
     {
         var parsed = ParseCoffObject(objectBytes, entrySymbolName);
+        externalLibraries = CollectWindowsRuntimeImports(objectBytes, parsed.SymbolTableOffset, parsed.SymbolCount, externalLibraries);
 
         using var rdataStream = new MemoryStream();
         var extraSectionOffsets = new Dictionary<int, uint>();
@@ -169,7 +232,10 @@ internal static partial class LlvmImageLinker
         AlignStream(rdataStream, 8);
         int iatSectionOffset = (int)rdataStream.Position;
 
-        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTextPrefixLength + parsed.TextBytes.Length)), PeSectionAlignment);
+        // Import call thunks live at the end of .text (one per external import symbol), so the
+        // .rdata base must account for them before any RVA-dependent content is written.
+        int externalThunkCount = externalImports.Sum(static import => import.SymbolNames.Length);
+        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTextPrefixLength + parsed.TextBytes.Length + externalThunkCount * WindowsImportThunkLength)), PeSectionAlignment);
 
         int kernel32IatOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, kernel32Hints, rdataRva);
@@ -355,11 +421,30 @@ internal static partial class LlvmImageLinker
             ["__imp_GetSystemInfo"] = getSystemInfoIatVa,
             ["__chkstk"] = chkstkStubVa,
         };
+        // Each external import symbol gets its IAT slot exposed as `__imp_<name>` (indirect
+        // references) plus a call thunk at the end of .text exposed as `<name>` (direct calls and
+        // address-taken references from statically linked bitcode, e.g. Mbed TLS).
+        ulong externalThunkBaseVa = PeImageBase + PeTextRva + (ulong)(WindowsTextPrefixLength + parsed.TextBytes.Length);
+        byte[] externalThunkBytes = new byte[externalThunkCount * WindowsImportThunkLength];
+        int externalThunkIndex = 0;
         foreach (var (import, offset) in externalIatOffsets)
         {
             for (int i = 0; i < import.SymbolNames.Length; i++)
             {
-                externalSymbolVas["__imp_" + import.SymbolNames[i]] = PeImageBase + rdataRva + (ulong)offset + (ulong)i * 8UL;
+                ulong iatEntryVa = PeImageBase + rdataRva + (ulong)offset + (ulong)i * 8UL;
+                externalSymbolVas["__imp_" + import.SymbolNames[i]] = iatEntryVa;
+
+                ulong thunkVa = externalThunkBaseVa + (ulong)(externalThunkIndex * WindowsImportThunkLength);
+                int thunkOffset = externalThunkIndex * WindowsImportThunkLength;
+                externalThunkBytes[thunkOffset] = 0xFF; // jmp qword ptr [rip+disp32]
+                externalThunkBytes[thunkOffset + 1] = 0x25;
+                BinaryPrimitives.WriteInt32LittleEndian(
+                    externalThunkBytes.AsSpan(thunkOffset + 2, 4),
+                    checked((int)((long)iatEntryVa - (long)(thunkVa + 6))));
+                externalThunkBytes[thunkOffset + 6] = 0xCC; // int3 padding
+                externalThunkBytes[thunkOffset + 7] = 0xCC;
+                externalSymbolVas[import.SymbolNames[i]] = thunkVa;
+                externalThunkIndex++;
             }
         }
         if (linkedPayload is LinkedImagePayload windowsPayload)
@@ -380,6 +465,7 @@ internal static partial class LlvmImageLinker
         byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
             .Concat(BuildWindowsChkstkStub())
             .Concat(parsed.TextBytes)
+            .Concat(externalThunkBytes)
             .ToArray();
 
         byte[] rdataBytes = rdataStream.ToArray();
@@ -640,6 +726,44 @@ internal static partial class LlvmImageLinker
         // Null terminator
         entry.Clear();
         stream.Write(entry);
+    }
+
+    /// <summary>
+    /// Scans the object's COFF symbol table for undefined (section 0) symbols that name a known
+    /// Windows runtime entry point (<see cref="WindowsRuntimeImportLibraries"/>) and merges them
+    /// into the caller-supplied external-library map. Statically linked bitcode payloads reference
+    /// libc/platform functions by direct call, so the linker synthesizes the imports the same way
+    /// the ELF linker consults its dynamic-import map. Caller-supplied mappings take precedence.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? CollectWindowsRuntimeImports(
+        ReadOnlySpan<byte> bytes,
+        uint symbolTableOffset,
+        uint symbolCount,
+        IReadOnlyDictionary<string, string>? externalLibraries)
+    {
+        Dictionary<string, string>? merged = null;
+        for (int symbolIndex = 0; symbolIndex < symbolCount;)
+        {
+            int offset = checked((int)symbolTableOffset + (symbolIndex * 18));
+            short sectionNumber = BinaryPrimitives.ReadInt16LittleEndian(bytes.Slice(offset + 12, 2));
+            byte auxSymbolCount = bytes[offset + 17];
+            if (sectionNumber == 0)
+            {
+                string name = ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount);
+                if (WindowsRuntimeImportLibraries.TryGetValue(name, out string? library)
+                    && (externalLibraries is null || !externalLibraries.ContainsKey(name)))
+                {
+                    merged ??= externalLibraries is null
+                        ? new Dictionary<string, string>(StringComparer.Ordinal)
+                        : new Dictionary<string, string>(externalLibraries, StringComparer.Ordinal);
+                    merged[name] = library;
+                }
+            }
+
+            symbolIndex += 1 + auxSymbolCount;
+        }
+
+        return merged ?? externalLibraries;
     }
 
     private static WindowsImportLibrary[] BuildWindowsExternalImports(IReadOnlyDictionary<string, string>? externalLibraries)

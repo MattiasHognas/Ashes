@@ -340,14 +340,14 @@ release_build() {
       dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/dap/\$rid
     done
 
-    stage_compiler() { # <rid> <binary> <llvm> <rustls>
-      local rid=\$1 binary=\$2 llvm=\$3 rustls=\$4
+    stage_compiler() { # <rid> <binary> <llvm>
+      local rid=\$1 binary=\$2 llvm=\$3
       local s=staging/ashes-\$rid
       rm -rf \"\$s\" && mkdir -p \"\$s/runtimes/\$rid\"
       cp \"publish/cli/\$rid/\$binary\" \"\$s/\"
       cp \"publish/cli/\$rid/\$llvm\" \"\$s/\"
-      cp \"publish/cli/\$rid/runtimes/\$rid/\$rustls\" \"\$s/runtimes/\$rid/\"
-      cp \"publish/cli/\$rid/runtimes/\$rid/rustls.version\" \"\$s/runtimes/\$rid/\"
+      # The per-target hermetic runtime payloads (libmbedtls.bc, libopenlibm.bc, version markers).
+      cp -r \"publish/cli/\$rid/runtimes/\$rid/.\" \"\$s/runtimes/\$rid/\"
       [ -f LICENSE ] && cp LICENSE \"\$s/\" || true
       cp README.md \"\$s/\"
       (cd \"\$s\" && zip -r \"\$OLDPWD/\$OUT/ashes-\$rid.zip\" . > /dev/null)
@@ -362,9 +362,9 @@ release_build() {
       (cd \"\$s\" && zip \"\$OLDPWD/\$OUT/\$artifact.zip\" * > /dev/null)
     }
 
-    stage_compiler linux-x64   ashes     libLLVM.so  librustls.so
-    stage_compiler linux-arm64 ashes     libLLVM.so  librustls.so
-    stage_compiler win-x64     ashes.exe libLLVM.dll rustls.dll
+    stage_compiler linux-x64   ashes     libLLVM.so
+    stage_compiler linux-arm64 ashes     libLLVM.so
+    stage_compiler win-x64     ashes.exe libLLVM.dll
 
     stage_tool lsp linux-x64   ashes-lsp     ashes-lsp-linux-x64
     stage_tool lsp linux-arm64 ashes-lsp     ashes-lsp-linux-arm64

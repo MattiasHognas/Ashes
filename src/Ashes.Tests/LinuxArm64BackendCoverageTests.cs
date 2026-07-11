@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -20,7 +21,7 @@ public sealed class LinuxArm64BackendCoverageTests
     private static readonly string[] LinuxArm64SysrootCandidates = ["/usr/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/aarch64-linux-gnu", "/opt/aarch64-linux-gnu"];
 
     [Test]
-    public void Linux_arm64_backend_compile_should_link_hermetic_rustls_payload_for_https_programs()
+    public void Linux_arm64_backend_compile_should_link_hermetic_mbedtls_payload_for_https_programs()
     {
         var bytes = CompileForLinuxArm64(HttpsProgram);
 
@@ -29,12 +30,13 @@ public sealed class LinuxArm64BackendCoverageTests
         bytes[1].ShouldBe((byte)'E');
         bytes[2].ShouldBe((byte)'L');
         bytes[3].ShouldBe((byte)'F');
-        ContainsAscii(bytes, "rustls_client_connection_new").ShouldBeTrue();
-        ContainsAscii(bytes, "rustls_platform_server_cert_verifier").ShouldBeTrue();
+        // Error-table strings from the statically linked Mbed TLS bitcode payload.
+        ContainsAscii(bytes, "SSL - The connection indicated an EOF").ShouldBeTrue();
+        ContainsAscii(bytes, "X509 - Certificate verification failed").ShouldBeTrue();
     }
 
     [Test]
-    public void Linux_arm64_backend_compile_should_not_link_hermetic_rustls_payload_for_plain_programs()
+    public void Linux_arm64_backend_compile_should_not_link_hermetic_mbedtls_payload_for_plain_programs()
     {
         var bytes = CompileForLinuxArm64("Ashes.IO.print(42)");
 
@@ -43,8 +45,8 @@ public sealed class LinuxArm64BackendCoverageTests
         bytes[1].ShouldBe((byte)'E');
         bytes[2].ShouldBe((byte)'L');
         bytes[3].ShouldBe((byte)'F');
-        ContainsAscii(bytes, "rustls_client_connection_new").ShouldBeFalse();
-        ContainsAscii(bytes, "rustls_platform_server_cert_verifier").ShouldBeFalse();
+        ContainsAscii(bytes, "SSL - The connection indicated an EOF").ShouldBeFalse();
+        ContainsAscii(bytes, "X509 - Certificate verification failed").ShouldBeFalse();
     }
 
     [Test]
@@ -718,9 +720,13 @@ public sealed class LinuxArm64BackendCoverageTests
             : null;
         var result = await CompileRunWithLinuxArm64LlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
         var serverException = await serverTask.ConfigureAwait(false);
-        if (allowServerHandshakeFailure && serverException is IOException ioException)
+        if (allowServerHandshakeFailure && serverException is not null)
         {
-            ioException.Message.ShouldContain("unexpected EOF");
+            // The client rejects the certificate mid-handshake: Mbed TLS sends a fatal TLS alert,
+            // which the .NET peer surfaces as an AuthenticationException (an abrupt close would
+            // surface as an IOException instead).
+            (serverException is AuthenticationException or IOException)
+                .ShouldBeTrue(serverException.ToString());
         }
         else
         {
