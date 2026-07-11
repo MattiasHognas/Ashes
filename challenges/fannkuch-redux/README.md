@@ -51,11 +51,23 @@ feature.
 
 ## Status
 
-**Scaffold only.** `fannkuch-redux.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented, but BLOCKED by compiler bugs — no benchmark yet.** [`fannkuch-redux.ash`](fannkuch-redux.ash)
+is the intended fully-pure solution (List-based permutation, one-pass O(k) `flip`, faithful
+factorial-order enumeration). Writing it surfaced **three distinct compiler bugs** — exactly the
+flaw-finding this challenge exists for — documented in [FLAWS.md](FLAWS.md):
 
-## Build & run (once written)
+1. a self-recursive function threading **two** `List` accumulators with an early ADT return drops
+   the early return (takes the wrong branch);
+2. a spurious `ASH014` for a non-recursive helper that calls a recursive helper;
+3. a **use-after-reset** of a pointer-bearing accumulator across the TCO back-edge.
+
+With workarounds for (1) and (2) the program compiles and is correct for `N <= 2`, but (3) makes it
+**segfault for `N >= 3`**, so there is no benchmark table yet. It becomes benchmarkable once the
+back-edge crash is fixed.
+
+## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch-redux.ash -o challenges/fannkuch-redux/fannkuch-redux
-./challenges/fannkuch-redux/fannkuch-redux 10
+./challenges/fannkuch-redux/fannkuch-redux 2   # correct; N >= 3 currently crashes (FLAWS.md bug 3)
 ```
