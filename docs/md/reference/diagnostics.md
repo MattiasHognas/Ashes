@@ -76,9 +76,7 @@ and the binding/type import selectors. See
 ## Capability diagnostics
 
 These codes cover the capability surface (`capability` declarations, `needs` rows,
-`perform`, `handle ... with`). See [Language Reference](language.md) §20 for the
-grammar and typing rules, and [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)
-for the remaining roadmap.
+`perform`, `handle ... with`). See [Language Reference](language.md) §20 for the grammar and typing rules.
 
 - `ASH017` — **Unsatisfied capability.** The program's residual capability row at the top level is
   non-empty after default built-in handlers are applied: some code reachable from the

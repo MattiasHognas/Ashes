@@ -2332,8 +2332,7 @@ resolution, and capabilities and providers declared in imported project modules.
 (a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
-defined; handler evidence is currently per-process, not per-task or per-thread (see
-[future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)). How handlers compile
+defined; handler evidence is currently per-process, not per-task or per-thread. How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
 documented in [Architecture](../internals/architecture.md).
 
