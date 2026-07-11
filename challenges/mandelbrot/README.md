@@ -35,11 +35,37 @@ spectral-norm. Wants a byte-output builder (verify `Bytes` write path is adequat
 
 ## Status
 
-**Scaffold only.** `mandelbrot.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked** (with caveats). [`mandelbrot.ash`](mandelbrot.ash) runs the pure-Float
+`N×N × up-to-50` escape loop. Two caveats, both in [FLAWS.md](FLAWS.md):
 
-## Build & run (once written)
+- It reports the **count of in-set pixels** as a checksum rather than writing the binary `P4` PBM —
+  `Ashes.IO.write` takes a UTF-8 `Str` and there is no raw-bytes stdout write. The compute (the
+  benchmark's work) is identical; the count is deterministic (e.g. `397380 of 1000000` at `N=1000`).
+- Two `Float` type-inference bugs had to be worked around: `Float * Float` of annotated parameters
+  mis-resolves to `Int` (led with `1.0 *`), and a recursive accumulator must lead with a known-`Float`
+  sub-expression. These also block the natural spelling of `n-body` / `spectral-norm`.
+
+## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/mandelbrot/mandelbrot.ash -o challenges/mandelbrot/mandelbrot
-./challenges/mandelbrot/mandelbrot 1000 > mandelbrot.pbm
+./challenges/mandelbrot/mandelbrot 1000
 ```
+
+## Benchmark
+
+```bash
+challenges/bench.sh mandelbrot 4000
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded):
+
+| N | Time | Peak RSS |
+|---|------|----------|
+| 1,000 | 0.04 s | 0.25 MB |
+| 2,000 | 0.18 s | 0.25 MB |
+| 4,000 | 0.69 s | 0.25 MB |
+
+Clean ~`O(N²)` scaling and **constant 0.25 MB** resident set: the accumulators are scalar `Int`/`Float`
+threaded through the pixel loops, so — unlike the pointer-bearing challenges — there is no arena churn
+and no growth. A pure-numeric hot loop is the compiler's happy path.
