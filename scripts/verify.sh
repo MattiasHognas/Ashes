@@ -20,11 +20,11 @@ cd "$repoRoot"
 os="$(uname -s)"
 corepackCmd="corepack"
 pnpmCmd="pnpm"
-enableCorepack="false"
+useCorepackPnpm="false"
 if [[ "$os" == "Linux" ]]; then
   os="linux"
   executableName="ashes"
-  enableCorepack="true"
+  useCorepackPnpm="true"
 elif [[ "$os" == "MINGW"* || "$os" == "CYGWIN"* || "$os" == "MSYS"* ]]; then
   os="win"
   executableName="ashes.exe"
@@ -48,6 +48,15 @@ fi
 ## Verify the Ashes compiler, formatter, and language server work correctly by building, running tests, and running examples.
 
 echo "--- Verifying Ashes on ${os}-${arch}..."
+
+run_pnpm() {
+  if [[ "$useCorepackPnpm" == "true" ]]; then
+    "$corepackCmd" pnpm "$@"
+  else
+    "$pnpmCmd" "$@"
+  fi
+}
+
 dotnet restore "Ashes.slnx"
 dotnet build "Ashes.slnx" --configuration Release --no-restore
 dotnet format "Ashes.slnx" --no-restore
@@ -108,11 +117,8 @@ done
 ## Verify the VS Code extension can be built and packaged.
 echo "--- Verifying VS Code extension..."
 cd vscode-extension
-if [[ "$enableCorepack" == "true" ]]; then
-  "$corepackCmd" enable
-fi
-"$pnpmCmd" install --frozen-lockfile
-"$pnpmCmd" run lint
-"$pnpmCmd" run format:check
-"$pnpmCmd" run compile
-"$pnpmCmd" dlx '--config.ignoredBuiltDependencies[]=@vscode/vsce-sign' '--config.ignoredBuiltDependencies[]=keytar' @vscode/vsce@3.9.2 package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix
+CI=true run_pnpm install --frozen-lockfile
+run_pnpm run lint
+run_pnpm run format:check
+run_pnpm run compile
+run_pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --out ../ashes-vscode.vsix

@@ -1398,7 +1398,8 @@ public sealed class Parser
 
             if (IsWhitespaceArgStarter(_current.Kind)
                 && !(_suppressLetWhitespaceArgument && _current.Kind == TokenKind.Let)
-                && !StartsNextTopLevelItem())
+                && !StartsNextTopLevelItem()
+                && !StartsIndentedTrailingExpressionAfterCompletedCall(expr))
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
                 var arg = ParseWhitespaceArgument();
@@ -1492,6 +1493,18 @@ public sealed class Parser
         }
 
         return StartsSourceLine(_current.Position) && GetColumn(_current.Position) <= _topLevelDeclColumn;
+    }
+
+    private bool StartsIndentedTrailingExpressionAfterCompletedCall(Expr expr)
+    {
+        if (!_suppressLetWhitespaceArgument || _topLevelDeclColumn < 0)
+        {
+            return false;
+        }
+
+        return expr is Expr.Call { IsWhitespaceApplication: false }
+            && StartsSourceLine(_current.Position)
+            && GetColumn(_current.Position) > _topLevelDeclColumn;
     }
 
     // Returns true when only whitespace precedes `pos` on its source line (i.e. `pos` is the line's

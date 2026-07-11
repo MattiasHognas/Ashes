@@ -1,6 +1,9 @@
 {
-    "recommendations": [
-        "redhat.vscode-xml",
-        "esbenp.prettier-vscode"
-    ]
+  "recommendations": [
+    "redhat.vscode-xml",
+    "esbenp.prettier-vscode",
+    "skellock.just",
+    "ms-dotnettools.csdevkit",
+    "vue.volar"
+  ]
 }

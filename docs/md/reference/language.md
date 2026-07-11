@@ -1528,9 +1528,9 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
 - **Introducer.** `module Name =` (a capitalized `UpperCamel` name), followed by
   a **layout block**: the run of lines indented past the `module` keyword. The
   block ends at the first line dedented back to (or past) the `module` column —
-  the same column rule the parser uses to find the next top-level item. `module`
-  is recognized only in this declaration position; it remains an ordinary
-  identifier elsewhere.
+  the same column rule the parser uses to find the next top-level item. A trailing
+  line comment (`// …`) after the `=` is permitted. `module` is recognized only in
+  this declaration position; it remains an ordinary identifier elsewhere.
 - **Members.** `let`, `let recursive ... and ...`, `type`, and nested `module`
   declarations — the same forms a file may contain. A `module` block may **not**
   contain a trailing expression or an `external` declaration.
@@ -2332,8 +2332,7 @@ resolution, and capabilities and providers declared in imported project modules.
 (a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
 interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
-defined; handler evidence is currently per-process, not per-task or per-thread (see
-[future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md)). How handlers compile
+defined; handler evidence is currently per-process, not per-task or per-thread. How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
 documented in [Architecture](../internals/architecture.md).
 

@@ -2,7 +2,7 @@
   "name": "ashes-vscode",
   "displayName": "Ashes Programming Language",
   "description": "Ashes programming language support",
-  "version": "1.2.1",
+  "version": "1.2.5",
   "publisher": "mattiashognas",
   "packageManager": "pnpm@11.9.0",
   "repository": {
@@ -18,13 +18,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:ashes",
-    "onCommand:ashes.getCompilerPath",
-    "onCommand:ashes.compile",
-    "onCommand:ashes.run",
-    "onCommand:ashes.test",
-    "onCommand:ashes.installToolchain",
-    "onDebugResolve:ashes"
+    "onCommand:ashes.getCompilerPath"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -208,8 +202,8 @@
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
-    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
-    "pretest:integration": "tsc -p ./tsconfig.test.json && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --outfile=out/extension.js",
+    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --log-level=warning --outfile=out/extension.js",
+    "pretest:integration": "tsc -p ./tsconfig.test.json && esbuild src/extension.ts --bundle --platform=node --external:vscode --format=cjs --log-level=warning --outfile=out/extension.js",
     "test:integration": "node ./out/test/runTest.js"
   },
   "devDependencies": {
@@ -220,6 +214,7 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
     "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "3.9.2",
     "esbuild": "^0.28.1",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",

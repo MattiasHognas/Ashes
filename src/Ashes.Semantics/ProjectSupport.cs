@@ -92,9 +92,9 @@ public static class ProjectSupport
     // rest of the pipeline (mangling, qualified-reference resolution, cross-file imports) then treats
     // exactly like a separate `File/Name.ash` file — so inline ↔ file promotion is transparent.
 
-    /// <summary>A header line <c>module Name =</c> at column <see cref="Indent"/>; the block body is the run of lines indented past it.</summary>
+    /// <summary>A header line <c>module Name =</c> at column <see cref="Indent"/>; the block body is the run of lines indented past it. A trailing line comment after the <c>=</c> is permitted (and dropped), matching where comments are ignored elsewhere.</summary>
     private static readonly Regex InlineModuleHeader = new(
-        @"^(?<indent>[ \t]*)module[ \t]+(?<name>[A-Z][A-Za-z0-9_]*)[ \t]*=[ \t]*$",
+        @"^(?<indent>[ \t]*)module[ \t]+(?<name>[A-Z][A-Za-z0-9_]*)[ \t]*=[ \t]*(//[^\n]*)?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant,
         TimeSpan.FromSeconds(1));
 

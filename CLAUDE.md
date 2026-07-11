@@ -163,8 +163,7 @@ pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this sur
 [docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md)).
 
 **Memory model:** no GC and no reference counting — memory is managed by deterministic destruction,
-with ownership + borrowing planned (`Lowering.Ownership.cs` is the in-progress home for this; see
-[docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md)). Don't reach for GC/RC-style designs.
+with ownership + borrowing in `Lowering.Ownership.cs`. Don't reach for GC/RC-style designs.
 
 The standard library is written in Ashes under `lib/Ashes/` (e.g. `List.ash`, `IO.ash`); `dist/`
 holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as ordinary programs with a leading `//` directive block
