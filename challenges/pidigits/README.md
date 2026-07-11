@@ -45,5 +45,32 @@ argument). Correctness of the bignum runtime is covered by `tests/bigint_pidigit
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/pidigits/pidigits.ash -o challenges/pidigits/pidigits
-./challenges/pidigits/pidigits 10000
+./challenges/pidigits/pidigits 1000
 ```
+
+## Benchmark
+
+Reproduce with the shared harness (compiles at `-O2`, times with `hyperfine`, reports peak RSS):
+
+```bash
+challenges/bench.sh pidigits 1000
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded — this benchmark does not
+use `Ashes.Parallel`):
+
+| N (digits) | Time | Peak RSS |
+|------------|------|----------|
+| 100 | 0.00 s | 1.2 MB |
+| 250 | 0.04 s | 9.0 MB |
+| 500 | 0.41 s | 37.8 MB |
+| 750 | 1.53 s | 91.2 MB |
+| 1,000 | 3.69 s | 168.0 MB |
+
+The headline finding is the **scaling**, not the absolute time: doubling `N` from 500 to 1,000 costs
+~9× the wall time and ~4.5× the memory — roughly `O(N³)` time and `O(N²)` resident set. Each spigot
+step allocates fresh `Ashes.BigInt` values whose width grows with the digit count, and the bump
+arena does not reclaim them within the digit loop, so both time and memory climb super-linearly.
+This is exactly the arena-churn cost the challenge was written to probe (`FLAWS.md`, and the memory
+model's non-GC reclamation path); it makes the Benchmarks Game standard `N=10000` impractical here
+(extrapolates to hours and tens of GB), so the table stops at `N=1000`.
