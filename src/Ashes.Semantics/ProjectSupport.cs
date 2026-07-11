@@ -95,7 +95,8 @@ public static class ProjectSupport
     /// <summary>A header line <c>module Name =</c> at column <see cref="Indent"/>; the block body is the run of lines indented past it.</summary>
     private static readonly Regex InlineModuleHeader = new(
         @"^(?<indent>[ \t]*)module[ \t]+(?<name>[A-Z][A-Za-z0-9_]*)[ \t]*=[ \t]*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
 
     /// <summary>A lifted inline module: its file-composed <see cref="ModuleName"/> and its (rewritten) block source.</summary>
     private sealed record InlineModule(string ModuleName, string Source);
@@ -143,7 +144,8 @@ public static class ProjectSupport
 
     private static readonly Regex ImportLine = new(
         ImportModulePattern,
-        RegexOptions.Compiled | RegexOptions.CultureInvariant
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1)
     );
 
     private static readonly IReadOnlyDictionary<string, StandardLibraryModuleDescriptor> StdModules =
@@ -2945,7 +2947,7 @@ public static class ProjectSupport
         var alternation = string.Join('|', childNames.Select(Regex.Escape));
         // Head segment must not be preceded by a word char or a dot (so it is a genuine head, not a
         // deeper segment), and must be followed by `.` + an identifier start (a qualified reference).
-        var pattern = new Regex($@"(?<![A-Za-z0-9_.])(?<head>{alternation})\.(?=[A-Za-z_])", RegexOptions.CultureInvariant);
+        var pattern = new Regex($@"(?<![A-Za-z0-9_.])(?<head>{alternation})\.(?=[A-Za-z_])", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         var sb = new StringBuilder(source.Length + 16);
         var inString = false;
         var i = 0;

@@ -668,7 +668,8 @@ public static class Runner
 
     private static readonly Regex ImportPattern = new(
         ProjectSupport.ImportModulePattern,
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
 
     private static bool HasImports(string source)
     {

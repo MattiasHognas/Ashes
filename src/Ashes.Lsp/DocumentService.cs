@@ -82,7 +82,8 @@ public static partial class DocumentService
 
     private static readonly Regex ImportLineRegex = new(
         ProjectSupport.ImportModulePattern,
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
 
     /// <summary>
     /// Strips the import header (import lines and leading blank/comment lines) from the source.

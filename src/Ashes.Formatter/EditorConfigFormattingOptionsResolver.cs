@@ -225,7 +225,7 @@ public static class EditorConfigFormattingOptionsResolver
             regexOptions |= RegexOptions.IgnoreCase;
         }
 
-        return Regex.IsMatch(target, regexPattern, regexOptions);
+        return Regex.IsMatch(target, regexPattern, regexOptions, TimeSpan.FromSeconds(1));
     }
 
     private static string NormalizeLine(string line)

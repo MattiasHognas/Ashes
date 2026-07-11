@@ -6,45 +6,42 @@ namespace Ashes.Backend.Llvm;
 
 internal static class HermeticTlsRuntimeAssets
 {
-    internal static string RustlsVersion { get; } = ResolveRustlsVersion();
+    internal static string MbedTlsVersion { get; } = ResolveMbedTlsVersion();
 
-    private static readonly ConcurrentDictionary<string, HermeticTlsRuntimeAsset> RustlsSharedLibraries =
+    private static readonly ConcurrentDictionary<string, byte[]> Bitcode =
         new(StringComparer.Ordinal);
 
-    internal static HermeticTlsRuntimeAsset GetRustlsSharedLibrary(string targetId)
+    internal static byte[] GetMbedTlsBitcode(string targetId)
     {
-        return RustlsSharedLibraries.GetOrAdd(targetId, LoadRustlsSharedLibrary);
+        return Bitcode.GetOrAdd(targetId, LoadMbedTlsBitcode);
     }
 
-    private static HermeticTlsRuntimeAsset LoadRustlsSharedLibrary(string targetId)
+    private static byte[] LoadMbedTlsBitcode(string targetId)
     {
-        RustlsAssetDescriptor descriptor = targetId switch
+        TlsBitcodeAssetDescriptor descriptor = targetId switch
         {
-            TargetIds.LinuxX64 => new RustlsAssetDescriptor(
-                Path.Combine("linux-x64", "librustls.so"),
-                Path.Combine("linux-x64", "rustls.version"),
-                $"librustls-{RustlsVersion}.so"),
-            TargetIds.LinuxArm64 => new RustlsAssetDescriptor(
-                Path.Combine("linux-arm64", "librustls.so"),
-                Path.Combine("linux-arm64", "rustls.version"),
-                $"librustls-{RustlsVersion}-arm64.so"),
-            TargetIds.WindowsX64 => new RustlsAssetDescriptor(
-                Path.Combine("win-x64", "rustls.dll"),
-                Path.Combine("win-x64", "rustls.version"),
-                $"rustls-{RustlsVersion}.dll"),
+            TargetIds.LinuxX64 => new TlsBitcodeAssetDescriptor(
+                Path.Combine("linux-x64", "libmbedtls.bc"),
+                Path.Combine("linux-x64", "mbedtls.version")),
+            TargetIds.LinuxArm64 => new TlsBitcodeAssetDescriptor(
+                Path.Combine("linux-arm64", "libmbedtls.bc"),
+                Path.Combine("linux-arm64", "mbedtls.version")),
+            TargetIds.WindowsX64 => new TlsBitcodeAssetDescriptor(
+                Path.Combine("win-x64", "libmbedtls.bc"),
+                Path.Combine("win-x64", "mbedtls.version")),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unsupported hermetic TLS target '{targetId}'.")
         };
 
         string assetPath = ResolveRuntimeAssetPath(descriptor.RelativePath);
-        ValidateProvisionedRustlsVersion(descriptor.VersionRelativePath);
+        ValidateProvisionedMbedTlsVersion(descriptor.VersionRelativePath);
 
         try
         {
-            return new HermeticTlsRuntimeAsset(descriptor.EmbeddedFileName, File.ReadAllBytes(assetPath));
+            return File.ReadAllBytes(assetPath);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to load hermetic TLS runtime asset from '{assetPath}'.", ex);
+            throw new InvalidOperationException($"Failed to load Mbed TLS bitcode from '{assetPath}'.", ex);
         }
     }
 
@@ -60,7 +57,7 @@ internal static class HermeticTlsRuntimeAssets
         }
 
         throw new InvalidOperationException(
-            $"Missing hermetic TLS runtime asset '{relativePath}'. Run scripts/download-rustls-ffi.sh to provision rustls-ffi payloads.");
+            $"Missing Mbed TLS bitcode '{relativePath}'. Run scripts/download-mbedtls.sh to provision the TLS runtime payload.");
     }
 
     private static IEnumerable<string> EnumerateRuntimeRoots()
@@ -106,7 +103,7 @@ internal static class HermeticTlsRuntimeAssets
         Justification = "An empty location is expected and handled by the caller; this only contributes an additional search root when not single-file published.")]
     private static string GetExecutingAssemblyLocation() => Assembly.GetExecutingAssembly().Location;
 
-    private static void ValidateProvisionedRustlsVersion(string versionRelativePath)
+    private static void ValidateProvisionedMbedTlsVersion(string versionRelativePath)
     {
         string versionPath = ResolveRuntimeAssetPath(versionRelativePath);
         string provisionedVersion;
@@ -120,36 +117,27 @@ internal static class HermeticTlsRuntimeAssets
             throw new InvalidOperationException($"Failed to read hermetic TLS runtime version marker from '{versionPath}'.", ex);
         }
 
-        if (!string.Equals(provisionedVersion, RustlsVersion, StringComparison.Ordinal))
+        if (!string.Equals(provisionedVersion, MbedTlsVersion, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Provisioned hermetic TLS runtime version '{provisionedVersion}' does not match the compiler's expected rustls-ffi version '{RustlsVersion}'. Re-run scripts/download-rustls-ffi.sh or update RustlsFfiVersion.");
+                $"Provisioned Mbed TLS version '{provisionedVersion}' does not match the compiler's expected version '{MbedTlsVersion}'. Re-run scripts/download-mbedtls.sh or update MbedTlsVersion.");
         }
     }
 
-    private static string ResolveRustlsVersion()
+    private static string ResolveMbedTlsVersion()
     {
         Assembly backendAssembly = typeof(HermeticTlsRuntimeAssets).Assembly;
         foreach (AssemblyMetadataAttribute attribute in backendAssembly.GetCustomAttributes<AssemblyMetadataAttribute>())
         {
-            if (string.Equals(attribute.Key, "RustlsFfiVersion", StringComparison.Ordinal)
+            if (string.Equals(attribute.Key, "MbedTlsVersion", StringComparison.Ordinal)
                 && !string.IsNullOrWhiteSpace(attribute.Value))
             {
                 return attribute.Value;
             }
         }
 
-        throw new InvalidOperationException("Missing RustlsFfiVersion assembly metadata on Ashes.Backend.");
+        throw new InvalidOperationException("Missing MbedTlsVersion assembly metadata on Ashes.Backend.");
     }
 
-    private readonly record struct RustlsAssetDescriptor(string RelativePath, string VersionRelativePath, string EmbeddedFileName);
-}
-
-internal sealed record HermeticTlsRuntimeAsset(string EmbeddedFileName, byte[] Bytes);
-
-internal static class HermeticTlsLinkPayloadSymbols
-{
-    internal const string StartSymbolName = "__ashes_tls_payload_start";
-    internal const string EndSymbolName = "__ashes_tls_payload_end";
-    internal const int Alignment = 16;
+    private readonly record struct TlsBitcodeAssetDescriptor(string RelativePath, string VersionRelativePath);
 }

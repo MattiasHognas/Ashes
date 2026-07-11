@@ -49,7 +49,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSleepImport,
         LlvmValueHandle windowsVirtualAllocImport,
         LlvmValueHandle windowsVirtualFreeImport,
-        HermeticTlsRuntimeAsset? rustlsSharedLibrary,
+        bool usesTlsRuntime,
         LlvmAttributeHandle nounwindAttr)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
@@ -57,81 +57,81 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
         LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
-        LlvmValueHandle rustlsReadCallback = default;
-        LlvmValueHandle rustlsWriteCallback = default;
+        LlvmValueHandle mbedTlsReadCallback = default;
+        LlvmValueHandle mbedTlsWriteCallback = default;
         if (IsLinuxFlavor(flavor) || flavor == LlvmCodegenFlavor.WindowsX64)
         {
-            LlvmTypeHandle rustlsIoCallbackType = LlvmApi.FunctionType(i32, [i8Ptr, i8Ptr, i64, i64Ptr]);
-            rustlsReadCallback = EmitInternalRuntimeFunction(
-                "__ashes_tls_rustls_socket_read_callback",
-                rustlsIoCallbackType,
+            LlvmTypeHandle mbedTlsIoCallbackType = LlvmApi.FunctionType(i32, [i8Ptr, i8Ptr, i64]);
+            mbedTlsReadCallback = EmitInternalRuntimeFunction(
+                "__ashes_tls_mbedtls_socket_read_callback",
+                mbedTlsIoCallbackType,
                 (state, fn) =>
                 {
                     LlvmBuilderHandle builder = state.Target.Builder;
-                    LlvmValueHandle socket = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 0), state.I64, "tls_rustls_read_socket");
-                    LlvmValueHandle bufferPtr = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 1), state.I64, "tls_rustls_read_buffer_ptr");
+                    LlvmValueHandle connection = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 0), state.I64, "tls_mbed_read_connection");
+                    LlvmValueHandle socket = LoadMemory(state, connection, MbedTlsConnectionSocketOffset, "tls_mbed_read_socket");
+                    LlvmValueHandle bufferPtr = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 1), state.I64, "tls_mbed_read_buffer_ptr");
                     LlvmValueHandle requestedBytes = LlvmApi.GetParam(fn, 2);
-                    LlvmValueHandle outBytesSlot = LlvmApi.GetParam(fn, 3);
                     LlvmValueHandle readCount = IsLinuxFlavor(state.Flavor)
-                        ? EmitLinuxSyscall(state, SyscallRead, socket, bufferPtr, requestedBytes, "tls_rustls_read_syscall")
+                        ? EmitLinuxSyscall(state, SyscallRead, socket, bufferPtr, requestedBytes, "tls_mbed_read_syscall")
                         : LlvmApi.BuildSExt(builder,
-                            EmitWindowsRecv(state, socket, LlvmApi.GetParam(fn, 1), LlvmApi.BuildTrunc(builder, requestedBytes, state.I32, "tls_rustls_read_requested_i32"), "tls_rustls_read_recv"),
+                            EmitWindowsRecv(state, socket, LlvmApi.GetParam(fn, 1), LlvmApi.BuildTrunc(builder, requestedBytes, state.I32, "tls_mbed_read_requested_i32"), "tls_mbed_read_recv"),
                             state.I64,
-                            "tls_rustls_read_count");
-                    LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "tls_rustls_read_ok");
+                            "tls_mbed_read_count");
+                    LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "tls_mbed_read_ok");
 
-                    LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_rustls_read_success");
-                    LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_rustls_read_fail");
+                    LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_mbed_read_success");
+                    LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_mbed_read_fail");
                     LlvmApi.BuildCondBr(builder, readOk, successBlock, failBlock);
 
                     LlvmApi.PositionBuilderAtEnd(builder, successBlock);
-                    LlvmApi.BuildStore(builder, readCount, outBytesSlot);
-                    LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I32, 0, 0));
+                    LlvmApi.BuildRet(builder, LlvmApi.BuildTrunc(builder, readCount, state.I32, "tls_mbed_read_count_i32"));
 
                     LlvmApi.PositionBuilderAtEnd(builder, failBlock);
                     LlvmValueHandle errorCode = IsLinuxFlavor(state.Flavor)
                         ? LlvmApi.BuildTrunc(builder,
-                            LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), readCount, "tls_rustls_read_errno_i64"),
+                            LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), readCount, "tls_mbed_read_errno_i64"),
                             state.I32,
-                            "tls_rustls_read_errno")
-                        : EmitWindowsWsaGetLastError(state, "tls_rustls_read_wsa_error");
-                    LlvmApi.BuildRet(builder, errorCode);
+                            "tls_mbed_read_errno")
+                        : EmitWindowsWsaGetLastError(state, "tls_mbed_read_wsa_error");
+                    LlvmValueHandle wouldBlock = EmitRustlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_read_would_block");
+                    LlvmApi.BuildRet(builder, LlvmApi.BuildSelect(builder, wouldBlock, LlvmApi.ConstInt(state.I32, unchecked((ulong)MbedTlsWantRead), 1), errorCode, "tls_mbed_read_result"));
                     return LlvmApi.ConstInt(state.I32, 0, 0);
                 });
-            rustlsWriteCallback = EmitInternalRuntimeFunction(
-                "__ashes_tls_rustls_socket_write_callback",
-                rustlsIoCallbackType,
+            mbedTlsWriteCallback = EmitInternalRuntimeFunction(
+                "__ashes_tls_mbedtls_socket_write_callback",
+                mbedTlsIoCallbackType,
                 (state, fn) =>
                 {
                     LlvmBuilderHandle builder = state.Target.Builder;
-                    LlvmValueHandle socket = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 0), state.I64, "tls_rustls_write_socket");
-                    LlvmValueHandle bufferPtr = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 1), state.I64, "tls_rustls_write_buffer_ptr");
+                    LlvmValueHandle connection = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 0), state.I64, "tls_mbed_write_connection");
+                    LlvmValueHandle socket = LoadMemory(state, connection, MbedTlsConnectionSocketOffset, "tls_mbed_write_socket");
+                    LlvmValueHandle bufferPtr = LlvmApi.BuildPtrToInt(builder, LlvmApi.GetParam(fn, 1), state.I64, "tls_mbed_write_buffer_ptr");
                     LlvmValueHandle requestedBytes = LlvmApi.GetParam(fn, 2);
-                    LlvmValueHandle outBytesSlot = LlvmApi.GetParam(fn, 3);
                     LlvmValueHandle writeCount = IsLinuxFlavor(state.Flavor)
-                        ? EmitLinuxSyscall(state, SyscallWrite, socket, bufferPtr, requestedBytes, "tls_rustls_write_syscall")
+                        ? EmitLinuxSyscall(state, SyscallWrite, socket, bufferPtr, requestedBytes, "tls_mbed_write_syscall")
                         : LlvmApi.BuildSExt(builder,
-                            EmitWindowsSend(state, socket, LlvmApi.GetParam(fn, 1), LlvmApi.BuildTrunc(builder, requestedBytes, state.I32, "tls_rustls_write_requested_i32"), "tls_rustls_write_send"),
+                            EmitWindowsSend(state, socket, LlvmApi.GetParam(fn, 1), LlvmApi.BuildTrunc(builder, requestedBytes, state.I32, "tls_mbed_write_requested_i32"), "tls_mbed_write_send"),
                             state.I64,
-                            "tls_rustls_write_count");
-                    LlvmValueHandle writeOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, writeCount, LlvmApi.ConstInt(state.I64, 0, 0), "tls_rustls_write_ok");
+                            "tls_mbed_write_count");
+                    LlvmValueHandle writeOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, writeCount, LlvmApi.ConstInt(state.I64, 0, 0), "tls_mbed_write_ok");
 
-                    LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_rustls_write_success");
-                    LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_rustls_write_fail");
+                    LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_mbed_write_success");
+                    LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tls_mbed_write_fail");
                     LlvmApi.BuildCondBr(builder, writeOk, successBlock, failBlock);
 
                     LlvmApi.PositionBuilderAtEnd(builder, successBlock);
-                    LlvmApi.BuildStore(builder, writeCount, outBytesSlot);
-                    LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I32, 0, 0));
+                    LlvmApi.BuildRet(builder, LlvmApi.BuildTrunc(builder, writeCount, state.I32, "tls_mbed_write_count_i32"));
 
                     LlvmApi.PositionBuilderAtEnd(builder, failBlock);
                     LlvmValueHandle errorCode = IsLinuxFlavor(state.Flavor)
                         ? LlvmApi.BuildTrunc(builder,
-                            LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), writeCount, "tls_rustls_write_errno_i64"),
+                            LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), writeCount, "tls_mbed_write_errno_i64"),
                             state.I32,
-                            "tls_rustls_write_errno")
-                        : EmitWindowsWsaGetLastError(state, "tls_rustls_write_wsa_error");
-                    LlvmApi.BuildRet(builder, errorCode);
+                            "tls_mbed_write_errno")
+                        : EmitWindowsWsaGetLastError(state, "tls_mbed_write_wsa_error");
+                    LlvmValueHandle wouldBlock = EmitRustlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_write_would_block");
+                    LlvmApi.BuildRet(builder, LlvmApi.BuildSelect(builder, wouldBlock, LlvmApi.ConstInt(state.I32, unchecked((ulong)MbedTlsWantWrite), 1), errorCode, "tls_mbed_write_result"));
                     return LlvmApi.ConstInt(state.I32, 0, 0);
                 });
         }
@@ -140,20 +140,12 @@ internal static partial class LlvmCodegen
             ? new LinuxTlsGlobals(
                 CreateInternalI64Global("__ashes_tls_init_status"),
                 CreateInternalI64Global("__ashes_tls_ctx"),
+                CreateInternalI64Global("__ashes_tls_runtime"),
                 CreateInternalI64Global("__ashes_tls_libssl_handle"),
-                rustlsReadCallback,
-                rustlsWriteCallback,
+                mbedTlsReadCallback,
+                mbedTlsWriteCallback,
                 CreateInternalI64Global("__ashes_tls_server_config"))
             : default;
-        LlvmValueHandle linkedTlsPayloadStartGlobal = default;
-        LlvmValueHandle linkedTlsPayloadEndGlobal = default;
-        if (rustlsSharedLibrary is not null)
-        {
-            linkedTlsPayloadStartGlobal = LlvmApi.AddGlobal(target.Module, i8, HermeticTlsLinkPayloadSymbols.StartSymbolName);
-            LlvmApi.SetLinkage(linkedTlsPayloadStartGlobal, LlvmLinkage.External);
-            linkedTlsPayloadEndGlobal = LlvmApi.AddGlobal(target.Module, i8, HermeticTlsLinkPayloadSymbols.EndSymbolName);
-            LlvmApi.SetLinkage(linkedTlsPayloadEndGlobal, LlvmLinkage.External);
-        }
 
         DeclareRuntimeFunction("ashes_tcp_connect", LlvmApi.FunctionType(i64, [i64, i64]));
         DeclareRuntimeFunction("ashes_tcp_send", LlvmApi.FunctionType(i64, [i64, i64]));
@@ -229,10 +221,8 @@ internal static partial class LlvmCodegen
         EmitRuntimeFunction(
             "ashes_tls_runtime_init",
             LlvmApi.FunctionType(i64, []),
-            (state, _) => IsLinuxFlavor(state.Flavor)
-                ? EmitEnsureLinuxTlsRuntimeInitialized(state, linuxTlsGlobals, rustlsSharedLibrary, linkedTlsPayloadStartGlobal, linkedTlsPayloadEndGlobal, "tls_runtime_init")
-                : state.Flavor == LlvmCodegenFlavor.WindowsX64
-                    ? EmitEnsureWindowsTlsRuntimeInitialized(state, linuxTlsGlobals, rustlsSharedLibrary, linkedTlsPayloadStartGlobal, linkedTlsPayloadEndGlobal, "tls_runtime_init")
+            (state, _) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+                ? EmitEnsureTlsRuntimeInitialized(state, linuxTlsGlobals, usesTlsRuntime, "tls_runtime_init")
                 : LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1));
 
         EmitRuntimeFunction(
@@ -278,35 +268,35 @@ internal static partial class LlvmCodegen
         EmitRuntimeFunction(
             "ashes_step_tls_handshake_task",
             LlvmApi.FunctionType(i64, [i64]),
-            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
                 ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS handshake runtime is not implemented yet", "step_tls_handshake_todo"));
 
         EmitRuntimeFunction(
             "ashes_step_tls_server_handshake_task",
             LlvmApi.FunctionType(i64, [i64]),
-            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
                 ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals, serverSide: true)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes server TLS handshake runtime is not implemented yet", "step_tls_server_handshake_todo"));
 
         EmitRuntimeFunction(
             "ashes_step_tls_send_task",
             LlvmApi.FunctionType(i64, [i64]),
-            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
                 ? EmitStepTlsSendTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS send runtime is not implemented yet", "step_tls_send_todo"));
 
         EmitRuntimeFunction(
             "ashes_step_tls_receive_task",
             LlvmApi.FunctionType(i64, [i64]),
-            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
                 ? EmitStepTlsReceiveTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS receive runtime is not implemented yet", "step_tls_receive_todo"));
 
         EmitRuntimeFunction(
             "ashes_step_tls_close_task",
             LlvmApi.FunctionType(i64, [i64]),
-            (state, fn) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
                 ? EmitStepTlsCloseTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS close runtime is not implemented yet", "step_tls_close_todo"));
 
@@ -659,29 +649,6 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder, functionType, function, args, name);
     }
 
-    private static LlvmValueHandle EmitLinuxDlopen(LlvmCodegenState state, LlvmValueHandle pathCstr, string name)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I32]);
-        LlvmValueHandle handlePtr = EmitLinuxImportedCall(
-            state,
-            "dlopen",
-            functionType,
-            [pathCstr, LlvmApi.ConstInt(state.I32, LinuxRtldNow, 0)],
-            name);
-        return LlvmApi.BuildPtrToInt(builder, handlePtr, state.I64, name + "_i64");
-    }
-
-    private static LlvmValueHandle EmitLinuxDlsym(LlvmCodegenState state, LlvmValueHandle libraryHandle, string symbolName, string name)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I8Ptr]);
-        LlvmValueHandle libraryPtr = LlvmApi.BuildIntToPtr(builder, libraryHandle, state.I8Ptr, name + "_library_ptr");
-        LlvmValueHandle symbolCstr = EmitStringToCString(state, EmitHeapStringLiteral(state, symbolName), name + "_symbol_name");
-        LlvmValueHandle symbolPtr = EmitLinuxImportedCall(state, "dlsym", functionType, [libraryPtr, symbolCstr], name + "_call");
-        return LlvmApi.BuildPtrToInt(builder, symbolPtr, state.I64, name + "_i64");
-    }
-
     private static LlvmValueHandle EmitLinuxStrlen(LlvmCodegenState state, LlvmValueHandle cstrPtr, string name)
     {
         LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I64, [state.I8Ptr]);
@@ -699,41 +666,6 @@ internal static partial class LlvmCodegen
     {
         LlvmTypeHandle functionType = LlvmApi.FunctionType(state.I32, []);
         return EmitLinuxImportedCall(state, "getpid", functionType, Array.Empty<LlvmValueHandle>(), name);
-    }
-
-    private static LlvmValueHandle EmitWindowsLoadLibraryWithFallback(LlvmCodegenState state, string primaryName, string fallbackName, string prefix)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle librarySlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_library_slot");
-        LlvmBasicBlockHandle fallbackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fallback");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-
-        LlvmValueHandle primaryHandle = EmitWindowsLoadLibrary(state,
-            EmitStringToCString(state, EmitHeapStringLiteral(state, primaryName), prefix + "_primary_name"),
-            prefix + "_primary");
-        LlvmApi.BuildStore(builder, primaryHandle, librarySlot);
-        LlvmValueHandle hasPrimary = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, primaryHandle, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_primary");
-        LlvmApi.BuildCondBr(builder, hasPrimary, doneBlock, fallbackBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, fallbackBlock);
-        LlvmValueHandle fallbackHandle = EmitWindowsLoadLibrary(state,
-            EmitStringToCString(state, EmitHeapStringLiteral(state, fallbackName), prefix + "_fallback_name"),
-            prefix + "_fallback");
-        LlvmApi.BuildStore(builder, fallbackHandle, librarySlot);
-        LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, librarySlot, prefix + "_library");
-    }
-
-    private static LlvmValueHandle EmitTlsResolveSymbol(LlvmCodegenState state, LlvmValueHandle libraryHandle, string symbolName, string name)
-    {
-        return state.Flavor == LlvmCodegenFlavor.WindowsX64
-            ? EmitWindowsGetProcAddress(state,
-                libraryHandle,
-                EmitStringToCString(state, EmitHeapStringLiteral(state, symbolName), name + "_symbol_name"),
-                name + "_getproc")
-            : EmitLinuxDlsym(state, libraryHandle, symbolName, name + "_dlsym");
     }
 
     private static void EmitSetSocketNonBlocking(LlvmCodegenState state, LlvmValueHandle socket, string prefix)
