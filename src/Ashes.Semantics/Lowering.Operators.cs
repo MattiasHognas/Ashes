@@ -58,6 +58,7 @@ public sealed partial class Lowering
             TypeRef resolved = rightPruned switch
             {
                 TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TFloat => new TypeRef.TFloat(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
