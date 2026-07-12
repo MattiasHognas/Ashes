@@ -37,12 +37,45 @@ None — integer + recursive-ADT only. No math lib needed.
 
 ## Status
 
-**Scaffold only.** `binary-trees.ash` and the `FLAWS.md` writeup are deferred — to be
-written and run as a later pass.
+**Implemented.** [`binary-trees.ash`](binary-trees.ash) is the recursive-ADT version described
+above (`type Tree = Leaf | Node(Tree, Tree)`, recursive `make`/`check`, accumulator-passing outer
+loops). Output matches the Benchmarks Game format; at `N=10`:
 
-## Build & run (once written)
+```
+stretch tree of depth 11	 check: 4095
+1024	 trees of depth 4	 check: 31744
+256	 trees of depth 6	 check: 32512
+64	 trees of depth 8	 check: 32704
+16	 trees of depth 10	 check: 32752
+long lived tree of depth 10	 check: 2047
+```
+
+## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/binary-trees/binary-trees.ash -o challenges/binary-trees/binary-trees
 ./challenges/binary-trees/binary-trees 21
 ```
+
+## Benchmark
+
+```bash
+challenges/bench.sh binary-trees 21
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded):
+
+| N (maxDepth) | Time | Peak RSS |
+|--------------|------|----------|
+| 16 | 0.03 s | 5.8 MB |
+| 18 | 0.15 s | 23.8 MB |
+| 20 | 0.74 s | 96.0 MB |
+| **21** (standard) | **1.51 s** | **191.5 MB** |
+
+The headline probe — *does the per-iteration arena reset fire for a discarded `Tree`, or does
+memory grow toward OOM?* — comes out **positive**: `N=21` allocates and discards tens of millions
+of short-lived nodes (the depth-4 stage alone builds 2^21 trees) yet completes in constant memory
+relative to the churn. Peak RSS tracks the size of the single **long-lived** depth-`N` tree
+resident across the run (~4M nodes at `N=21`), not the total allocated — so the bump arena is
+reclaiming the per-iteration garbage. This is the isolated counterpoint to `pidigits`, where the
+growing-width `BigInt` accumulators are *not* reclaimed within the loop.

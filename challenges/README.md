@@ -11,8 +11,72 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 
 - [`1brc/`](1brc/README.md) — the One Billion Row Challenge; a full 1e9-row stress test that runs
   in ~8.3 s (every flaw it originally surfaced has since been fixed).
+- [`server/`](server/README.md) — TCP + HTTP echo servers benchmarked against .NET baselines (own `bench.sh`).
 - The folders below are the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-  set — **scaffolds for now** (README only; `.ash` + run deferred).
+  set. [`bench.sh`](bench.sh) is a shared harness for the compute-bound ones (`bench.sh <name> [args]`
+  — compiles at `-O2`, reports hyperfine time + peak RSS). Progress:
+
+  | Challenge | State |
+  |---|---|
+  | [pidigits](pidigits/README.md) | **Benchmarked** — resident memory now **constant** 0.25 MB at every N (was O(N²), 168 MB at N=1000); only the O(N³) division *time* remains |
+  | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
+  | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
+  | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=8…11); resident memory now **constant** 0.25 MB (was 4.6 GB at N=10), time-bound only |
+  | [reverse-complement](reverse-complement/README.md) | **Implemented** — correct, no bugs; list-of-char-`Str` is memory-dense but linear |
+  | [spectral-norm](spectral-norm/README.md) | **Implemented** — correct (1.274224153); needs Float-operand-order workaround ([BUGS](BUGS.md) #1) |
+  | [n-body](n-body/README.md) | **Implemented** — correct energy; several workarounds + O(N) `List(Body)` leak ([BUGS](BUGS.md) #1,2,3,15) |
+  | [fasta](fasta/README.md) | **Implemented** — correct; natural string/tuple accumulator O(N²), streaming form O(1) ([BUGS](BUGS.md) #3) |
+  | [k-nucleotide](k-nucleotide/README.md) | **Implemented** — correct via `Bytes`; `String.substring` superlinear ([BUGS](BUGS.md) #7) |
+  | [regex-redux](regex-redux/README.md) | **Implemented** — correct at small N; chained `Regex.replace` OOMs at scale ([BUGS](BUGS.md) #8) |
+
+  Every bug and gap these probes surfaced is catalogued in **[BUGS.md](BUGS.md)** (the fix backlog);
+  fixed items live in each challenge's `FLAWS.md`.
+
+## Compiler fixes made (surfaced by benchmarking)
+
+Every bug the benchmarks above surfaced has been fixed; the benchmarks are written in their natural,
+workaround-free form. Minimal reproducers live in each challenge's `FLAWS.md`, and each fix ships with
+a regression test under `tests/`.
+
+- **fannkuch-redux** ([FLAWS.md](fannkuch-redux/FLAWS.md)) — all three bugs fixed; benchmark runs:
+  - [x] **Two threaded `List` accumulators + early ADT return miscompiled** — the shallow single-cell
+    TCO copy-out only preserved a list's top cons cell; a multi-cell/rebuilt list left interior cells
+    dangling, so the early return was dropped. Now the reset is disqualified for any list accumulator
+    that is not a single fresh cons.
+  - [x] **Back-edge use-after-reset (segfault)** — same root cause; the `State`-of-two-lists
+    accumulator no longer takes the unsound shallow copy across the reset.
+  - [x] **Spurious `ASH014`** — a non-recursive helper calling a recursive one is no longer rejected;
+    the backward-reference reconstruction no longer requires the specialization path.
+- **mandelbrot** ([FLAWS.md](mandelbrot/FLAWS.md)) — written naturally; emits the real image:
+  - [x] **`Float * Float` of annotated parameters resolved to `Int`** — the operator overload was
+    picked before the parameter's annotation applied. Annotated parameter types are now seeded before
+    the body is lowered, so `zr * zr` and `cr + zr2 - zi2` resolve as `Float` with no `1.0 *` lead or
+    operand reordering.
+  - [x] **Recursive numeric accumulator typed off its first operand** — same seeding fix.
+  - [x] **(feature) Raw-bytes stdout write** — added `Ashes.IO.writeBytes : Bytes -> Unit`; mandelbrot
+    now emits the real binary `P4` PBM instead of a pixel count.
+- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, memory now **constant**:
+  - [x] **Per-iteration `BigInt` garbage now reclaimed** — a BigInt is a self-contained buffer, so it
+    is copied out across the TCO reset like a `String`; the reset fires and reclaims the spigot's
+    intermediate `BigInt`s.
+  - [x] **Growing whole-value accumulator is now O(N), not O(N²)** — a loop threading only non-sharing
+    whole-value accumulators (`String` / `BigInt`, no cons-lists) resets to a **fixed** loop-entry
+    watermark, so each grown accumulator overwrites the previous one instead of being stranded below an
+    advancing watermark. pidigits resident memory dropped from 168 MB (N=1000) to a **constant 0.25 MB
+    at every N**. Only the ~`O(N³)` *time* remains (binary long-division — a bignum-algorithm follow-up).
+- **fannkuch / fixed-shape pointer-bearing ADT accumulators** — a non-recursive pointer-bearing ADT
+  (fannkuch's `State(perm, count)`) is now carried across the reset by a recursive **deep copy** — a
+  self-contained clone (list fields fully copied, tail-sharing broken) that resets to the fixed
+  loop-entry watermark. fannkuch resident memory dropped from 4.6 GB (N=10) to a constant 0.25 MB, and
+  N≥11 is now reachable (time-bound only).
+- **Growing recursive-tree / cons-list accumulators** *(memory-model milestone, still open)* — a
+  *growing* accumulator that is a **cons-list** (shared tail forces the advancing watermark) or a
+  **self-recursive ADT** (an unbounded tree — deep-copying it per iteration would be O(size)/iteration,
+  and it is owned by the in-place reuse specialization) still grows outside that specialization. Also,
+  a helper that *returns* a growing list deep-copies it out of its arena scope per call. Removing these
+  needs ownership / in-place reuse (FLAWS #2), not a point fix.
+- **binary-trees** — no fix needed; the **positive baseline**: the per-iteration arena reset fires
+  correctly for a discarded pointer-bearing ADT (constant memory, no OOM).
 
 ## Benchmarks Game — math-lib coverage
 

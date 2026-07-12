@@ -746,6 +746,85 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Returns true if an ADT can be safely DEEP-copied out of the arena — a self-contained clone with
+    /// no pointer back into the reclaimable region. Unlike <see cref="CanCopyOutAdt"/> (a flat memcpy,
+    /// copy-type fields only) this permits pointer fields as long as every one is itself deep-copyable:
+    /// a copy type, a String/Bytes, a List of deep-copyable-by-<see cref="EmitDeepCopy"/> elements, or
+    /// another non-resource deep-copyable ADT (recursion guarded by <paramref name="visited"/>).
+    /// Excludes closures (env may share/own resources), BigInt (no ADT-field deep-copy path), and
+    /// resource-bearing types (an fd must never be duplicated). Used to let a TCO loop threading a
+    /// fixed-shape pointer-bearing accumulator (e.g. fannkuch's <c>State(perm, count)</c>) reset: the
+    /// deep clone breaks any tail-sharing with the previous accumulator, so it is fixed-watermark safe.
+    /// </summary>
+    private bool CanDeepCopyOutAdt(TypeRef.TNamedType named, HashSet<string>? path = null)
+    {
+        var sym = named.Symbol;
+        if (sym.Constructors.Count == 0 || BuiltinRegistry.IsResourceTypeName(sym.Name) || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        // Decline SELF-RECURSIVE ADTs (trees like MapTree). Such an accumulator is unbounded, so a full
+        // per-iteration deep copy would be O(size)/iteration, and these are exactly the shapes the in-
+        // place reuse specialization owns — deep-copying one out from under it corrupts it. `path` holds
+        // the ADT types on the current field chain (removed on the way back up, so a diamond of the same
+        // non-recursive sub-ADT is still fine); a name already on the path is a cycle.
+        path ??= new HashSet<string>(StringComparer.Ordinal);
+        if (!path.Add(sym.Name))
+        {
+            return false;
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        bool ok = true;
+        foreach (var ctor in sym.Constructors)
+        {
+            foreach (var fieldType in ctor.ParameterTypes)
+            {
+                if (!IsDeepCopyOutSafeFieldType(ResolveFieldType(fieldType, typeParamMap), path))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok)
+            {
+                break;
+            }
+        }
+
+        path.Remove(sym.Name);
+        return ok;
+    }
+
+    private bool IsDeepCopyOutSafeFieldType(TypeRef type, HashSet<string> path)
+    {
+        var pruned = Prune(type);
+        return pruned switch
+        {
+            _ when CanArenaReset(pruned) => true,
+            TypeRef.TStr or TypeRef.TBytes => true,
+            // Lists deep-copy element-by-element via CopyOutList: copy-type, String, or List-of-copy heads.
+            TypeRef.TList list => Prune(list.Element) is TypeRef.TStr
+                || CanArenaReset(Prune(list.Element))
+                || (Prune(list.Element) is TypeRef.TList inner && CanArenaReset(Prune(inner.Element))),
+            TypeRef.TTuple tup => tup.Elements.All(e => IsDeepCopyOutSafeFieldType(e, path)),
+            TypeRef.TNamedType n => CanDeepCopyOutAdt(n, path),
+            _ => false,
+        };
+    }
+
+    /// <summary>
     /// Resolves a constructor field type by substituting type parameters with their
     /// concrete type arguments, then pruning any remaining type variables.
     /// </summary>
@@ -1175,6 +1254,13 @@ public sealed partial class Lowering
                 staticSizeBytes = -1; // dynamic: 8 + length
                 return CopyOutKind.Shallow;
 
+            case TypeRef.TBigInt:
+                // Self-contained { header, limb… } buffer, no internal pointers — copy the normalized
+                // prefix (size from the header) so a threaded BigInt accumulator survives the reset and
+                // the iteration's BigInt garbage is reclaimed.
+                staticSizeBytes = IrInst.CopyOutArena.BigIntSize;
+                return CopyOutKind.Shallow;
+
             case TypeRef.TList list:
                 {
                     var elemPruned = Prune(list.Element);
@@ -1207,9 +1293,15 @@ public sealed partial class Lowering
                 return CopyOutKind.Closure;
 
             case TypeRef.TNamedType named:
-                return CanCopyOutAdt(named, out staticSizeBytes)
-                    ? CopyOutKind.Shallow
-                    : CopyOutKind.None;
+                if (CanCopyOutAdt(named, out staticSizeBytes))
+                {
+                    return CopyOutKind.Shallow;
+                }
+
+                // A pointer-bearing ADT (list/string fields) can still be carried across the reset by a
+                // recursive deep copy — a self-contained clone. Lets a fixed-shape ADT accumulator reset.
+                staticSizeBytes = 0;
+                return CanDeepCopyOutAdt(named) ? CopyOutKind.DeepAdt : CopyOutKind.None;
 
             default:
                 staticSizeBytes = 0;

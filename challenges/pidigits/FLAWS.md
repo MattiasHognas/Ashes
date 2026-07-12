@@ -20,7 +20,14 @@ Implementing it drove the whole `BigInt` surface to completeness:
   allocates fresh normalized `BigInt` values in the arena. A long run (`./pidigits 10000`) is a
   direct stress test of the immutable-value + bump-arena model under a numeric hot loop — exactly
   the cost the memory model predicts. No leak or corruption surfaced; throughput is bounded by
-  allocation volume and by the division algorithm.
+  allocation volume and by the division algorithm. **Update:** memory is now **constant** (0.25 MB at
+  every `N`, down from `O(N²)`). Two changes: (1) a `BigInt` is a self-contained buffer, so it is
+  copied out across the TCO reset like a `String` and the reset fires, freeing the intermediate values;
+  (2) a loop threading only non-sharing whole-value accumulators (`q, r, t` `BigInt`s + the `String`
+  output, no cons-lists) resets to a *fixed* loop-entry watermark, so each grown accumulator overwrites
+  the previous one rather than being stranded below an advancing watermark. Only **time** remains
+  super-linear (~`O(N³)`) — the binary long-division cost, a bignum-algorithm follow-up (Algorithm D /
+  Karatsuba), not a memory-model issue.
 - **Division cost.** The runtime currently uses binary long division (O(bits·limbs)); it is the
   hot operation in the digit-extraction step. Knuth Algorithm D is the documented performance
   follow-up. This benchmark is the natural place to measure whether that upgrade is worth it.

@@ -45,5 +45,36 @@ argument). Correctness of the bignum runtime is covered by `tests/bigint_pidigit
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/pidigits/pidigits.ash -o challenges/pidigits/pidigits
-./challenges/pidigits/pidigits 10000
+./challenges/pidigits/pidigits 1000
 ```
+
+## Benchmark
+
+Reproduce with the shared harness (compiles at `-O2`, times with `hyperfine`, reports peak RSS):
+
+```bash
+challenges/bench.sh pidigits 1000
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded — this benchmark does not
+use `Ashes.Parallel`):
+
+| N (digits) | Time | Peak RSS |
+|------------|------|----------|
+| 250 | 0.03 s | 0.25 MB |
+| 500 | 0.36 s | 0.25 MB |
+| 1,000 | 3.50 s | 0.25 MB |
+| 2,000 | 31.7 s | 0.25 MB |
+
+Resident memory is now **constant** (0.25 MB) at every `N` — down from `O(N²)` (`N=1000` was 168 MB).
+Two changes did it: (1) a `BigInt` is a self-contained buffer, so it is copied out across the TCO
+back-edge reset like a `String`, letting the reset fire and free the spigot's intermediate values; and
+(2) a loop threading only non-sharing whole-value accumulators (here `q, r, t` `BigInt`s plus the
+`String` output — no cons-lists) resets to a **fixed** loop-entry watermark, so each iteration's
+grown accumulator overwrites the previous one instead of being stranded below an advancing watermark.
+The growing accumulator now stays `O(current width)`, not `O(sum of all widths)`.
+
+What remains is **time**: it is still ~`O(N³)` (doubling `N` is ~9×), driven by the binary long-
+division in the digit-extraction step. That is a bignum-algorithm follow-up (Knuth Algorithm D /
+Karatsuba), not a memory-model issue — the standard `N=10000` is now memory-feasible but still
+time-bound, so the table stops where the wall time does.

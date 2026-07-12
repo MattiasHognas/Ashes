@@ -380,6 +380,14 @@ public sealed partial class Lowering
     // into the to-space can fire. Null when not generating a spec.
     private IReadOnlyList<TypeRef>? _specializationConcreteParamTypes;
     private int _specializationParamCursor;
+    // Parameter arg-types peeled from a `let f : A -> B -> ... = <lambda>` annotation, seeded into each
+    // curried lambda's parameter type BEFORE its body is lowered (bidirectional checking). Without this,
+    // a numeric operator on an annotated-Float parameter is lowered while the parameter is still an
+    // unbound type variable, so ResolveNumericOperandTypes defaults it to Int (then the annotation
+    // clashes). Consumed one per lambda via the cursor, exactly like the specialization seeding above,
+    // and limited to the definition's curried-lambda count so body lambdas never consume a leftover.
+    private IReadOnlyList<TypeRef>? _annotationParamTypes;
+    private int _annotationParamCursor;
     // Outer (non-accumulator) parameter names of the reuse specialization currently being lowered — e.g.
     // compare/newKey/newValue for Map.set. A constructor field whose argument is one of these is a FRESH
     // heap input (materialize it into the persistent blob so it survives the per-iteration reset); a field
@@ -912,14 +920,17 @@ public sealed partial class Lowering
             _reuseBindingSeenBySlot[seenLocal.Slot]++;
         }
 
-        if (b is null && (_inSpecialization || _inParallelSpecialization) && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
+        if (b is null && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
-            // Reuse specialization: this name is a non-inlined top-level helper (e.g. an AVL height/max
-            // reader) referenced from the spec's isolated scope, where its generation-site slot is gone.
-            // It has an empty closure environment, so reconstruct its closure directly from the label with
-            // a null env, and instantiate its type scheme fresh for this use (polymorphic helpers unify
-            // against the concrete call). This is what lets non-allocating helpers stay out of the inline
-            // set without hitting the Model-A forward-reference check (ASH014).
+            // This name is a non-inlined top-level helper (e.g. an AVL height/max reader, or a plain
+            // helper called from an inlined/specialized body) referenced from an isolated scope where its
+            // generation-site slot is gone. Membership in _topLevelFunctionRefs is proof it was already
+            // lowered — i.e. declared earlier — so this is a genuine backward reference, NOT the Model-A
+            // forward reference the ASH014 check below would otherwise (wrongly) report. It has an empty
+            // closure environment, so reconstruct its closure directly from the label with a null env, and
+            // instantiate its type scheme fresh for this use (polymorphic helpers unify against the
+            // concrete call). Reached only when Lookup fails; normal top-level references resolve via the
+            // scope and never get here, so this cannot change well-scoped code.
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
@@ -1134,6 +1145,21 @@ public sealed partial class Lowering
         return ptrTemp;
     }
 
+    // Peel the leading argument types from a function-type annotation, one per curried parameter, up to
+    // `maxCount` (the definition's lambda-chain length so a body lambda never consumes a leftover).
+    private List<TypeRef> PeelAnnotationParamTypes(TypeRef annotated, int maxCount)
+    {
+        var args = new List<TypeRef>();
+        var t = Prune(annotated);
+        while (args.Count < maxCount && t is TypeRef.TFun fun)
+        {
+            args.Add(fun.Arg);
+            t = Prune(fun.Ret);
+        }
+
+        return args;
+    }
+
     private (int, TypeRef) LowerLet(Expr.Let let)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -1144,14 +1170,27 @@ public sealed partial class Lowering
         EmitArenaWatermark();
 
         int depth0Before = _depth0LambdaCount;
+
+        // Seed parameter types from the annotation (if any) before lowering the value, so operators on
+        // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
+        var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
+        var savedAnnotParams = _annotationParamTypes;
+        var savedAnnotCursor = _annotationParamCursor;
+        if (annotatedLetType is not null && let.Value is Expr.Lambda letLambda)
+        {
+            _annotationParamTypes = PeelAnnotationParamTypes(annotatedLetType, CountLambdaChain(letLambda));
+            _annotationParamCursor = 0;
+        }
+
         var (valueTemp, valueType) = LowerLetValue(let);
+        _annotationParamTypes = savedAnnotParams;
+        _annotationParamCursor = savedAnnotCursor;
 
         // If the user wrote a type annotation, verify it matches the inferred type.
-        if (let.TypeAnnotation is { } letAnnotation)
+        if (annotatedLetType is not null)
         {
             using var annotationSpan = PushDiagnosticSpan(GetSpan(let.Value));
-            var annotatedType = ResolveAnnotationType(letAnnotation);
-            Unify(annotatedType, valueType);
+            Unify(annotatedLetType, valueType);
         }
 
         int slot = NewLocal();
@@ -1363,6 +1402,23 @@ public sealed partial class Lowering
         };
         _scopes.Push(child);
 
+        // Seed the recursive function's parameter types from its declared annotation BEFORE lowering
+        // the body, so that operator-overload resolution inside the body (e.g. `a * b` on Float
+        // params) sees the annotated types rather than defaulting an unresolved type var to Int.
+        // Resolving the annotation against recursiveType up front also makes self-calls type-check
+        // against the declared arrow. Restored after the value branches so nested lets don't inherit it.
+        var savedAnnotationParamTypes = _annotationParamTypes;
+        var savedAnnotationParamCursor = _annotationParamCursor;
+        _annotationParamTypes = null;
+        _annotationParamCursor = 0;
+        if (letRecursive.TypeAnnotation is { } seedAnnotation && innerLambda is not null)
+        {
+            var seedAnnotationType = ResolveAnnotationType(seedAnnotation);
+            Unify(recursiveType, seedAnnotationType);
+            _annotationParamTypes = PeelAnnotationParamTypes(seedAnnotationType, CountLambdaChain(innerLambda));
+            _annotationParamCursor = 0;
+        }
+
         (int valTemp, TypeRef valType) valueAndType;
         bool helperMarkerAdded = false;
         if (letRecursive.Value is Expr.Lambda lam
@@ -1471,6 +1527,9 @@ public sealed partial class Lowering
             ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
             valueAndType = LowerExpr(letRecursive.Value);
         }
+
+        _annotationParamTypes = savedAnnotationParamTypes;
+        _annotationParamCursor = savedAnnotationParamCursor;
 
         Unify(recursiveType, valueAndType.valType);
 
@@ -1637,6 +1696,15 @@ public sealed partial class Lowering
         {
             Unify(paramTy, concreteParamTypes[_specializationParamCursor]);
             _specializationParamCursor++;
+        }
+
+        // Seed this parameter from the enclosing let's type annotation before lowering the body, so an
+        // operator on an annotated-Float parameter resolves against Float instead of defaulting to Int.
+        if (_annotationParamTypes is { } annotationParamTypes
+            && _annotationParamCursor < annotationParamTypes.Count)
+        {
+            Unify(paramTy, annotationParamTypes[_annotationParamCursor]);
+            _annotationParamCursor++;
         }
 
         // Compute free variables for capture
@@ -2034,6 +2102,15 @@ public sealed partial class Lowering
                     }
                 }
             }
+
+            // Save a FIXED loop-entry watermark BEFORE the loop label (runs once). A back-edge whose
+            // accumulators are all non-sharing whole-value types resets here instead of the per-iteration
+            // mark, so the previous iteration's whole-value copy is reclaimed rather than stranded below
+            // an advancing watermark (the growing-accumulator O(N^2) leak). Same cursor position as the
+            // first per-iteration save below (nothing is emitted between them).
+            tco.FixedCursorSlot = NewLocal();
+            tco.FixedEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
 
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
@@ -2572,6 +2649,37 @@ public sealed partial class Lowering
                 }
                 else
                 {
+                    // A list copy-out (shallow single-cell CopyOutArena(16), or TcoListCell for
+                    // String/InnerList heads) preserves only the list's TOP cons cell across the reset,
+                    // on the assumption that its tail already lives below the watermark. That holds only
+                    // when the argument is literally `head :: <loop accumulator param>`: exactly one
+                    // fresh cell, tail = the previous iteration's accumulator (below the watermark). Any
+                    // other shape — `a :: b :: acc` (two fresh cells), a rebuilt list from
+                    // setAt/map/reverse, or an opaque function result — has interior fresh cells the
+                    // single-cell copy leaves dangling, so the reset reclaims still-referenced memory
+                    // (wrong branch taken at best, segfault at worst). Detect the safe shape (through one
+                    // level of let-binding, since accumulators are usually named) and disqualify the
+                    // reset for every other list arg; those iterations then simply don't reclaim.
+                    bool IsSingleFreshConsListArg(int i)
+                    {
+                        if (Prune(newArgTypes[i]) is not TypeRef.TList)
+                        {
+                            return false;
+                        }
+
+                        var argExpr = collectedArgs[i];
+                        if (argExpr is Expr.Var v
+                            && Lookup(v.Name) is Binding.Local local
+                            && _letBindingValues.TryGetValue(local.Slot, out var bound))
+                        {
+                            argExpr = bound;
+                        }
+
+                        return argExpr is Expr.Cons cons
+                            && cons.Tail is Expr.Var tailVar
+                            && tco.ParamNames.Contains(tailVar.Name);
+                    }
+
                     // Check whether every heap-type arg can be copy-outed.
                     bool allCopyable = true;
                     for (int i = 0; i < newArgTypes.Length; i++)
@@ -2582,7 +2690,32 @@ public sealed partial class Lowering
                             allCopyable = false;
                             break;
                         }
+
+                        if (Prune(newArgTypes[i]) is TypeRef.TList && !IsSingleFreshConsListArg(i))
+                        {
+                            allCopyable = false;
+                            break;
+                        }
                     }
+
+                    // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's
+                    // whole-value accumulator copies) instead of the per-iteration one WHEN every arg is
+                    // a non-sharing whole-value type: a copy type, a resource handle, a String, or a
+                    // BigInt. A cons-list (or any TList) shares its tail with the prior accumulator, which
+                    // sits below the per-iteration watermark and would be overwritten by a fixed-mark
+                    // reset — so any list disqualifies the fixed mark and keeps the advancing one. This is
+                    // what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident memory.
+                    bool useFixedWatermark = tco.FixedCursorSlot >= 0
+                        && newArgTypes.All(t =>
+                            CanArenaReset(t)
+                            || IsResourceHandleType(t)
+                            || Prune(t) is TypeRef.TStr or TypeRef.TBigInt
+                            // An ADT copied shallow (all copy-type fields) or deep (list/string fields
+                            // fully copied, breaking tail-sharing) is a self-contained clone, so it is
+                            // safe at the fixed mark.
+                            || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n))));
+                    int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
+                    int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
 
                     if (allCopyable)
                     {
@@ -2622,12 +2755,19 @@ public sealed partial class Lowering
                                 continue;
                             }
 
-                            upCopyTemps[i] = NewTemp();
-                            EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
+                            // A deep-ADT copy returns its own temp (a self-contained recursive clone),
+                            // rather than writing into a pre-allocated dest like the shallow kinds.
+                            upCopyTemps[i] = kind == CopyOutKind.DeepAdt
+                                ? EmitDeepCopy(newArgTemps[i], newArgTypes[i])
+                                : NewTemp();
+                            if (kind != CopyOutKind.DeepAdt)
+                            {
+                                EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
+                            }
                         }
 
                         // Reset (pointer reset only, no chunk freeing): cursor → W.
-                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
+                        Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
 
                         // Phase B: copy each up-copy down to W and store into the slot.
                         for (int i = 0; i < newArgTypes.Length; i++)
@@ -2636,14 +2776,23 @@ public sealed partial class Lowering
                                 continue;
 
                             var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
-                            int copyDest = NewTemp();
-                            EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
+                            int copyDest;
+                            if (kind == CopyOutKind.DeepAdt)
+                            {
+                                copyDest = EmitDeepCopy(upCopyTemps[i], newArgTypes[i]);
+                            }
+                            else
+                            {
+                                copyDest = NewTemp();
+                                EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
+                            }
+
                             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
                         }
 
                         // Free the chunks abandoned above W (including the Phase A
                         // up-copies, now fully consumed by Phase B).
-                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
+                        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
                         EndLivePostsGuard(tcoCopySkipLabel);
                     }
                     // else: complex heap types — no arena reset.
@@ -2706,6 +2855,7 @@ public sealed partial class Lowering
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
                 IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
                 IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
                 IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
                 IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
@@ -2838,6 +2988,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                    BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
                     BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),

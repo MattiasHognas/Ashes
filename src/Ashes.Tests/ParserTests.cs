@@ -139,9 +139,18 @@ public sealed class ParserTests
     }
 
     [Test]
-    public void Parse_should_support_negative_float_literals_via_unary_negation()
+    public void Parse_should_fold_negated_float_literal_into_the_literal()
     {
-        Parse("-2.25").ShouldBe(new Expr.Subtract(new Expr.IntLit(0), new Expr.FloatLit(2.25, "2.25")));
+        // A negated float literal folds into the literal itself rather than desugaring to
+        // `0 - 2.25`, whose synthesized Int `0` would force the value to resolve as Int.
+        Parse("-2.25").ShouldBe(new Expr.FloatLit(-2.25, "-2.25"));
+    }
+
+    [Test]
+    public void Parse_should_keep_negated_int_literal_as_zero_minus_form()
+    {
+        // Int negation stays `0 - 2` (both operands Int, resolves correctly); only float needs folding.
+        Parse("-2").ShouldBe(new Expr.Subtract(new Expr.IntLit(0), new Expr.IntLit(2)));
     }
 
     [Test]

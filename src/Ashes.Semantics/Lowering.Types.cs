@@ -56,6 +56,17 @@ public sealed partial class Lowering
         public int ArenaCursorSlot { get; set; } = -1;
         public int ArenaEndSlot { get; set; } = -1;
 
+        // Fixed loop-ENTRY arena watermark, saved ONCE before the loop label (not re-saved per
+        // iteration like ArenaCursorSlot). When every threaded accumulator is a non-sharing whole-value
+        // type (copy type, resource handle, String, or BigInt) — never a cons-list, whose shared tail
+        // must stay below an ADVANCING watermark — the back-edge resets to this fixed mark instead. The
+        // per-iteration mark advances past the accumulator each iteration, stranding the previous
+        // iteration's whole-value copy below itself forever (the O(N^2) growing-accumulator leak); the
+        // fixed mark reclaims that old copy and re-materializes the new one at the same spot, so a
+        // growing String/BigInt accumulator stays O(current size) instead of O(sum of sizes).
+        public int FixedCursorSlot { get; set; } = -1;
+        public int FixedEndSlot { get; set; } = -1;
+
         // Stack pointer saved at the loop body label; restored at each back-edge so per-iteration dynamic
         // stack allocations in the loop body are freed instead of accumulating until the stack overflows.
         public int StackPtrSlot { get; set; } = -1;
@@ -77,6 +88,7 @@ public sealed partial class Lowering
     {
         Print,
         Write,
+        WriteBytes,
         WriteLine,
         ReadLine,
         FileReadText,
@@ -284,5 +296,8 @@ public sealed partial class Lowering
         Closure,
         /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
         TcoListCell,
+        /// <summary>Recursive deep copy of a pointer-bearing ADT (fields deep-copied) via a synthesized
+        /// copier. Self-contained result, so a fixed-shape ADT accumulator can reset.</summary>
+        DeepAdt,
     }
 }

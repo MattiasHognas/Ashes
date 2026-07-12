@@ -51,11 +51,43 @@ feature.
 
 ## Status
 
-**Scaffold only.** `fannkuch-redux.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked.** [`fannkuch-redux.ash`](fannkuch-redux.ash) is the intended fully-pure
+solution (List-based permutation, one-pass O(k) `flip`, faithful factorial-order enumeration). Writing
+it surfaced **three distinct compiler bugs** — exactly the flaw-finding this challenge exists for —
+**all now fixed** (see [FLAWS.md](FLAWS.md)):
 
-## Build & run (once written)
+1. a self-recursive function threading **two** `List` accumulators with an early ADT return dropped
+   the early return — the TCO shallow copy-out only preserved a list's top cons cell;
+2. a spurious `ASH014` for a non-recursive helper that calls a recursive helper;
+3. a **use-after-reset** segfault of a pointer-bearing accumulator across the TCO back-edge (same root
+   as (1)).
+
+Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`), and resident memory
+is now **constant**: the `State(perm, count)` accumulator is a fixed-shape (non-recursive) pointer-
+bearing ADT, so it is carried across the TCO reset by a recursive **deep copy** (a self-contained clone
+whose list fields are fully copied) and reset to the fixed loop-entry watermark. The reset now fires,
+reclaiming every per-iteration transient. Larger N is bounded only by *time* (`N!` enumeration).
+
+## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch-redux.ash -o challenges/fannkuch-redux/fannkuch-redux
-./challenges/fannkuch-redux/fannkuch-redux 10
+./challenges/fannkuch-redux/fannkuch-redux 7
 ```
+
+## Benchmark
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`. All outputs match
+the reference:
+
+| N | checksum / Pfannkuchen | Time | Peak RSS |
+|---|---|------|----------|
+| 8 | 1616 / 22 | 0.02 s | 0.25 MB |
+| 9 | 8629 / 30 | 0.20 s | 0.25 MB |
+| 10 | 73196 / 38 | 2.4 s | 0.25 MB |
+| 11 | 556355 / 51 | 30 s | 0.25 MB |
+
+Resident set is a **constant 0.25 MB** (previously it grew ~10× per N — 4.6 GB at N=10 — and N≥11 was
+out of reach). The remaining limit is pure `N!` enumeration *time*, not memory; the mutable-array
+reference plus its permutation-range sharding (FLAWS #5, still sequential here) is what closes the
+speed gap at N=12.
