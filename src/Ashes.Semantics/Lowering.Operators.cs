@@ -164,6 +164,24 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(mul.Left);
         var (rightTemp, rightType) = LowerExpr(mul.Right);
 
+        // Both operands unconstrained: don't eagerly pick Int (as ResolveNumericOperandTypes would).
+        // Unify them into one monomorphic var (kept out of generalization via _mulConstrainedVars) so a
+        // later use resolves it — e.g. a `dot xs ys acc = … x * y + acc` fold used at Float. Emit a
+        // provisional MulInt, patched to MulFloat/BigIntBinary in ResolveDeferredMuls once the operand
+        // type is known. If it never resolves (an unused generic '*'), it defaults to Int there.
+        if (Prune(leftType) is TypeRef.TVar && Prune(rightType) is TypeRef.TVar)
+        {
+            Unify(Prune(leftType), Prune(rightType));
+            if (Prune(leftType) is TypeRef.TVar sharedVar)
+            {
+                _mulConstrainedVars.Add(sharedVar);
+                _hasDeferredMuls = true;
+                int deferredTarget = NewTemp();
+                Emit(new IrInst.MulInt(deferredTarget, leftTemp, rightTemp, sharedVar));
+                return (deferredTarget, sharedVar);
+            }
+        }
+
         return LowerNumericBinaryOp(mul, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'", bigIntOp: "mul");
     }
 

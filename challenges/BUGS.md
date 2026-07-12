@@ -17,12 +17,16 @@ Reproduce any snippet with the prebuilt compiler:
 
 ## Type inference & operators
 
-### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free) — [PARTIAL]
-**[PARTIAL]** main case FIXED (`c4556bd`): `+`'s left-operand resolution switch was missing the `Float`
-case (it had `Str`/`BigInt`/`UInt`), so `acc + x * 2.0` froze the accumulator to `Int`; adding
-`TFloat -> TFloat` fixes n-body / spectral-norm `avRow`. **Still open:** a bare `x * y` with *both*
-operands unresolved defaults to `Int` (`Multiply` has no deferred-resolution path like `Add`'s
-`ResolveDeferredAdds`) — a pure polymorphic dot product still needs a signature.
+### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free) — [FIXED]
+**[FIXED]** in two parts. Main case (`c4556bd`): `+`'s left-operand resolution switch was missing the
+`Float` case (it had `Str`/`BigInt`/`UInt`), so `acc + x * 2.0` froze the accumulator to `Int`; adding
+`TFloat -> TFloat` fixes n-body / spectral-norm `avRow`. Second case: a bare `x * y` with *both*
+operands unresolved defaulted to `Int` because `Multiply` had no deferred-resolution path. `*` now
+mirrors `+` — both-unconstrained operands emit a provisional `MulInt` with the shared operand var kept
+monomorphic (`_mulConstrainedVars`), patched to `MulFloat` / `BigIntBinary` / `MulInt` once inference
+resolves it (`ResolveDeferredMuls`). A generic dot product (`… acc + x * y`) works at Float, Int, or
+BigInt with no signature. (Like `+`, a generic multiply is monomorphic — using the *same* one at two
+types in a single program still needs the non-recursive overload-generic path, tracked elsewhere.)
 
 A numeric operator whose result type is not yet grounded defaults an unbound operand to `Int`, so a
 recursive Float accumulator on the **left** of `+`/`*` with a compound Float right operand is rejected.
